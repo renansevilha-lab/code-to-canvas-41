@@ -212,8 +212,15 @@ function VendasPage() {
     await recarregar();
   };
 
-  // Estado inicial: sem dados
-  if (!loading && pedidos.length === 0) {
+  // Estado inicial: sem dados (também mostra durante loading inicial pra evitar flash de "zeros")
+  if (pedidos.length === 0) {
+    if (loading) {
+      return (
+        <div className="p-10 text-center text-sm text-muted-foreground">
+          Carregando…
+        </div>
+      );
+    }
     return <EstadoVazio onFiles={handleFiles} importing={importing} />;
   }
 
