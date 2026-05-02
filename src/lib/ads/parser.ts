@@ -344,7 +344,7 @@ export async function processarArquivosAds(files: File[]): Promise<ResultadoAdsP
       const xlsxs = await extrairXlsxDeArquivo(file);
       for (const x of xlsxs) {
         try {
-          const linhas = lerXlsx(x.buf);
+          const linhas = lerArquivo(x.buf, x.nome);
           if (linhas.length === 0) {
             warnings.push(`${x.nome}: 0 linhas lidas`);
             continue;
