@@ -4,35 +4,11 @@
  * Dedup por chave (id_anuncio + data).
  */
 
-import { openDB, type IDBPDatabase } from "idb";
+import { getShopeeAnalyticsDB } from "@/lib/storage/db";
 
 import type { AdRow } from "./types";
 
-const DB_NAME = "shopee-analytics";
-const DB_VERSION = 2; // bump pra adicionar store `ads`
-
-async function getDB(): Promise<IDBPDatabase> {
-  return openDB(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion) {
-      if (!db.objectStoreNames.contains("pedidos")) {
-        const s = db.createObjectStore("pedidos", { keyPath: "id" });
-        s.createIndex("data_pedido", "data_pedido");
-      }
-      if (!db.objectStoreNames.contains("itens")) {
-        const s = db.createObjectStore("itens", { autoIncrement: true });
-        s.createIndex("id_pedido", "id_pedido");
-        s.createIndex("data_pedido", "data_pedido");
-        s.createIndex("sku", "sku");
-        s.createIndex("composite", ["id_pedido", "sku"], { unique: false });
-      }
-      if (oldVersion < 2 && !db.objectStoreNames.contains("ads")) {
-        const s = db.createObjectStore("ads", { keyPath: "chave" });
-        s.createIndex("data", "data");
-        s.createIndex("id_anuncio", "id_anuncio");
-      }
-    },
-  });
-}
+const getDB = getShopeeAnalyticsDB;
 
 export async function getAllAds(): Promise<AdRow[]> {
   const db = await getDB();
