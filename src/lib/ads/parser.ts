@@ -144,21 +144,38 @@ function get(row: Record<string, unknown>, colMap: Map<string, string>, canon: s
 
 // ─── Leitura de arquivos ──────────────────────────────────────────────────
 
-function lerXlsx(buf: ArrayBuffer): Record<string, unknown>[] {
-  const wb = XLSX.read(buf, { type: "array", cellDates: false });
+function lerArquivo(buf: ArrayBuffer, nome: string): Record<string, unknown>[] {
+  const isCsv = nome.toLowerCase().endsWith(".csv");
+  let wb: XLSX.WorkBook;
+  if (isCsv) {
+    // Decodifica como UTF-8 (o relatório da Shopee tem BOM)
+    const text = new TextDecoder("utf-8").decode(buf);
+    wb = XLSX.read(text, { type: "string", cellDates: false });
+  } else {
+    wb = XLSX.read(buf, { type: "array", cellDates: false });
+  }
   // Procura aba com mais linhas (Shopee às vezes inclui aba "Resumo")
   let melhor: { rows: Record<string, unknown>[]; n: number } = { rows: [], n: 0 };
-  for (const nome of wb.SheetNames) {
-    const sheet = wb.Sheets[nome];
+  for (const nomeAba of wb.SheetNames) {
+    const sheet = wb.Sheets[nomeAba];
     if (!sheet) continue;
     // Tenta detectar header se as primeiras linhas forem metadados
     const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
     let headerIdx = 0;
-    for (let i = 0; i < Math.min(raw.length, 8); i++) {
+    for (let i = 0; i < Math.min(raw.length, 12); i++) {
       const linha = (raw[i] || []).map((c) => normalizeKey(String(c)));
       if (
         linha.some((c) =>
-          ["impressoes", "cliques", "vendas", "vendas (gmv)", "gasto", "gmv"].includes(c)
+          [
+            "impressoes",
+            "cliques",
+            "vendas",
+            "vendas (gmv)",
+            "gasto",
+            "gmv",
+            "despesas",
+            "nome do anuncio",
+          ].includes(c)
         )
       ) {
         headerIdx = i;
