@@ -5,37 +5,16 @@
  * Equivalente ao "Excel mestre" do Python: ler histórico → mesclar novo → dedup.
  */
 
-import { openDB, type IDBPDatabase } from "idb";
+import { getShopeeAnalyticsDB } from "@/lib/storage/db";
 
 import type { ItemPedido, Pedido } from "./types";
-
-const DB_NAME = "shopee-analytics";
-const DB_VERSION = 1;
 
 interface DBSchema extends Record<string, unknown> {
   pedidos: { key: string; value: Pedido };
   itens: { key: string; value: ItemPedido };
 }
 
-async function getDB(): Promise<IDBPDatabase> {
-  return openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains("pedidos")) {
-        const s = db.createObjectStore("pedidos", { keyPath: "id" });
-        s.createIndex("data_pedido", "data_pedido");
-      }
-      if (!db.objectStoreNames.contains("itens")) {
-        const s = db.createObjectStore("itens", {
-          autoIncrement: true,
-        });
-        s.createIndex("id_pedido", "id_pedido");
-        s.createIndex("data_pedido", "data_pedido");
-        s.createIndex("sku", "sku");
-        s.createIndex("composite", ["id_pedido", "sku"], { unique: false });
-      }
-    },
-  });
-}
+const getDB = getShopeeAnalyticsDB;
 
 export async function getAllPedidos(): Promise<Pedido[]> {
   const db = await getDB();
