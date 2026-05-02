@@ -78,11 +78,25 @@ const ALIASES: Record<string, string[]> = {
     "ad name",
   ],
   id_anuncio: ["id do anuncio", "id anuncio", "id do produto", "sku", "ad id"],
-  tipo_anuncio: ["tipo de anuncio", "tipo", "modo de lance", "ad type"],
+  tipo_anuncio: [
+    "tipo de anuncio",
+    "tipos de anuncios",
+    "tipos de anuncio",
+    "tipo",
+    "modo de lance",
+    "ad type",
+  ],
   status: ["status", "status do anuncio"],
   impressoes: ["impressoes", "impressions", "exibicoes"],
   cliques: ["cliques", "clicks", "clique"],
-  pedidos: ["pedidos", "orders", "n° de pedidos", "numero de pedidos"],
+  pedidos: [
+    "pedidos",
+    "orders",
+    "n° de pedidos",
+    "numero de pedidos",
+    "conversoes",
+    "conversions",
+  ],
   itens_vendidos: ["itens vendidos", "produtos vendidos", "qtd vendida", "items sold"],
   gmv: [
     "vendas",
@@ -93,7 +107,16 @@ const ALIASES: Record<string, string[]> = {
     "vendas direto e indireto",
     "valor de vendas",
   ],
-  gasto: ["gasto", "gasto (r$)", "custo", "investimento", "spend", "valor gasto"],
+  gasto: [
+    "gasto",
+    "gasto (r$)",
+    "custo",
+    "investimento",
+    "spend",
+    "valor gasto",
+    "despesas",
+    "despesa",
+  ],
 };
 
 /** Cria lookup de chave normalizada → chave canônica do nosso modelo. */
@@ -121,21 +144,38 @@ function get(row: Record<string, unknown>, colMap: Map<string, string>, canon: s
 
 // ─── Leitura de arquivos ──────────────────────────────────────────────────
 
-function lerXlsx(buf: ArrayBuffer): Record<string, unknown>[] {
-  const wb = XLSX.read(buf, { type: "array", cellDates: false });
+function lerArquivo(buf: ArrayBuffer, nome: string): Record<string, unknown>[] {
+  const isCsv = nome.toLowerCase().endsWith(".csv");
+  let wb: XLSX.WorkBook;
+  if (isCsv) {
+    // Decodifica como UTF-8 (o relatório da Shopee tem BOM)
+    const text = new TextDecoder("utf-8").decode(buf);
+    wb = XLSX.read(text, { type: "string", cellDates: false });
+  } else {
+    wb = XLSX.read(buf, { type: "array", cellDates: false });
+  }
   // Procura aba com mais linhas (Shopee às vezes inclui aba "Resumo")
   let melhor: { rows: Record<string, unknown>[]; n: number } = { rows: [], n: 0 };
-  for (const nome of wb.SheetNames) {
-    const sheet = wb.Sheets[nome];
+  for (const nomeAba of wb.SheetNames) {
+    const sheet = wb.Sheets[nomeAba];
     if (!sheet) continue;
     // Tenta detectar header se as primeiras linhas forem metadados
     const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
     let headerIdx = 0;
-    for (let i = 0; i < Math.min(raw.length, 8); i++) {
+    for (let i = 0; i < Math.min(raw.length, 12); i++) {
       const linha = (raw[i] || []).map((c) => normalizeKey(String(c)));
       if (
         linha.some((c) =>
-          ["impressoes", "cliques", "vendas", "vendas (gmv)", "gasto", "gmv"].includes(c)
+          [
+            "impressoes",
+            "cliques",
+            "vendas",
+            "vendas (gmv)",
+            "gasto",
+            "gmv",
+            "despesas",
+            "nome do anuncio",
+          ].includes(c)
         )
       ) {
         headerIdx = i;
@@ -162,7 +202,11 @@ export async function extrairXlsxDeArquivo(
   file: File
 ): Promise<{ nome: string; buf: ArrayBuffer }[]> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+  if (
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".csv")
+  ) {
     return [{ nome: file.name, buf: await file.arrayBuffer() }];
   }
   if (lower.endsWith(".zip")) {
@@ -171,7 +215,7 @@ export async function extrairXlsxDeArquivo(
     for (const entry of Object.values(zip.files)) {
       if (entry.dir) continue;
       const n = entry.name.toLowerCase();
-      if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
+      if (n.endsWith(".xlsx") || n.endsWith(".xls") || n.endsWith(".csv")) {
         out.push({ nome: entry.name, buf: await entry.async("arraybuffer") });
       }
     }
@@ -189,10 +233,16 @@ export interface ResultadoAdsProcessamento {
   warnings: string[];
 }
 
-/** Tenta inferir uma data do nome do arquivo (ex: "ads_2025-04-01_2025-04-30.xlsx"). */
+/** Tenta inferir uma data do nome do arquivo (ex: "ads_2025-04-01_2025-04-30.xlsx" ou "...30_04_2026-30_04_2026.csv"). */
 function inferirDataDoNome(nome: string): string {
-  const m = nome.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // Pega a última ocorrência (data final do período)
+  const matches = [...nome.matchAll(/(\d{2})[-_/](\d{2})[-_/](\d{4})/g)];
+  if (matches.length > 0) {
+    const m = matches[matches.length - 1];
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  }
+  const iso = nome.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
   return "";
 }
 
@@ -294,7 +344,7 @@ export async function processarArquivosAds(files: File[]): Promise<ResultadoAdsP
       const xlsxs = await extrairXlsxDeArquivo(file);
       for (const x of xlsxs) {
         try {
-          const linhas = lerXlsx(x.buf);
+          const linhas = lerArquivo(x.buf, x.nome);
           if (linhas.length === 0) {
             warnings.push(`${x.nome}: 0 linhas lidas`);
             continue;
