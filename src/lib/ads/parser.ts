@@ -185,7 +185,11 @@ export async function extrairXlsxDeArquivo(
   file: File
 ): Promise<{ nome: string; buf: ArrayBuffer }[]> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+  if (
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".csv")
+  ) {
     return [{ nome: file.name, buf: await file.arrayBuffer() }];
   }
   if (lower.endsWith(".zip")) {
@@ -194,7 +198,7 @@ export async function extrairXlsxDeArquivo(
     for (const entry of Object.values(zip.files)) {
       if (entry.dir) continue;
       const n = entry.name.toLowerCase();
-      if (n.endsWith(".xlsx") || n.endsWith(".xls")) {
+      if (n.endsWith(".xlsx") || n.endsWith(".xls") || n.endsWith(".csv")) {
         out.push({ nome: entry.name, buf: await entry.async("arraybuffer") });
       }
     }
@@ -212,10 +216,16 @@ export interface ResultadoAdsProcessamento {
   warnings: string[];
 }
 
-/** Tenta inferir uma data do nome do arquivo (ex: "ads_2025-04-01_2025-04-30.xlsx"). */
+/** Tenta inferir uma data do nome do arquivo (ex: "ads_2025-04-01_2025-04-30.xlsx" ou "...30_04_2026-30_04_2026.csv"). */
 function inferirDataDoNome(nome: string): string {
-  const m = nome.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // Pega a última ocorrência (data final do período)
+  const matches = [...nome.matchAll(/(\d{2})[-_/](\d{2})[-_/](\d{4})/g)];
+  if (matches.length > 0) {
+    const m = matches[matches.length - 1];
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  }
+  const iso = nome.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
   return "";
 }
 
