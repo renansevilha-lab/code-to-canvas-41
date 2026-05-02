@@ -78,11 +78,25 @@ const ALIASES: Record<string, string[]> = {
     "ad name",
   ],
   id_anuncio: ["id do anuncio", "id anuncio", "id do produto", "sku", "ad id"],
-  tipo_anuncio: ["tipo de anuncio", "tipo", "modo de lance", "ad type"],
+  tipo_anuncio: [
+    "tipo de anuncio",
+    "tipos de anuncios",
+    "tipos de anuncio",
+    "tipo",
+    "modo de lance",
+    "ad type",
+  ],
   status: ["status", "status do anuncio"],
   impressoes: ["impressoes", "impressions", "exibicoes"],
   cliques: ["cliques", "clicks", "clique"],
-  pedidos: ["pedidos", "orders", "n° de pedidos", "numero de pedidos"],
+  pedidos: [
+    "pedidos",
+    "orders",
+    "n° de pedidos",
+    "numero de pedidos",
+    "conversoes",
+    "conversions",
+  ],
   itens_vendidos: ["itens vendidos", "produtos vendidos", "qtd vendida", "items sold"],
   gmv: [
     "vendas",
@@ -93,7 +107,16 @@ const ALIASES: Record<string, string[]> = {
     "vendas direto e indireto",
     "valor de vendas",
   ],
-  gasto: ["gasto", "gasto (r$)", "custo", "investimento", "spend", "valor gasto"],
+  gasto: [
+    "gasto",
+    "gasto (r$)",
+    "custo",
+    "investimento",
+    "spend",
+    "valor gasto",
+    "despesas",
+    "despesa",
+  ],
 };
 
 /** Cria lookup de chave normalizada → chave canônica do nosso modelo. */
