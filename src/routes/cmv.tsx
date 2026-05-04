@@ -586,19 +586,19 @@ function NovoUploadDialog({
   onFiles: (files: File[]) => void;
   importing: boolean;
 }) {
-  const inputRef = useState<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
       <Button
         variant="outline"
         size="sm"
-        onClick={() => inputRef[0]?.click()}
+        onClick={() => inputRef.current?.click()}
         disabled={importing}
       >
         Importar CMV
       </Button>
       <input
-        ref={(el) => inputRef[1](el)}
+        ref={inputRef}
         type="file"
         accept=".xlsx,.xls,.csv"
         multiple
