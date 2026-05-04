@@ -1,7 +1,7 @@
 import { openDB, type IDBPDatabase } from "idb";
 
 const DB_NAME = "shopee-analytics";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export async function getShopeeAnalyticsDB(): Promise<IDBPDatabase> {
   return openDB(DB_NAME, DB_VERSION, {
@@ -21,6 +21,9 @@ export async function getShopeeAnalyticsDB(): Promise<IDBPDatabase> {
         const s = db.createObjectStore("ads", { keyPath: "chave" });
         s.createIndex("data", "data");
         s.createIndex("id_anuncio", "id_anuncio");
+      }
+      if (!db.objectStoreNames.contains("cmv")) {
+        db.createObjectStore("cmv", { keyPath: "sku" });
       }
     },
   });
