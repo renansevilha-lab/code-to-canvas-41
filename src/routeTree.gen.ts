@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
+import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
@@ -29,6 +30,11 @@ const ResultadoRoute = ResultadoRouteImport.update({
 const ProdutosRoute = ProdutosRouteImport.update({
   id: '/produtos',
   path: '/produtos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CmvRoute = CmvRouteImport.update({
+  id: '/cmv',
+  path: '/cmv',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CarteiraRoute = CarteiraRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
+  '/cmv': typeof CmvRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
+  '/cmv': typeof CmvRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -68,20 +76,36 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
+  '/cmv': typeof CmvRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/ads' | '/carteira' | '/produtos' | '/resultado' | '/vendas'
+  fullPaths:
+    | '/'
+    | '/ads'
+    | '/carteira'
+    | '/cmv'
+    | '/produtos'
+    | '/resultado'
+    | '/vendas'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/ads' | '/carteira' | '/produtos' | '/resultado' | '/vendas'
+  to:
+    | '/'
+    | '/ads'
+    | '/carteira'
+    | '/cmv'
+    | '/produtos'
+    | '/resultado'
+    | '/vendas'
   id:
     | '__root__'
     | '/'
     | '/ads'
     | '/carteira'
+    | '/cmv'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -91,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdsRoute: typeof AdsRoute
   CarteiraRoute: typeof CarteiraRoute
+  CmvRoute: typeof CmvRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
   VendasRoute: typeof VendasRoute
@@ -117,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/produtos'
       fullPath: '/produtos'
       preLoaderRoute: typeof ProdutosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cmv': {
+      id: '/cmv'
+      path: '/cmv'
+      fullPath: '/cmv'
+      preLoaderRoute: typeof CmvRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/carteira': {
@@ -147,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdsRoute: AdsRoute,
   CarteiraRoute: CarteiraRoute,
+  CmvRoute: CmvRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
   VendasRoute: VendasRoute,
