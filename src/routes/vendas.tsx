@@ -72,7 +72,25 @@ import {
   type PeriodoKey,
 } from "@/lib/vendas/aggregations";
 import type { ItemPedido, Pedido } from "@/lib/vendas/types";
+import type { CmvRow } from "@/lib/cmv/types";
+import type { AdRow } from "@/lib/ads/types";
+import { getAllCmv } from "@/lib/cmv/storage";
+import { getAllAds } from "@/lib/ads/storage";
+import { gastoAdsPeriodo } from "@/lib/cmv/aggregations";
+import { filtrarPeriodo as filtrarPeriodoAds } from "@/lib/ads/aggregations";
 import { formatBRL, formatDate, formatDelta, formatNumber, formatPercent } from "@/lib/format";
+
+export interface PedidoIndicadores {
+  subtotal: number;
+  taxas: number;
+  imposto: number;
+  cmv: number;
+  ads: number;
+  renda: number;
+  margem: number;
+  margem_pct: number;
+  cmv_faltante: boolean;
+}
 
 import {
   Bar,
