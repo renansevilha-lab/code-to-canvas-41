@@ -77,7 +77,7 @@ import type { AdRow } from "@/lib/ads/types";
 import { getAllCmv } from "@/lib/cmv/storage";
 import { getAllAds } from "@/lib/ads/storage";
 import { gastoAdsPeriodo } from "@/lib/cmv/aggregations";
-import { filtrarPeriodo as filtrarPeriodoAds } from "@/lib/ads/aggregations";
+import { filtrarPeriodoAds } from "@/lib/ads/aggregations";
 import { formatBRL, formatDate, formatDelta, formatNumber, formatPercent } from "@/lib/format";
 
 export interface PedidoIndicadores {
