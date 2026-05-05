@@ -126,6 +126,8 @@ function VendasPage() {
   const router = useRouter();
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [itens, setItens] = useState<ItemPedido[]>([]);
+  const [cmvRows, setCmvRows] = useState<CmvRow[]>([]);
+  const [adsRows, setAdsRows] = useState<AdRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [periodo, setPeriodo] = useState<PeriodoKey>("30d");
@@ -134,9 +136,16 @@ function VendasPage() {
   const recarregar = async () => {
     setLoading(true);
     try {
-      const [p, i] = await Promise.all([getAllPedidos(), getAllItens()]);
+      const [p, i, c, a] = await Promise.all([
+        getAllPedidos(),
+        getAllItens(),
+        getAllCmv(),
+        getAllAds(),
+      ]);
       setPedidos(p);
       setItens(i);
+      setCmvRows(c);
+      setAdsRows(a);
     } finally {
       setLoading(false);
     }
