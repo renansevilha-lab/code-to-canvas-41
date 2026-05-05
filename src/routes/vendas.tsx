@@ -942,54 +942,103 @@ function TabelaPedidos({
               <TableHead className="text-center">Itens</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>UF</TableHead>
-              <TableHead>Envio</TableHead>
               <TableHead className="text-right">GMV</TableHead>
+              <TableHead className="text-right">Subtotal</TableHead>
+              <TableHead className="text-right">Taxas</TableHead>
+              <TableHead className="text-right">Imposto 10%</TableHead>
+              <TableHead className="text-right">CMV</TableHead>
+              <TableHead className="text-right">ADS rateado</TableHead>
               <TableHead className="text-right">Renda est.</TableHead>
+              <TableHead className="text-right">Margem</TableHead>
+              <TableHead className="text-right">Margem %</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {pageRows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={15} className="text-center text-muted-foreground py-8">
                   Nenhum pedido encontrado
                 </TableCell>
               </TableRow>
             ) : (
-              pageRows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="text-xs text-muted-foreground tabular-nums">
-                    {formatDate(p.data_pedido)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{p.id}</TableCell>
-                  <TableCell className="max-w-xs truncate">
-                    {p.primeiro_produto || "—"}
-                    {p.n_skus > 1 && (
-                      <span className="text-xs text-muted-foreground ml-1">
-                        +{p.n_skus - 1}
+              pageRows.map((p) => {
+                const ind = indicadores.get(p.id);
+                const margemPositiva = (ind?.margem ?? 0) >= 0;
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                      {formatDate(p.data_pedido)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{p.id}</TableCell>
+                    <TableCell className="max-w-xs truncate">
+                      {p.primeiro_produto || "—"}
+                      {p.n_skus > 1 && (
+                        <span className="text-xs text-muted-foreground ml-1">
+                          +{p.n_skus - 1}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{p.total_itens}</TableCell>
+                    <TableCell>
+                      <StatusBadge status={p.status} valido={p.pedido_valido} />
+                    </TableCell>
+                    <TableCell>{p.uf || "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      {formatBRL(p.valor_total)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatBRL(ind?.subtotal ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-warning-foreground">
+                      {formatBRL(ind?.taxas ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {formatBRL(ind?.imposto ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {ind?.cmv_faltante && (ind?.cmv ?? 0) === 0 ? (
+                        <span
+                          className="text-destructive text-xs"
+                          title="SKU sem CMV cadastrado"
+                        >
+                          —
+                        </span>
+                      ) : (
+                        <span className={ind?.cmv_faltante ? "text-warning-foreground" : ""}>
+                          {formatBRL(ind?.cmv ?? 0)}
+                          {ind?.cmv_faltante && <span className="ml-1">*</span>}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {formatBRL(ind?.ads ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className={(ind?.renda ?? 0) < 0 ? "text-destructive" : ""}>
+                        {formatBRL(ind?.renda ?? 0)}
                       </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center tabular-nums">{p.total_itens}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={p.status} valido={p.pedido_valido} />
-                  </TableCell>
-                  <TableCell>{p.uf || "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                    {p.opcao_envio || "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">
-                    {formatBRL(p.valor_total)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <span className={p.renda_estimada < 0 ? "text-destructive" : ""}>
-                      {formatBRL(p.renda_estimada)}
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <span className={margemPositiva ? "text-success" : "text-destructive"}>
+                        {formatBRL(ind?.margem ?? 0)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <span className={margemPositiva ? "text-success" : "text-destructive"}>
+                        {formatPercent(ind?.margem_pct ?? 0)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="px-4 py-2 text-[11px] text-muted-foreground border-t border-border">
+        * CMV parcial — algum SKU do pedido não tem custo cadastrado.{" "}
+        ADS rateado proporcional ao GMV do período (gasto total / GMV × valor do pedido).
       </div>
 
       {totalPages > 1 && (
