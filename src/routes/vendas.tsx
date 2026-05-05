@@ -616,12 +616,81 @@ function VendasPage() {
       </Tabs>
 
       {/* Tabela completa de pedidos */}
-      <TabelaPedidos pedidos={pedidosPeriodo} />
+      <TabelaPedidos pedidos={pedidosPeriodo} indicadores={indicadoresPorPedido} />
     </div>
   );
 }
 
+// ─── Cálculo de indicadores por pedido (CMV + ADS rateado + Margem) ────────
+
+function calcularIndicadoresPorPedido(
+  pedidos: Pedido[],
+  itens: ItemPedido[],
+  cmv: CmvRow[],
+  ads: AdRow[],
+  periodo: PeriodoKey,
+  dataMax: string | null
+): Map<string, PedidoIndicadores> {
+  const cmvIdx = new Map<string, number>();
+  for (const c of cmv) cmvIdx.set((c.sku ?? "").trim(), c.cmv);
+
+  const itensPorPedido = new Map<string, ItemPedido[]>();
+  for (const it of itens) {
+    const arr = itensPorPedido.get(it.id_pedido) ?? [];
+    arr.push(it);
+    itensPorPedido.set(it.id_pedido, arr);
+  }
+
+  const adsPeriodo = filtrarPeriodoAds(ads, periodo, dataMax);
+  const gastoAds = gastoAdsPeriodo(adsPeriodo);
+  const gmvValido = pedidos
+    .filter((p) => p.pedido_valido)
+    .reduce((s, p) => s + (p.valor_total || 0), 0);
+  const taxaAds = gmvValido > 0 ? gastoAds / gmvValido : 0;
+
+  const out = new Map<string, PedidoIndicadores>();
+  for (const p of pedidos) {
+    const its = itensPorPedido.get(p.id) ?? [];
+    let cmvTotal = 0;
+    let cmvFaltante = false;
+    for (const it of its) {
+      const unit =
+        cmvIdx.get((it.sku ?? "").trim()) ||
+        cmvIdx.get((it.sku_principal ?? "").trim()) ||
+        0;
+      if (unit > 0) cmvTotal += unit * (it.quantidade || 0);
+      else if ((it.quantidade || 0) > 0) cmvFaltante = true;
+    }
+
+    const subtotal = p.subtotal_produtos || 0;
+    const taxas =
+      (p.taxa_comissao || 0) +
+      (p.taxa_servico || 0) +
+      (p.taxa_transacao || 0) +
+      (p.comissao_afiliados || 0);
+    const imposto = p.imposto_estimado || 0;
+    const adsRateado = p.pedido_valido ? taxaAds * (p.valor_total || 0) : 0;
+    const renda = p.renda_estimada || 0;
+    const margem = renda - cmvTotal - adsRateado;
+    const margemPct = subtotal > 0 ? (margem / subtotal) * 100 : 0;
+
+    out.set(p.id, {
+      subtotal,
+      taxas,
+      imposto,
+      cmv: cmvTotal,
+      ads: adsRateado,
+      renda,
+      margem,
+      margem_pct: margemPct,
+      cmv_faltante: cmvFaltante,
+    });
+  }
+  return out;
+}
+
 // ─── Sub-componentes ──────────────────────────────────────────────────────
+
 
 function EstadoVazio({
   onFiles,
