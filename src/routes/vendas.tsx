@@ -72,7 +72,25 @@ import {
   type PeriodoKey,
 } from "@/lib/vendas/aggregations";
 import type { ItemPedido, Pedido } from "@/lib/vendas/types";
+import type { CmvRow } from "@/lib/cmv/types";
+import type { AdRow } from "@/lib/ads/types";
+import { getAllCmv } from "@/lib/cmv/storage";
+import { getAllAds } from "@/lib/ads/storage";
+import { gastoAdsPeriodo } from "@/lib/cmv/aggregations";
+import { filtrarPeriodoAds } from "@/lib/ads/aggregations";
 import { formatBRL, formatDate, formatDelta, formatNumber, formatPercent } from "@/lib/format";
+
+export interface PedidoIndicadores {
+  subtotal: number;
+  taxas: number;
+  imposto: number;
+  cmv: number;
+  ads: number;
+  renda: number;
+  margem: number;
+  margem_pct: number;
+  cmv_faltante: boolean;
+}
 
 import {
   Bar,
@@ -108,6 +126,8 @@ function VendasPage() {
   const router = useRouter();
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [itens, setItens] = useState<ItemPedido[]>([]);
+  const [cmvRows, setCmvRows] = useState<CmvRow[]>([]);
+  const [adsRows, setAdsRows] = useState<AdRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [periodo, setPeriodo] = useState<PeriodoKey>("30d");
@@ -116,9 +136,16 @@ function VendasPage() {
   const recarregar = async () => {
     setLoading(true);
     try {
-      const [p, i] = await Promise.all([getAllPedidos(), getAllItens()]);
+      const [p, i, c, a] = await Promise.all([
+        getAllPedidos(),
+        getAllItens(),
+        getAllCmv(),
+        getAllAds(),
+      ]);
       setPedidos(p);
       setItens(i);
+      setCmvRows(c);
+      setAdsRows(a);
     } finally {
       setLoading(false);
     }
@@ -174,6 +201,12 @@ function VendasPage() {
   const cancelamentos = useMemo(
     () => calcularCancelamentos(pedidosPeriodo),
     [pedidosPeriodo]
+  );
+
+  // Indicadores avançados por pedido (CMV, ADS rateado, Renda, Margem)
+  const indicadoresPorPedido = useMemo(
+    () => calcularIndicadoresPorPedido(pedidosPeriodo, itensPeriodo, cmvRows, adsRows, periodo, dataMax),
+    [pedidosPeriodo, itensPeriodo, cmvRows, adsRows, periodo, dataMax]
   );
 
   // Upload
@@ -583,12 +616,81 @@ function VendasPage() {
       </Tabs>
 
       {/* Tabela completa de pedidos */}
-      <TabelaPedidos pedidos={pedidosPeriodo} />
+      <TabelaPedidos pedidos={pedidosPeriodo} indicadores={indicadoresPorPedido} />
     </div>
   );
 }
 
+// ─── Cálculo de indicadores por pedido (CMV + ADS rateado + Margem) ────────
+
+function calcularIndicadoresPorPedido(
+  pedidos: Pedido[],
+  itens: ItemPedido[],
+  cmv: CmvRow[],
+  ads: AdRow[],
+  periodo: PeriodoKey,
+  dataMax: string | null
+): Map<string, PedidoIndicadores> {
+  const cmvIdx = new Map<string, number>();
+  for (const c of cmv) cmvIdx.set((c.sku ?? "").trim(), c.cmv);
+
+  const itensPorPedido = new Map<string, ItemPedido[]>();
+  for (const it of itens) {
+    const arr = itensPorPedido.get(it.id_pedido) ?? [];
+    arr.push(it);
+    itensPorPedido.set(it.id_pedido, arr);
+  }
+
+  const adsPeriodo = filtrarPeriodoAds(ads, periodo, dataMax);
+  const gastoAds = gastoAdsPeriodo(adsPeriodo);
+  const gmvValido = pedidos
+    .filter((p) => p.pedido_valido)
+    .reduce((s, p) => s + (p.valor_total || 0), 0);
+  const taxaAds = gmvValido > 0 ? gastoAds / gmvValido : 0;
+
+  const out = new Map<string, PedidoIndicadores>();
+  for (const p of pedidos) {
+    const its = itensPorPedido.get(p.id) ?? [];
+    let cmvTotal = 0;
+    let cmvFaltante = false;
+    for (const it of its) {
+      const unit =
+        cmvIdx.get((it.sku ?? "").trim()) ||
+        cmvIdx.get((it.sku_principal ?? "").trim()) ||
+        0;
+      if (unit > 0) cmvTotal += unit * (it.quantidade || 0);
+      else if ((it.quantidade || 0) > 0) cmvFaltante = true;
+    }
+
+    const subtotal = p.subtotal_produtos || 0;
+    const taxas =
+      (p.taxa_comissao || 0) +
+      (p.taxa_servico || 0) +
+      (p.taxa_transacao || 0) +
+      (p.comissao_afiliados || 0);
+    const imposto = p.imposto_estimado || 0;
+    const adsRateado = p.pedido_valido ? taxaAds * (p.valor_total || 0) : 0;
+    const renda = p.renda_estimada || 0;
+    const margem = renda - cmvTotal - adsRateado;
+    const margemPct = subtotal > 0 ? (margem / subtotal) * 100 : 0;
+
+    out.set(p.id, {
+      subtotal,
+      taxas,
+      imposto,
+      cmv: cmvTotal,
+      ads: adsRateado,
+      renda,
+      margem,
+      margem_pct: margemPct,
+      cmv_faltante: cmvFaltante,
+    });
+  }
+  return out;
+}
+
 // ─── Sub-componentes ──────────────────────────────────────────────────────
+
 
 function EstadoVazio({
   onFiles,
@@ -754,7 +856,13 @@ function DonutComposicao({
   );
 }
 
-function TabelaPedidos({ pedidos }: { pedidos: Pedido[] }) {
+function TabelaPedidos({
+  pedidos,
+  indicadores,
+}: {
+  pedidos: Pedido[];
+  indicadores: Map<string, PedidoIndicadores>;
+}) {
   const [busca, setBusca] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
@@ -834,54 +942,103 @@ function TabelaPedidos({ pedidos }: { pedidos: Pedido[] }) {
               <TableHead className="text-center">Itens</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>UF</TableHead>
-              <TableHead>Envio</TableHead>
               <TableHead className="text-right">GMV</TableHead>
+              <TableHead className="text-right">Subtotal</TableHead>
+              <TableHead className="text-right">Taxas</TableHead>
+              <TableHead className="text-right">Imposto 10%</TableHead>
+              <TableHead className="text-right">CMV</TableHead>
+              <TableHead className="text-right">ADS rateado</TableHead>
               <TableHead className="text-right">Renda est.</TableHead>
+              <TableHead className="text-right">Margem</TableHead>
+              <TableHead className="text-right">Margem %</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {pageRows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={15} className="text-center text-muted-foreground py-8">
                   Nenhum pedido encontrado
                 </TableCell>
               </TableRow>
             ) : (
-              pageRows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="text-xs text-muted-foreground tabular-nums">
-                    {formatDate(p.data_pedido)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{p.id}</TableCell>
-                  <TableCell className="max-w-xs truncate">
-                    {p.primeiro_produto || "—"}
-                    {p.n_skus > 1 && (
-                      <span className="text-xs text-muted-foreground ml-1">
-                        +{p.n_skus - 1}
+              pageRows.map((p) => {
+                const ind = indicadores.get(p.id);
+                const margemPositiva = (ind?.margem ?? 0) >= 0;
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                      {formatDate(p.data_pedido)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{p.id}</TableCell>
+                    <TableCell className="max-w-xs truncate">
+                      {p.primeiro_produto || "—"}
+                      {p.n_skus > 1 && (
+                        <span className="text-xs text-muted-foreground ml-1">
+                          +{p.n_skus - 1}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{p.total_itens}</TableCell>
+                    <TableCell>
+                      <StatusBadge status={p.status} valido={p.pedido_valido} />
+                    </TableCell>
+                    <TableCell>{p.uf || "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      {formatBRL(p.valor_total)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatBRL(ind?.subtotal ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-warning-foreground">
+                      {formatBRL(ind?.taxas ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {formatBRL(ind?.imposto ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {ind?.cmv_faltante && (ind?.cmv ?? 0) === 0 ? (
+                        <span
+                          className="text-destructive text-xs"
+                          title="SKU sem CMV cadastrado"
+                        >
+                          —
+                        </span>
+                      ) : (
+                        <span className={ind?.cmv_faltante ? "text-warning-foreground" : ""}>
+                          {formatBRL(ind?.cmv ?? 0)}
+                          {ind?.cmv_faltante && <span className="ml-1">*</span>}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {formatBRL(ind?.ads ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className={(ind?.renda ?? 0) < 0 ? "text-destructive" : ""}>
+                        {formatBRL(ind?.renda ?? 0)}
                       </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center tabular-nums">{p.total_itens}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={p.status} valido={p.pedido_valido} />
-                  </TableCell>
-                  <TableCell>{p.uf || "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                    {p.opcao_envio || "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">
-                    {formatBRL(p.valor_total)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <span className={p.renda_estimada < 0 ? "text-destructive" : ""}>
-                      {formatBRL(p.renda_estimada)}
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <span className={margemPositiva ? "text-success" : "text-destructive"}>
+                        {formatBRL(ind?.margem ?? 0)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <span className={margemPositiva ? "text-success" : "text-destructive"}>
+                        {formatPercent(ind?.margem_pct ?? 0)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="px-4 py-2 text-[11px] text-muted-foreground border-t border-border">
+        * CMV parcial — algum SKU do pedido não tem custo cadastrado.{" "}
+        ADS rateado proporcional ao GMV do período (gasto total / GMV × valor do pedido).
       </div>
 
       {totalPages > 1 && (
