@@ -856,7 +856,13 @@ function DonutComposicao({
   );
 }
 
-function TabelaPedidos({ pedidos }: { pedidos: Pedido[] }) {
+function TabelaPedidos({
+  pedidos,
+  indicadores,
+}: {
+  pedidos: Pedido[];
+  indicadores: Map<string, PedidoIndicadores>;
+}) {
   const [busca, setBusca] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
