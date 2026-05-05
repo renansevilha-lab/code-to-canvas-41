@@ -203,6 +203,12 @@ function VendasPage() {
     [pedidosPeriodo]
   );
 
+  // Indicadores avançados por pedido (CMV, ADS rateado, Renda, Margem)
+  const indicadoresPorPedido = useMemo(
+    () => calcularIndicadoresPorPedido(pedidosPeriodo, itensPeriodo, cmvRows, adsRows, periodo, dataMax),
+    [pedidosPeriodo, itensPeriodo, cmvRows, adsRows, periodo, dataMax]
+  );
+
   // Upload
   const handleFiles = async (files: File[]) => {
     setImporting(true);
