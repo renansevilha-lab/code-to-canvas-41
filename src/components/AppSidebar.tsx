@@ -37,7 +37,7 @@ const modulos: NavItem[] = [
   { title: "Vendas", url: "/vendas", icon: ShoppingBag, status: "ready" },
   { title: "Anúncios", url: "/ads", icon: Megaphone, status: "ready" },
   { title: "Margem (CMV)", url: "/cmv", icon: TrendingUp, status: "ready" },
-  { title: "Carteira", url: "/carteira", icon: Wallet, status: "soon" },
+  { title: "Carteira", url: "/carteira", icon: Wallet, status: "ready" },
   { title: "Resultado", url: "/resultado", icon: Package, status: "soon" },
   { title: "Catálogo", url: "/produtos", icon: Package, status: "soon" },
 ];
