@@ -15,6 +15,9 @@ import { salvarAds } from "@/lib/ads/storage";
 import { processarArquivosCmv } from "@/lib/cmv/parser";
 import { salvarCmv } from "@/lib/cmv/storage";
 
+import { processarArquivosCarteira } from "@/lib/carteira/parser";
+import { salvarCarteira } from "@/lib/carteira/storage";
+
 export interface ResultadoSmart {
   tipo: TipoArquivo | "desconhecido";
   arquivos: string[];
@@ -66,7 +69,16 @@ export async function processarArquivosSmart(
         resumo: `${r.rows.length} SKUs com CMV (${novos} novos, ${atualizados} atualizados)`,
         warnings: r.warnings,
       });
-    } else if (tipo === "produtos" || tipo === "carteira") {
+    } else if (tipo === "carteira") {
+      const r = await processarArquivosCarteira(fs);
+      const { novos, atualizados } = await salvarCarteira(r.rows);
+      out.push({
+        tipo,
+        arquivos: nomes,
+        resumo: `${r.rows.length} transações da carteira (${novos} novas, ${atualizados} atualizadas)`,
+        warnings: r.warnings,
+      });
+    } else if (tipo === "produtos") {
       out.push({
         tipo,
         arquivos: nomes,
