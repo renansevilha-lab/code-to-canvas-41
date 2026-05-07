@@ -3,17 +3,18 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withSupabaseAuth } from "@/integrations/supabase/auth-client-middleware";
 import { buildAuthUrl } from "./sign.server";
 
 export const getShopeeAuthUrl = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withSupabaseAuth, requireSupabaseAuth])
   .inputValidator((data: { redirectUrl: string }) => data)
   .handler(async ({ data }) => {
     return { url: buildAuthUrl(data.redirectUrl) };
   });
 
 export const listShopeeConnections = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withSupabaseAuth, requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase } = context;
     const { data, error } = await supabase
