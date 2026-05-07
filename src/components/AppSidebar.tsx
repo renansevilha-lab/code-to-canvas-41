@@ -6,6 +6,7 @@ import {
   TrendingUp,
   Package,
   LayoutDashboard,
+  Plug,
 } from "lucide-react";
 
 import {
@@ -40,6 +41,10 @@ const modulos: NavItem[] = [
   { title: "Carteira", url: "/carteira", icon: Wallet, status: "ready" },
   { title: "Resultado", url: "/resultado", icon: Package, status: "soon" },
   { title: "Catálogo", url: "/produtos", icon: Package, status: "soon" },
+];
+
+const integracoes: NavItem[] = [
+  { title: "Conexões", url: "/conexoes", icon: Plug, status: "ready" },
 ];
 
 export function AppSidebar() {
@@ -131,6 +136,31 @@ export function AppSidebar() {
                           )}
                         </>
                       )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          {!collapsed && (
+            <SidebarGroupLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/70 font-medium">
+              Integrações
+            </SidebarGroupLabel>
+          )}
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {integracoes.map((item) => (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive(item.url)}
+                    tooltip={collapsed ? item.title : undefined}
+                  >
+                    <Link to={item.url}>
+                      <item.icon className="h-4 w-4" />
+                      {!collapsed && <span>{item.title}</span>}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

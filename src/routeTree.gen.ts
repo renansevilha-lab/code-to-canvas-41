@@ -12,10 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
+import { Route as ConexoesRouteImport } from './routes/conexoes'
 import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
 const VendasRoute = VendasRouteImport.update({
   id: '/vendas',
@@ -30,6 +32,11 @@ const ResultadoRoute = ResultadoRouteImport.update({
 const ProdutosRoute = ProdutosRouteImport.update({
   id: '/produtos',
   path: '/produtos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConexoesRoute = ConexoesRouteImport.update({
+  id: '/conexoes',
+  path: '/conexoes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CmvRoute = CmvRouteImport.update({
@@ -52,24 +59,33 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
+  id: '/api/public/shopee/callback',
+  path: '/api/public/shopee/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
+  '/conexoes': typeof ConexoesRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
+  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
+  '/conexoes': typeof ConexoesRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
+  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,9 +93,11 @@ export interface FileRoutesById {
   '/ads': typeof AdsRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
+  '/conexoes': typeof ConexoesRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
+  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -88,27 +106,33 @@ export interface FileRouteTypes {
     | '/ads'
     | '/carteira'
     | '/cmv'
+    | '/conexoes'
     | '/produtos'
     | '/resultado'
     | '/vendas'
+    | '/api/public/shopee/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/ads'
     | '/carteira'
     | '/cmv'
+    | '/conexoes'
     | '/produtos'
     | '/resultado'
     | '/vendas'
+    | '/api/public/shopee/callback'
   id:
     | '__root__'
     | '/'
     | '/ads'
     | '/carteira'
     | '/cmv'
+    | '/conexoes'
     | '/produtos'
     | '/resultado'
     | '/vendas'
+    | '/api/public/shopee/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -116,9 +140,11 @@ export interface RootRouteChildren {
   AdsRoute: typeof AdsRoute
   CarteiraRoute: typeof CarteiraRoute
   CmvRoute: typeof CmvRoute
+  ConexoesRoute: typeof ConexoesRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
   VendasRoute: typeof VendasRoute
+  ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -142,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/produtos'
       fullPath: '/produtos'
       preLoaderRoute: typeof ProdutosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/conexoes': {
+      id: '/conexoes'
+      path: '/conexoes'
+      fullPath: '/conexoes'
+      preLoaderRoute: typeof ConexoesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cmv': {
@@ -172,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/shopee/callback': {
+      id: '/api/public/shopee/callback'
+      path: '/api/public/shopee/callback'
+      fullPath: '/api/public/shopee/callback'
+      preLoaderRoute: typeof ApiPublicShopeeCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -180,9 +220,11 @@ const rootRouteChildren: RootRouteChildren = {
   AdsRoute: AdsRoute,
   CarteiraRoute: CarteiraRoute,
   CmvRoute: CmvRoute,
+  ConexoesRoute: ConexoesRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
   VendasRoute: VendasRoute,
+  ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
