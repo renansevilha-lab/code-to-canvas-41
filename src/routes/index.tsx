@@ -78,7 +78,15 @@ function Index() {
         if (r.tipo === "desconhecido") {
           toast.error(titulo, { description: r.resumo });
         } else {
-          toast.success(titulo, { description: r.resumo });
+          const cloudMsg = r.cloud
+            ? r.cloud.ok
+              ? " · ☁ sincronizado"
+              : ` · ☁ falhou (${r.cloud.error})`
+            : "";
+          toast.success(titulo, { description: r.resumo + cloudMsg });
+          if (r.cloud && !r.cloud.ok) {
+            console.error("[cloud sync]", r.tipo, r.cloud.error);
+          }
         }
         if (r.warnings.length) console.warn(r.tipo, r.warnings);
       }

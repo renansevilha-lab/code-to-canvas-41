@@ -1,7 +1,6 @@
 /**
- * Upload "inteligente": detecta o tipo de cada arquivo (vendas/ads/cmv/...)
- * pelo nome (e conteúdo de zips) e roteia automaticamente pro parser certo,
- * salvando no IndexedDB. Retorna um sumário por tipo.
+ * Upload "inteligente": detecta o tipo de cada arquivo e roteia para o parser
+ * certo. Salva em IndexedDB (local) E sincroniza com Lovable Cloud.
  */
 
 import { detectarTipo, ROTULOS, type TipoArquivo } from "./detectarTipo";
@@ -18,17 +17,24 @@ import { salvarCmv } from "@/lib/cmv/storage";
 import { processarArquivosCarteira } from "@/lib/carteira/parser";
 import { salvarCarteira } from "@/lib/carteira/storage";
 
+import {
+  syncVendas,
+  syncAds,
+  syncCmv,
+  syncCarteira,
+} from "@/lib/cloud/sync";
+
 export interface ResultadoSmart {
   tipo: TipoArquivo | "desconhecido";
   arquivos: string[];
   resumo: string;
   warnings: string[];
+  cloud?: { ok: boolean; error?: string };
 }
 
 export async function processarArquivosSmart(
   files: File[]
 ): Promise<ResultadoSmart[]> {
-  // Agrupa por tipo
   const grupos = new Map<TipoArquivo | "desconhecido", File[]>();
   for (const f of files) {
     const t = (await detectarTipo(f)) ?? "desconhecido";
@@ -45,38 +51,46 @@ export async function processarArquivosSmart(
       const r = await processarArquivosVendas(fs);
       const { novos, atualizados } = await salvarPedidos(r.pedidos);
       await salvarItens(r.itens);
+      const cloud = await syncVendas(r.pedidos, r.itens);
       out.push({
         tipo,
         arquivos: nomes,
         resumo: `${r.pedidos_unicos} pedidos (${novos} novos, ${atualizados} atualizados) · ${r.itens.length} SKUs`,
         warnings: r.warnings,
+        cloud,
       });
     } else if (tipo === "ads") {
       const r = await processarArquivosAds(fs);
       const { novos, atualizados } = await salvarAds(r.rows);
+      const cloud = await syncAds(r.rows);
       out.push({
         tipo,
         arquivos: nomes,
         resumo: `${r.rows.length} linhas de anúncios (${novos} novas, ${atualizados} atualizadas)`,
         warnings: r.warnings,
+        cloud,
       });
     } else if (tipo === "cmv") {
       const r = await processarArquivosCmv(fs);
       const { novos, atualizados } = await salvarCmv(r.rows);
+      const cloud = await syncCmv(r.rows);
       out.push({
         tipo,
         arquivos: nomes,
         resumo: `${r.rows.length} SKUs com CMV (${novos} novos, ${atualizados} atualizados)`,
         warnings: r.warnings,
+        cloud,
       });
     } else if (tipo === "carteira") {
       const r = await processarArquivosCarteira(fs);
       const { novos, atualizados } = await salvarCarteira(r.rows);
+      const cloud = await syncCarteira(r.rows);
       out.push({
         tipo,
         arquivos: nomes,
         resumo: `${r.rows.length} transações da carteira (${novos} novas, ${atualizados} atualizadas)`,
         warnings: r.warnings,
+        cloud,
       });
     } else if (tipo === "produtos") {
       out.push({
