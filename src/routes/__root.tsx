@@ -75,9 +75,12 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   return (
-    <AuthGate>
-      <AppShell />
-    </AuthGate>
+    <>
+      <AuthGate>
+        <AppShell />
+      </AuthGate>
+      <Toaster position="top-right" richColors />
+    </>
   );
 }
 
