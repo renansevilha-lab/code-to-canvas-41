@@ -20,9 +20,7 @@ export function shopeePartnerId(): number {
 export function shopeePartnerKey(): string {
   const key = process.env.SHOPEE_PARTNER_KEY;
   if (!key) throw new Error("SHOPEE_PARTNER_KEY não configurado");
-  // Shopee gera a partner key com prefixo "shpk" que NÃO faz parte da chave
-  // usada para HMAC. Remove se presente.
-  return key.startsWith("shpk") ? key.slice(4) : key;
+  return key.trim();
 }
 
 /** Assinatura para endpoints públicos (auth/token): partner_id + path + timestamp */
