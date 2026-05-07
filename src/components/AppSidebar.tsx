@@ -6,6 +6,7 @@ import {
   TrendingUp,
   Package,
   LayoutDashboard,
+  Plug,
 } from "lucide-react";
 
 import {
@@ -40,6 +41,10 @@ const modulos: NavItem[] = [
   { title: "Carteira", url: "/carteira", icon: Wallet, status: "ready" },
   { title: "Resultado", url: "/resultado", icon: Package, status: "soon" },
   { title: "Catálogo", url: "/produtos", icon: Package, status: "soon" },
+];
+
+const integracoes: NavItem[] = [
+  { title: "Conexões", url: "/conexoes", icon: Plug, status: "ready" },
 ];
 
 export function AppSidebar() {
