@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
+import { Route as PedidosRouteImport } from './routes/pedidos'
+import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as ConexoesRouteImport } from './routes/conexoes'
 import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
@@ -32,6 +34,16 @@ const ResultadoRoute = ResultadoRouteImport.update({
 const ProdutosRoute = ProdutosRouteImport.update({
   id: '/produtos',
   path: '/produtos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidosRoute = PedidosRouteImport.update({
+  id: '/pedidos',
+  path: '/pedidos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContasPagarRoute = ContasPagarRouteImport.update({
+  id: '/contas-pagar',
+  path: '/contas-pagar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConexoesRoute = ConexoesRouteImport.update({
@@ -71,6 +83,8 @@ export interface FileRoutesByFullPath {
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
+  '/contas-pagar': typeof ContasPagarRoute
+  '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -82,6 +96,8 @@ export interface FileRoutesByTo {
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
+  '/contas-pagar': typeof ContasPagarRoute
+  '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -94,6 +110,8 @@ export interface FileRoutesById {
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
+  '/contas-pagar': typeof ContasPagarRoute
+  '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -107,6 +125,8 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/cmv'
     | '/conexoes'
+    | '/contas-pagar'
+    | '/pedidos'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -118,6 +138,8 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/cmv'
     | '/conexoes'
+    | '/contas-pagar'
+    | '/pedidos'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -129,6 +151,8 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/cmv'
     | '/conexoes'
+    | '/contas-pagar'
+    | '/pedidos'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -141,6 +165,8 @@ export interface RootRouteChildren {
   CarteiraRoute: typeof CarteiraRoute
   CmvRoute: typeof CmvRoute
   ConexoesRoute: typeof ConexoesRoute
+  ContasPagarRoute: typeof ContasPagarRoute
+  PedidosRoute: typeof PedidosRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
   VendasRoute: typeof VendasRoute
@@ -168,6 +194,20 @@ declare module '@tanstack/react-router' {
       path: '/produtos'
       fullPath: '/produtos'
       preLoaderRoute: typeof ProdutosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedidos': {
+      id: '/pedidos'
+      path: '/pedidos'
+      fullPath: '/pedidos'
+      preLoaderRoute: typeof PedidosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contas-pagar': {
+      id: '/contas-pagar'
+      path: '/contas-pagar'
+      fullPath: '/contas-pagar'
+      preLoaderRoute: typeof ContasPagarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/conexoes': {
@@ -221,6 +261,8 @@ const rootRouteChildren: RootRouteChildren = {
   CarteiraRoute: CarteiraRoute,
   CmvRoute: CmvRoute,
   ConexoesRoute: ConexoesRoute,
+  ContasPagarRoute: ContasPagarRoute,
+  PedidosRoute: PedidosRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
   VendasRoute: VendasRoute,
@@ -229,12 +271,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
