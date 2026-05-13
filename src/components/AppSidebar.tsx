@@ -7,6 +7,8 @@ import {
   Package,
   LayoutDashboard,
   Plug,
+  Receipt,
+  ClipboardList,
 } from "lucide-react";
 
 import {
@@ -31,7 +33,10 @@ type NavItem = {
 };
 
 const principal: NavItem[] = [
-  { title: "Visão Geral", url: "/", icon: LayoutDashboard, status: "ready" },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard, status: "ready" },
+  { title: "Pedidos", url: "/pedidos", icon: ClipboardList, status: "ready" },
+  { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, status: "ready" },
+  { title: "Catálogo", url: "/produtos", icon: Package, status: "ready" },
 ];
 
 const modulos: NavItem[] = [
@@ -40,7 +45,6 @@ const modulos: NavItem[] = [
   { title: "Margem (CMV)", url: "/cmv", icon: TrendingUp, status: "ready" },
   { title: "Carteira", url: "/carteira", icon: Wallet, status: "ready" },
   { title: "Resultado", url: "/resultado", icon: Package, status: "soon" },
-  { title: "Catálogo", url: "/produtos", icon: Package, status: "soon" },
 ];
 
 const integracoes: NavItem[] = [
