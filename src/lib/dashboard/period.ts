@@ -1,9 +1,8 @@
 import {
+  addDays,
   endOfMonth,
-  endOfYesterday,
   format,
   startOfMonth,
-  startOfYesterday,
   subDays,
   subMonths,
 } from "date-fns";
@@ -15,6 +14,12 @@ export type PeriodPreset =
   | "mtd"
   | "prev_month"
   | "last90"
+  // forward-looking
+  | "overdue"
+  | "next7"
+  | "next30"
+  | "next60"
+  | "next90"
   | "custom";
 
 export type PeriodRange = {
@@ -30,10 +35,14 @@ export const PERIOD_LABELS: Record<PeriodPreset, string> = {
   mtd: "Mês atual",
   prev_month: "Mês anterior",
   last90: "Últimos 90 dias",
+  overdue: "Atrasadas",
+  next7: "Próximos 7 dias",
+  next30: "Próximos 30 dias",
+  next60: "Próximos 60 dias",
+  next90: "Próximos 90 dias",
   custom: "Personalizado",
 };
 
-// Short label used inside KPI card titles ("Pedidos no mês", "Pedidos hoje", …)
 export const PERIOD_SUFFIX: Record<PeriodPreset, string> = {
   today: "hoje",
   last7: "últ. 7 dias",
@@ -41,12 +50,38 @@ export const PERIOD_SUFFIX: Record<PeriodPreset, string> = {
   mtd: "no mês",
   prev_month: "mês anterior",
   last90: "últ. 90 dias",
+  overdue: "atrasadas",
+  next7: "próx. 7 dias",
+  next30: "próx. 30 dias",
+  next60: "próx. 60 dias",
+  next90: "próx. 90 dias",
   custom: "no período",
 };
 
+export const BACKWARD_PRESETS: PeriodPreset[] = [
+  "today",
+  "last7",
+  "last30",
+  "mtd",
+  "prev_month",
+  "last90",
+];
+
+export const FORWARD_PRESETS: PeriodPreset[] = [
+  "overdue",
+  "today",
+  "next7",
+  "next30",
+  "next60",
+  "next90",
+];
+
 const fmt = (d: Date) => format(d, "yyyy-MM-dd");
 
-export function computeRange(preset: PeriodPreset, today = new Date()): { from: string; to: string } {
+export function computeRange(
+  preset: PeriodPreset,
+  today = new Date(),
+): { from: string; to: string } {
   switch (preset) {
     case "today":
       return { from: fmt(today), to: fmt(today) };
@@ -62,8 +97,17 @@ export function computeRange(preset: PeriodPreset, today = new Date()): { from: 
     }
     case "last90":
       return { from: fmt(subDays(today, 89)), to: fmt(today) };
+    case "overdue":
+      return { from: "1900-01-01", to: fmt(subDays(today, 1)) };
+    case "next7":
+      return { from: fmt(today), to: fmt(addDays(today, 7)) };
+    case "next30":
+      return { from: fmt(today), to: fmt(addDays(today, 30)) };
+    case "next60":
+      return { from: fmt(today), to: fmt(addDays(today, 60)) };
+    case "next90":
+      return { from: fmt(today), to: fmt(addDays(today, 90)) };
     case "custom":
-      // caller must override
       return { from: fmt(startOfMonth(today)), to: fmt(today) };
   }
 }
@@ -77,3 +121,9 @@ export function resolveRange(
   const { from: f, to: t } = computeRange(preset);
   return { preset, from: f, to: t };
 }
+
+export const ALL_PRESETS: PeriodPreset[] = [
+  ...BACKWARD_PRESETS,
+  ...FORWARD_PRESETS.filter((p) => !BACKWARD_PRESETS.includes(p)),
+  "custom",
+];
