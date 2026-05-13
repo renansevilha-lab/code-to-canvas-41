@@ -364,7 +364,7 @@ function Dashboard() {
                       fontSize: 12,
                     }}
                     labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                    formatter={(value: number) => formatBRL(Number(value))}
+                    formatter={(value) => formatBRL(Number(value ?? 0))}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   {canaisAtivos.map((canal, i) => (
