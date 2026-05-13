@@ -15,27 +15,21 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  BACKWARD_PRESETS,
   PERIOD_LABELS,
   computeRange,
   type PeriodPreset,
   type PeriodRange,
 } from "@/lib/dashboard/period";
 
-const PRESETS: PeriodPreset[] = [
-  "today",
-  "last7",
-  "last30",
-  "mtd",
-  "prev_month",
-  "last90",
-];
-
 interface Props {
   value: PeriodRange;
   onChange: (range: PeriodRange) => void;
+  presets?: PeriodPreset[];
 }
 
-export function DashboardPeriodFilter({ value, onChange }: Props) {
+export function DashboardPeriodFilter({ value, onChange, presets }: Props) {
+  const PRESETS = presets ?? BACKWARD_PRESETS;
   const [customOpen, setCustomOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | undefined>(
     value.preset === "custom"

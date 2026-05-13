@@ -13,6 +13,7 @@ import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosRouteImport } from './routes/pedidos'
+import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as ConexoesRouteImport } from './routes/conexoes'
 import { Route as CmvRouteImport } from './routes/cmv'
@@ -39,6 +40,11 @@ const ProdutosRoute = ProdutosRouteImport.update({
 const PedidosRoute = PedidosRouteImport.update({
   id: '/pedidos',
   path: '/pedidos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
+  id: '/fluxo-caixa',
+  path: '/fluxo-caixa',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContasPagarRoute = ContasPagarRouteImport.update({
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/cmv': typeof CmvRoute
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/cmv'
     | '/conexoes'
     | '/contas-pagar'
+    | '/fluxo-caixa'
     | '/pedidos'
     | '/produtos'
     | '/resultado'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/cmv'
     | '/conexoes'
     | '/contas-pagar'
+    | '/fluxo-caixa'
     | '/pedidos'
     | '/produtos'
     | '/resultado'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/cmv'
     | '/conexoes'
     | '/contas-pagar'
+    | '/fluxo-caixa'
     | '/pedidos'
     | '/produtos'
     | '/resultado'
@@ -166,6 +178,7 @@ export interface RootRouteChildren {
   CmvRoute: typeof CmvRoute
   ConexoesRoute: typeof ConexoesRoute
   ContasPagarRoute: typeof ContasPagarRoute
+  FluxoCaixaRoute: typeof FluxoCaixaRoute
   PedidosRoute: typeof PedidosRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
@@ -201,6 +214,13 @@ declare module '@tanstack/react-router' {
       path: '/pedidos'
       fullPath: '/pedidos'
       preLoaderRoute: typeof PedidosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fluxo-caixa': {
+      id: '/fluxo-caixa'
+      path: '/fluxo-caixa'
+      fullPath: '/fluxo-caixa'
+      preLoaderRoute: typeof FluxoCaixaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/contas-pagar': {
@@ -262,6 +282,7 @@ const rootRouteChildren: RootRouteChildren = {
   CmvRoute: CmvRoute,
   ConexoesRoute: ConexoesRoute,
   ContasPagarRoute: ContasPagarRoute,
+  FluxoCaixaRoute: FluxoCaixaRoute,
   PedidosRoute: PedidosRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
