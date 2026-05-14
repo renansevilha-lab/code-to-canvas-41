@@ -4,9 +4,10 @@ import { AlertTriangle, Clock, CheckCircle2, Wallet, CalendarRange } from "lucid
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatBRL, formatNumber } from "@/lib/format";
+import { formatBRL, formatDate, formatNumber } from "@/lib/format";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
   FORWARD_PRESETS,
@@ -46,20 +47,18 @@ type Conta = {
   categoria: string | null;
   valor_total: number;
   valor_pago: number | null;
-  saldo: number | null;
   data_emissao: string | null;
   data_vencimento: string | null;
   data_pagamento: string | null;
   status: string;
-  alerta: string | null;
-  dias_atraso: number | null;
 };
 
-type Situacao = {
-  status: string;
+type Snapshot = {
   qtd: number;
-  valor_total: number;
+  valor: number;
 };
+
+const PAGE_SIZE = 1000;
 
 const STATUS_BADGE: Record<string, string> = {
   paga: "bg-success/10 text-success border-success/20",
@@ -69,20 +68,92 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 function statusBadgeFor(c: Conta): string {
-  if (c.status === "paga") return STATUS_BADGE.paga;
-  if (c.alerta === "atrasada") return "bg-destructive/10 text-destructive border-destructive/20";
-  if (c.alerta === "vence_hoje" || c.alerta === "vence_7dias")
+  if (isPaid(c)) return STATUS_BADGE.paga;
+  if (isOverdue(c)) return "bg-destructive/10 text-destructive border-destructive/20";
+  if (isDueWithinDays(c, 7))
     return "bg-warning/10 text-warning border-warning/20";
   return STATUS_BADGE[c.status] ?? STATUS_BADGE.aberto;
 }
 
 function statusLabel(c: Conta): string {
-  if (c.status === "paga") return "Paga";
-  if (c.alerta === "atrasada") return `Atrasada${c.dias_atraso ? ` (${c.dias_atraso}d)` : ""}`;
-  if (c.alerta === "vence_hoje") return "Vence hoje";
-  if (c.alerta === "vence_7dias") return "Vence em 7 dias";
+  if (isPaid(c)) return "Paga";
+  const diasAtraso = getDiasAtraso(c);
+  if (diasAtraso > 0) return `Atrasada (${diasAtraso}d)`;
+  if (isDueToday(c)) return "Vence hoje";
+  if (isDueWithinDays(c, 7)) return "Vence em 7 dias";
   if (c.status === "parcial") return "Parcial";
+  if (c.status === "cancelada") return "Cancelada";
   return "Aberto";
+}
+
+function toDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addLocalDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isOpen(c: Conta): boolean {
+  return c.status === "aberto" || c.status === "parcial";
+}
+
+function isPaid(c: Conta): boolean {
+  return c.status === "paga" || c.status === "pago" || c.status === "liquidado";
+}
+
+function isOverdue(c: Conta): boolean {
+  return isOpen(c) && Boolean(c.data_vencimento) && c.data_vencimento! < toDateKey(new Date());
+}
+
+function isDueToday(c: Conta): boolean {
+  return isOpen(c) && c.data_vencimento === toDateKey(new Date());
+}
+
+function isDueWithinDays(c: Conta, days: number): boolean {
+  if (!isOpen(c) || !c.data_vencimento) return false;
+  const today = toDateKey(new Date());
+  const limit = toDateKey(addLocalDays(new Date(), days));
+  return c.data_vencimento >= today && c.data_vencimento <= limit;
+}
+
+function getDiasAtraso(c: Conta): number {
+  if (!isOpen(c) || !c.data_vencimento) return 0;
+  const today = new Date(`${toDateKey(new Date())}T00:00:00`);
+  const vencimento = new Date(`${c.data_vencimento}T00:00:00`);
+  return Math.max(0, Math.floor((today.getTime() - vencimento.getTime()) / 86400000));
+}
+
+function getSaldo(c: Conta): number {
+  return Math.max(Number(c.valor_total ?? 0) - Number(c.valor_pago ?? 0), 0);
+}
+
+function inRange(c: Conta, range: PeriodRange): boolean {
+  return Boolean(c.data_vencimento) && c.data_vencimento! >= range.from && c.data_vencimento! <= range.to;
+}
+
+async function fetchAllContas(): Promise<Conta[]> {
+  const rows: Conta[] = [];
+  for (let start = 0; ; start += PAGE_SIZE) {
+    const { data, error } = await supabaseExternal
+      .from("contas_pagar")
+      .select(
+        "id,numero_documento,fornecedor_nome,descricao,categoria,valor_total,valor_pago,data_emissao,data_vencimento,data_pagamento,status",
+      )
+      .order("data_vencimento", { ascending: true })
+      .range(start, start + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    const page = (data ?? []) as Conta[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return rows;
 }
 
 function ContasPagarPage() {
