@@ -259,34 +259,34 @@ function ContasPagarPage() {
           icon={AlertTriangle}
           label="Atrasadas"
           qtd={snap.atrasadas.qtd}
-          valor={snap.atrasadas.valor_total}
+          valor={snap.atrasadas.valor}
           accent="danger"
         />
         <SummaryCard
           icon={Clock}
           label="Vencem em 7 dias"
           qtd={snap.vencendo.qtd}
-          valor={snap.vencendo.valor_total}
+          valor={snap.vencendo.valor}
           accent="warning"
         />
         <SummaryCard
           icon={Wallet}
           label="Em aberto"
           qtd={snap.aberto.qtd}
-          valor={snap.aberto.valor_total}
+          valor={snap.aberto.valor}
         />
         <SummaryCard
           icon={CheckCircle2}
           label="Pagas"
           qtd={snap.paga.qtd}
-          valor={snap.paga.valor_total}
+          valor={snap.paga.valor}
           accent="success"
         />
         <SummaryCard
           icon={CalendarRange}
           label={`Total · ${PERIOD_LABELS[range.preset]}`}
-          qtd={contas.length}
-          valor={totalPeriodo}
+          qtd={totalPeriodo.qtd}
+          valor={totalPeriodo.valor}
           accent="primary"
         />
       </div>
@@ -355,7 +355,7 @@ function ContasPagarPage() {
                       {formatBRL(c.valor_total)}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                      {c.saldo != null ? formatBRL(c.saldo) : "—"}
+                      {formatBRL(getSaldo(c))}
                     </td>
                     <td className="px-4 py-2.5 max-w-[260px] truncate text-muted-foreground">
                       {c.descricao ?? "—"}
