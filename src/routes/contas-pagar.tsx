@@ -166,7 +166,6 @@ function ContasPagarPage() {
   );
 
   const [contas, setContas] = useState<Conta[]>([]);
-  const [situacoesGlobais, setSituacoesGlobais] = useState<Situacao[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("todos");
@@ -181,68 +180,51 @@ function ContasPagarPage() {
     });
   };
 
-  // Snapshot global (não muda com o período)
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabaseExternal
-        .from("view_contas_pagar_situacao")
-        .select("*");
-      setSituacoesGlobais((data ?? []) as Situacao[]);
-    })();
-  }, []);
-
-  // Contas do período
+  // Fonte única da página: banco externo vhogjofsxyhnyxdyglmq, tabela contas_pagar.
   useEffect(() => {
     let cancel = false;
     setLoading(true);
     (async () => {
-      const { data, error } = await supabaseExternal
-        .from("contas_pagar")
-        .select(
-          "id,numero_documento,fornecedor_nome,descricao,categoria,valor_total,valor_pago,saldo,data_emissao,data_vencimento,data_pagamento,status,alerta,dias_atraso",
-        )
-        .gte("data_vencimento", range.from)
-        .lte("data_vencimento", range.to)
-        .order("data_vencimento", { ascending: true })
-        .limit(2000);
       if (cancel) return;
-      if (!error) setContas((data ?? []) as Conta[]);
-      setLoading(false);
+      try {
+        const rows = await fetchAllContas();
+        if (!cancel) setContas(rows);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
     })();
     return () => {
       cancel = true;
     };
-  }, [range.from, range.to]);
+  }, []);
 
-  // Snapshots dos cards (calculados de TODAS as situações, não dependem do período)
+  // Snapshots dos cards calculados localmente da mesma consulta externa.
   const snap = useMemo(() => {
-    const get = (s: string) =>
-      situacoesGlobais.find((x) => x.status === s) ?? { qtd: 0, valor_total: 0, status: s };
-    const atrasadas = get("atrasada");
-    const vence7 = get("vence_7dias");
-    const venceHoje = get("vence_hoje");
-    const aberto = get("aberto");
-    const parcial = get("parcial");
-    const paga = get("paga");
+    const build = (items: Conta[]): Snapshot => ({
+      qtd: items.length,
+      valor: items.reduce((acc, c) => acc + (isPaid(c) ? Number(c.valor_total ?? 0) : getSaldo(c)), 0),
+    });
     return {
-      atrasadas,
-      vencendo: { qtd: vence7.qtd + venceHoje.qtd, valor_total: vence7.valor_total + venceHoje.valor_total },
-      aberto: { qtd: aberto.qtd + parcial.qtd, valor_total: aberto.valor_total + parcial.valor_total },
-      paga,
+      atrasadas: build(contas.filter(isOverdue)),
+      vencendo: build(contas.filter((c) => isDueWithinDays(c, 7))),
+      aberto: build(contas.filter(isOpen)),
+      paga: build(contas.filter(isPaid)),
     };
-  }, [situacoesGlobais]);
+  }, [contas]);
 
-  const totalPeriodo = useMemo(
-    () => contas.reduce((acc, c) => acc + (c.valor_total ?? 0), 0),
-    [contas],
-  );
+  const contasPeriodo = useMemo(() => contas.filter((c) => inRange(c, range)), [contas, range]);
 
-  const filtradas = contas.filter((c) => {
+  const totalPeriodo = useMemo(() => ({
+    qtd: contasPeriodo.length,
+    valor: contasPeriodo.reduce((acc, c) => acc + getSaldo(c), 0),
+  }), [contasPeriodo]);
+
+  const filtradas = contasPeriodo.filter((c) => {
     if (statusFilter !== "todos") {
-      if (statusFilter === "atrasadas" && c.alerta !== "atrasada") return false;
-      if (statusFilter === "vencendo" && c.alerta !== "vence_7dias" && c.alerta !== "vence_hoje") return false;
-      if (statusFilter === "aberto" && c.status !== "aberto" && c.status !== "parcial") return false;
-      if (statusFilter === "paga" && c.status !== "paga") return false;
+      if (statusFilter === "atrasadas" && !isOverdue(c)) return false;
+      if (statusFilter === "vencendo" && !isDueWithinDays(c, 7)) return false;
+      if (statusFilter === "aberto" && !isOpen(c)) return false;
+      if (statusFilter === "paga" && !isPaid(c)) return false;
     }
     if (busca) {
       const q = busca.toLowerCase();
