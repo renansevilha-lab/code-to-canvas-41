@@ -219,7 +219,9 @@ function ContasPagarPage() {
     valor: contasPeriodo.reduce((acc, c) => acc + getSaldo(c), 0),
   }), [contasPeriodo]);
 
-  const filtradas = contasPeriodo.filter((c) => {
+  const baseTabela = statusFilter === "atrasadas" || statusFilter === "vencendo" ? contas : contasPeriodo;
+
+  const filtradas = baseTabela.filter((c) => {
     if (statusFilter !== "todos") {
       if (statusFilter === "atrasadas" && !isOverdue(c)) return false;
       if (statusFilter === "vencendo" && !isDueWithinDays(c, 7)) return false;
@@ -314,7 +316,11 @@ function ContasPagarPage() {
 
       <Card className="overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center text-muted-foreground">Carregando…</div>
+          <div className="space-y-3 p-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
         ) : filtradas.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">Nenhuma conta nesse período/filtro.</div>
         ) : (
@@ -347,9 +353,7 @@ function ContasPagarPage() {
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs">{c.numero_documento ?? "—"}</td>
                     <td className="px-4 py-2.5">
-                      {c.data_vencimento
-                        ? new Date(c.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR")
-                        : "—"}
+                      {c.data_vencimento ? formatDate(c.data_vencimento) : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
                       {formatBRL(c.valor_total)}
