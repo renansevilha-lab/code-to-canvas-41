@@ -134,6 +134,7 @@ function getSaldo(c: Conta): number {
 }
 
 function inRange(c: Conta, range: PeriodRange): boolean {
+  if (range.preset === "overdue") return isOverdue(c);
   return Boolean(c.data_vencimento) && c.data_vencimento! >= range.from && c.data_vencimento! <= range.to;
 }
 
