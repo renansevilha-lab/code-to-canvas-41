@@ -9,6 +9,7 @@ import {
   Plug,
   Receipt,
   ClipboardList,
+  Boxes,
 } from "lucide-react";
 
 import {
@@ -35,6 +36,7 @@ type NavItem = {
 const principal: NavItem[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, status: "ready" },
   { title: "Pedidos", url: "/pedidos", icon: ClipboardList, status: "ready" },
+  { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, status: "ready" },
   { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, status: "ready" },
   { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, status: "ready" },
   { title: "Catálogo", url: "/produtos", icon: Package, status: "ready" },
