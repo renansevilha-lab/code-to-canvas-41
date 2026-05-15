@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
+import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
 import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
@@ -35,6 +36,11 @@ const ResultadoRoute = ResultadoRouteImport.update({
 const ProdutosRoute = ProdutosRouteImport.update({
   id: '/produtos',
   path: '/produtos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
+  id: '/pedidos-integrados',
+  path: '/pedidos-integrados',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PedidosRoute = PedidosRouteImport.update({
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
+  '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
+  '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/pedidos': typeof PedidosRoute
+  '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
   '/vendas': typeof VendasRoute
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/pedidos'
+    | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/pedidos'
+    | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/pedidos'
+    | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
     | '/vendas'
@@ -180,6 +192,7 @@ export interface RootRouteChildren {
   ContasPagarRoute: typeof ContasPagarRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   PedidosRoute: typeof PedidosRoute
+  PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
   VendasRoute: typeof VendasRoute
@@ -207,6 +220,13 @@ declare module '@tanstack/react-router' {
       path: '/produtos'
       fullPath: '/produtos'
       preLoaderRoute: typeof ProdutosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedidos-integrados': {
+      id: '/pedidos-integrados'
+      path: '/pedidos-integrados'
+      fullPath: '/pedidos-integrados'
+      preLoaderRoute: typeof PedidosIntegradosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pedidos': {
@@ -284,6 +304,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContasPagarRoute: ContasPagarRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   PedidosRoute: PedidosRoute,
+  PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
   VendasRoute: VendasRoute,
@@ -292,12 +313,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

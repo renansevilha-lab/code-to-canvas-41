@@ -435,7 +435,7 @@ function PedidosIntegradosPage() {
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatBRL(v, { compact: true })} />
                     <RTooltip
                       contentStyle={{ fontSize: 12 }}
-                      formatter={(v: number) => formatBRL(v)}
+                      formatter={(v: unknown) => formatBRL(Number(v) || 0)}
                     />
                     <Bar dataKey="receita" fill="hsl(var(--primary))" opacity={0.6} name="Receita" />
                     <Line
@@ -480,7 +480,7 @@ function PedidosIntegradosPage() {
                       tick={{ fontSize: 11 }}
                       tickFormatter={(v: string) => (v.length > 22 ? v.slice(0, 22) + "…" : v)}
                     />
-                    <RTooltip formatter={(v: number) => formatBRL(v)} contentStyle={{ fontSize: 12 }} />
+                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
                     <Bar dataKey="margem" fill="hsl(0 84% 60%)" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -511,7 +511,7 @@ function PedidosIntegradosPage() {
                         <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
                       ))}
                     </Pie>
-                    <RTooltip formatter={(v: number) => formatBRL(v)} contentStyle={{ fontSize: 12 }} />
+                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
                   </PieChart>
                 </ResponsiveContainer>
               )}
