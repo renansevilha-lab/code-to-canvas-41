@@ -913,7 +913,7 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
           cmvMissing && "italic text-muted-foreground",
         )}
       >
-        {p.custo_total != null ? formatBRL(p.custo_total) : "—"}
+        {p.custo_prod != null ? formatBRL(p.custo_prod) : "—"}
       </td>
       <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.comissao_total ?? 0)}</td>
       <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.imposto ?? 0)}</td>
