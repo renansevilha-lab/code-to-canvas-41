@@ -159,7 +159,7 @@ type CoberturaFilter = "todos" | "completo" | "incompletos";
 type SortKey =
   | "data_pedido"
   | "venda"
-  | "custo_total"
+  | "custo_prod"
   | "comissao_total"
   | "imposto"
   | "margem"
