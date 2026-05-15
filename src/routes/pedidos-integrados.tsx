@@ -584,7 +584,7 @@ function PedidosIntegradosPage() {
                   <th className="text-left font-medium px-3 py-2">Produto</th>
                   <th className="text-left font-medium px-3 py-2">UF</th>
                   <Th label="Venda" k="venda" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="CMV" k="custo_total" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
+                  <Th label="CMV" k="custo_prod" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="Comissão" k="comissao_total" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="Imposto" k="imposto" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="Margem" k="margem" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
