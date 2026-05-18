@@ -305,7 +305,7 @@ function ContasPagarPage() {
           label="Canceladas"
           qtd={snap.cancelada.qtd}
           valor={snap.cancelada.valor}
-          accent="muted"
+          
         />
         <SummaryCard
           icon={CalendarRange}
