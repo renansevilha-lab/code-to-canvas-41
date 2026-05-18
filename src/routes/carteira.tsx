@@ -155,7 +155,7 @@ function CarteiraPage() {
   useEffect(() => {
     (async () => {
       const { data, error } = await supabaseExternal
-        .from("transacoes_carteira")
+        .from("view_carteira")
         .select("saldo_apos, data")
         .not("saldo_apos", "is", null)
         .order("data", { ascending: false })
@@ -184,7 +184,7 @@ function CarteiraPage() {
       const CHUNK = 1000;
       while (true) {
         const { data, error } = await supabaseExternal
-          .from("transacoes_carteira")
+          .from("view_carteira")
           .select(
             "id, shopee_transaction_id, data, tipo, classificacao, descricao, pedido_id, direcao, valor, status, saldo_apos"
           )
