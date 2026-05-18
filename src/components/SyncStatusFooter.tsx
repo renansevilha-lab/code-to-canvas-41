@@ -116,7 +116,9 @@ export function SyncStatusFooter({
           >
             <span className={cn("inline-block h-2 w-2 rounded-full", DOT[status])} />
             <span>
-              Atualizado {row.tempo_relativo ?? "—"}
+              {status === "sem_dado"
+                ? (row.tempo_relativo ?? "Nunca atualizado")
+                : `Atualizado ${row.tempo_relativo ?? "—"}`}
               {row.frequencia ? ` · ${row.frequencia}` : ""}
             </span>
           </div>
