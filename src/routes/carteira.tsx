@@ -1,22 +1,32 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import {
-  AlertTriangle,
-  ArrowDownLeft,
-  ArrowUpRight,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  CalendarIcon,
   Coins,
-  Hourglass,
+  Download,
+  FileSpreadsheet,
   Receipt,
-  Trash2,
+  Scale,
+  TrendingUp,
   Wallet,
+  Zap,
 } from "lucide-react";
-import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -26,704 +36,668 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-
-import { UploadDropzone } from "@/components/UploadDropzone";
-import { KpiCard } from "@/components/KpiCard";
-
-import { processarArquivosCarteira } from "@/lib/carteira/parser";
-import {
-  getAllCarteira,
-  limparCarteira,
-  salvarCarteira,
-} from "@/lib/carteira/storage";
-import {
-  calcularResumoCarteira,
-  calcularResumoConciliacao,
-  conciliarPedidos,
-  fluxoDiario,
-} from "@/lib/carteira/aggregations";
-import type {
-  ConciliacaoPedido,
-  TransacaoCarteira,
-} from "@/lib/carteira/types";
-
-import { getAllPedidos } from "@/lib/vendas/storage";
-import type { Pedido } from "@/lib/vendas/types";
-
-import { formatBRL, formatDate, formatNumber } from "@/lib/format";
-
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  ResponsiveContainer,
   Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { KpiCard } from "@/components/KpiCard";
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
+
+import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { formatBRL } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/carteira")({
   component: CarteiraPage,
-  head: () => ({
-    meta: [
-      { title: "Carteira — Shopee Analytics" },
-      {
-        name: "description",
-        content:
-          "Pago vs a receber por pedido cruzando o extrato da carteira Shopee com seus pedidos.",
-      },
-    ],
-  }),
 });
 
-type StatusFiltro = "todos" | "Pago" | "A receber" | "Reembolsado" | "Cancelado";
+// ---------- Tipos ----------
+type Transacao = {
+  id: number;
+  shopee_transaction_id: string | null;
+  data: string;
+  tipo: string;
+  classificacao: string | null;
+  descricao: string | null;
+  pedido_id: string | null;
+  direcao: "Entrada" | "Saída" | string;
+  valor: number;
+  status: string | null;
+  saldo_apos: number | null;
+};
+
+type TipoMeta = {
+  label: string;
+  variant: "success" | "destructive" | "info" | "warning" | "muted";
+};
+
+const TIPO_META: Record<string, TipoMeta> = {
+  recebimento_pedido: { label: "Recebimento", variant: "success" },
+  ressarcimento: { label: "Ressarcimento", variant: "info" },
+  imposto_difal: { label: "DIFAL", variant: "destructive" },
+  estorno_credito: { label: "Estorno crédito", variant: "warning" },
+  antecipacao_taxa: { label: "Taxa antecipação", variant: "destructive" },
+  antecipacao_credito: { label: "Crédito antecipação", variant: "success" },
+  ajuste_pedido: { label: "Ajuste pedido", variant: "warning" },
+  ajuste: { label: "Ajuste", variant: "warning" },
+  saque: { label: "Saque/PIX", variant: "destructive" },
+  taxa_servico: { label: "Taxa FBS", variant: "destructive" },
+  deposito: { label: "Depósito", variant: "success" },
+  estorno: { label: "Estorno", variant: "warning" },
+  credito: { label: "Crédito", variant: "muted" },
+  outros: { label: "Outros", variant: "muted" },
+};
+
+const TIPO_BADGE_CLASS: Record<TipoMeta["variant"], string> = {
+  success: "bg-success/15 text-success border-success/30",
+  destructive: "bg-destructive/15 text-destructive border-destructive/30",
+  info: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  warning: "bg-warning/20 text-warning-foreground border-warning/40",
+  muted: "bg-muted text-muted-foreground border-border",
+};
+
+// ---------- Período ----------
+type PeriodoKey = "hoje" | "7d" | "30d" | "mes" | "custom";
+
+const PERIODOS: { key: PeriodoKey; label: string }[] = [
+  { key: "hoje", label: "Hoje" },
+  { key: "7d", label: "7 dias" },
+  { key: "30d", label: "30 dias" },
+  { key: "mes", label: "Mês atual" },
+  { key: "custom", label: "Personalizado" },
+];
+
+function rangeFromKey(key: PeriodoKey, custom: { from?: Date; to?: Date }): { from: Date; to: Date } {
+  const now = new Date();
+  switch (key) {
+    case "hoje":
+      return { from: startOfDay(now), to: endOfDay(now) };
+    case "7d":
+      return { from: startOfDay(subDays(now, 6)), to: endOfDay(now) };
+    case "30d":
+      return { from: startOfDay(subDays(now, 29)), to: endOfDay(now) };
+    case "mes":
+      return { from: startOfMonth(now), to: endOfMonth(now) };
+    case "custom":
+      return {
+        from: custom.from ? startOfDay(custom.from) : startOfDay(subDays(now, 29)),
+        to: custom.to ? endOfDay(custom.to) : endOfDay(now),
+      };
+  }
+}
+
+// ---------- Página ----------
+const PAGE_SIZE = 50;
 
 function CarteiraPage() {
-  const [carteira, setCarteira] = useState<TransacaoCarteira[]>([]);
-  const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [periodoKey, setPeriodoKey] = useState<PeriodoKey>("30d");
+  const [custom, setCustom] = useState<{ from?: Date; to?: Date }>({});
+
+  const range = useMemo(() => rangeFromKey(periodoKey, custom), [periodoKey, custom]);
+
+  const [todasNoPeriodo, setTodasNoPeriodo] = useState<Transacao[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [importing, setImporting] = useState(false);
-  const [busca, setBusca] = useState("");
-  const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>("todos");
+  const [erro, setErro] = useState<string | null>(null);
 
-  const recarregar = async () => {
-    setLoading(true);
-    try {
-      const [c, p] = await Promise.all([getAllCarteira(), getAllPedidos()]);
-      setCarteira(c);
-      setPedidos(p);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [saldoAtual, setSaldoAtual] = useState<{ valor: number | null; data: string | null }>({
+    valor: null,
+    data: null,
+  });
 
+  const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState<"data" | "valor">("data");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // Saldo atual (independente do período)
   useEffect(() => {
-    recarregar();
+    (async () => {
+      const { data, error } = await supabaseExternal
+        .from("transacoes_carteira")
+        .select("saldo_apos, data")
+        .not("saldo_apos", "is", null)
+        .order("data", { ascending: false })
+        .limit(1);
+      if (error) return;
+      const row = data?.[0];
+      if (row) {
+        setSaldoAtual({ valor: Number(row.saldo_apos), data: row.data as string });
+      }
+    })();
   }, []);
 
-  const periodoExtrato = useMemo(() => {
-    if (carteira.length === 0) return { ini: null, fim: null };
-    let ini = carteira[0].data;
-    let fim = carteira[0].data;
-    for (const r of carteira) {
-      if (r.data < ini) ini = r.data;
-      if (r.data > fim) fim = r.data;
-    }
-    return { ini, fim };
-  }, [carteira]);
+  // Fetch transações do período (uma vez por range; paginação client-side)
+  useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    setErro(null);
+    setPage(1);
+    (async () => {
+      const fromIso = range.from.toISOString();
+      const toIso = range.to.toISOString();
 
-  const resumo = useMemo(() => calcularResumoCarteira(carteira), [carteira]);
-  const fluxo = useMemo(() => fluxoDiario(carteira), [carteira]);
-
-  // Conciliação só de pedidos do período do extrato
-  const pedidosPeriodo = useMemo(() => {
-    if (!periodoExtrato.ini || !periodoExtrato.fim) return [];
-    return pedidos.filter(
-      (p) =>
-        p.data_pedido >= periodoExtrato.ini! &&
-        p.data_pedido <= periodoExtrato.fim!
-    );
-  }, [pedidos, periodoExtrato]);
-
-  const conciliacao = useMemo(
-    () => conciliarPedidos(pedidosPeriodo, carteira),
-    [pedidosPeriodo, carteira]
-  );
-  const resumoConc = useMemo(
-    () => calcularResumoConciliacao(conciliacao),
-    [conciliacao]
-  );
-
-  const conciliacaoFiltrada = useMemo(() => {
-    let arr = conciliacao;
-    if (statusFiltro !== "todos") {
-      arr = arr.filter((c) => c.status_recebimento === statusFiltro);
-    }
-    if (busca) {
-      const q = busca.toLowerCase();
-      arr = arr.filter((c) => c.id_pedido.toLowerCase().includes(q));
-    }
-    return arr.sort((a, b) => (a.data_pedido < b.data_pedido ? 1 : -1));
-  }, [conciliacao, statusFiltro, busca]);
-
-  const handleFiles = async (files: File[]) => {
-    setImporting(true);
-    try {
-      const r = await processarArquivosCarteira(files);
-      if (r.rows.length === 0) {
-        toast.error("Nenhuma transação encontrada", {
-          description:
-            r.warnings[0] ?? "Verifique se é o extrato 'Minha Carteira'.",
-        });
-        return;
+      // Pode haver muitas linhas; busca em páginas de 1000 (limite Supabase)
+      const acc: Transacao[] = [];
+      let offset = 0;
+      const CHUNK = 1000;
+      while (true) {
+        const { data, error } = await supabaseExternal
+          .from("transacoes_carteira")
+          .select(
+            "id, shopee_transaction_id, data, tipo, classificacao, descricao, pedido_id, direcao, valor, status, saldo_apos"
+          )
+          .gte("data", fromIso)
+          .lte("data", toIso)
+          .order("data", { ascending: false })
+          .range(offset, offset + CHUNK - 1);
+        if (cancel) return;
+        if (error) {
+          setErro(error.message);
+          break;
+        }
+        const rows = (data ?? []) as Transacao[];
+        acc.push(...rows);
+        if (rows.length < CHUNK) break;
+        offset += CHUNK;
+        if (offset > 50_000) break; // sanidade
       }
-      const { novos, atualizados } = await salvarCarteira(r.rows);
-      toast.success(`${r.rows.length} transações importadas`, {
-        description: `${novos} novas, ${atualizados} atualizadas`,
-      });
-      if (r.warnings.length) console.warn("Carteira:", r.warnings);
-      await recarregar();
-    } catch (e) {
-      toast.error("Erro ao importar", { description: (e as Error).message });
-    } finally {
-      setImporting(false);
+      if (!cancel) {
+        setTodasNoPeriodo(acc);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [range.from, range.to]);
+
+  // KPIs
+  const kpis = useMemo(() => {
+    const rows = todasNoPeriodo ?? [];
+    const sumWhere = (pred: (r: Transacao) => boolean) =>
+      rows.filter(pred).reduce((acc, r) => acc + Number(r.valor || 0), 0);
+
+    return {
+      totalRecebido: sumWhere((r) => r.tipo === "recebimento_pedido"),
+      totalRessarcimentos: sumWhere((r) => r.tipo === "ressarcimento"),
+      totalDifal: sumWhere((r) => r.tipo === "imposto_difal"),
+      totalAntecipacao: sumWhere((r) => r.tipo === "antecipacao_taxa"),
+      totalAjustes: sumWhere((r) =>
+        ["ajuste", "ajuste_pedido", "estorno_credito"].includes(r.tipo)
+      ),
+    };
+  }, [todasNoPeriodo]);
+
+  // Ordenação + paginação
+  const sorted = useMemo(() => {
+    const rows = [...(todasNoPeriodo ?? [])];
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === "data") {
+        cmp = new Date(a.data).getTime() - new Date(b.data).getTime();
+      } else {
+        const va = signedValue(a);
+        const vb = signedValue(b);
+        cmp = va - vb;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return rows;
+  }, [todasNoPeriodo, sortBy, sortDir]);
+
+  const totalRows = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const pageRows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const toggleSort = (col: "data" | "valor") => {
+    if (sortBy === col) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else {
+      setSortBy(col);
+      setSortDir("desc");
     }
   };
 
-  const handleLimpar = async () => {
-    await limparCarteira();
-    toast.success("Extrato removido");
-    await recarregar();
+  // Export
+  const exportRows = () =>
+    sorted.map((r) => ({
+      Data: format(new Date(r.data), "dd/MM/yyyy HH:mm"),
+      Tipo: TIPO_META[r.tipo]?.label ?? r.tipo,
+      Classificação: r.classificacao ?? "",
+      Descrição: r.descricao ?? "",
+      Pedido: r.pedido_id ?? "",
+      Direção: r.direcao,
+      Valor: signedValue(r),
+      "Saldo após": r.saldo_apos ?? "",
+      Status: r.status ?? "",
+    }));
+
+  const baseFilename = `carteira_shopee_${format(range.from, "yyyy-MM-dd")}_a_${format(range.to, "yyyy-MM-dd")}`;
+
+  const exportCSV = () => {
+    const rows = exportRows();
+    if (rows.length === 0) return;
+    const headers = Object.keys(rows[0]);
+    const csv = [
+      headers.join(";"),
+      ...rows.map((row) =>
+        headers
+          .map((h) => {
+            const v = (row as any)[h];
+            const s = v == null ? "" : String(v);
+            return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(";")
+      ),
+    ].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    triggerDownload(blob, `${baseFilename}.csv`);
   };
 
-  if (loading) {
-    return (
-      <div className="p-10 text-center text-sm text-muted-foreground">
-        Carregando…
-      </div>
-    );
-  }
-
-  if (carteira.length === 0) {
-    return <EstadoVazio onFiles={handleFiles} importing={importing} />;
-  }
-
-  const semPedidos = pedidos.length === 0;
+  const exportXLSX = () => {
+    const rows = exportRows();
+    if (rows.length === 0) return;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Carteira");
+    XLSX.writeFile(wb, `${baseFilename}.xlsx`);
+  };
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto">
-      <header className="flex items-center justify-between gap-4 flex-wrap">
+    <div className="space-y-6 p-6">
+      {/* Cabeçalho */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">
-            Carteira
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {formatNumber(resumo.n_transacoes)} transações
-            {periodoExtrato.ini && periodoExtrato.fim && (
-              <>
-                {" · "}
-                {formatDate(periodoExtrato.ini)} → {formatDate(periodoExtrato.fim)}
-              </>
-            )}
+          <h1 className="text-2xl font-semibold tracking-tight">Carteira Shopee</h1>
+          <p className="text-sm text-muted-foreground">
+            Transações sincronizadas automaticamente da Shopee
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <NovoUploadDialog onFiles={handleFiles} importing={importing} />
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="icon" title="Limpar extrato">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Apagar todo o extrato?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Vai remover {formatNumber(resumo.n_transacoes)} transações.
-                  Pedidos e CMV não são afetados.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleLimpar}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  Apagar
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </header>
+        <SeletorPeriodo
+          value={periodoKey}
+          custom={custom}
+          onChangeKey={setPeriodoKey}
+          onChangeCustom={setCustom}
+          range={range}
+        />
+      </div>
 
-      {semPedidos && (
-        <Card className="p-4 border-warning/30 bg-warning/5 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-warning-foreground shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="font-medium">Sem pedidos para cruzar.</p>
-            <p className="text-muted-foreground mt-0.5">
-              Importe pedidos no módulo Vendas para ver Pago vs A receber.
-            </p>
-          </div>
+      {erro && (
+        <Card className="border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          Erro ao carregar carteira: {erro}
         </Card>
       )}
 
-      {/* KPIs financeiros */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         <KpiCard
           label="Saldo atual"
-          value={formatBRL(resumo.saldo_atual)}
-          hint="último saldo registrado no extrato"
-          icon={<Wallet className="h-4 w-4" />}
+          value={saldoAtual.valor != null ? formatBRL(saldoAtual.valor) : "—"}
+          hint={
+            saldoAtual.data
+              ? `em ${format(new Date(saldoAtual.data), "dd/MM/yyyy HH:mm")}`
+              : "sem dados"
+          }
+          icon={<Wallet className="h-5 w-5" />}
           accent="primary"
         />
         <KpiCard
-          label="Entradas"
-          value={formatBRL(resumo.entradas_total)}
-          hint={`${formatNumber(carteira.filter((r) => r.valor >= 0).length)} créditos`}
-          icon={<ArrowUpRight className="h-4 w-4" />}
+          label="Total recebido"
+          value={loading ? "…" : formatBRL(kpis.totalRecebido)}
+          icon={<TrendingUp className="h-5 w-5" />}
           accent="success"
         />
         <KpiCard
-          label="Saídas"
-          value={formatBRL(Math.abs(resumo.saidas_total))}
-          hint={`${formatNumber(carteira.filter((r) => r.valor < 0).length)} débitos`}
-          icon={<ArrowDownLeft className="h-4 w-4" />}
+          label="Ressarcimentos"
+          value={loading ? "…" : formatBRL(kpis.totalRessarcimentos)}
+          icon={<Coins className="h-5 w-5" />}
+          accent="primary"
+        />
+        <KpiCard
+          label="Impostos DIFAL"
+          value={loading ? "…" : formatBRL(kpis.totalDifal)}
+          icon={<Receipt className="h-5 w-5" />}
           accent="destructive"
         />
         <KpiCard
-          label="Resultado do período"
-          value={formatBRL(resumo.saldo_periodo)}
-          hint="entradas − saídas no extrato"
-          icon={<Coins className="h-4 w-4" />}
-          accent={resumo.saldo_periodo >= 0 ? "success" : "destructive"}
+          label="Taxas antecipação"
+          value={loading ? "…" : formatBRL(kpis.totalAntecipacao)}
+          icon={<Zap className="h-5 w-5" />}
+          accent="warning"
         />
-      </section>
+        <KpiCard
+          label="Total ajustes"
+          value={loading ? "…" : formatBRL(kpis.totalAjustes)}
+          icon={<Scale className="h-5 w-5" />}
+          accent="warning"
+        />
+      </div>
 
-      {/* KPIs conciliação */}
-      {!semPedidos && (
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-          <KpiCard
-            label="Pedidos pagos"
-            value={formatNumber(resumoConc.pagos.n)}
-            hint={`recebido ${formatBRL(resumoConc.pagos.valor)}`}
-            icon={<Receipt className="h-4 w-4" />}
-            accent="success"
-          />
-          <KpiCard
-            label="A receber"
-            value={formatNumber(resumoConc.a_receber.n)}
-            hint={`estimado ${formatBRL(resumoConc.a_receber.valor)}`}
-            icon={<Hourglass className="h-4 w-4" />}
-            accent="warning"
-          />
-          <KpiCard
-            label="Reembolsados"
-            value={formatNumber(resumoConc.reembolsados.n)}
-            hint={`estornado ${formatBRL(resumoConc.reembolsados.valor)}`}
-            icon={<ArrowDownLeft className="h-4 w-4" />}
-            accent="destructive"
-          />
-          <KpiCard
-            label="Diferença vs estimado"
-            value={formatBRL(resumoConc.diferenca_total)}
-            hint="recebido − renda estimada (pagos)"
-            icon={<Coins className="h-4 w-4" />}
-            accent={
-              Math.abs(resumoConc.diferenca_total) < 1
-                ? "success"
-                : resumoConc.diferenca_total > 0
-                  ? "success"
-                  : "destructive"
-            }
-          />
-        </section>
-      )}
+      {/* Tabela */}
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            {loading
+              ? "Carregando…"
+              : totalRows === 0
+                ? "Nenhuma transação no período selecionado."
+                : `Mostrando ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, totalRows)} de ${totalRows.toLocaleString("pt-BR")}`}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportCSV}
+              disabled={totalRows === 0}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportXLSX}
+              disabled={totalRows === 0}
+            >
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+              Excel
+            </Button>
+          </div>
+        </div>
 
-      {/* Fluxo diário */}
-      <Card className="p-5">
-        <header className="mb-4">
-          <h3 className="font-semibold text-foreground">Fluxo diário</h3>
-          <p className="text-xs text-muted-foreground">
-            Entradas e saídas por dia, com saldo líquido (linha)
-          </p>
-        </header>
-        {fluxo.length === 0 ? (
-          <EmptyChart />
-        ) : (
-          <div className="h-[320px] w-full">
-            <ResponsiveContainer>
-              <ComposedChart
-                data={fluxo}
-                margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <SortableHead label="Data" active={sortBy === "data"} dir={sortDir} onClick={() => toggleSort("data")} />
+                <TableHead>Tipo</TableHead>
+                <TableHead>Classificação</TableHead>
+                <TableHead>Descrição</TableHead>
+                <TableHead>Pedido</TableHead>
+                <TableHead>Direção</TableHead>
+                <SortableHead label="Valor" active={sortBy === "valor"} dir={sortDir} onClick={() => toggleSort("valor")} align="right" />
+                <TableHead className="text-right">Saldo após</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading &&
+                Array.from({ length: 8 }).map((_, i) => (
+                  <TableRow key={`sk-${i}`}>
+                    {Array.from({ length: 9 }).map((__, j) => (
+                      <TableCell key={j}>
+                        <Skeleton className="h-4 w-full" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+
+              {!loading && totalRows === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                    Nenhuma transação no período selecionado.
+                  </TableCell>
+                </TableRow>
+              )}
+
+              {!loading &&
+                pageRows.map((r) => {
+                  const meta = TIPO_META[r.tipo] ?? { label: r.tipo, variant: "muted" as const };
+                  const isEntrada = r.direcao === "Entrada";
+                  const signed = signedValue(r);
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {format(new Date(r.data), "dd/MM/yyyy HH:mm")}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={cn("font-medium", TIPO_BADGE_CLASS[meta.variant])}>
+                          {meta.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {r.classificacao ?? "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="max-w-[320px]">
+                        {r.descricao ? (
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="block truncate">{r.descricao}</span>
+                              </TooltipTrigger>
+                              {r.descricao.length > 60 && (
+                                <TooltipContent side="top" className="max-w-md">
+                                  <p className="text-xs">{r.descricao}</p>
+                                </TooltipContent>
+                              )}
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {r.pedido_id ? (
+                          <span className="font-mono text-xs">{r.pedido_id}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "font-medium",
+                            isEntrada
+                              ? "bg-success/15 text-success border-success/30"
+                              : "bg-destructive/15 text-destructive border-destructive/30"
+                          )}
+                        >
+                          {isEntrada ? (
+                            <ArrowDown className="mr-1 h-3 w-3" />
+                          ) : (
+                            <ArrowUp className="mr-1 h-3 w-3" />
+                          )}
+                          {r.direcao}
+                        </Badge>
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "whitespace-nowrap text-right font-medium tabular-nums",
+                          isEntrada ? "text-success" : "text-destructive"
+                        )}
+                      >
+                        {(signed >= 0 ? "+" : "−") + " " + formatBRL(Math.abs(signed))}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
+                        {r.saldo_apos != null ? formatBRL(Number(r.saldo_apos)) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "font-normal",
+                            r.status === "COMPLETED"
+                              ? "bg-success/10 text-success border-success/30"
+                              : "bg-muted text-muted-foreground border-border"
+                          )}
+                        >
+                          {r.status ?? "—"}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Paginação */}
+        {!loading && totalRows > PAGE_SIZE && (
+          <div className="flex items-center justify-between pt-4">
+            <div className="text-xs text-muted-foreground">
+              Página {page} de {totalPages}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" onClick={() => setPage(1)} disabled={page === 1}>
+                «
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
               >
-                <CartesianGrid
-                  stroke="var(--border)"
-                  strokeDasharray="3 3"
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="data"
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                  tickFormatter={(d: string) => d.slice(5)}
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                  tickFormatter={(v: number) =>
-                    formatBRL(v, { compact: true }).replace("R$", "")
-                  }
-                />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar
-                  dataKey="entradas"
-                  name="Entradas"
-                  fill="var(--chart-1)"
-                  radius={[4, 4, 0, 0]}
-                  maxBarSize={28}
-                />
-                <Bar
-                  dataKey="saidas"
-                  name="Saídas"
-                  fill="var(--chart-3)"
-                  radius={[4, 4, 0, 0]}
-                  maxBarSize={28}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="liquido"
-                  name="Líquido"
-                  stroke="var(--chart-5)"
-                  strokeWidth={2.5}
-                  dot={{ r: 3 }}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Próximo
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+              >
+                »
+              </Button>
+            </div>
           </div>
         )}
       </Card>
 
-      {/* Tabs */}
-      <Tabs defaultValue="pedidos">
-        <TabsList>
-          <TabsTrigger value="pedidos">
-            Pedidos
-            {!semPedidos && (
-              <Badge variant="secondary" className="ml-1.5 h-4 px-1.5 text-[10px]">
-                {formatNumber(conciliacao.length)}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="extrato">
-            Extrato
-            <Badge variant="secondary" className="ml-1.5 h-4 px-1.5 text-[10px]">
-              {formatNumber(carteira.length)}
-            </Badge>
-          </TabsTrigger>
-          <TabsTrigger value="tipos">Por tipo</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="pedidos">
-          <div className="mb-3 flex items-center gap-2 flex-wrap">
-            <Input
-              placeholder="Buscar ID do pedido…"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              className="max-w-sm"
-            />
-            <div className="flex items-center gap-1 flex-wrap">
-              {(
-                ["todos", "Pago", "A receber", "Reembolsado", "Cancelado"] as StatusFiltro[]
-              ).map((s) => (
-                <Button
-                  key={s}
-                  variant={statusFiltro === s ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setStatusFiltro(s)}
-                >
-                  {s === "todos" ? "Todos" : s}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <Card className="p-0 overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Pedido</TableHead>
-                  <TableHead>Data pedido</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">GMV</TableHead>
-                  <TableHead className="text-right">Renda estimada</TableHead>
-                  <TableHead className="text-right">Recebido</TableHead>
-                  <TableHead className="text-right">Estornado</TableHead>
-                  <TableHead className="text-right">Líquido</TableHead>
-                  <TableHead className="text-right">Diferença</TableHead>
-                  <TableHead>Recebido em</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {conciliacaoFiltrada.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={10}
-                      className="text-center text-muted-foreground py-8"
-                    >
-                      Nenhum pedido encontrado
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  conciliacaoFiltrada.slice(0, 200).map((c) => (
-                    <LinhaPedido key={c.id_pedido} c={c} />
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </Card>
-          {conciliacaoFiltrada.length > 200 && (
-            <p className="text-xs text-muted-foreground text-center mt-2">
-              Mostrando 200 de {formatNumber(conciliacaoFiltrada.length)} pedidos
-            </p>
-          )}
-        </TabsContent>
-
-        <TabsContent value="extrato">
-          <Card className="p-0 overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Data/Hora</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead>Pedido</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead className="text-right">Saldo após</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {carteira.slice(0, 300).map((t) => (
-                  <TableRow key={t.chave}>
-                    <TableCell className="text-xs whitespace-nowrap">
-                      {t.data_hora}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px]">
-                        {t.tipo}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="max-w-md truncate text-xs text-muted-foreground">
-                      {t.descricao}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {t.id_pedido || "—"}
-                    </TableCell>
-                    <TableCell
-                      className={
-                        "text-right tabular-nums font-medium " +
-                        (t.valor >= 0 ? "text-success" : "text-destructive")
-                      }
-                    >
-                      {formatBRL(t.valor)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {formatBRL(t.saldo_apos)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
-          {carteira.length > 300 && (
-            <p className="text-xs text-muted-foreground text-center mt-2">
-              Mostrando 300 de {formatNumber(carteira.length)} transações
-            </p>
-          )}
-        </TabsContent>
-
-        <TabsContent value="tipos">
-          <Card className="p-0 overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Transações</TableHead>
-                  <TableHead className="text-right">Valor líquido</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {resumo.por_tipo.map((t) => (
-                  <TableRow key={t.tipo}>
-                    <TableCell>{t.tipo}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatNumber(t.n)}
-                    </TableCell>
-                    <TableCell
-                      className={
-                        "text-right tabular-nums font-medium " +
-                        (t.valor >= 0 ? "text-success" : "text-destructive")
-                      }
-                    >
-                      {formatBRL(t.valor)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <SyncStatusFooter area="carteira" />
     </div>
   );
 }
 
-function LinhaPedido({ c }: { c: ConciliacaoPedido }) {
-  const cor =
-    c.status_recebimento === "Pago"
-      ? "text-success border-success/40 bg-success/10"
-      : c.status_recebimento === "A receber"
-        ? "text-warning-foreground border-warning/40 bg-warning/10"
-        : c.status_recebimento === "Reembolsado"
-          ? "text-destructive border-destructive/40 bg-destructive/10"
-          : "text-muted-foreground border-border bg-muted";
+// ---------- Helpers ----------
+function signedValue(r: Transacao): number {
+  const v = Math.abs(Number(r.valor || 0));
+  return r.direcao === "Entrada" ? v : -v;
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function SortableHead({
+  label,
+  active,
+  dir,
+  onClick,
+  align,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+  align?: "right";
+}) {
   return (
-    <TableRow>
-      <TableCell className="font-mono text-xs">{c.id_pedido}</TableCell>
-      <TableCell className="text-xs whitespace-nowrap">
-        {formatDate(c.data_pedido)}
-      </TableCell>
-      <TableCell>
-        <Badge variant="outline" className={"text-[10px] " + cor}>
-          {c.status_recebimento}
-        </Badge>
-      </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {formatBRL(c.valor_total)}
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        {formatBRL(c.renda_estimada)}
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-success">
-        {c.recebido > 0 ? formatBRL(c.recebido) : "—"}
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-destructive">
-        {c.estornado > 0 ? formatBRL(c.estornado) : "—"}
-      </TableCell>
-      <TableCell
-        className={
-          "text-right tabular-nums font-medium " +
-          (c.liquido >= 0 ? "text-foreground" : "text-destructive")
-        }
+    <TableHead className={align === "right" ? "text-right" : undefined}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "inline-flex items-center gap-1 hover:text-foreground transition-colors",
+          active ? "text-foreground" : "text-muted-foreground"
+        )}
       >
-        {formatBRL(c.liquido)}
-      </TableCell>
-      <TableCell
-        className={
-          "text-right tabular-nums " +
-          (Math.abs(c.diferenca) < 0.01
-            ? "text-muted-foreground"
-            : c.diferenca > 0
-              ? "text-success"
-              : "text-destructive")
-        }
-      >
-        {c.recebido > 0 ? formatBRL(c.diferenca) : "—"}
-      </TableCell>
-      <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-        {c.data_recebimento ?? "—"}
-      </TableCell>
-    </TableRow>
+        {label}
+        {active ? (
+          dir === "asc" ? (
+            <ArrowUp className="h-3 w-3" />
+          ) : (
+            <ArrowDown className="h-3 w-3" />
+          )
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-50" />
+        )}
+      </button>
+    </TableHead>
   );
 }
 
-function EstadoVazio({
-  onFiles,
-  importing,
+// ---------- Seletor de período ----------
+function SeletorPeriodo({
+  value,
+  custom,
+  onChangeKey,
+  onChangeCustom,
+  range,
 }: {
-  onFiles: (files: File[]) => void;
-  importing: boolean;
+  value: PeriodoKey;
+  custom: { from?: Date; to?: Date };
+  onChangeKey: (k: PeriodoKey) => void;
+  onChangeCustom: (c: { from?: Date; to?: Date }) => void;
+  range: { from: Date; to: Date };
 }) {
   return (
-    <div className="p-6 md:p-10 max-w-3xl mx-auto space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-          Carteira
-        </h1>
-        <p className="text-muted-foreground">
-          Importe o extrato da Shopee (Minha Carteira → Extrato →{" "}
-          <em>balance_transaction_report</em>) para ver Pago vs A receber por
-          pedido.
-        </p>
-      </header>
-      <UploadDropzone
-        onFiles={onFiles}
-        accept=".xlsx,.xls,.csv"
-        title="Solte aqui o extrato da carteira"
-        hint="Aceita o arquivo balance_transaction_report.shopee.*.xlsx exportado em Minha Carteira → Extrato."
-        loading={importing}
-      />
-    </div>
-  );
-}
-
-function NovoUploadDialog({
-  onFiles,
-  importing,
-}: {
-  onFiles: (files: File[]) => void;
-  importing: boolean;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  return (
-    <>
-      <Button
+    <div className="flex flex-wrap items-center gap-2">
+      <ToggleGroup
+        type="single"
+        value={value}
+        onValueChange={(v) => v && onChangeKey(v as PeriodoKey)}
         variant="outline"
         size="sm"
-        onClick={() => inputRef.current?.click()}
-        disabled={importing}
+        className="bg-card"
       >
-        Importar extrato
-      </Button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files && e.target.files.length > 0) {
-            onFiles(Array.from(e.target.files));
-            e.target.value = "";
-          }
-        }}
-      />
-    </>
-  );
-}
-
-function EmptyChart() {
-  return (
-    <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
-      Sem dados pra exibir.
-    </div>
-  );
-}
-
-function ChartTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; dataKey: string; color: string }>;
-  label?: string;
-}) {
-  if (!active || !payload || payload.length === 0) return null;
-  return (
-    <div className="rounded-lg border bg-popover p-2.5 text-xs shadow-md">
-      <p className="font-medium mb-1">{label}</p>
-      {payload.map((p) => (
-        <div key={p.dataKey} className="flex items-center gap-2">
-          <span
-            className="h-2 w-2 rounded-full"
-            style={{ background: p.color }}
+        {PERIODOS.filter((p) => p.key !== "custom").map((p) => (
+          <ToggleGroupItem
+            key={p.key}
+            value={p.key}
+            className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+          >
+            {p.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant={value === "custom" ? "default" : "outline"}
+            size="sm"
+            className="gap-1.5"
+          >
+            <CalendarIcon className="h-4 w-4" />
+            {value === "custom" && custom.from && custom.to
+              ? `${format(custom.from, "dd/MM/yy")} – ${format(custom.to, "dd/MM/yy")}`
+              : "Personalizado"}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="end">
+          <Calendar
+            mode="range"
+            selected={{ from: custom.from, to: custom.to }}
+            onSelect={(r: any) => {
+              onChangeCustom({ from: r?.from, to: r?.to });
+              if (r?.from && r?.to) onChangeKey("custom");
+            }}
+            numberOfMonths={2}
+            locale={ptBR}
+            className={cn("p-3 pointer-events-auto")}
           />
-          <span className="text-muted-foreground">{p.name}:</span>
-          <span className="font-medium tabular-nums">{formatBRL(p.value)}</span>
-        </div>
-      ))}
+        </PopoverContent>
+      </Popover>
+      <span className="text-xs text-muted-foreground">
+        {format(range.from, "dd/MM/yyyy")} – {format(range.to, "dd/MM/yyyy")}
+      </span>
     </div>
   );
 }
