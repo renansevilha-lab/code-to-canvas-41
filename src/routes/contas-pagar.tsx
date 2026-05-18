@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Clock, CheckCircle2, Wallet, CalendarRange } from "lucide-react";
+import { AlertTriangle, Clock, CheckCircle2, Wallet, CalendarRange, XCircle } from "lucide-react";
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -101,6 +102,14 @@ function addLocalDays(date: Date, days: number): Date {
 
 function isOpen(c: Conta): boolean {
   return c.status === "aberto" || c.status === "parcial";
+}
+
+function isAbertoStrict(c: Conta): boolean {
+  return c.status === "aberto";
+}
+
+function isCancelada(c: Conta): boolean {
+  return c.status === "cancelada" || c.status === "cancelado";
 }
 
 function isPaid(c: Conta): boolean {
@@ -206,10 +215,13 @@ function ContasPagarPage() {
       valor: items.reduce((acc, c) => acc + (isPaid(c) ? Number(c.valor_total ?? 0) : getSaldo(c)), 0),
     });
     return {
+      // Atrasadas: status aberto/parcial E vencimento passado
       atrasadas: build(contas.filter(isOverdue)),
       vencendo: build(contas.filter((c) => isDueWithinDays(c, 7))),
-      aberto: build(contas.filter(isOpen)),
+      // Em aberto: APENAS status='aberto' (exclui canceladas e pagas)
+      aberto: build(contas.filter(isAbertoStrict)),
       paga: build(contas.filter(isPaid)),
+      cancelada: build(contas.filter(isCancelada)),
     };
   }, [contas]);
 
@@ -256,8 +268,11 @@ function ContasPagarPage() {
         />
       </header>
 
+      <SyncStatusFooter area="contas_pagar" />
+
+
       {/* Cards snapshots (globais) + 1 do período */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         <SummaryCard
           icon={AlertTriangle}
           label="Atrasadas"
@@ -284,6 +299,13 @@ function ContasPagarPage() {
           qtd={snap.paga.qtd}
           valor={snap.paga.valor}
           accent="success"
+        />
+        <SummaryCard
+          icon={XCircle}
+          label="Canceladas"
+          qtd={snap.cancelada.qtd}
+          valor={snap.cancelada.valor}
+          
         />
         <SummaryCard
           icon={CalendarRange}

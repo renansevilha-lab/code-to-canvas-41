@@ -1,3 +1,4 @@
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -146,6 +147,8 @@ function FluxoCaixaPage() {
           Projeção baseada em média histórica de receita e contas a pagar com vencimentos confirmados.
         </p>
       </header>
+
+      <SyncStatusFooter area="fluxo_caixa" />
 
       {/* Linha 1 — saldos previstos */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">

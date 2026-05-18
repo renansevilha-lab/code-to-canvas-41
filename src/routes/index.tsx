@@ -1,3 +1,4 @@
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -244,6 +245,8 @@ function Dashboard() {
         </div>
         <DashboardPeriodFilter value={range} onChange={handlePeriodChange} />
       </header>
+
+      <SyncStatusFooter area="dashboard" />
 
       {/* Linha 1 — period-aware */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

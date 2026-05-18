@@ -1,3 +1,4 @@
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
@@ -162,6 +163,8 @@ function PedidosPage() {
         </div>
         <DashboardPeriodFilter value={range} onChange={handlePeriodChange} />
       </header>
+
+      <SyncStatusFooter area="pedidos_tiny" />
 
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MiniCard label={`Pedidos ${suffix}`} value={resumo ? formatNumber(resumo.pedidos_qtd) : "—"} />

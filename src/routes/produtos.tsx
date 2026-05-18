@@ -1,3 +1,4 @@
+import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
@@ -65,6 +66,8 @@ function ProdutosPage() {
           Produtos com preço de venda, CMV efetivo e margem bruta calculada.
         </p>
       </header>
+
+      <SyncStatusFooter area="catalogo" />
 
       <Card className="p-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
