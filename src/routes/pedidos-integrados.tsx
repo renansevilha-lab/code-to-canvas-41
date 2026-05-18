@@ -336,6 +336,8 @@ function PedidosIntegradosPage() {
           </p>
         </header>
 
+        <SyncStatusFooter area="pedidos_integrados" />
+
         {/* Filtros sticky */}
         <div className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-background/80 backdrop-blur border-b">
           <div className="flex flex-wrap items-center gap-2">

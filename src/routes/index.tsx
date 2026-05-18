@@ -245,6 +245,8 @@ function Dashboard() {
         <DashboardPeriodFilter value={range} onChange={handlePeriodChange} />
       </header>
 
+      <SyncStatusFooter area="dashboard" />
+
       {/* Linha 1 — period-aware */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard

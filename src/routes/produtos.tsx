@@ -66,6 +66,8 @@ function ProdutosPage() {
         </p>
       </header>
 
+      <SyncStatusFooter area="catalogo" />
+
       <Card className="p-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Input

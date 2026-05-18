@@ -147,6 +147,8 @@ function FluxoCaixaPage() {
         </p>
       </header>
 
+      <SyncStatusFooter area="fluxo_caixa" />
+
       {/* Linha 1 — saldos previstos */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <SaldoCard label="Saldo 7 dias" value={kpis?.saldo_7d} loading={loadingKpis} />
