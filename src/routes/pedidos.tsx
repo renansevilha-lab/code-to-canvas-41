@@ -97,8 +97,7 @@ function PedidosPage() {
     let cancel = false;
     setLoading(true);
     (async () => {
-      const fromIso = `${range.from}T00:00:00`;
-      const toIso = `${range.to}T23:59:59`;
+      const { fromIso, toIso } = rangeToSPIso(range.from, range.to);
       const [p, r] = await Promise.all([
         supabaseExternal
           .from("pedidos_tiny")
