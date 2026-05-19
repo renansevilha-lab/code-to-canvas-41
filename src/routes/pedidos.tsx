@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber } from "@/lib/format";
+import { rangeToSPIso } from "@/lib/date";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
   PERIOD_SUFFIX,
