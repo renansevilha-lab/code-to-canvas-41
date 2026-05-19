@@ -209,8 +209,7 @@ function PedidosIntegradosPage() {
       setLoading(true);
       setError(null);
       try {
-        const fromIso = `${range.from}T00:00:00`;
-        const toIso = `${range.to}T23:59:59`;
+        const { fromIso, toIso } = rangeToSPIso(range.from, range.to);
         const days =
           (parseISO(`${range.to}T00:00:00`).getTime() -
             parseISO(`${range.from}T00:00:00`).getTime()) /
@@ -221,6 +220,7 @@ function PedidosIntegradosPage() {
           subDays(parseISO(`${range.from}T00:00:00`), days),
           "yyyy-MM-dd",
         );
+        const { fromIso: prevFromIso, toIso: prevToIso } = rangeToSPIso(prevFrom, prevTo);
 
         const baseQuery = (fromI: string, toI: string) =>
           supabaseExternal
@@ -233,7 +233,7 @@ function PedidosIntegradosPage() {
 
         const [cur, prev] = await Promise.all([
           baseQuery(fromIso, toIso),
-          baseQuery(`${prevFrom}T00:00:00`, `${prevTo}T23:59:59`),
+          baseQuery(prevFromIso, prevToIso),
         ]);
         if (cancelled) return;
         if (cur.error) throw cur.error;
