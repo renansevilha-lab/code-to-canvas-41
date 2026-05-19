@@ -175,8 +175,8 @@ function CarteiraPage() {
     setErro(null);
     setPage(1);
     (async () => {
-      const fromIso = range.from.toISOString();
-      const toIso = range.to.toISOString();
+      const fromIso = inicioDoDiaSP(range.from);
+      const toIso = fimDoDiaSP(range.to);
 
       // Pode haver muitas linhas; busca em páginas de 1000 (limite Supabase)
       const acc: Transacao[] = [];
