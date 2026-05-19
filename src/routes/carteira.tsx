@@ -47,6 +47,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { inicioDoDiaSP, fimDoDiaSP } from "@/lib/date";
 import { formatBRL } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
