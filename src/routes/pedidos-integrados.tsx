@@ -57,6 +57,7 @@ import {
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
+import { rangeToSPIso } from "@/lib/date";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
   resolveRange,
