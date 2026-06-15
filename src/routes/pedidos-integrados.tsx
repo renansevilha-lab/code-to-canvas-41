@@ -350,7 +350,7 @@ function PedidosIntegradosPage() {
             <DashboardPeriodFilter value={range} onChange={updatePeriod} />
 
             <MarketplaceFilter value={marketplaces} onChange={setMarketplaces} />
-            <StatusFilter value={statuses} onChange={setStatuses} />
+            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={marketplaces} />
             <CoberturaSegment value={cobertura} onChange={setCobertura} />
 
             <div className="relative ml-auto w-full max-w-xs">
