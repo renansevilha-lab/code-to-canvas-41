@@ -1207,7 +1207,8 @@ function buildWorstProducts(rows: PedidoIntegrado[]) {
 function buildMarketplaceShare(rows: PedidoIntegrado[]) {
   const map = new Map<string, number>();
   for (const r of rows) {
-    map.set(r.marketplace, (map.get(r.marketplace) ?? 0) + (r.venda ?? 0));
+    const key = r.loja_nome ?? r.marketplace ?? "—";
+    map.set(key, (map.get(key) ?? 0) + (r.venda ?? 0));
   }
   return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
 }
