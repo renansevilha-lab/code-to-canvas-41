@@ -128,33 +128,37 @@ export const Route = createFileRoute("/pedidos-integrados")({
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes
 
-const STATUS_OPTIONS = [
-  "PROCESSED",
-  "SHIPPED",
-  "READY_TO_SHIP",
-  "TO_CONFIRM_RECEIVE",
-  "UNPAID",
-  "CANCELLED",
-] as const;
+const STATUS_OPTIONS: { value: string; label: string; marketplace: "shopee" | "mercadolivre" }[] = [
+  { value: "PROCESSED", label: "Processando (Shopee)", marketplace: "shopee" },
+  { value: "READY_TO_SHIP", label: "Pronto para envio (Shopee)", marketplace: "shopee" },
+  { value: "SHIPPED", label: "Enviado (Shopee)", marketplace: "shopee" },
+  { value: "TO_CONFIRM_RECEIVE", label: "Aguardando confirmação (Shopee)", marketplace: "shopee" },
+  { value: "COMPLETED", label: "Concluído (Shopee)", marketplace: "shopee" },
+  { value: "PAID", label: "Pago (ML)", marketplace: "mercadolivre" },
+  { value: "PARTIALLY_REFUNDED", label: "Devolução parcial (ML)", marketplace: "mercadolivre" },
+];
 
-const DEFAULT_STATUSES = STATUS_OPTIONS.filter(
-  (s) => s !== "CANCELLED" && s !== "UNPAID",
-);
+const DEFAULT_STATUSES = STATUS_OPTIONS.map((s) => s.value);
 
 const STATUS_COLORS: Record<string, string> = {
   PROCESSED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
   SHIPPED: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30",
   READY_TO_SHIP: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30",
   TO_CONFIRM_RECEIVE: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  COMPLETED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  PAID: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  PARTIALLY_REFUNDED: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
   UNPAID: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
   CANCELLED: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30",
 };
 
-const MARKETPLACES = [
-  { id: "Shopee", label: "Shopee", available: true },
-  { id: "Mercado Livre", label: "Mercado Livre", available: false },
-  { id: "Amazon", label: "Amazon", available: false },
-  { id: "TikTok Shop", label: "TikTok Shop", available: false },
+const STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  STATUS_OPTIONS.map((s) => [s.value, s.label]),
+);
+
+const MARKETPLACES: { id: "shopee" | "mercadolivre"; label: string }[] = [
+  { id: "shopee", label: "Shopee" },
+  { id: "mercadolivre", label: "Mercado Livre" },
 ];
 
 type CoberturaFilter = "todos" | "completo" | "incompletos";
