@@ -128,33 +128,37 @@ export const Route = createFileRoute("/pedidos-integrados")({
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes
 
-const STATUS_OPTIONS = [
-  "PROCESSED",
-  "SHIPPED",
-  "READY_TO_SHIP",
-  "TO_CONFIRM_RECEIVE",
-  "UNPAID",
-  "CANCELLED",
-] as const;
+const STATUS_OPTIONS: { value: string; label: string; marketplace: "shopee" | "mercadolivre" }[] = [
+  { value: "PROCESSED", label: "Processando (Shopee)", marketplace: "shopee" },
+  { value: "READY_TO_SHIP", label: "Pronto para envio (Shopee)", marketplace: "shopee" },
+  { value: "SHIPPED", label: "Enviado (Shopee)", marketplace: "shopee" },
+  { value: "TO_CONFIRM_RECEIVE", label: "Aguardando confirmação (Shopee)", marketplace: "shopee" },
+  { value: "COMPLETED", label: "Concluído (Shopee)", marketplace: "shopee" },
+  { value: "PAID", label: "Pago (ML)", marketplace: "mercadolivre" },
+  { value: "PARTIALLY_REFUNDED", label: "Devolução parcial (ML)", marketplace: "mercadolivre" },
+];
 
-const DEFAULT_STATUSES = STATUS_OPTIONS.filter(
-  (s) => s !== "CANCELLED" && s !== "UNPAID",
-);
+const DEFAULT_STATUSES = STATUS_OPTIONS.map((s) => s.value);
 
 const STATUS_COLORS: Record<string, string> = {
   PROCESSED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
   SHIPPED: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30",
   READY_TO_SHIP: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30",
   TO_CONFIRM_RECEIVE: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  COMPLETED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  PAID: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  PARTIALLY_REFUNDED: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
   UNPAID: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
   CANCELLED: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30",
 };
 
-const MARKETPLACES = [
-  { id: "Shopee", label: "Shopee", available: true },
-  { id: "Mercado Livre", label: "Mercado Livre", available: false },
-  { id: "Amazon", label: "Amazon", available: false },
-  { id: "TikTok Shop", label: "TikTok Shop", available: false },
+const STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  STATUS_OPTIONS.map((s) => [s.value, s.label]),
+);
+
+const MARKETPLACES: { id: "shopee" | "mercadolivre"; label: string }[] = [
+  { id: "shopee", label: "Shopee" },
+  { id: "mercadolivre", label: "Mercado Livre" },
 ];
 
 type CoberturaFilter = "todos" | "completo" | "incompletos";
@@ -181,7 +185,7 @@ function PedidosIntegradosPage() {
     [search.period, search.from, search.to],
   );
 
-  const [marketplaces, setMarketplaces] = useState<string[]>(["Shopee"]);
+  const [marketplaces, setMarketplaces] = useState<string[]>(["shopee", "mercadolivre"]);
   const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
   const [cobertura, setCobertura] = useState<CoberturaFilter>("todos");
   const [searchText, setSearchText] = useState("");
@@ -346,7 +350,7 @@ function PedidosIntegradosPage() {
             <DashboardPeriodFilter value={range} onChange={updatePeriod} />
 
             <MarketplaceFilter value={marketplaces} onChange={setMarketplaces} />
-            <StatusFilter value={statuses} onChange={setStatuses} />
+            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={marketplaces} />
             <CoberturaSegment value={cobertura} onChange={setCobertura} />
 
             <div className="relative ml-auto w-full max-w-xs">
@@ -681,19 +685,11 @@ function MarketplaceFilter({
           <DropdownMenuCheckboxItem
             key={m.id}
             checked={value.includes(m.id)}
-            disabled={!m.available}
             onCheckedChange={(c) => {
-              if (!m.available) return;
               onChange(c ? [...value, m.id] : value.filter((x) => x !== m.id));
             }}
-            className="flex items-center justify-between"
           >
-            <span>{m.label}</span>
-            {!m.available && (
-              <Badge variant="secondary" className="text-[10px] h-4">
-                em breve
-              </Badge>
-            )}
+            {m.label}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>
@@ -704,10 +700,15 @@ function MarketplaceFilter({
 function StatusFilter({
   value,
   onChange,
+  marketplaces,
 }: {
   value: string[];
   onChange: (v: string[]) => void;
+  marketplaces: string[];
 }) {
+  const visible = STATUS_OPTIONS.filter(
+    (s) => marketplaces.length === 0 || marketplaces.includes(s.marketplace),
+  );
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -719,18 +720,18 @@ function StatusFilter({
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Status do pedido</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {STATUS_OPTIONS.map((s) => (
+        {visible.map((s) => (
           <DropdownMenuCheckboxItem
-            key={s}
-            checked={value.includes(s)}
+            key={s.value}
+            checked={value.includes(s.value)}
             onCheckedChange={(c) =>
-              onChange(c ? [...value, s] : value.filter((x) => x !== s))
+              onChange(c ? [...value, s.value] : value.filter((x) => x !== s.value))
             }
           >
-            {s}
+            {s.label}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>
@@ -890,17 +891,27 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
         {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
       </td>
       <td className="px-3 py-2">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px] h-5 px-1.5 font-medium border",
-            STATUS_COLORS[p.status_pedido ?? ""] ?? "",
+        <div className="flex items-center gap-1 flex-wrap">
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px] h-5 px-1.5 font-medium border",
+              STATUS_COLORS[p.status_pedido ?? ""] ?? "",
+            )}
+          >
+            {STATUS_LABELS[p.status_pedido ?? ""] ?? p.status_pedido ?? "—"}
+          </Badge>
+          {p.status_pedido === "PARTIALLY_REFUNDED" && (
+            <Badge
+              variant="outline"
+              className="text-[10px] h-5 px-1.5 font-medium border border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+            >
+              Devolução parcial
+            </Badge>
           )}
-        >
-          {p.status_pedido ?? "—"}
-        </Badge>
+        </div>
       </td>
-      <td className="px-3 py-2 text-xs">{p.marketplace}</td>
+      <td className="px-3 py-2 text-xs">{p.loja_nome ?? p.marketplace}</td>
       <td className="px-3 py-2 max-w-[260px]">
         <div className="truncate text-xs">
           {p.primeiro_produto_nome ?? "—"}
@@ -1196,7 +1207,8 @@ function buildWorstProducts(rows: PedidoIntegrado[]) {
 function buildMarketplaceShare(rows: PedidoIntegrado[]) {
   const map = new Map<string, number>();
   for (const r of rows) {
-    map.set(r.marketplace, (map.get(r.marketplace) ?? 0) + (r.venda ?? 0));
+    const key = r.loja_nome ?? r.marketplace ?? "—";
+    map.set(key, (map.get(key) ?? 0) + (r.venda ?? 0));
   }
   return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
 }
