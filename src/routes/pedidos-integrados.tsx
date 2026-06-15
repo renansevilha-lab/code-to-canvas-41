@@ -685,19 +685,11 @@ function MarketplaceFilter({
           <DropdownMenuCheckboxItem
             key={m.id}
             checked={value.includes(m.id)}
-            disabled={!m.available}
             onCheckedChange={(c) => {
-              if (!m.available) return;
               onChange(c ? [...value, m.id] : value.filter((x) => x !== m.id));
             }}
-            className="flex items-center justify-between"
           >
-            <span>{m.label}</span>
-            {!m.available && (
-              <Badge variant="secondary" className="text-[10px] h-4">
-                em breve
-              </Badge>
-            )}
+            {m.label}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>
@@ -708,10 +700,15 @@ function MarketplaceFilter({
 function StatusFilter({
   value,
   onChange,
+  marketplaces,
 }: {
   value: string[];
   onChange: (v: string[]) => void;
+  marketplaces: string[];
 }) {
+  const visible = STATUS_OPTIONS.filter(
+    (s) => marketplaces.length === 0 || marketplaces.includes(s.marketplace),
+  );
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -723,18 +720,18 @@ function StatusFilter({
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Status do pedido</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {STATUS_OPTIONS.map((s) => (
+        {visible.map((s) => (
           <DropdownMenuCheckboxItem
-            key={s}
-            checked={value.includes(s)}
+            key={s.value}
+            checked={value.includes(s.value)}
             onCheckedChange={(c) =>
-              onChange(c ? [...value, s] : value.filter((x) => x !== s))
+              onChange(c ? [...value, s.value] : value.filter((x) => x !== s.value))
             }
           >
-            {s}
+            {s.label}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>
