@@ -185,7 +185,7 @@ function PedidosIntegradosPage() {
     [search.period, search.from, search.to],
   );
 
-  const [marketplaces, setMarketplaces] = useState<string[]>(["Shopee"]);
+  const [marketplaces, setMarketplaces] = useState<string[]>(["shopee", "mercadolivre"]);
   const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
   const [cobertura, setCobertura] = useState<CoberturaFilter>("todos");
   const [searchText, setSearchText] = useState("");
