@@ -891,17 +891,27 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
         {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
       </td>
       <td className="px-3 py-2">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px] h-5 px-1.5 font-medium border",
-            STATUS_COLORS[p.status_pedido ?? ""] ?? "",
+        <div className="flex items-center gap-1 flex-wrap">
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px] h-5 px-1.5 font-medium border",
+              STATUS_COLORS[p.status_pedido ?? ""] ?? "",
+            )}
+          >
+            {STATUS_LABELS[p.status_pedido ?? ""] ?? p.status_pedido ?? "—"}
+          </Badge>
+          {p.status_pedido === "PARTIALLY_REFUNDED" && (
+            <Badge
+              variant="outline"
+              className="text-[10px] h-5 px-1.5 font-medium border border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+            >
+              Devolução parcial
+            </Badge>
           )}
-        >
-          {p.status_pedido ?? "—"}
-        </Badge>
+        </div>
       </td>
-      <td className="px-3 py-2 text-xs">{p.marketplace}</td>
+      <td className="px-3 py-2 text-xs">{p.loja_nome ?? p.marketplace}</td>
       <td className="px-3 py-2 max-w-[260px]">
         <div className="truncate text-xs">
           {p.primeiro_produto_nome ?? "—"}
