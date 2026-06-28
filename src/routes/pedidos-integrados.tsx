@@ -736,7 +736,7 @@ function PedidosIntegradosPage() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-t">
-                      <td colSpan={14} className="px-3 py-3">
+                      <td colSpan={15} className="px-3 py-3">
                         <Skeleton className="h-6 w-full" />
                       </td>
                     </tr>
