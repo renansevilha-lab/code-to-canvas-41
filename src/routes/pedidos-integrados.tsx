@@ -1420,13 +1420,15 @@ function buildWorstProducts(rows: PedidoIntegrado[]) {
     .slice(0, 10);
 }
 
-function buildMarketplaceShare(rows: PedidoIntegrado[]) {
-  const map = new Map<string, number>();
+function buildMarketplaceShare(rows: PedidoIntegrado[]): { name: string; value: number; marketplace: string | null }[] {
+  const map = new Map<string, { value: number; marketplace: string | null }>();
   for (const r of rows) {
-    const key = r.loja_nome ?? r.marketplace ?? "—";
-    map.set(key, (map.get(key) ?? 0) + (r.venda ?? 0));
+    const key = r.canal ?? r.loja_nome ?? r.marketplace ?? "—";
+    const cur = map.get(key) ?? { value: 0, marketplace: r.marketplace ?? null };
+    cur.value += r.venda ?? 0;
+    map.set(key, cur);
   }
-  return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+  return Array.from(map.entries()).map(([name, v]) => ({ name, value: v.value, marketplace: v.marketplace }));
 }
 
 function buildUfRanking(rows: PedidoIntegrado[]) {
