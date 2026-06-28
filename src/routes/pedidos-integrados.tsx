@@ -435,8 +435,19 @@ function PedidosIntegradosPage() {
           <div className="flex flex-wrap items-center gap-2">
             <DashboardPeriodFilter value={range} onChange={updatePeriod} />
 
-            <MarketplaceFilter value={marketplaces} onChange={setMarketplaces} />
-            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={marketplaces} />
+            <EmpresaFilter value={empresas} options={empresasOptions} onChange={setEmpresas} />
+            <CanalFilter value={canais} options={canaisOptions} onChange={setCanais} />
+            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={selectedMarketplaces} />
+            {(empresas.length > 0 || canais.length > 0) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 text-xs text-muted-foreground"
+                onClick={() => { setEmpresas([]); setCanais([]); }}
+              >
+                Limpar filtros
+              </Button>
+            )}
             <CoberturaSegment value={cobertura} onChange={setCobertura} />
 
             <div className="relative ml-auto w-full max-w-xs">
