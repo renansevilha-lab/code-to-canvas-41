@@ -460,6 +460,37 @@ function PedidosIntegradosPage() {
               />
             </div>
           </div>
+
+          {(empresas.length > 0 || canais.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {empresas.map((e) => (
+                <Badge key={`e-${e}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
+                  <span className="text-muted-foreground">Empresa:</span>
+                  <span className="font-medium">{e}</span>
+                  <button
+                    onClick={() => setEmpresas(empresas.filter((x) => x !== e))}
+                    className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
+                    aria-label={`Remover ${e}`}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+              {canais.map((c) => (
+                <Badge key={`c-${c}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
+                  <MarketplaceDot canal={c} size={8} />
+                  <span className="font-medium">{c}</span>
+                  <button
+                    onClick={() => setCanais(canais.filter((x) => x !== c))}
+                    className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
+                    aria-label={`Remover ${c}`}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         {error && (
