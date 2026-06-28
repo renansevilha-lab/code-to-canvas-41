@@ -719,6 +719,7 @@ function PedidosIntegradosPage() {
                   <th className="text-left font-medium px-3 py-2">Pedido</th>
                   <Th label="Data" k="data_pedido" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <th className="text-left font-medium px-3 py-2">Status</th>
+                  <th className="text-left font-medium px-3 py-2">Empresa</th>
                   <th className="text-left font-medium px-3 py-2">Canal</th>
                   <th className="text-left font-medium px-3 py-2">Produto</th>
                   <th className="text-left font-medium px-3 py-2">UF</th>
