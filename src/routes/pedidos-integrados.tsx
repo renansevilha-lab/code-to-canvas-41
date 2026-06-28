@@ -271,7 +271,7 @@ function PedidosIntegradosPage() {
 
         const baseQuery = (fromI: string, toI: string) =>
           supabaseExternal
-            .from("view_pedidos_integrados")
+            .from("view_margem_pedido_v2")
             .select("*")
             .gte("data_pedido", fromI)
             .lte("data_pedido", toI)
@@ -306,7 +306,7 @@ function PedidosIntegradosPage() {
     (async () => {
       try {
         const { data: rows } = await supabaseExternal
-          .from("view_pedidos_integrados")
+          .from("view_margem_pedido_v2")
           .select("canal, empresa")
           .limit(5000);
         if (cancelled || !rows) return;
