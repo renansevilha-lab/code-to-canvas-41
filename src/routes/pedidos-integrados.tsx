@@ -300,10 +300,52 @@ function PedidosIntegradosPage() {
     };
   }, [range.from, range.to]);
 
+  // Fetch distinct canais (e empresas) — dinâmico
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: rows } = await supabaseExternal
+          .from("view_pedidos_integrados")
+          .select("canal, empresa")
+          .limit(5000);
+        if (cancelled || !rows) return;
+        const cset = new Set<string>();
+        const eset = new Set<string>();
+        for (const r of rows as { canal: string | null; empresa: string | null }[]) {
+          if (r.canal) cset.add(r.canal);
+          if (r.empresa) eset.add(r.empresa);
+        }
+        const cs = [...cset].sort((a, b) => a.localeCompare(b, "pt-BR"));
+        const es = [...eset].sort((a, b) => a.localeCompare(b, "pt-BR"));
+        if (cs.length) setCanaisOptions(cs);
+        if (es.length) setEmpresasOptions(es);
+      } catch { /* silencioso */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Derived selected marketplaces (para o filtro de status)
+  const selectedMarketplaces = useMemo(() => {
+    const set = new Set<string>();
+    const src = canais.length ? canais : canaisOptions;
+    for (const c of src) {
+      const m = marketplaceFromCanal(c);
+      if (m) set.add(m);
+    }
+    return [...set];
+  }, [canais, canaisOptions]);
+
   // filtered
+  const matchesEmpresaCanal = (p: PedidoIntegrado): boolean => {
+    if (empresas.length && (!p.empresa || !empresas.includes(p.empresa))) return false;
+    if (canais.length && (!p.canal || !canais.includes(p.canal))) return false;
+    return true;
+  };
+
   const filtered = useMemo(() => {
     return data.filter((p) => {
-      if (marketplaces.length && !marketplaces.includes(p.marketplace)) return false;
+      if (!matchesEmpresaCanal(p)) return false;
       if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
         return false;
       if (cobertura === "completo" && p.cobertura_cmv !== "completo") return false;
@@ -314,16 +356,18 @@ function PedidosIntegradosPage() {
       }
       return true;
     });
-  }, [data, marketplaces, statuses, cobertura, debounced]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, empresas, canais, statuses, cobertura, debounced]);
 
   const filteredPrev = useMemo(() => {
     return prevData.filter((p) => {
-      if (marketplaces.length && !marketplaces.includes(p.marketplace)) return false;
+      if (!matchesEmpresaCanal(p)) return false;
       if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
         return false;
       return true;
     });
-  }, [prevData, marketplaces, statuses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevData, empresas, canais, statuses]);
 
   // KPIs
   const kpis = useMemo(() => computeKpis(filtered), [filtered]);
