@@ -636,23 +636,41 @@ function PedidosIntegradosPage() {
               ) : marketplaceShare.length === 0 ? (
                 <EmptyChart />
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={marketplaceShare}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={50}
-                      outerRadius={90}
-                      paddingAngle={2}
-                    >
-                      {marketplaceShare.map((_, i) => (
-                        <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="h-full flex flex-col">
+                  <div className="flex-1 min-h-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={marketplaceShare}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={45}
+                          outerRadius={80}
+                          paddingAngle={2}
+                        >
+                          {marketplaceShare.map((entry, i) => (
+                            <Cell
+                              key={i}
+                              fill={
+                                colorForCanal(entry.name, entry.marketplace) ??
+                                DONUT_COLORS[i % DONUT_COLORS.length]
+                              }
+                            />
+                          ))}
+                        </Pie>
+                        <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 pt-2 justify-center text-[11px]">
+                    {marketplaceShare.map((s) => (
+                      <span key={s.name} className="inline-flex items-center gap-1.5">
+                        <MarketplaceDot canal={s.name} marketplace={s.marketplace} size={8} />
+                        <span>{s.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </Card>
