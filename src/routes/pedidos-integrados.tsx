@@ -390,7 +390,7 @@ function PedidosIntegradosPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debounced, marketplaces, statuses, cobertura, range.from, range.to]);
+  }, [debounced, empresas, canais, statuses, cobertura, range.from, range.to]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
