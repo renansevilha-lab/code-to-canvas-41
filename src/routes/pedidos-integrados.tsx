@@ -1103,7 +1103,13 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
           )}
         </div>
       </td>
-      <td className="px-3 py-2 text-xs">{p.loja_nome ?? p.marketplace}</td>
+      <td className="px-3 py-2 text-xs whitespace-nowrap">{p.empresa ?? "—"}</td>
+      <td className="px-3 py-2 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
+          <span>{p.canal ?? p.loja_nome ?? p.marketplace}</span>
+        </span>
+      </td>
       <td className="px-3 py-2 max-w-[260px]">
         <div className="truncate text-xs">
           {p.primeiro_produto_nome ?? "—"}
