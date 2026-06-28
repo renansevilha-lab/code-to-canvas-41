@@ -75,6 +75,8 @@ interface PedidoIntegrado {
   marketplace: string;
   loja_nome: string | null;
   shop_id: number | null;
+  empresa: string | null;
+  canal: string | null;
   data_pedido: string | null;
   data_pagamento_shopee: string | null;
   status_pedido: string | null;
@@ -156,10 +158,28 @@ const STATUS_LABELS: Record<string, string> = Object.fromEntries(
   STATUS_OPTIONS.map((s) => [s.value, s.label]),
 );
 
-const MARKETPLACES: { id: "shopee" | "mercadolivre"; label: string }[] = [
-  { id: "shopee", label: "Shopee" },
-  { id: "mercadolivre", label: "Mercado Livre" },
-];
+const EMPRESAS_FALLBACK: string[] = ["ACZ Pet", "SVL Store"];
+
+const MARKETPLACE_COLORS: Record<string, string> = {
+  shopee: "#EE4D2D",
+  mercadolivre: "#FFE600",
+};
+
+function marketplaceFromCanal(canal: string | null | undefined): "shopee" | "mercadolivre" | null {
+  if (!canal) return null;
+  const c = canal.toLowerCase();
+  if (c.includes("shopee")) return "shopee";
+  if (c.includes("mercado livre") || c.includes("mercadolivre")) return "mercadolivre";
+  return null;
+}
+
+function colorForCanal(canal: string | null | undefined, mk?: string | null): string | null {
+  const m = marketplaceFromCanal(canal) ?? (mk?.toLowerCase() as "shopee" | "mercadolivre" | undefined);
+  return m ? MARKETPLACE_COLORS[m] ?? null : null;
+}
+
+const LS_EMPRESAS = "pi.filtros.empresas";
+const LS_CANAIS = "pi.filtros.canais";
 
 type CoberturaFilter = "todos" | "completo" | "incompletos";
 type SortKey =
@@ -185,11 +205,33 @@ function PedidosIntegradosPage() {
     [search.period, search.from, search.to],
   );
 
-  const [marketplaces, setMarketplaces] = useState<string[]>(["shopee", "mercadolivre"]);
+  const [empresas, setEmpresas] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem(LS_EMPRESAS);
+      if (s) return JSON.parse(s) as string[];
+    } catch { /* noop */ }
+    return [];
+  });
+  const [canais, setCanais] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem(LS_CANAIS);
+      if (s) return JSON.parse(s) as string[];
+    } catch { /* noop */ }
+    return [];
+  });
+  const [canaisOptions, setCanaisOptions] = useState<string[]>([]);
+  const [empresasOptions, setEmpresasOptions] = useState<string[]>(EMPRESAS_FALLBACK);
   const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
   const [cobertura, setCobertura] = useState<CoberturaFilter>("todos");
   const [searchText, setSearchText] = useState("");
   const [debounced, setDebounced] = useState("");
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_EMPRESAS, JSON.stringify(empresas)); } catch { /* noop */ }
+  }, [empresas]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_CANAIS, JSON.stringify(canais)); } catch { /* noop */ }
+  }, [canais]);
 
   const [data, setData] = useState<PedidoIntegrado[]>([]);
   const [prevData, setPrevData] = useState<PedidoIntegrado[]>([]);
@@ -258,10 +300,52 @@ function PedidosIntegradosPage() {
     };
   }, [range.from, range.to]);
 
+  // Fetch distinct canais (e empresas) — dinâmico
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: rows } = await supabaseExternal
+          .from("view_pedidos_integrados")
+          .select("canal, empresa")
+          .limit(5000);
+        if (cancelled || !rows) return;
+        const cset = new Set<string>();
+        const eset = new Set<string>();
+        for (const r of rows as { canal: string | null; empresa: string | null }[]) {
+          if (r.canal) cset.add(r.canal);
+          if (r.empresa) eset.add(r.empresa);
+        }
+        const cs = [...cset].sort((a, b) => a.localeCompare(b, "pt-BR"));
+        const es = [...eset].sort((a, b) => a.localeCompare(b, "pt-BR"));
+        if (cs.length) setCanaisOptions(cs);
+        if (es.length) setEmpresasOptions(es);
+      } catch { /* silencioso */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Derived selected marketplaces (para o filtro de status)
+  const selectedMarketplaces = useMemo(() => {
+    const set = new Set<string>();
+    const src = canais.length ? canais : canaisOptions;
+    for (const c of src) {
+      const m = marketplaceFromCanal(c);
+      if (m) set.add(m);
+    }
+    return [...set];
+  }, [canais, canaisOptions]);
+
   // filtered
+  const matchesEmpresaCanal = (p: PedidoIntegrado): boolean => {
+    if (empresas.length && (!p.empresa || !empresas.includes(p.empresa))) return false;
+    if (canais.length && (!p.canal || !canais.includes(p.canal))) return false;
+    return true;
+  };
+
   const filtered = useMemo(() => {
     return data.filter((p) => {
-      if (marketplaces.length && !marketplaces.includes(p.marketplace)) return false;
+      if (!matchesEmpresaCanal(p)) return false;
       if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
         return false;
       if (cobertura === "completo" && p.cobertura_cmv !== "completo") return false;
@@ -272,16 +356,18 @@ function PedidosIntegradosPage() {
       }
       return true;
     });
-  }, [data, marketplaces, statuses, cobertura, debounced]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, empresas, canais, statuses, cobertura, debounced]);
 
   const filteredPrev = useMemo(() => {
     return prevData.filter((p) => {
-      if (marketplaces.length && !marketplaces.includes(p.marketplace)) return false;
+      if (!matchesEmpresaCanal(p)) return false;
       if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
         return false;
       return true;
     });
-  }, [prevData, marketplaces, statuses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevData, empresas, canais, statuses]);
 
   // KPIs
   const kpis = useMemo(() => computeKpis(filtered), [filtered]);
@@ -304,7 +390,7 @@ function PedidosIntegradosPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debounced, marketplaces, statuses, cobertura, range.from, range.to]);
+  }, [debounced, empresas, canais, statuses, cobertura, range.from, range.to]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -349,8 +435,19 @@ function PedidosIntegradosPage() {
           <div className="flex flex-wrap items-center gap-2">
             <DashboardPeriodFilter value={range} onChange={updatePeriod} />
 
-            <MarketplaceFilter value={marketplaces} onChange={setMarketplaces} />
-            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={marketplaces} />
+            <EmpresaFilter value={empresas} options={empresasOptions} onChange={setEmpresas} />
+            <CanalFilter value={canais} options={canaisOptions} onChange={setCanais} />
+            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={selectedMarketplaces} />
+            {(empresas.length > 0 || canais.length > 0) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 text-xs text-muted-foreground"
+                onClick={() => { setEmpresas([]); setCanais([]); }}
+              >
+                Limpar filtros
+              </Button>
+            )}
             <CoberturaSegment value={cobertura} onChange={setCobertura} />
 
             <div className="relative ml-auto w-full max-w-xs">
@@ -363,6 +460,37 @@ function PedidosIntegradosPage() {
               />
             </div>
           </div>
+
+          {(empresas.length > 0 || canais.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {empresas.map((e) => (
+                <Badge key={`e-${e}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
+                  <span className="text-muted-foreground">Empresa:</span>
+                  <span className="font-medium">{e}</span>
+                  <button
+                    onClick={() => setEmpresas(empresas.filter((x) => x !== e))}
+                    className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
+                    aria-label={`Remover ${e}`}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+              {canais.map((c) => (
+                <Badge key={`c-${c}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
+                  <MarketplaceDot canal={c} size={8} />
+                  <span className="font-medium">{c}</span>
+                  <button
+                    onClick={() => setCanais(canais.filter((x) => x !== c))}
+                    className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
+                    aria-label={`Remover ${c}`}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         {error && (
@@ -422,6 +550,9 @@ function PedidosIntegradosPage() {
             loading={loading}
           />
         </section>
+
+        <EmpresaSubResumo rows={filtered} loading={loading} />
+
 
         {/* Charts */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -505,23 +636,41 @@ function PedidosIntegradosPage() {
               ) : marketplaceShare.length === 0 ? (
                 <EmptyChart />
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={marketplaceShare}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={50}
-                      outerRadius={90}
-                      paddingAngle={2}
-                    >
-                      {marketplaceShare.map((_, i) => (
-                        <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="h-full flex flex-col">
+                  <div className="flex-1 min-h-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={marketplaceShare}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={45}
+                          outerRadius={80}
+                          paddingAngle={2}
+                        >
+                          {marketplaceShare.map((entry, i) => (
+                            <Cell
+                              key={i}
+                              fill={
+                                colorForCanal(entry.name, entry.marketplace) ??
+                                DONUT_COLORS[i % DONUT_COLORS.length]
+                              }
+                            />
+                          ))}
+                        </Pie>
+                        <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 pt-2 justify-center text-[11px]">
+                    {marketplaceShare.map((s) => (
+                      <span key={s.name} className="inline-flex items-center gap-1.5">
+                        <MarketplaceDot canal={s.name} marketplace={s.marketplace} size={8} />
+                        <span>{s.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </Card>
@@ -588,6 +737,7 @@ function PedidosIntegradosPage() {
                   <th className="text-left font-medium px-3 py-2">Pedido</th>
                   <Th label="Data" k="data_pedido" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <th className="text-left font-medium px-3 py-2">Status</th>
+                  <th className="text-left font-medium px-3 py-2">Empresa</th>
                   <th className="text-left font-medium px-3 py-2">Canal</th>
                   <th className="text-left font-medium px-3 py-2">Produto</th>
                   <th className="text-left font-medium px-3 py-2">UF</th>
@@ -604,14 +754,14 @@ function PedidosIntegradosPage() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-t">
-                      <td colSpan={14} className="px-3 py-3">
+                      <td colSpan={15} className="px-3 py-3">
                         <Skeleton className="h-6 w-full" />
                       </td>
                     </tr>
                   ))
                 ) : paged.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={15} className="px-3 py-12 text-center text-sm text-muted-foreground">
                       Nenhum pedido encontrado com os filtros selecionados
                     </td>
                   </tr>
@@ -660,38 +810,98 @@ function PedidosIntegradosPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Subcomponents
 
-function MarketplaceFilter({
+function MarketplaceDot({ canal, marketplace, size = 10 }: { canal?: string | null; marketplace?: string | null; size?: number }) {
+  const color = colorForCanal(canal ?? null, marketplace ?? null);
+  if (!color) return null;
+  return (
+    <span
+      aria-hidden
+      className="inline-block rounded-full shrink-0"
+      style={{ width: size, height: size, backgroundColor: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.08) inset" }}
+    />
+  );
+}
+
+function EmpresaFilter({
   value,
+  options,
   onChange,
 }: {
   value: string[];
+  options: string[];
   onChange: (v: string[]) => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5 bg-card">
-          <span className="font-medium">Marketplace</span>
+          <span className="font-medium">Empresa</span>
           <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-            {value.length}
+            {value.length === 0 ? "Todas" : value.length}
           </Badge>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel>Canais</DropdownMenuLabel>
+        <DropdownMenuLabel>Empresas</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {MARKETPLACES.map((m) => (
+        {options.map((e) => (
           <DropdownMenuCheckboxItem
-            key={m.id}
-            checked={value.includes(m.id)}
+            key={e}
+            checked={value.includes(e)}
             onCheckedChange={(c) => {
-              onChange(c ? [...value, m.id] : value.filter((x) => x !== m.id));
+              onChange(c ? [...value, e] : value.filter((x) => x !== e));
             }}
           >
-            {m.label}
+            {e}
           </DropdownMenuCheckboxItem>
         ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function CanalFilter({
+  value,
+  options,
+  onChange,
+}: {
+  value: string[];
+  options: string[];
+  onChange: (v: string[]) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 bg-card">
+          <span className="font-medium">Canal</span>
+          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+            {value.length === 0 ? "Todos" : value.length}
+          </Badge>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel>Canais</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {options.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">Sem canais</div>
+        ) : (
+          options.map((c) => (
+            <DropdownMenuCheckboxItem
+              key={c}
+              checked={value.includes(c)}
+              onCheckedChange={(chk) => {
+                onChange(chk ? [...value, c] : value.filter((x) => x !== c));
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                <MarketplaceDot canal={c} />
+                {c}
+              </span>
+            </DropdownMenuCheckboxItem>
+          ))
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -911,7 +1121,13 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
           )}
         </div>
       </td>
-      <td className="px-3 py-2 text-xs">{p.loja_nome ?? p.marketplace}</td>
+      <td className="px-3 py-2 text-xs whitespace-nowrap">{p.empresa ?? "—"}</td>
+      <td className="px-3 py-2 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
+          <span>{p.canal ?? p.loja_nome ?? p.marketplace}</span>
+        </span>
+      </td>
       <td className="px-3 py-2 max-w-[260px]">
         <div className="truncate text-xs">
           {p.primeiro_produto_nome ?? "—"}
@@ -1146,6 +1362,71 @@ function Meta({ label, value, className }: { label: string; value: string; class
   );
 }
 
+function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading: boolean }) {
+  const groups = useMemo(() => {
+    const map = new Map<string, { receita: number; margem: number; mcReceita: number }>();
+    for (const r of rows) {
+      const key = r.empresa ?? "—";
+      const g = map.get(key) ?? { receita: 0, margem: 0, mcReceita: 0 };
+      g.receita += r.venda ?? 0;
+      if (r.cobertura_cmv === "completo") {
+        g.margem += r.margem ?? 0;
+        g.mcReceita += r.venda ?? 0;
+      }
+      map.set(key, g);
+    }
+    return Array.from(map.entries())
+      .filter(([k, g]) => k !== "—" && g.receita > 0)
+      .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
+      .map(([empresa, g]) => ({
+        empresa,
+        receita: g.receita,
+        margem: g.margem,
+        mcPct: g.mcReceita > 0 ? g.margem / g.mcReceita : 0,
+      }));
+  }, [rows]);
+
+  if (loading || groups.length === 0) return null;
+
+  return (
+    <Card className="p-4">
+      <h3 className="text-sm font-semibold mb-3">Resumo por empresa</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted-foreground">
+            <tr>
+              <th className="text-left font-medium py-1.5">Empresa</th>
+              <th className="text-right font-medium">Receita</th>
+              <th className="text-right font-medium">Margem</th>
+              <th className="text-right font-medium">MC%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.empresa} className="border-t border-border/50">
+                <td className="py-1.5 font-medium">{g.empresa}</td>
+                <td className="text-right tabular-nums">{formatBRL(g.receita)}</td>
+                <td
+                  className={cn(
+                    "text-right tabular-nums font-medium",
+                    g.margem >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-600 dark:text-red-400",
+                  )}
+                >
+                  {formatBRL(g.margem)}
+                </td>
+                <td className="text-right tabular-nums">{formatPercent(g.mcPct * 100, 1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 
@@ -1204,13 +1485,15 @@ function buildWorstProducts(rows: PedidoIntegrado[]) {
     .slice(0, 10);
 }
 
-function buildMarketplaceShare(rows: PedidoIntegrado[]) {
-  const map = new Map<string, number>();
+function buildMarketplaceShare(rows: PedidoIntegrado[]): { name: string; value: number; marketplace: string | null }[] {
+  const map = new Map<string, { value: number; marketplace: string | null }>();
   for (const r of rows) {
-    const key = r.loja_nome ?? r.marketplace ?? "—";
-    map.set(key, (map.get(key) ?? 0) + (r.venda ?? 0));
+    const key = r.canal ?? r.loja_nome ?? r.marketplace ?? "—";
+    const cur = map.get(key) ?? { value: 0, marketplace: r.marketplace ?? null };
+    cur.value += r.venda ?? 0;
+    map.set(key, cur);
   }
-  return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+  return Array.from(map.entries()).map(([name, v]) => ({ name, value: v.value, marketplace: v.marketplace }));
 }
 
 function buildUfRanking(rows: PedidoIntegrado[]) {
