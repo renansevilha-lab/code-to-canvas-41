@@ -1362,6 +1362,71 @@ function Meta({ label, value, className }: { label: string; value: string; class
   );
 }
 
+function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading: boolean }) {
+  const groups = useMemo(() => {
+    const map = new Map<string, { receita: number; margem: number; mcReceita: number }>();
+    for (const r of rows) {
+      const key = r.empresa ?? "—";
+      const g = map.get(key) ?? { receita: 0, margem: 0, mcReceita: 0 };
+      g.receita += r.venda ?? 0;
+      if (r.cobertura_cmv === "completo") {
+        g.margem += r.margem ?? 0;
+        g.mcReceita += r.venda ?? 0;
+      }
+      map.set(key, g);
+    }
+    return Array.from(map.entries())
+      .filter(([k, g]) => k !== "—" && g.receita > 0)
+      .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
+      .map(([empresa, g]) => ({
+        empresa,
+        receita: g.receita,
+        margem: g.margem,
+        mcPct: g.mcReceita > 0 ? g.margem / g.mcReceita : 0,
+      }));
+  }, [rows]);
+
+  if (loading || groups.length === 0) return null;
+
+  return (
+    <Card className="p-4">
+      <h3 className="text-sm font-semibold mb-3">Resumo por empresa</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted-foreground">
+            <tr>
+              <th className="text-left font-medium py-1.5">Empresa</th>
+              <th className="text-right font-medium">Receita</th>
+              <th className="text-right font-medium">Margem</th>
+              <th className="text-right font-medium">MC%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.empresa} className="border-t border-border/50">
+                <td className="py-1.5 font-medium">{g.empresa}</td>
+                <td className="text-right tabular-nums">{formatBRL(g.receita)}</td>
+                <td
+                  className={cn(
+                    "text-right tabular-nums font-medium",
+                    g.margem >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-600 dark:text-red-400",
+                  )}
+                >
+                  {formatBRL(g.margem)}
+                </td>
+                <td className="text-right tabular-nums">{formatPercent(g.mcPct * 100, 1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 
