@@ -158,10 +158,28 @@ const STATUS_LABELS: Record<string, string> = Object.fromEntries(
   STATUS_OPTIONS.map((s) => [s.value, s.label]),
 );
 
-const MARKETPLACES: { id: "shopee" | "mercadolivre"; label: string }[] = [
-  { id: "shopee", label: "Shopee" },
-  { id: "mercadolivre", label: "Mercado Livre" },
-];
+const EMPRESAS_FALLBACK: string[] = ["ACZ Pet", "SVL Store"];
+
+const MARKETPLACE_COLORS: Record<string, string> = {
+  shopee: "#EE4D2D",
+  mercadolivre: "#FFE600",
+};
+
+function marketplaceFromCanal(canal: string | null | undefined): "shopee" | "mercadolivre" | null {
+  if (!canal) return null;
+  const c = canal.toLowerCase();
+  if (c.includes("shopee")) return "shopee";
+  if (c.includes("mercado livre") || c.includes("mercadolivre")) return "mercadolivre";
+  return null;
+}
+
+function colorForCanal(canal: string | null | undefined, mk?: string | null): string | null {
+  const m = marketplaceFromCanal(canal) ?? (mk?.toLowerCase() as "shopee" | "mercadolivre" | undefined);
+  return m ? MARKETPLACE_COLORS[m] ?? null : null;
+}
+
+const LS_EMPRESAS = "pi.filtros.empresas";
+const LS_CANAIS = "pi.filtros.canais";
 
 type CoberturaFilter = "todos" | "completo" | "incompletos";
 type SortKey =
