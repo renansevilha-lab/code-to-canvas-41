@@ -205,11 +205,33 @@ function PedidosIntegradosPage() {
     [search.period, search.from, search.to],
   );
 
-  const [marketplaces, setMarketplaces] = useState<string[]>(["shopee", "mercadolivre"]);
+  const [empresas, setEmpresas] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem(LS_EMPRESAS);
+      if (s) return JSON.parse(s) as string[];
+    } catch { /* noop */ }
+    return [];
+  });
+  const [canais, setCanais] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem(LS_CANAIS);
+      if (s) return JSON.parse(s) as string[];
+    } catch { /* noop */ }
+    return [];
+  });
+  const [canaisOptions, setCanaisOptions] = useState<string[]>([]);
+  const [empresasOptions, setEmpresasOptions] = useState<string[]>(EMPRESAS_FALLBACK);
   const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
   const [cobertura, setCobertura] = useState<CoberturaFilter>("todos");
   const [searchText, setSearchText] = useState("");
   const [debounced, setDebounced] = useState("");
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_EMPRESAS, JSON.stringify(empresas)); } catch { /* noop */ }
+  }, [empresas]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_CANAIS, JSON.stringify(canais)); } catch { /* noop */ }
+  }, [canais]);
 
   const [data, setData] = useState<PedidoIntegrado[]>([]);
   const [prevData, setPrevData] = useState<PedidoIntegrado[]>([]);
