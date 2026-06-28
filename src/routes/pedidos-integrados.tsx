@@ -757,38 +757,98 @@ function PedidosIntegradosPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Subcomponents
 
-function MarketplaceFilter({
+function MarketplaceDot({ canal, marketplace, size = 10 }: { canal?: string | null; marketplace?: string | null; size?: number }) {
+  const color = colorForCanal(canal ?? null, marketplace ?? null);
+  if (!color) return null;
+  return (
+    <span
+      aria-hidden
+      className="inline-block rounded-full shrink-0"
+      style={{ width: size, height: size, backgroundColor: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.08) inset" }}
+    />
+  );
+}
+
+function EmpresaFilter({
   value,
+  options,
   onChange,
 }: {
   value: string[];
+  options: string[];
   onChange: (v: string[]) => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5 bg-card">
-          <span className="font-medium">Marketplace</span>
+          <span className="font-medium">Empresa</span>
           <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-            {value.length}
+            {value.length === 0 ? "Todas" : value.length}
           </Badge>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel>Canais</DropdownMenuLabel>
+        <DropdownMenuLabel>Empresas</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {MARKETPLACES.map((m) => (
+        {options.map((e) => (
           <DropdownMenuCheckboxItem
-            key={m.id}
-            checked={value.includes(m.id)}
+            key={e}
+            checked={value.includes(e)}
             onCheckedChange={(c) => {
-              onChange(c ? [...value, m.id] : value.filter((x) => x !== m.id));
+              onChange(c ? [...value, e] : value.filter((x) => x !== e));
             }}
           >
-            {m.label}
+            {e}
           </DropdownMenuCheckboxItem>
         ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function CanalFilter({
+  value,
+  options,
+  onChange,
+}: {
+  value: string[];
+  options: string[];
+  onChange: (v: string[]) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 bg-card">
+          <span className="font-medium">Canal</span>
+          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+            {value.length === 0 ? "Todos" : value.length}
+          </Badge>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel>Canais</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {options.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">Sem canais</div>
+        ) : (
+          options.map((c) => (
+            <DropdownMenuCheckboxItem
+              key={c}
+              checked={value.includes(c)}
+              onCheckedChange={(chk) => {
+                onChange(chk ? [...value, c] : value.filter((x) => x !== c));
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                <MarketplaceDot canal={c} />
+                {c}
+              </span>
+            </DropdownMenuCheckboxItem>
+          ))
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
