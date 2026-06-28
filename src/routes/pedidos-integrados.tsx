@@ -551,6 +551,9 @@ function PedidosIntegradosPage() {
           />
         </section>
 
+        <EmpresaSubResumo rows={filtered} loading={loading} />
+
+
         {/* Charts */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-4">
