@@ -743,7 +743,7 @@ function PedidosIntegradosPage() {
                   ))
                 ) : paged.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={15} className="px-3 py-12 text-center text-sm text-muted-foreground">
                       Nenhum pedido encontrado com os filtros selecionados
                     </td>
                   </tr>
