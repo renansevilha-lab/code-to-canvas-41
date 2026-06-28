@@ -75,6 +75,8 @@ interface PedidoIntegrado {
   marketplace: string;
   loja_nome: string | null;
   shop_id: number | null;
+  empresa: string | null;
+  canal: string | null;
   data_pedido: string | null;
   data_pagamento_shopee: string | null;
   status_pedido: string | null;
