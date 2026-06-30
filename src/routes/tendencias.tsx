@@ -1,14 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  Minus,
-  Circle,
-  Search,
-} from "lucide-react";
+import { ArrowUpDown, Circle, Search, ChevronDown } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,22 +30,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, formatBRL } from "@/lib/format";
 
 export const Route = createFileRoute("/tendencias")({
   component: TendenciasPage,
 });
 
 type Janela = "rolling_7d" | "mom";
-type Tendencia =
-  | "subiu"
-  | "caiu"
-  | "estavel"
-  | "sem_comparativo"
-  | "sem_dado_atual";
 
 interface BaseRow {
   empresa: string | null;
@@ -63,11 +49,6 @@ interface BaseRow {
   receita_anterior: number | null;
   margem_atual: number | null;
   margem_anterior: number | null;
-  mc_pct_atual: number | null;
-  mc_pct_anterior: number | null;
-  delta_pp: number | null;
-  delta_pct: number | null;
-  tendencia: Tendencia | string | null;
 }
 interface CategoriaRow extends BaseRow {
   categoria: string;
@@ -87,6 +68,77 @@ const JANELA_LABEL: Record<Janela, string> = {
   mom: "Últimos 30 dias",
 };
 
+const TOLERANCIA_MC_PP = 0.01;
+const TOLERANCIA_RECEITA = 0.05;
+
+type Padrao =
+  | "acelerou"
+  | "otimizou"
+  | "escalou"
+  | "alerta"
+  | "estavel"
+  | "sem_comparativo";
+
+const PADRAO_META: Record<
+  Padrao,
+  { label: string; emoji: string; className: string; tooltip: string }
+> = {
+  acelerou: {
+    label: "Acelerou",
+    emoji: "🚀",
+    className: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 border-emerald-600/30",
+    tooltip: "Margem e receita crescendo juntas. Padrão ideal.",
+  },
+  otimizou: {
+    label: "Otimizou",
+    emoji: "✨",
+    className: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30",
+    tooltip:
+      "Margem maior, mas vendendo menos. Mais lucro por venda, atenção ao volume.",
+  },
+  escalou: {
+    label: "Escalou",
+    emoji: "📦",
+    className: "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30",
+    tooltip:
+      "Vendendo mais, mas com margem menor. Ganho em volume sacrificando margem.",
+  },
+  alerta: {
+    label: "Alerta",
+    emoji: "⚠️",
+    className: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30",
+    tooltip: "Margem e receita caindo juntas. Investigar.",
+  },
+  estavel: {
+    label: "Estável",
+    emoji: "—",
+    className: "bg-muted text-muted-foreground border-border",
+    tooltip: "Margem e receita dentro da tolerância.",
+  },
+  sem_comparativo: {
+    label: "Sem comparativo",
+    emoji: "○",
+    className: "bg-muted text-muted-foreground border-border",
+    tooltip: "Faltam dados do período anterior para comparar.",
+  },
+};
+
+function classifyPadrao(
+  delta_pp: number | null,
+  delta_receita_pct: number | null,
+): Padrao {
+  if (delta_pp == null || delta_receita_pct == null) return "sem_comparativo";
+  const margem_subiu = delta_pp > TOLERANCIA_MC_PP;
+  const margem_caiu = delta_pp < -TOLERANCIA_MC_PP;
+  const receita_subiu = delta_receita_pct > TOLERANCIA_RECEITA;
+  const receita_caiu = delta_receita_pct < -TOLERANCIA_RECEITA;
+  if (margem_subiu && receita_subiu) return "acelerou";
+  if (margem_subiu && receita_caiu) return "otimizou";
+  if (margem_caiu && receita_subiu) return "escalou";
+  if (margem_caiu && receita_caiu) return "alerta";
+  return "estavel";
+}
+
 function fmtPctDecimal(v: number | null | undefined, decimals = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${(v * 100).toFixed(decimals).replace(".", ",")}%`;
@@ -94,7 +146,7 @@ function fmtPctDecimal(v: number | null | undefined, decimals = 2): string {
 function fmtPp(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(1).replace(".", ",")}pp`;
+  return `${sign}${(v * 100).toFixed(1).replace(".", ",")}pp`;
 }
 function fmtDeltaPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -102,46 +154,44 @@ function fmtDeltaPct(v: number | null | undefined): string {
   return `${sign}${(v * 100).toFixed(1).replace(".", ",")}%`;
 }
 
-function TendenciaBadge({ t }: { t: string | null }) {
-  switch (t) {
-    case "subiu":
-      return (
-        <span className="inline-flex items-center gap-1 text-[#10B981]">
-          <ArrowUp className="h-3.5 w-3.5" /> Subiu
-        </span>
-      );
-    case "caiu":
-      return (
-        <span className="inline-flex items-center gap-1 text-[#EF4444]">
-          <ArrowDown className="h-3.5 w-3.5" /> Caiu
-        </span>
-      );
-    case "estavel":
-      return (
-        <span className="inline-flex items-center gap-1 text-[#6B7280]">
-          <Minus className="h-3.5 w-3.5" /> Estável
-        </span>
-      );
-    case "sem_comparativo":
-      return (
-        <span className="inline-flex items-center gap-1 text-muted-foreground">
-          <Circle className="h-3.5 w-3.5" /> Sem comparativo
-        </span>
-      );
-    default:
-      return (
-        <span className="inline-flex items-center gap-1 text-muted-foreground">
-          <Circle className="h-3.5 w-3.5" /> Sem dados
-        </span>
-      );
-  }
-}
-
 function DeltaPp({ v }: { v: number | null | undefined }) {
   if (v == null) return <span className="text-muted-foreground">—</span>;
   const color =
-    v > 0.05 ? "text-[#10B981]" : v < -0.05 ? "text-[#EF4444]" : "text-muted-foreground";
-  return <span className={cn("font-medium", color)}>{fmtPp(v)}</span>;
+    v > 0.0005 ? "text-[#10B981]" : v < -0.0005 ? "text-[#EF4444]" : "text-muted-foreground";
+  return <span className={cn("font-medium tabular-nums", color)}>{fmtPp(v)}</span>;
+}
+
+function DeltaReceita({ v }: { v: number | null | undefined }) {
+  if (v == null) return <span className="text-muted-foreground">—</span>;
+  const color =
+    v > TOLERANCIA_RECEITA
+      ? "text-[#10B981]"
+      : v < -TOLERANCIA_RECEITA
+      ? "text-[#EF4444]"
+      : "text-muted-foreground";
+  return <span className={cn("font-medium tabular-nums", color)}>{fmtDeltaPct(v)}</span>;
+}
+
+function PadraoBadge({ p }: { p: Padrao }) {
+  const meta = PADRAO_META[p];
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap cursor-help",
+              meta.className,
+            )}
+          >
+            <span aria-hidden>{meta.emoji}</span>
+            {meta.label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{meta.tooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 const EMPRESAS_FIXAS = ["ACZ Pet", "SVL Store"];
@@ -198,7 +248,7 @@ function MultiEmpresaFilter({
   );
 }
 
-// ── Aggregation across empresas for top/down + tabela ─────────────────────────
+// ── Aggregation across empresas ───────────────────────────────────────────────
 interface AggRow {
   key: string;
   nome: string;
@@ -212,7 +262,8 @@ interface AggRow {
   mc_pct_anterior: number | null;
   delta_pp: number | null;
   delta_pct: number | null;
-  tendencia: string;
+  delta_receita_pct: number | null;
+  padrao: Padrao;
 }
 
 function aggregateRows<T extends BaseRow>(
@@ -239,7 +290,8 @@ function aggregateRows<T extends BaseRow>(
         mc_pct_anterior: null,
         delta_pp: null,
         delta_pct: null,
-        tendencia: "sem_comparativo",
+        delta_receita_pct: null,
+        padrao: "sem_comparativo",
       };
       map.set(k, agg);
     }
@@ -259,13 +311,12 @@ function aggregateRows<T extends BaseRow>(
         a.mc_pct_anterior !== 0
           ? (a.mc_pct_atual - a.mc_pct_anterior) / Math.abs(a.mc_pct_anterior)
           : null;
-      a.tendencia =
-        a.delta_pp > 0.005 ? "subiu" : a.delta_pp < -0.005 ? "caiu" : "estavel";
-    } else if (a.mc_pct_atual == null) {
-      a.tendencia = "sem_dado_atual";
-    } else {
-      a.tendencia = "sem_comparativo";
     }
+    if (a.receita_anterior > 0) {
+      a.delta_receita_pct =
+        (a.receita_atual - a.receita_anterior) / a.receita_anterior;
+    }
+    a.padrao = classifyPadrao(a.delta_pp, a.delta_receita_pct);
   }
   return Array.from(map.values());
 }
@@ -291,12 +342,18 @@ function TopList({
   direction: "up" | "down";
 }) {
   const filtered = rows.filter((r) => r.delta_pp != null);
-  filtered.sort((a, b) =>
+  // Filtro cruzado de receita
+  const cleaned = filtered.filter((r) => {
+    if (r.delta_receita_pct == null) return true;
+    if (direction === "up") return r.delta_receita_pct >= -TOLERANCIA_RECEITA;
+    return r.delta_receita_pct <= TOLERANCIA_RECEITA;
+  });
+  cleaned.sort((a, b) =>
     direction === "up"
       ? (b.delta_pp ?? 0) - (a.delta_pp ?? 0)
       : (a.delta_pp ?? 0) - (b.delta_pp ?? 0),
   );
-  const top = filtered
+  const top = cleaned
     .filter((r) =>
       direction === "up" ? (r.delta_pp ?? 0) > 0 : (r.delta_pp ?? 0) < 0,
     )
@@ -307,7 +364,8 @@ function TopList({
     <Card className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold">
-          {dot} {title} <span className="text-muted-foreground font-normal">(top 10)</span>
+          {dot} {title}{" "}
+          <span className="text-muted-foreground font-normal">(top 10)</span>
         </h3>
       </div>
       {top.length === 0 ? (
@@ -330,15 +388,22 @@ function TopList({
                     {r.subtitulo}
                   </p>
                 )}
-                <p className="text-[11px] text-muted-foreground">
+                <div className="mt-1">
+                  <PadraoBadge p={r.padrao} />
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
                   {formatNumber(r.pedidos)} pedidos
                 </p>
               </div>
-              <div className="text-right shrink-0">
+              <div className="text-right shrink-0 space-y-0.5">
                 <p className="text-sm font-semibold tabular-nums">
                   {fmtPctDecimal(r.mc_pct_atual)}
                 </p>
                 <DeltaPp v={r.delta_pp} />
+                <p className="text-xs tabular-nums text-muted-foreground">
+                  {formatBRL(r.receita_atual, { compact: true })}
+                </p>
+                <DeltaReceita v={r.delta_receita_pct} />
               </div>
             </div>
           ))}
@@ -348,7 +413,26 @@ function TopList({
   );
 }
 
-type SortKey = "nome" | "pedidos" | "mc_atual" | "mc_anterior" | "delta_pp" | "delta_pct";
+type SortKey =
+  | "nome"
+  | "pedidos"
+  | "mc_atual"
+  | "mc_anterior"
+  | "delta_pp"
+  | "delta_pct"
+  | "receita_atual"
+  | "delta_receita_pct"
+  | "padrao";
+
+const PADRAO_ORDER: Record<Padrao, number> = {
+  acelerou: 5,
+  otimizou: 4,
+  escalou: 3,
+  estavel: 2,
+  alerta: 1,
+  sem_comparativo: 0,
+};
+
 const PAGE_SIZE = 25;
 
 function FullTable({
@@ -385,9 +469,15 @@ function FullTable({
           case "mc_anterior":
             return r.mc_pct_anterior ?? -Infinity;
           case "delta_pp":
-            return r.delta_pp ?? Infinity; // null vai pro fim em asc
+            return r.delta_pp ?? Infinity;
           case "delta_pct":
             return r.delta_pct ?? Infinity;
+          case "receita_atual":
+            return r.receita_atual;
+          case "delta_receita_pct":
+            return r.delta_receita_pct ?? Infinity;
+          case "padrao":
+            return PADRAO_ORDER[r.padrao];
         }
       };
       const va = getter(a);
@@ -410,12 +500,25 @@ function FullTable({
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(k);
-      setSortDir(k === "nome" ? "asc" : "asc");
+      setSortDir("asc");
     }
   };
 
-  const Th = ({ k, children, align = "left" }: { k: SortKey; children: React.ReactNode; align?: "left" | "right" }) => (
-    <th className={cn("px-3 py-2 text-xs font-medium text-muted-foreground", align === "right" && "text-right")}>
+  const Th = ({
+    k,
+    children,
+    align = "left",
+  }: {
+    k: SortKey;
+    children: React.ReactNode;
+    align?: "left" | "right";
+  }) => (
+    <th
+      className={cn(
+        "px-3 py-2 text-xs font-medium text-muted-foreground",
+        align === "right" && "text-right",
+      )}
+    >
       <button
         type="button"
         onClick={() => toggleSort(k)}
@@ -448,31 +551,52 @@ function FullTable({
           <thead className="border-b">
             <tr>
               <Th k="nome">Nome</Th>
-              <Th k="pedidos" align="right">Pedidos</Th>
-              <Th k="mc_atual" align="right">MC% Atual</Th>
-              <Th k="mc_anterior" align="right">MC% Anterior</Th>
-              <Th k="delta_pp" align="right">Δpp</Th>
-              <Th k="delta_pct" align="right">Δ%</Th>
-              <th className="px-3 py-2 text-xs font-medium text-muted-foreground">Tendência</th>
+              <Th k="pedidos" align="right">
+                Pedidos
+              </Th>
+              <Th k="mc_atual" align="right">
+                MC% Atual
+              </Th>
+              <Th k="mc_anterior" align="right">
+                MC% Anterior
+              </Th>
+              <Th k="delta_pp" align="right">
+                Δpp
+              </Th>
+              <Th k="receita_atual" align="right">
+                Receita Atual
+              </Th>
+              <Th k="delta_receita_pct" align="right">
+                Δ Receita
+              </Th>
+              <Th k="padrao">Padrão</Th>
             </tr>
           </thead>
           <tbody>
             {pageRows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  Nenhum dado disponível para esse filtro. Verifique se há pedidos
-                  suficientes (mínimo 10) no período selecionado.
+                <td
+                  colSpan={8}
+                  className="px-3 py-8 text-center text-sm text-muted-foreground"
+                >
+                  Nenhum dado disponível para esse filtro. Verifique se há
+                  pedidos suficientes (mínimo 10) no período selecionado.
                 </td>
               </tr>
             ) : (
               pageRows.map((r) => (
-                <tr key={r.key} className="border-b last:border-0 hover:bg-muted/30">
+                <tr
+                  key={r.key}
+                  className="border-b last:border-0 hover:bg-muted/30"
+                >
                   <td className="px-3 py-2 max-w-md">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <p className="font-medium truncate">
-                            {r.nome.length > 50 ? r.nome.slice(0, 50) + "…" : r.nome}
+                            {r.nome.length > 50
+                              ? r.nome.slice(0, 50) + "…"
+                              : r.nome}
                           </p>
                         </TooltipTrigger>
                         {r.nome.length > 50 && (
@@ -486,19 +610,32 @@ function FullTable({
                       </p>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatNumber(r.pedidos)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmtPctDecimal(r.mc_pct_atual)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {formatNumber(r.pedidos)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmtPctDecimal(r.mc_pct_atual)}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                     {fmtPctDecimal(r.mc_pct_anterior)}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     <DeltaPp v={r.delta_pp} />
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                    {fmtDeltaPct(r.delta_pct)}
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {formatBRL(r.receita_atual)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    <DeltaReceita v={r.delta_receita_pct} />
                   </td>
                   <td className="px-3 py-2">
-                    <TendenciaBadge t={r.tendencia} />
+                    {r.padrao === "sem_comparativo" ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Circle className="h-3 w-3" /> Sem comparativo
+                      </span>
+                    ) : (
+                      <PadraoBadge p={r.padrao} />
+                    )}
                   </td>
                 </tr>
               ))
@@ -566,14 +703,25 @@ function SectionContent({
 function TendenciasPage() {
   const [empresas, setEmpresas] = useState<string[]>([]);
   const [janela, setJanela] = useState<Janela>("rolling_7d");
-  const [tab, setTab] = useState<"categoria" | "marca" | "produto">("categoria");
+  const [tab, setTab] = useState<"categoria" | "marca" | "produto">(
+    "categoria",
+  );
 
-  const cat = useViewRows<CategoriaRow>("view_tendencia_categoria", empresas, janela);
+  const cat = useViewRows<CategoriaRow>(
+    "view_tendencia_categoria",
+    empresas,
+    janela,
+  );
   const mar = useViewRows<MarcaRow>("view_tendencia_marca", empresas, janela);
-  const pro = useViewRows<ProdutoRow>("view_tendencia_produto", empresas, janela);
+  const pro = useViewRows<ProdutoRow>(
+    "view_tendencia_produto",
+    empresas,
+    janela,
+  );
 
   const catAgg = useMemo(
-    () => aggregateRows(cat.data ?? [], (r) => r.categoria, (r) => r.categoria),
+    () =>
+      aggregateRows(cat.data ?? [], (r) => r.categoria, (r) => r.categoria),
     [cat.data],
   );
   const marAgg = useMemo(
@@ -597,7 +745,7 @@ function TendenciasPage() {
       <div>
         <h1 className="text-2xl font-semibold">Tendências de Margem</h1>
         <p className="text-sm text-muted-foreground">
-          Variação de MC% no período comparado ao anterior
+          Variação de MC% e receita no período comparado ao anterior
         </p>
       </div>
 
@@ -641,19 +789,25 @@ function TendenciasPage() {
         <TabsContent value="categoria" className="mt-4">
           <SectionContent rows={catAgg} isLoading={cat.isLoading} />
           {cat.error && (
-            <p className="text-sm text-destructive mt-2">{(cat.error as Error).message}</p>
+            <p className="text-sm text-destructive mt-2">
+              {(cat.error as Error).message}
+            </p>
           )}
         </TabsContent>
         <TabsContent value="marca" className="mt-4">
           <SectionContent rows={marAgg} isLoading={mar.isLoading} />
           {mar.error && (
-            <p className="text-sm text-destructive mt-2">{(mar.error as Error).message}</p>
+            <p className="text-sm text-destructive mt-2">
+              {(mar.error as Error).message}
+            </p>
           )}
         </TabsContent>
         <TabsContent value="produto" className="mt-4">
           <SectionContent rows={proAgg} showSubtitle isLoading={pro.isLoading} />
           {pro.error && (
-            <p className="text-sm text-destructive mt-2">{(pro.error as Error).message}</p>
+            <p className="text-sm text-destructive mt-2">
+              {(pro.error as Error).message}
+            </p>
           )}
         </TabsContent>
       </Tabs>
