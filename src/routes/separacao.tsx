@@ -759,6 +759,3 @@ function SeparacaoPage() {
     </div>
   );
 }
-
-  );
-}
