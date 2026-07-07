@@ -417,22 +417,14 @@ function SeparacaoPage() {
   }
 
   async function atualizarFila() {
-    setSyncing(true);
     try {
-      const res = await fetch(
-        "https://vhogjofsxyhnyxdyglmq.supabase.co/functions/v1/tiny-separacao?modulo=sync&max=200",
-        { method: "POST" },
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success("Fila sincronizada");
       await qc.invalidateQueries({ queryKey: ["separacao"] });
       await refetch();
+      toast.success("Fila atualizada");
     } catch (e) {
       toast.error("Erro ao atualizar fila", {
         description: (e as Error).message,
       });
-    } finally {
-      setSyncing(false);
     }
   }
 
