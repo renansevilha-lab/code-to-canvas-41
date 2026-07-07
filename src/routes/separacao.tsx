@@ -309,7 +309,6 @@ function SeparacaoPage() {
   const qc = useQueryClient();
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [busca, setBusca] = useState("");
-  const [syncing, setSyncing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const enviosDisponiveis = useMemo(() => {
@@ -417,22 +416,14 @@ function SeparacaoPage() {
   }
 
   async function atualizarFila() {
-    setSyncing(true);
     try {
-      const res = await fetch(
-        "https://vhogjofsxyhnyxdyglmq.supabase.co/functions/v1/tiny-separacao?modulo=sync&max=200",
-        { method: "POST" },
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success("Fila sincronizada");
       await qc.invalidateQueries({ queryKey: ["separacao"] });
       await refetch();
+      toast.success("Fila atualizada");
     } catch (e) {
       toast.error("Erro ao atualizar fila", {
         description: (e as Error).message,
       });
-    } finally {
-      setSyncing(false);
     }
   }
 
@@ -448,8 +439,8 @@ function SeparacaoPage() {
             Fila de pedidos aguardando separação no galpão (Full excluído).
           </p>
         </div>
-        <Button onClick={atualizarFila} disabled={syncing || isFetching} variant="outline">
-          <RefreshCw className={cn("h-4 w-4 mr-2", (syncing || isFetching) && "animate-spin")} />
+        <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
+          <RefreshCw className={cn("h-4 w-4 mr-2", isFetching && "animate-spin")} />
           Atualizar fila
         </Button>
       </div>
