@@ -309,7 +309,6 @@ function SeparacaoPage() {
   const qc = useQueryClient();
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [busca, setBusca] = useState("");
-  const [syncing, setSyncing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const enviosDisponiveis = useMemo(() => {
@@ -440,8 +439,8 @@ function SeparacaoPage() {
             Fila de pedidos aguardando separação no galpão (Full excluído).
           </p>
         </div>
-        <Button onClick={atualizarFila} disabled={syncing || isFetching} variant="outline">
-          <RefreshCw className={cn("h-4 w-4 mr-2", (syncing || isFetching) && "animate-spin")} />
+        <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
+          <RefreshCw className={cn("h-4 w-4 mr-2", isFetching && "animate-spin")} />
           Atualizar fila
         </Button>
       </div>
