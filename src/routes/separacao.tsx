@@ -9,6 +9,7 @@ import {
   Search,
   Check,
   Boxes as BoxesIcon,
+  ImageOff,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -16,11 +17,235 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatNumber } from "@/lib/format";
+
+interface PriorizadaRow {
+  prioridade: number;
+  ordem_envio: number;
+  tipo_envio: string | null;
+  sku: string | null;
+  nome_produto: string | null;
+  qtd_unidades: number | null;
+  qtd_pedidos: number | null;
+  total_unidades: number | null;
+  tag_sugerida: string | null;
+  foto_capa: string | null;
+}
+
+function usePriorizadaRows() {
+  return useQuery({
+    queryKey: ["separacao", "view_separacao_priorizada"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_priorizada")
+        .select("*")
+        .order("prioridade", { ascending: true })
+        .limit(5000);
+      if (error) throw error;
+      return (data ?? []) as PriorizadaRow[];
+    },
+  });
+}
+
+const ENVIO_HEADER: Record<
+  string,
+  { bg: string; text: string; label: string; icon?: boolean }
+> = {
+  ER: { bg: "#EF4444", text: "#FFFFFF", label: "ENTREGA RÁPIDA (ER) — PRIORIDADE", icon: true },
+  SPX: { bg: "#EE4D2D", text: "#FFFFFF", label: "SHOPEE EXPRESS (SPX)" },
+  ML: { bg: "#FFE600", text: "#111827", label: "MERCADO LIVRE (ML)" },
+};
+
+function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="w-20 h-20 rounded-md bg-muted flex flex-col items-center justify-center text-muted-foreground shrink-0">
+        <ImageOff className="h-5 w-5" />
+        <span className="text-[9px] mt-0.5">sem foto</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="w-20 h-20 rounded-md object-cover bg-muted shrink-0"
+    />
+  );
+}
+
+function FilaPriorizada() {
+  const { data: rows, isLoading, error } = usePriorizadaRows();
+
+  const grupos = useMemo(() => {
+    const map = new Map<
+      string,
+      { tipo_envio: string; ordem: number; items: PriorizadaRow[] }
+    >();
+    for (const r of rows ?? []) {
+      const key = r.tipo_envio ?? "—";
+      const cur = map.get(key);
+      if (cur) cur.items.push(r);
+      else map.set(key, { tipo_envio: key, ordem: r.ordem_envio ?? 99, items: [r] });
+    }
+    return Array.from(map.values()).sort((a, b) => a.ordem - b.ordem);
+  }, [rows]);
+
+  const totais = useMemo(() => {
+    const list = rows ?? [];
+    return {
+      etiquetas: list.length,
+      pedidos: list.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0),
+      unidades: list.reduce((s, r) => s + Number(r.total_unidades ?? 0), 0),
+    };
+  }, [rows]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="p-4 border-destructive text-destructive text-sm">
+        Erro ao carregar fila priorizada: {(error as Error).message}
+      </Card>
+    );
+  }
+
+  if ((rows?.length ?? 0) === 0) {
+    return (
+      <Card className="p-12 text-center">
+        <PackageCheck className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+        <p className="text-muted-foreground">Fila vazia. Nada pra separar.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Resumo */}
+      <Card className="p-4">
+        <div className="text-sm">
+          <span className="font-semibold">Total:</span>{" "}
+          {formatNumber(totais.etiquetas)} etiquetas ·{" "}
+          {formatNumber(totais.pedidos)} pedidos ·{" "}
+          {formatNumber(totais.unidades)} unidades
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {grupos.map((g) => {
+            const cfg = ENVIO_HEADER[g.tipo_envio];
+            const pedidos = g.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0);
+            return (
+              <span
+                key={g.tipo_envio}
+                className="text-xs font-medium px-2.5 py-1 rounded-full"
+                style={{
+                  backgroundColor: cfg?.bg ?? "#E5E7EB",
+                  color: cfg?.text ?? "#111827",
+                }}
+              >
+                {g.tipo_envio}: {formatNumber(pedidos)}
+              </span>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Blocos */}
+      {grupos.map((g) => {
+        const cfg = ENVIO_HEADER[g.tipo_envio];
+        const bg = cfg?.bg ?? "#6B7280";
+        const color = cfg?.text ?? "#FFFFFF";
+        const label = cfg?.label ?? g.tipo_envio;
+        const etiquetas = g.items.length;
+        const pedidos = g.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0);
+        const unidades = g.items.reduce(
+          (s, r) => s + Number(r.total_unidades ?? 0),
+          0,
+        );
+        return (
+          <div key={g.tipo_envio} className="space-y-2">
+            <div
+              className="rounded-md px-4 py-3 flex items-center justify-between gap-4"
+              style={{ backgroundColor: bg, color }}
+            >
+              <div className="flex items-center gap-2 font-semibold text-sm md:text-base">
+                {cfg?.icon && <Zap className="h-4 w-4" />}
+                {label}
+              </div>
+              <div className="text-xs md:text-sm opacity-90">
+                {formatNumber(etiquetas)} etiquetas · {formatNumber(pedidos)} pedidos ·{" "}
+                {formatNumber(unidades)} unidades
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              {g.items.map((item) => {
+                const isER = item.tipo_envio === "ER";
+                return (
+                  <Card
+                    key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}
+                    className={cn(
+                      "p-3 flex items-center gap-4",
+                      isER && "border-destructive/40",
+                    )}
+                  >
+                    <div className="text-2xl md:text-3xl font-bold text-muted-foreground w-14 text-center tabular-nums shrink-0">
+                      #{item.prioridade}
+                    </div>
+                    <ProdutoFoto src={item.foto_capa} alt={item.sku ?? "produto"} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono text-sm md:text-base font-semibold">
+                        {item.tag_sugerida ?? "—"}
+                      </div>
+                      <div
+                        className="text-sm text-muted-foreground truncate"
+                        title={item.nome_produto ?? ""}
+                      >
+                        {item.nome_produto ?? "—"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div
+                        className={cn(
+                          "px-4 py-2 rounded-lg font-bold text-lg md:text-xl tabular-nums",
+                          isER
+                            ? "bg-destructive text-destructive-foreground"
+                            : "bg-primary text-primary-foreground",
+                        )}
+                      >
+                        SEPARAR {formatNumber(item.qtd_pedidos ?? 0)}x
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground w-20">
+                        <div className="font-semibold text-sm text-foreground tabular-nums">
+                          {formatNumber(Number(item.total_unidades ?? 0))}
+                        </div>
+                        unidades
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/separacao")({
   component: SeparacaoPage,
