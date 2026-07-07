@@ -454,8 +454,20 @@ function SeparacaoPage() {
         </Button>
       </div>
 
+      <Tabs defaultValue="priorizada" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="priorizada">Fila Priorizada</TabsTrigger>
+          <TabsTrigger value="detalhado">Detalhado</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="priorizada" className="space-y-4 mt-2">
+          <FilaPriorizada />
+        </TabsContent>
+
+        <TabsContent value="detalhado" className="space-y-6 mt-2">
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+
         <Card className="p-4">
           <div className="text-xs text-muted-foreground uppercase tracking-wide">
             Total a separar
