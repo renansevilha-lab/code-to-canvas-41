@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
+import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
@@ -32,6 +33,11 @@ const VendasRoute = VendasRouteImport.update({
 const TendenciasRoute = TendenciasRouteImport.update({
   id: '/tendencias',
   path: '/tendencias',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SeparacaoRoute = SeparacaoRouteImport.update({
+  id: '/separacao',
+  path: '/separacao',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResultadoRoute = ResultadoRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
+  '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
+  '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/resultado': typeof ResultadoRoute
+  '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
+    | '/separacao'
     | '/tendencias'
     | '/vendas'
     | '/api/public/shopee/callback'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
+    | '/separacao'
     | '/tendencias'
     | '/vendas'
     | '/api/public/shopee/callback'
@@ -190,6 +201,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/resultado'
+    | '/separacao'
     | '/tendencias'
     | '/vendas'
     | '/api/public/shopee/callback'
@@ -207,6 +219,7 @@ export interface RootRouteChildren {
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
   ResultadoRoute: typeof ResultadoRoute
+  SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
   VendasRoute: typeof VendasRoute
   ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
@@ -226,6 +239,13 @@ declare module '@tanstack/react-router' {
       path: '/tendencias'
       fullPath: '/tendencias'
       preLoaderRoute: typeof TendenciasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/separacao': {
+      id: '/separacao'
+      path: '/separacao'
+      fullPath: '/separacao'
+      preLoaderRoute: typeof SeparacaoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/resultado': {
@@ -327,6 +347,7 @@ const rootRouteChildren: RootRouteChildren = {
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
   ResultadoRoute: ResultadoRoute,
+  SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,
   VendasRoute: VendasRoute,
   ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
