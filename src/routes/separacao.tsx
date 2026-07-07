@@ -520,11 +520,3 @@ function SeparacaoPage() {
     </div>
   );
 }
-
-// unused import guard
-void DropdownMenu;
-void DropdownMenuCheckboxItem;
-void DropdownMenuContent;
-void DropdownMenuLabel;
-void DropdownMenuSeparator;
-void DropdownMenuTrigger;
