@@ -754,6 +754,11 @@ function SeparacaoPage() {
           <Skeleton className="h-64 w-full" />
         </div>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
+  );
+}
+
   );
 }
