@@ -10,7 +10,9 @@ import {
   Receipt,
   ClipboardList,
   Boxes,
+  PackageCheck,
 } from "lucide-react";
+
 
 import {
   Sidebar,
