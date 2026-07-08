@@ -56,6 +56,130 @@ function usePriorizadaRows() {
   });
 }
 
+interface SeparacaoTotais {
+  id: number;
+  aguardando_separacao: number | null;
+  em_separacao: number | null;
+  separadas_hoje: number | null;
+  embaladas_hoje: number | null;
+  atualizado_em: string | null;
+}
+
+function useSeparacaoTotais() {
+  return useQuery({
+    queryKey: ["separacao", "separacao_totais"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("separacao_totais")
+        .select("*")
+        .eq("id", 1)
+        .single();
+      if (error) throw error;
+      return data as SeparacaoTotais;
+    },
+  });
+}
+
+function tempoRelativo(iso: string | null): string {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  if (!Number.isFinite(then)) return "—";
+  const diffMin = Math.floor(Math.max(0, now - then) / 60000);
+  if (diffMin < 1) return "agora mesmo";
+  if (diffMin === 1) return "1 minuto";
+  if (diffMin < 60) return `${diffMin} minutos`;
+  const h = Math.floor(diffMin / 60);
+  if (h === 1) return "1 hora";
+  if (h < 24) return `${h} horas`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return "1 dia";
+  return `${d} dias`;
+}
+
+function SeparacaoTotaisCards() {
+  const { data, isLoading, error } = useSeparacaoTotais();
+
+  const cards = [
+    {
+      key: "aguardando",
+      label: "Aguardando separação",
+      value: data?.aguardando_separacao ?? 0,
+      icon: Hourglass,
+      bg: "bg-blue-50 dark:bg-blue-950/30",
+      text: "text-blue-700 dark:text-blue-300",
+      border: "border-blue-200 dark:border-blue-900",
+    },
+    {
+      key: "em_separacao",
+      label: "Em separação",
+      value: data?.em_separacao ?? 0,
+      icon: Loader2,
+      bg: "bg-amber-50 dark:bg-amber-950/30",
+      text: "text-amber-700 dark:text-amber-300",
+      border: "border-amber-200 dark:border-amber-900",
+    },
+    {
+      key: "separadas_hoje",
+      label: "Separadas hoje",
+      value: data?.separadas_hoje ?? 0,
+      icon: CheckCircle2,
+      bg: "bg-green-50 dark:bg-green-950/30",
+      text: "text-green-700 dark:text-green-300",
+      border: "border-green-200 dark:border-green-900",
+    },
+    {
+      key: "embaladas_hoje",
+      label: "Embaladas hoje",
+      value: data?.embaladas_hoje ?? 0,
+      icon: Package,
+      bg: "bg-emerald-50 dark:bg-emerald-950/40",
+      text: "text-emerald-800 dark:text-emerald-300",
+      border: "border-emerald-200 dark:border-emerald-900",
+    },
+  ];
+
+  if (error) {
+    return (
+      <Card className="p-3 border-destructive text-destructive text-xs">
+        Erro ao carregar totais: {(error as Error).message}
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {cards.map((c) => (
+          <Card
+            key={c.key}
+            className={cn("p-4 border", c.bg, c.border)}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={cn("text-xs font-medium truncate", c.text)}>
+                  {c.label}
+                </p>
+                {isLoading ? (
+                  <Skeleton className="h-8 w-16 mt-1" />
+                ) : (
+                  <p className={cn("text-2xl font-semibold tabular-nums mt-1", c.text)}>
+                    {formatNumber(c.value)}
+                  </p>
+                )}
+              </div>
+              <c.icon className={cn("h-5 w-5 shrink-0", c.text)} />
+            </div>
+          </Card>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Atualizado há {tempoRelativo(data?.atualizado_em ?? null)}
+      </p>
+    </div>
+  );
+}
+
 const ENVIO_HEADER: Record<
   string,
   { bg: string; text: string; label: string; icon?: boolean }
