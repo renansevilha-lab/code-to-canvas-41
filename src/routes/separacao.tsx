@@ -10,6 +10,10 @@ import {
   Check,
   Boxes as BoxesIcon,
   ImageOff,
+  Hourglass,
+  Loader2,
+  CheckCircle2,
+  Package,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
