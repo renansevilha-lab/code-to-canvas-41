@@ -30,6 +30,7 @@ import { formatNumber } from "@/lib/format";
 
 interface PriorizadaRow {
   prioridade: number;
+  tipo_grupo: string | null;
   ordem_envio: number;
   tipo_envio: string | null;
   sku: string | null;
@@ -52,6 +53,21 @@ function usePriorizadaRows() {
         .limit(5000);
       if (error) throw error;
       return (data ?? []) as PriorizadaRow[];
+    },
+  });
+}
+
+function useFullCount() {
+  return useQuery({
+    queryKey: ["separacao", "full_count"],
+    queryFn: async () => {
+      const { count, error } = await supabaseExternal
+        .from("pedidos_tiny")
+        .select("*", { count: "exact", head: true })
+        .or("marca_canal.ilike.*Fulfillment*,marca_canal.ilike.*Full*")
+        .in("situacao", ["preparando_envio", "aprovada"]);
+      if (error) return 0;
+      return count ?? 0;
     },
   });
 }
@@ -212,29 +228,76 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 
 function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
+  const { data: fullCount } = useFullCount();
+  const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
+  const [buscaSku, setBuscaSku] = useState("");
+
+  const enviosDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    (rows ?? []).forEach((r) => r.tipo_envio && set.add(r.tipo_envio));
+    return Array.from(set).sort((a, b) => {
+      if (a === "ER") return -1;
+      if (b === "ER") return 1;
+      return a.localeCompare(b);
+    });
+  }, [rows]);
+
+  const enviosAtivos = selectedEnvios ?? enviosDisponiveis;
+  const enviosAtivosSet = useMemo(() => new Set(enviosAtivos), [enviosAtivos]);
+
+  function toggleEnvio(env: string) {
+    const base = selectedEnvios ?? enviosDisponiveis;
+    if (base.includes(env)) {
+      setSelectedEnvios(base.filter((e) => e !== env));
+    } else {
+      setSelectedEnvios([...base, env]);
+    }
+  }
+
+  const filteredRows = useMemo(() => {
+    const q = buscaSku.trim().toLowerCase();
+    return (rows ?? []).filter((r) => {
+      if (r.tipo_envio && !enviosAtivosSet.has(r.tipo_envio)) return false;
+      if (q) {
+        const hit =
+          (r.sku ?? "").toLowerCase().includes(q) ||
+          (r.nome_produto ?? "").toLowerCase().includes(q);
+        if (!hit) return false;
+      }
+      return true;
+    });
+  }, [rows, enviosAtivosSet, buscaSku]);
+
+  const unitarios = useMemo(
+    () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
+    [filteredRows],
+  );
+  const multis = useMemo(
+    () => filteredRows.filter((r) => r.tipo_grupo === "multi"),
+    [filteredRows],
+  );
 
   const grupos = useMemo(() => {
     const map = new Map<
       string,
       { tipo_envio: string; ordem: number; items: PriorizadaRow[] }
     >();
-    for (const r of rows ?? []) {
+    for (const r of unitarios) {
       const key = r.tipo_envio ?? "—";
       const cur = map.get(key);
       if (cur) cur.items.push(r);
       else map.set(key, { tipo_envio: key, ordem: r.ordem_envio ?? 99, items: [r] });
     }
     return Array.from(map.values()).sort((a, b) => a.ordem - b.ordem);
-  }, [rows]);
+  }, [unitarios]);
 
   const totais = useMemo(() => {
-    const list = rows ?? [];
     return {
-      etiquetas: list.length,
-      pedidos: list.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0),
-      unidades: list.reduce((s, r) => s + Number(r.total_unidades ?? 0), 0),
+      tags: filteredRows.length,
+      pedidos: filteredRows.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0),
+      unidades: filteredRows.reduce((s, r) => s + Number(r.total_unidades ?? 0), 0),
     };
-  }, [rows]);
+  }, [filteredRows]);
 
   if (isLoading) {
     return (
@@ -267,14 +330,14 @@ function FilaPriorizada() {
       <SeparacaoTotaisCards />
 
       {/* Resumo */}
-      <Card className="p-4">
+      <Card className="p-4 space-y-3">
         <div className="text-sm">
           <span className="font-semibold">Total:</span>{" "}
-          {formatNumber(totais.etiquetas)} etiquetas ·{" "}
+          {formatNumber(totais.tags)} TAGs ·{" "}
           {formatNumber(totais.pedidos)} pedidos ·{" "}
           {formatNumber(totais.unidades)} unidades
         </div>
-        <div className="flex flex-wrap gap-2 mt-3">
+        <div className="flex flex-wrap items-center gap-2">
           {grupos.map((g) => {
             const cfg = ENVIO_HEADER[g.tipo_envio];
             const pedidos = g.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0);
@@ -291,16 +354,86 @@ function FilaPriorizada() {
               </span>
             );
           })}
+          {multis.length > 0 && (
+            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300">
+              MULTI: {formatNumber(multis.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0))}
+            </span>
+          )}
+          {fullCount != null && fullCount > 0 && (
+            <>
+              <span className="text-muted-foreground text-xs mx-1">|</span>
+              <span
+                className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-dashed"
+                title="Full é separado pelo marketplace, não no galpão"
+              >
+                Full (não separado aqui): {formatNumber(fullCount)} pedidos
+              </span>
+            </>
+          )}
         </div>
       </Card>
 
-      {/* Blocos */}
+      {/* Filtros */}
+      <Card className="p-3 space-y-3">
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted-foreground mr-1">Envio:</span>
+          <Button
+            size="sm"
+            variant={
+              selectedEnvios === null ||
+              selectedEnvios.length === enviosDisponiveis.length
+                ? "default"
+                : "outline"
+            }
+            onClick={() => setSelectedEnvios(null)}
+          >
+            Todos
+          </Button>
+          {enviosDisponiveis.map((env) => {
+            const active = enviosAtivosSet.has(env);
+            const isER = env === "ER";
+            return (
+              <Button
+                key={env}
+                size="sm"
+                variant={active ? (isER ? "destructive" : "default") : "outline"}
+                onClick={() => toggleEnvio(env)}
+              >
+                {isER && <Zap className="h-3 w-3 mr-1" />}
+                {env}
+              </Button>
+            );
+          })}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative w-full max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                value={buscaSku}
+                onChange={(e) => setBuscaSku(e.target.value)}
+                placeholder="Buscar por SKU ou nome…"
+                className="pl-8 h-8 text-sm"
+              />
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled
+              title="em breve"
+              className="opacity-60"
+            >
+              Peso
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Blocos unitários por envio */}
       {grupos.map((g) => {
         const cfg = ENVIO_HEADER[g.tipo_envio];
         const bg = cfg?.bg ?? "#6B7280";
         const color = cfg?.text ?? "#FFFFFF";
         const label = cfg?.label ?? g.tipo_envio;
-        const etiquetas = g.items.length;
+        const tags = g.items.length;
         const pedidos = g.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0);
         const unidades = g.items.reduce(
           (s, r) => s + Number(r.total_unidades ?? 0),
@@ -317,7 +450,7 @@ function FilaPriorizada() {
                 {label}
               </div>
               <div className="text-xs md:text-sm opacity-90">
-                {formatNumber(etiquetas)} etiquetas · {formatNumber(pedidos)} pedidos ·{" "}
+                {formatNumber(tags)} TAGs · {formatNumber(pedidos)} pedidos ·{" "}
                 {formatNumber(unidades)} unidades
               </div>
             </div>
@@ -357,7 +490,7 @@ function FilaPriorizada() {
                             : "bg-primary text-primary-foreground",
                         )}
                       >
-                        SEPARAR {formatNumber(item.qtd_pedidos ?? 0)}x
+                        {formatNumber(item.qtd_pedidos ?? 0)} pedidos
                       </div>
                       <div className="text-right text-xs text-muted-foreground w-20">
                         <div className="font-semibold text-sm text-foreground tabular-nums">
@@ -373,6 +506,62 @@ function FilaPriorizada() {
           </div>
         );
       })}
+
+      {/* Bloco Multi-SKU */}
+      {multis.length > 0 && (
+        <div className="space-y-2">
+          <div className="rounded-md px-4 py-3 flex items-center justify-between gap-4 bg-purple-600 text-white">
+            <div className="flex items-center gap-2 font-semibold text-sm md:text-base">
+              <BoxesIcon className="h-4 w-4" />
+              📦 MÚLTIPLOS SKUs
+            </div>
+            <div className="text-xs md:text-sm opacity-90">
+              {formatNumber(multis.length)} combinações ·{" "}
+              {formatNumber(multis.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0))} pedidos
+            </div>
+          </div>
+          <div className="grid gap-2">
+            {multis.map((item) => (
+              <Card
+                key={`multi-${item.prioridade}-${item.sku}-${item.tipo_envio}`}
+                className="p-3 flex items-center gap-4 border-purple-300/60 dark:border-purple-900/60"
+              >
+                <div className="text-2xl md:text-3xl font-bold text-muted-foreground w-14 text-center tabular-nums shrink-0">
+                  #{item.prioridade}
+                </div>
+                <div className="w-20 h-20 rounded-md bg-purple-50 dark:bg-purple-950/30 flex flex-col items-center justify-center text-purple-700 dark:text-purple-300 shrink-0 border border-purple-200 dark:border-purple-900">
+                  <BoxesIcon className="h-6 w-6" />
+                  <span className="text-[9px] mt-0.5">combo</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm md:text-base font-semibold break-words">
+                    {item.nome_produto ?? item.sku ?? "—"}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                    <span
+                      className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium"
+                      style={{
+                        backgroundColor:
+                          ENVIO_HEADER[item.tipo_envio ?? ""]?.bg ?? "#6B7280",
+                        color:
+                          ENVIO_HEADER[item.tipo_envio ?? ""]?.text ?? "#FFFFFF",
+                      }}
+                    >
+                      {item.tipo_envio ?? "—"}
+                    </span>
+                    <span className="font-mono">{item.sku ?? ""}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="px-4 py-2 rounded-lg font-bold text-lg md:text-xl tabular-nums bg-purple-600 text-white">
+                    {formatNumber(item.qtd_pedidos ?? 0)} pedidos
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
