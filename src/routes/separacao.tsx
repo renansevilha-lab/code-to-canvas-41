@@ -264,6 +264,8 @@ function FilaPriorizada() {
 
   return (
     <div className="space-y-5">
+      <SeparacaoTotaisCards />
+
       {/* Resumo */}
       <Card className="p-4">
         <div className="text-sm">
