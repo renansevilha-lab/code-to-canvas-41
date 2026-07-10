@@ -8,11 +8,13 @@ import {
   Clock,
   AlertTriangle,
   ShoppingCart,
+  ImageOff,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -45,6 +47,7 @@ interface AmazonRow {
   uf: string | null;
   cidade: string | null;
   primeiro_produto: string | null;
+  foto_capa: string | null;
   receita: number | null;
   taxa_comissao: number | null;
   taxa_fba: number | null;
@@ -61,14 +64,48 @@ interface AmazonRow {
 
 type OrigemFilter = "todos" | "real" | "estimado" | "pendente";
 type LogFilter = "todos" | "FBA" | "FBM";
+type PresetPeriodo = "hoje" | "7d" | "30d" | "mes" | "tudo" | "custom";
 
-function useAmazonRows() {
+function toDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function computePreset(preset: PresetPeriodo): { de: string; ate: string } {
+  const now = new Date();
+  const ate = toDateKey(now);
+  if (preset === "hoje") return { de: ate, ate };
+  if (preset === "7d") {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    return { de: toDateKey(d), ate };
+  }
+  if (preset === "30d") {
+    const d = new Date();
+    d.setDate(d.getDate() - 29);
+    return { de: toDateKey(d), ate };
+  }
+  if (preset === "mes") {
+    const d = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { de: toDateKey(d), ate };
+  }
+  // tudo
+  return { de: "2000-01-01", ate };
+}
+
+function useAmazonRows(de: string, ate: string) {
   return useQuery({
-    queryKey: ["amazon", "view_amazon_dashboard"],
+    queryKey: ["amazon", "view_amazon_dashboard", de, ate],
     queryFn: async () => {
+      const fromIso = `${de}T00:00:00.000Z`;
+      const toIso = `${ate}T23:59:59.999Z`;
       const { data, error } = await supabaseExternal
         .from("view_amazon_dashboard")
         .select("*")
+        .gte("data_pedido", fromIso)
+        .lte("data_pedido", toIso)
         .order("data_pedido", { ascending: false })
         .limit(5000);
       if (error) throw error;
@@ -92,6 +129,26 @@ function formatDateBR(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function ProductThumb({ src, alt }: { src: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="w-12 h-12 rounded bg-muted flex items-center justify-center shrink-0">
+        <ImageOff className="h-4 w-4 text-muted-foreground" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      onError={() => setFailed(true)}
+      loading="lazy"
+      className="w-12 h-12 rounded object-cover shrink-0 border"
+      alt={alt}
+    />
+  );
 }
 
 function OrigemBadge({ origem }: { origem: string | null }) {
@@ -146,13 +203,28 @@ function PercentBadge({ pct }: { pct: number | null }) {
 }
 
 function AmazonPage() {
-  const { data, isLoading, error } = useAmazonRows();
+  const [preset, setPreset] = useState<PresetPeriodo>("30d");
+  const initial = computePreset("30d");
+  const [de, setDe] = useState<string>(initial.de);
+  const [ate, setAte] = useState<string>(initial.ate);
+
+  const { data, isLoading, error } = useAmazonRows(de, ate);
   const [origem, setOrigem] = useState<OrigemFilter>("todos");
   const [log, setLog] = useState<LogFilter>("todos");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
 
   const rows = data ?? [];
+
+  function applyPreset(p: PresetPeriodo) {
+    setPreset(p);
+    if (p !== "custom") {
+      const r = computePreset(p);
+      setDe(r.de);
+      setAte(r.ate);
+    }
+    setPage(0);
+  }
 
   const resumo = useMemo(() => {
     let receita = 0;
@@ -217,6 +289,55 @@ function AmazonPage() {
             </p>
           </div>
         </div>
+
+        {/* Filtro de período */}
+        <Card className="p-4 space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            {(
+              [
+                ["hoje", "Hoje"],
+                ["7d", "7 dias"],
+                ["30d", "30 dias"],
+                ["mes", "Este mês"],
+                ["tudo", "Tudo"],
+              ] as [PresetPeriodo, string][]
+            ).map(([k, label]) => (
+              <Button
+                key={k}
+                size="sm"
+                variant={preset === k ? "default" : "outline"}
+                onClick={() => applyPreset(k)}
+                className="h-8"
+              >
+                {label}
+              </Button>
+            ))}
+            <div className="flex items-center gap-2 ml-2">
+              <span className="text-xs text-muted-foreground">De</span>
+              <Input
+                type="date"
+                value={de}
+                onChange={(e) => {
+                  setDe(e.target.value);
+                  setPreset("custom");
+                  setPage(0);
+                }}
+                className="h-8 w-[150px]"
+              />
+              <span className="text-xs text-muted-foreground">Até</span>
+              <Input
+                type="date"
+                value={ate}
+                onChange={(e) => {
+                  setAte(e.target.value);
+                  setPreset("custom");
+                  setPage(0);
+                }}
+                className="h-8 w-[150px]"
+              />
+            </div>
+          </div>
+        </Card>
 
         {/* Cards resumo */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -318,6 +439,7 @@ function AmazonPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[64px]">Foto</TableHead>
                   <TableHead>Pedido</TableHead>
                   <TableHead>Data</TableHead>
                   <TableHead>Log.</TableHead>
@@ -336,21 +458,21 @@ function AmazonPage() {
                 {isLoading &&
                   Array.from({ length: 8 }).map((_, i) => (
                     <TableRow key={i}>
-                      <TableCell colSpan={12}>
+                      <TableCell colSpan={13}>
                         <Skeleton className="h-6 w-full" />
                       </TableCell>
                     </TableRow>
                   ))}
                 {error && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-red-600 py-8">
+                    <TableCell colSpan={13} className="text-center text-red-600 py-8">
                       Erro ao carregar: {(error as Error).message}
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && !error && pageRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                       Nenhum pedido encontrado
                     </TableCell>
                   </TableRow>
@@ -365,6 +487,9 @@ function AmazonPage() {
                         : "text-muted-foreground";
                   return (
                     <TableRow key={r.pedido}>
+                      <TableCell>
+                        <ProductThumb src={r.foto_capa} alt={r.primeiro_produto ?? r.pedido} />
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{r.pedido}</TableCell>
                       <TableCell className="text-xs">{formatDateBR(r.data_pedido)}</TableCell>
                       <TableCell>
