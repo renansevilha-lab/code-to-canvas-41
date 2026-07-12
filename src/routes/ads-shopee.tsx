@@ -682,13 +682,11 @@ function AdsShopeePage() {
                     }
                   />
                   <RTooltip
-                    formatter={(value: number, name: string) => {
+                    formatter={(value, name) => {
+                      const v = Number(value) || 0;
                       if (name === "ROAS")
-                        return [
-                          `${value.toFixed(2).replace(".", ",")}x`,
-                          name,
-                        ];
-                      return [formatBRL(value), name];
+                        return [`${v.toFixed(2).replace(".", ",")}x`, name];
+                      return [formatBRL(v), name];
                     }}
                   />
                   <Legend />
