@@ -284,6 +284,20 @@ function Dashboard() {
           const rows = (am.data ?? []) as { tem_mapeamento: boolean | null }[];
           setAlertaAmazon(rows.filter((r) => !r.tem_mapeamento).length);
         }
+
+        if (!anoms.error) {
+          const rows = (anoms.data ?? []) as { tipo: string; receita: number | null }[];
+          const acc = { sku_sem_custo: { count: 0, receita: 0 }, cmv_maior_que_receita: { count: 0, receita: 0 }, sem_recebido: { count: 0, receita: 0 } };
+          for (const r of rows) {
+            const g = acc[r.tipo as keyof typeof acc];
+            if (!g) continue;
+            g.count++;
+            g.receita += Number(r.receita ?? 0);
+          }
+          setAnomSemCusto(acc.sku_sem_custo);
+          setAnomCmvMaior(acc.cmv_maior_que_receita);
+          setAnomSemRecebido({ count: acc.sem_recebido.count });
+        }
       } catch (e) {
         if (!cancel) setErro((e as Error).message);
       } finally {
