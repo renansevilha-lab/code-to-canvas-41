@@ -528,7 +528,7 @@ function Dashboard() {
                         borderRadius: 8,
                         fontSize: 12,
                       }}
-                      formatter={(value: number) => formatBRL(Number(value))}
+                      formatter={(value) => formatBRL(Number(value ?? 0))}
                     />
                   </PieChart>
                 </ResponsiveContainer>
