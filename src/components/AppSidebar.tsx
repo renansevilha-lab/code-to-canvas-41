@@ -1,20 +1,19 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  ShoppingBag,
   Megaphone,
   Wallet,
   TrendingUp,
   Package,
   LayoutDashboard,
-  Plug,
   Receipt,
   ClipboardList,
   Boxes,
   PackageCheck,
   ShoppingCart,
   Link2,
+  Target,
+  ShoppingBag,
 } from "lucide-react";
-
 
 import {
   Sidebar,
@@ -28,41 +27,31 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Badge } from "@/components/ui/badge";
 
 type NavItem = {
   title: string;
   url: string;
   icon: typeof ShoppingBag;
-  status?: "ready" | "soon";
 };
 
 const principal: NavItem[] = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard, status: "ready" },
-  { title: "Pedidos", url: "/pedidos", icon: ClipboardList, status: "ready" },
-  { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, status: "ready" },
-  { title: "Separação", url: "/separacao", icon: PackageCheck, status: "ready" },
-
-  { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, status: "ready" },
-  { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, status: "ready" },
-  { title: "Catálogo", url: "/produtos", icon: Package, status: "ready" },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Metas", url: "/metas", icon: Target },
+  { title: "Pedidos", url: "/pedidos", icon: ClipboardList },
+  { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes },
+  { title: "Separação", url: "/separacao", icon: PackageCheck },
+  { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt },
+  { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet },
+  { title: "Catálogo", url: "/produtos", icon: Package },
 ];
 
 const modulos: NavItem[] = [
-  { title: "Vendas", url: "/vendas", icon: ShoppingBag, status: "ready" },
-  { title: "Produtos", url: "/produtos-margem", icon: Package, status: "ready" },
-  { title: "Amazon", url: "/amazon", icon: ShoppingCart, status: "ready" },
-  { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2, status: "ready" },
-  { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone, status: "ready" },
-  { title: "Anúncios", url: "/ads", icon: Megaphone, status: "ready" },
-  { title: "Margem (CMV)", url: "/cmv", icon: TrendingUp, status: "ready" },
-  { title: "Tendências", url: "/tendencias", icon: TrendingUp, status: "ready" },
-  { title: "Carteira", url: "/carteira", icon: Wallet, status: "ready" },
-  { title: "Resultado", url: "/resultado", icon: Package, status: "soon" },
-];
-
-const integracoes: NavItem[] = [
-  { title: "Conexões", url: "/conexoes", icon: Plug, status: "ready" },
+  { title: "Produtos", url: "/produtos-margem", icon: Package },
+  { title: "Amazon", url: "/amazon", icon: ShoppingCart },
+  { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2 },
+  { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone },
+  { title: "Tendências", url: "/tendencias", icon: TrendingUp },
+  { title: "Carteira", url: "/carteira", icon: Wallet },
 ];
 
 export function AppSidebar() {
@@ -76,6 +65,34 @@ export function AppSidebar() {
     if (path === "/") return currentPath === "/";
     return currentPath.startsWith(path);
   };
+
+  const renderGroup = (label: string, items: NavItem[]) => (
+    <SidebarGroup>
+      {!collapsed && (
+        <SidebarGroupLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/70 font-medium">
+          {label}
+        </SidebarGroupLabel>
+      )}
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {items.map((item) => (
+            <SidebarMenuItem key={item.url}>
+              <SidebarMenuButton
+                asChild
+                isActive={isActive(item.url)}
+                tooltip={collapsed ? item.title : undefined}
+              >
+                <Link to={item.url}>
+                  <item.icon className="h-4 w-4" />
+                  {!collapsed && <span>{item.title}</span>}
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -98,94 +115,8 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-3">
-        <SidebarGroup>
-          {!collapsed && (
-            <SidebarGroupLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/70 font-medium">
-              Principal
-            </SidebarGroupLabel>
-          )}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {principal.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={collapsed ? item.title : undefined}
-                  >
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          {!collapsed && (
-            <SidebarGroupLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/70 font-medium">
-              Módulos
-            </SidebarGroupLabel>
-          )}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {modulos.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={collapsed ? item.title : undefined}
-                  >
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      {!collapsed && (
-                        <>
-                          <span className="flex-1">{item.title}</span>
-                          {item.status === "soon" && (
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px] py-0 px-1.5 font-normal h-4"
-                            >
-                              em breve
-                            </Badge>
-                          )}
-                        </>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          {!collapsed && (
-            <SidebarGroupLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/70 font-medium">
-              Integrações
-            </SidebarGroupLabel>
-          )}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {integracoes.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={collapsed ? item.title : undefined}
-                  >
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {renderGroup("Principal", principal)}
+        {renderGroup("Módulos", modulos)}
       </SidebarContent>
     </Sidebar>
   );
