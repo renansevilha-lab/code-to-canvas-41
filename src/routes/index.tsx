@@ -216,8 +216,15 @@ function Dashboard() {
           .select("sem_cadastro,tem_mapeamento")
           .eq("sem_cadastro", true);
 
-        const [k, d, pr, acos, am] = await Promise.all([
-          kpisQ, diasQ, produtosQ, acosQ, amazonQ,
+        // Anomalias resumidas
+        const anomaliasQ = supabaseExternal
+          .from("view_anomalias")
+          .select("tipo, receita")
+          .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
+          .limit(20000);
+
+        const [k, d, pr, acos, am, anoms] = await Promise.all([
+          kpisQ, diasQ, produtosQ, acosQ, amazonQ, anomaliasQ,
         ]);
         if (cancel) return;
 
