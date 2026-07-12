@@ -1305,7 +1305,7 @@ function MetaAcosCard({ data }: { data: MetaRealizado | null }) {
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Teto de ACOS</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{temTeto ? "Teto de ACOS" : "ACOS realizado"}</p>
         <Megaphone className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className={cn("text-2xl font-semibold tabular-nums", textCls)}>{formatPercent(acos)}</p>
