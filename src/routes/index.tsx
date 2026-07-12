@@ -114,6 +114,12 @@ type MetaRealizado = {
   receita_pct_meta: number | null;
   margem_pct_meta: number | null;
   acos_estourou: boolean | null;
+  meta_receita_diaria: number | null;
+  receita_media_diaria: number | null;
+  projecao_receita: number | null;
+  projecao_pct_meta: number | null;
+  dias_decorridos: number | null;
+  dias_no_mes: number | null;
 };
 
 type ProdutoRow = {
