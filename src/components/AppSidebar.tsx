@@ -50,6 +50,7 @@ const principal: NavItem[] = [
 
 const modulos: NavItem[] = [
   { title: "Vendas", url: "/vendas", icon: ShoppingBag, status: "ready" },
+  { title: "Produtos", url: "/produtos-margem", icon: Package, status: "ready" },
   { title: "Amazon", url: "/amazon", icon: ShoppingCart, status: "ready" },
   { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2, status: "ready" },
   { title: "Anúncios", url: "/ads", icon: Megaphone, status: "ready" },
