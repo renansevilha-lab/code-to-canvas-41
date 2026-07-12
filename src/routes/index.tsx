@@ -138,12 +138,18 @@ type ProdutoRow = {
 // ============================================================
 // Period presets
 // ============================================================
-type PresetKey = "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
+type PresetKey = "hoje" | "ontem" | "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
 
 function computeRange(preset: PresetKey, custom?: { from: string; to: string }): { from: string; to: string } {
   const today = new Date();
   const ymd = (d: Date) => format(d, "yyyy-MM-dd");
   switch (preset) {
+    case "hoje":
+      return { from: ymd(today), to: ymd(today) };
+    case "ontem": {
+      const y = subDays(today, 1);
+      return { from: ymd(y), to: ymd(y) };
+    }
     case "mes_atual":
       return { from: ymd(startOfMonth(today)), to: ymd(today) };
     case "ult_7":
@@ -160,6 +166,8 @@ function computeRange(preset: PresetKey, custom?: { from: string; to: string }):
 }
 
 const PRESET_LABEL: Record<PresetKey, string> = {
+  hoje: "Hoje",
+  ontem: "Ontem",
   mes_atual: "Mês atual",
   ult_7: "Últimos 7 dias",
   ult_30: "Últimos 30 dias",
