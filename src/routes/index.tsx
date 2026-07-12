@@ -1029,15 +1029,6 @@ function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[]
         </div>
       </div>
 
-      {spark.length > 1 && (
-        <div className="h-10">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={spark} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
-              <Line type="monotone" dataKey="receita" stroke={cor} strokeWidth={1.75} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       <div className="space-y-1.5 text-sm">
         <Linha
