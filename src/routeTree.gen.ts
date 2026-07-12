@@ -9,10 +9,8 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
-import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
@@ -20,20 +18,12 @@ import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
-import { Route as ConexoesRouteImport } from './routes/conexoes'
-import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AmazonRouteImport } from './routes/amazon'
 import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
-import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
-const VendasRoute = VendasRouteImport.update({
-  id: '/vendas',
-  path: '/vendas',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const TendenciasRoute = TendenciasRouteImport.update({
   id: '/tendencias',
   path: '/tendencias',
@@ -42,11 +32,6 @@ const TendenciasRoute = TendenciasRouteImport.update({
 const SeparacaoRoute = SeparacaoRouteImport.update({
   id: '/separacao',
   path: '/separacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResultadoRoute = ResultadoRouteImport.update({
-  id: '/resultado',
-  path: '/resultado',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProdutosMargemRoute = ProdutosMargemRouteImport.update({
@@ -84,16 +69,6 @@ const ContasPagarRoute = ContasPagarRouteImport.update({
   path: '/contas-pagar',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConexoesRoute = ConexoesRouteImport.update({
-  id: '/conexoes',
-  path: '/conexoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CmvRoute = CmvRouteImport.update({
-  id: '/cmv',
-  path: '/cmv',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CarteiraRoute = CarteiraRouteImport.update({
   id: '/carteira',
   path: '/carteira',
@@ -109,11 +84,6 @@ const AdsShopeeRoute = AdsShopeeRouteImport.update({
   path: '/ads-shopee',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdsRoute = AdsRouteImport.update({
-  id: '/ads',
-  path: '/ads',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -127,12 +97,9 @@ const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/ads': typeof AdsRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
-  '/cmv': typeof CmvRoute
-  '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -140,20 +107,15 @@ export interface FileRoutesByFullPath {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
-  '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
-  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/ads': typeof AdsRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
-  '/cmv': typeof CmvRoute
-  '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -161,21 +123,16 @@ export interface FileRoutesByTo {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
-  '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
-  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/ads': typeof AdsRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
-  '/cmv': typeof CmvRoute
-  '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -183,22 +140,17 @@ export interface FileRoutesById {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
-  '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
-  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/ads'
     | '/ads-shopee'
     | '/amazon'
     | '/carteira'
-    | '/cmv'
-    | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -206,20 +158,15 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
-    | '/resultado'
     | '/separacao'
     | '/tendencias'
-    | '/vendas'
     | '/api/public/shopee/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/ads'
     | '/ads-shopee'
     | '/amazon'
     | '/carteira'
-    | '/cmv'
-    | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -227,20 +174,15 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
-    | '/resultado'
     | '/separacao'
     | '/tendencias'
-    | '/vendas'
     | '/api/public/shopee/callback'
   id:
     | '__root__'
     | '/'
-    | '/ads'
     | '/ads-shopee'
     | '/amazon'
     | '/carteira'
-    | '/cmv'
-    | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -248,21 +190,16 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
-    | '/resultado'
     | '/separacao'
     | '/tendencias'
-    | '/vendas'
     | '/api/public/shopee/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AdsRoute: typeof AdsRoute
   AdsShopeeRoute: typeof AdsShopeeRoute
   AmazonRoute: typeof AmazonRoute
   CarteiraRoute: typeof CarteiraRoute
-  CmvRoute: typeof CmvRoute
-  ConexoesRoute: typeof ConexoesRoute
   ContasPagarRoute: typeof ContasPagarRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
@@ -270,22 +207,13 @@ export interface RootRouteChildren {
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
-  ResultadoRoute: typeof ResultadoRoute
   SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
-  VendasRoute: typeof VendasRoute
   ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/vendas': {
-      id: '/vendas'
-      path: '/vendas'
-      fullPath: '/vendas'
-      preLoaderRoute: typeof VendasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/tendencias': {
       id: '/tendencias'
       path: '/tendencias'
@@ -298,13 +226,6 @@ declare module '@tanstack/react-router' {
       path: '/separacao'
       fullPath: '/separacao'
       preLoaderRoute: typeof SeparacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/resultado': {
-      id: '/resultado'
-      path: '/resultado'
-      fullPath: '/resultado'
-      preLoaderRoute: typeof ResultadoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/produtos-margem': {
@@ -356,20 +277,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContasPagarRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/conexoes': {
-      id: '/conexoes'
-      path: '/conexoes'
-      fullPath: '/conexoes'
-      preLoaderRoute: typeof ConexoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cmv': {
-      id: '/cmv'
-      path: '/cmv'
-      fullPath: '/cmv'
-      preLoaderRoute: typeof CmvRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/carteira': {
       id: '/carteira'
       path: '/carteira'
@@ -391,13 +298,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdsShopeeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ads': {
-      id: '/ads'
-      path: '/ads'
-      fullPath: '/ads'
-      preLoaderRoute: typeof AdsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -417,12 +317,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AdsRoute: AdsRoute,
   AdsShopeeRoute: AdsShopeeRoute,
   AmazonRoute: AmazonRoute,
   CarteiraRoute: CarteiraRoute,
-  CmvRoute: CmvRoute,
-  ConexoesRoute: ConexoesRoute,
   ContasPagarRoute: ContasPagarRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,
@@ -430,10 +327,8 @@ const rootRouteChildren: RootRouteChildren = {
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,
-  ResultadoRoute: ResultadoRoute,
   SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,
-  VendasRoute: VendasRoute,
   ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
 }
 export const routeTree = rootRouteImport
