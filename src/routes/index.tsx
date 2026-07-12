@@ -884,7 +884,7 @@ function PeriodoPicker({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="text-xs">Período</DropdownMenuLabel>
-        {(["mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
+        {(["hoje", "ontem", "mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
           <DropdownMenuCheckboxItem
             key={p}
             checked={preset === p}
