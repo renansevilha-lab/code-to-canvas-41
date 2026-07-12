@@ -291,14 +291,43 @@ function PedidosIntegradosPage() {
             .order("data_pedido", { ascending: false })
             .limit(5000);
 
-        const [cur, prev] = await Promise.all([
+        const canaisRpc =
+          selectedMarketplaces.length > 0 && selectedMarketplaces.length < 3
+            ? selectedMarketplaces
+            : null;
+
+        const [cur, prev, kpi, prevKpi, totalCount] = await Promise.all([
           baseQuery(fromIso, toIso),
           baseQuery(prevFromIso, prevToIso),
+          supabaseExternal.rpc("kpi_pedidos", {
+            data_ini: range.from,
+            data_fim: range.to,
+            canais: canaisRpc,
+          }),
+          supabaseExternal.rpc("kpi_pedidos", {
+            data_ini: prevFrom,
+            data_fim: prevTo,
+            canais: canaisRpc,
+          }),
+          supabaseExternal
+            .from("view_margem_pedido_v2")
+            .select("*", { count: "exact", head: true })
+            .gte("data_pedido", fromIso)
+            .lte("data_pedido", toIso),
         ]);
         if (cancelled) return;
         if (cur.error) throw cur.error;
         setData((cur.data ?? []) as PedidoIntegrado[]);
         setPrevData((prev.data ?? []) as PedidoIntegrado[]);
+        if (!kpi.error) {
+          const row = Array.isArray(kpi.data) ? kpi.data[0] : kpi.data;
+          setKpiRpc((row ?? null) as KpiRpcRow | null);
+        }
+        if (!prevKpi.error) {
+          const row = Array.isArray(prevKpi.data) ? prevKpi.data[0] : prevKpi.data;
+          setPrevKpiRpc((row ?? null) as KpiRpcRow | null);
+        }
+        setTotalPedidosPeriodo(totalCount.count ?? 0);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Erro desconhecido");
       } finally {
@@ -311,7 +340,9 @@ function PedidosIntegradosPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [range.from, range.to]);
+    // selectedMarketplaces depends on canais; include canais list length
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, canais.join(",")]);
 
   // Fetch distinct canais (e empresas) — dinâmico
   useEffect(() => {
