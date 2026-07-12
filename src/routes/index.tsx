@@ -25,8 +25,6 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  Line,
-  LineChart,
 } from "recharts";
 import {
   format,
