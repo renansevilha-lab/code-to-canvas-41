@@ -24,6 +24,7 @@ import { Route as ConexoesRouteImport } from './routes/conexoes'
 import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AmazonRouteImport } from './routes/amazon'
+import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
 import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
@@ -103,6 +104,11 @@ const AmazonRoute = AmazonRouteImport.update({
   path: '/amazon',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdsShopeeRoute = AdsShopeeRouteImport.update({
+  id: '/ads-shopee',
+  path: '/ads-shopee',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdsRoute = AdsRouteImport.update({
   id: '/ads',
   path: '/ads',
@@ -122,6 +128,7 @@ const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
+  '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
+  '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
+  '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
@@ -185,6 +194,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/ads'
+    | '/ads-shopee'
     | '/amazon'
     | '/carteira'
     | '/cmv'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/ads'
+    | '/ads-shopee'
     | '/amazon'
     | '/carteira'
     | '/cmv'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/ads'
+    | '/ads-shopee'
     | '/amazon'
     | '/carteira'
     | '/cmv'
@@ -246,6 +258,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdsRoute: typeof AdsRoute
+  AdsShopeeRoute: typeof AdsShopeeRoute
   AmazonRoute: typeof AmazonRoute
   CarteiraRoute: typeof CarteiraRoute
   CmvRoute: typeof CmvRoute
@@ -371,6 +384,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AmazonRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ads-shopee': {
+      id: '/ads-shopee'
+      path: '/ads-shopee'
+      fullPath: '/ads-shopee'
+      preLoaderRoute: typeof AdsShopeeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ads': {
       id: '/ads'
       path: '/ads'
@@ -398,6 +418,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdsRoute: AdsRoute,
+  AdsShopeeRoute: AdsShopeeRoute,
   AmazonRoute: AmazonRoute,
   CarteiraRoute: CarteiraRoute,
   CmvRoute: CmvRoute,
