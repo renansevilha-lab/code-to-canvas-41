@@ -1175,19 +1175,24 @@ function VisaoItem({
   atual,
   anterior,
   altaBoa,
+  extra,
 }: {
   label: string;
   value: string;
   atual: number;
   anterior: number | null;
   altaBoa: boolean;
+  extra?: string;
 }) {
   const temHist = anterior != null && anterior !== 0;
   const delta = temHist ? ((atual - anterior!) / Math.abs(anterior!)) * 100 : null;
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
+      <div className="flex items-baseline gap-1.5 mt-1">
+        <p className="text-xl font-semibold tabular-nums">{value}</p>
+        {extra && <span className="text-xs text-muted-foreground tabular-nums">{extra}</span>}
+      </div>
       <div className="mt-0.5">
         <VariacaoInline valor={delta} temHistorico={temHist} altaBoa={altaBoa} />
       </div>
