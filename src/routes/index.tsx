@@ -340,38 +340,11 @@ function Dashboard() {
 
       {/* 3.1 — Metas do mês */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <MetaCard
-          label="Receita"
-          icon={TrendingUp}
-          realizado={receitaAtual}
-          meta={metasAtual?.meta_receita ?? null}
-          pct={metasAtual?.receita_pct_meta ?? null}
-          invertida={false}
-        />
-        <MetaCard
-          label="Margem de contribuição"
-          icon={Wallet}
-          realizado={margemAtual}
-          meta={metasAtual?.meta_margem ?? null}
-          pct={metasAtual?.margem_pct_meta ?? null}
-          invertida={false}
-          footer={
-            receitaAtual > 0
-              ? `${formatPercent((margemAtual / receitaAtual) * 100)} da receita`
-              : undefined
-          }
-        />
-        <MetaCard
-          label="Gasto com ADS"
-          icon={Megaphone}
-          realizado={adsAtual}
-          meta={metasAtual?.meta_ads ?? null}
-          pct={metasAtual?.ads_pct_meta ?? null}
-          invertida={true}
-          tetoLabel
-          footer={`ACOS geral: ${formatPercent(acosGeral)}`}
-        />
+        <ReceitaMetaCard data={metasAtual} realizadoFallback={receitaAtual} />
+        <MargemMetaCard data={metasAtual} realizadoFallback={margemAtual} receita={receitaAtual} />
+        <AcosMetaCard data={metasAtual} adsRealizado={adsAtual} acosFallback={acosGeral} />
       </section>
+
 
       {/* 3.2 — Comparativo mesmo intervalo do mês anterior */}
       <section>
