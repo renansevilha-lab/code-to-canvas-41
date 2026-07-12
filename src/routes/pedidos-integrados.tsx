@@ -1150,10 +1150,14 @@ function Th({
 
 function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) {
   const cmvMissing = p.cobertura_cmv !== "completo";
+  const semCusto = p.cobertura_cmv === "sem_dado";
   return (
     <tr
       onClick={onClick}
-      className="border-t hover:bg-accent/40 cursor-pointer transition"
+      className={cn(
+        "border-t hover:bg-accent/40 cursor-pointer transition",
+        semCusto && "opacity-60",
+      )}
     >
       <td className="px-3 py-2">
         <ProductThumb url={p.primeiro_produto_foto} />
