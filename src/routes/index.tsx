@@ -256,11 +256,55 @@ function Dashboard() {
         ]);
         if (cancel) return;
 
-        if (kpi.error) throw kpi.error;
-        const kpiRows = ((kpi.data ?? []) as KpiCanal[]).filter((r) => r.canal);
-        setKpisCanal(kpiRows);
+        console.log("kpi_canais →", { data: kpi.data, error: kpi.error, range });
+        if (kpi.error) {
+          setErro(`kpi_canais: ${kpi.error.message}`);
+        }
+        let kpiRows = ((kpi.data ?? []) as KpiCanal[]).filter((r) => r.canal);
 
-        if (!dia.error) setDiario((dia.data ?? []) as ReceitaDiaCanal[]);
+        const diaRows = !dia.error ? ((dia.data ?? []) as ReceitaDiaCanal[]) : [];
+        setDiario(diaRows);
+
+        // Fallback: se kpi_canais vier vazio mas houver dados diários,
+        // agrega os cards a partir de view_receita_diaria_canal.
+        if (kpiRows.length === 0 && diaRows.length > 0) {
+          console.warn("kpi_canais vazio — agregando fallback a partir de view_receita_diaria_canal");
+          const agg = new Map<string, KpiCanal>();
+          for (const r of diaRows) {
+            const key = `${r.canal}|${r.shop_id ?? ""}`;
+            const cur = agg.get(key) ?? {
+              canal: r.canal,
+              marketplace: r.marketplace,
+              shop_id: r.shop_id,
+              pedidos: 0,
+              receita: 0,
+              cmv: 0,
+              imposto: 0,
+              margem: 0,
+              mc_pct: 0,
+              ticket_medio: 0,
+              ads: null,
+              acos: null,
+              pedidos_ant: null,
+              receita_ant: null,
+              margem_ant: null,
+              var_receita_pct: null,
+              var_margem_pct: null,
+              var_pedidos_pct: null,
+              cobertura_pct: null,
+            };
+            cur.pedidos += Number(r.pedidos ?? 0);
+            cur.receita += Number(r.receita ?? 0);
+            cur.margem += Number(r.margem ?? 0);
+            agg.set(key, cur);
+          }
+          for (const v of agg.values()) {
+            v.ticket_medio = v.pedidos > 0 ? v.receita / v.pedidos : 0;
+            v.mc_pct = v.receita > 0 ? (v.margem / v.receita) * 100 : 0;
+          }
+          kpiRows = Array.from(agg.values());
+        }
+        setKpisCanal(kpiRows);
         if (!met.error) setMetas((met.data ?? []) as MetaRealizado[]);
 
         if (!prod.error) {
