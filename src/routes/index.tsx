@@ -737,7 +737,7 @@ function Dashboard() {
             {[...kpisVisiveis]
               .sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0))
               .map((c) => (
-                <CanalCard key={c.canal} data={c} diario={diarioVisivel.filter((d) => d.canal === c.canal)} />
+                <CanalCard key={c.canal} data={c} />
               ))}
           </div>
         )}
