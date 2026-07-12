@@ -994,10 +994,6 @@ function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[]
   const margemAposAds = ads == null ? margem : margem - ads;
   const margemAposAdsPct = receita > 0 ? (margemAposAds / receita) * 100 : 0;
 
-  const spark = diario
-    .slice()
-    .sort((a, b) => a.data.localeCompare(b.data))
-    .map((d) => ({ data: d.data, receita: Number(d.receita ?? 0) }));
 
   return (
     <Card className="p-5 space-y-4">
