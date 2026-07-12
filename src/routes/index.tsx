@@ -305,6 +305,7 @@ function Dashboard() {
   const canaisAtivos = chartData.canais;
 
   const metaDiariaReceita = useMemo(() => {
+    if (metasAtual?.meta_receita_diaria != null) return Number(metasAtual.meta_receita_diaria);
     const meta = Number(metasAtual?.meta_receita ?? 0);
     return meta > 0 ? meta / diasNoMes : 0;
   }, [metasAtual, diasNoMes]);
