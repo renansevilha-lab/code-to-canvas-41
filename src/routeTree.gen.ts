@@ -20,6 +20,7 @@ import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as CarteiraRouteImport } from './routes/carteira'
+import { Route as AnomaliasRouteImport } from './routes/anomalias'
 import { Route as AmazonRouteImport } from './routes/amazon'
 import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
 import { Route as IndexRouteImport } from './routes/index'
@@ -80,6 +81,11 @@ const CarteiraRoute = CarteiraRouteImport.update({
   path: '/carteira',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AnomaliasRoute = AnomaliasRouteImport.update({
+  id: '/anomalias',
+  path: '/anomalias',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AmazonRoute = AmazonRouteImport.update({
   id: '/amazon',
   path: '/amazon',
@@ -105,6 +111,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
+  '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
+  '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
+  '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
@@ -159,6 +168,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ads-shopee'
     | '/amazon'
+    | '/anomalias'
     | '/carteira'
     | '/contas-pagar'
     | '/fluxo-caixa'
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ads-shopee'
     | '/amazon'
+    | '/anomalias'
     | '/carteira'
     | '/contas-pagar'
     | '/fluxo-caixa'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ads-shopee'
     | '/amazon'
+    | '/anomalias'
     | '/carteira'
     | '/contas-pagar'
     | '/fluxo-caixa'
@@ -211,6 +223,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdsShopeeRoute: typeof AdsShopeeRoute
   AmazonRoute: typeof AmazonRoute
+  AnomaliasRoute: typeof AnomaliasRoute
   CarteiraRoute: typeof CarteiraRoute
   ContasPagarRoute: typeof ContasPagarRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
@@ -304,6 +317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CarteiraRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/anomalias': {
+      id: '/anomalias'
+      path: '/anomalias'
+      fullPath: '/anomalias'
+      preLoaderRoute: typeof AnomaliasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/amazon': {
       id: '/amazon'
       path: '/amazon'
@@ -339,6 +359,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdsShopeeRoute: AdsShopeeRoute,
   AmazonRoute: AmazonRoute,
+  AnomaliasRoute: AnomaliasRoute,
   CarteiraRoute: CarteiraRoute,
   ContasPagarRoute: ContasPagarRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,

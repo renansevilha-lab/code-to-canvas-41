@@ -105,6 +105,16 @@ interface PedidoIntegrado {
   primeira_categoria: string | null;
 }
 
+interface KpiRpcRow {
+  pedidos: number | null;
+  receita: number | null;
+  cmv: number | null;
+  imposto: number | null;
+  margem: number | null;
+  mc_pct: number | null;
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
@@ -235,6 +245,9 @@ function PedidosIntegradosPage() {
 
   const [data, setData] = useState<PedidoIntegrado[]>([]);
   const [prevData, setPrevData] = useState<PedidoIntegrado[]>([]);
+  const [kpiRpc, setKpiRpc] = useState<KpiRpcRow | null>(null);
+  const [prevKpiRpc, setPrevKpiRpc] = useState<KpiRpcRow | null>(null);
+  const [totalPedidosPeriodo, setTotalPedidosPeriodo] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -278,14 +291,43 @@ function PedidosIntegradosPage() {
             .order("data_pedido", { ascending: false })
             .limit(5000);
 
-        const [cur, prev] = await Promise.all([
+        const canaisRpc =
+          selectedMarketplaces.length > 0 && selectedMarketplaces.length < 3
+            ? selectedMarketplaces
+            : null;
+
+        const [cur, prev, kpi, prevKpi, totalCount] = await Promise.all([
           baseQuery(fromIso, toIso),
           baseQuery(prevFromIso, prevToIso),
+          supabaseExternal.rpc("kpi_pedidos", {
+            data_ini: range.from,
+            data_fim: range.to,
+            canais: canaisRpc,
+          }),
+          supabaseExternal.rpc("kpi_pedidos", {
+            data_ini: prevFrom,
+            data_fim: prevTo,
+            canais: canaisRpc,
+          }),
+          supabaseExternal
+            .from("view_margem_pedido_v2")
+            .select("*", { count: "exact", head: true })
+            .gte("data_pedido", fromIso)
+            .lte("data_pedido", toIso),
         ]);
         if (cancelled) return;
         if (cur.error) throw cur.error;
         setData((cur.data ?? []) as PedidoIntegrado[]);
         setPrevData((prev.data ?? []) as PedidoIntegrado[]);
+        if (!kpi.error) {
+          const row = Array.isArray(kpi.data) ? kpi.data[0] : kpi.data;
+          setKpiRpc((row ?? null) as KpiRpcRow | null);
+        }
+        if (!prevKpi.error) {
+          const row = Array.isArray(prevKpi.data) ? prevKpi.data[0] : prevKpi.data;
+          setPrevKpiRpc((row ?? null) as KpiRpcRow | null);
+        }
+        setTotalPedidosPeriodo(totalCount.count ?? 0);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Erro desconhecido");
       } finally {
@@ -298,7 +340,9 @@ function PedidosIntegradosPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [range.from, range.to]);
+    // selectedMarketplaces depends on canais; include canais list length
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, canais.join(",")]);
 
   // Fetch distinct canais (e empresas) — dinâmico
   useEffect(() => {
@@ -369,9 +413,34 @@ function PedidosIntegradosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prevData, empresas, canais, statuses]);
 
-  // KPIs
-  const kpis = useMemo(() => computeKpis(filtered), [filtered]);
-  const prevKpis = useMemo(() => computeKpis(filteredPrev), [filteredPrev]);
+  // KPIs — os totais principais vêm do RPC kpi_pedidos (agrega no banco,
+  // ignorando o cap de 1000 rows do PostgREST). Os filtros de empresa/status
+  // afetam apenas a lista abaixo; os cards refletem período + canal.
+  const filtroRefinaCards = empresas.length > 0 || statuses.length !== DEFAULT_STATUSES.length || debounced.length > 0;
+  const kpiClient = useMemo(() => computeKpis(filtered), [filtered]);
+  const prevKpiClient = useMemo(() => computeKpis(filteredPrev), [filteredPrev]);
+  const kpis = useMemo(() => {
+    if (filtroRefinaCards || !kpiRpc) return kpiClient;
+    return {
+      receita: Number(kpiRpc.receita ?? 0),
+      custo: Number(kpiRpc.cmv ?? 0) + Number(kpiRpc.imposto ?? 0),
+      margem: Number(kpiRpc.margem ?? 0),
+      mcPct: Number(kpiRpc.mc_pct ?? 0),
+      qtd: totalPedidosPeriodo || Number(kpiRpc.pedidos ?? 0),
+      cobertura: totalPedidosPeriodo > 0 ? Number(kpiRpc.pedidos ?? 0) / totalPedidosPeriodo : 0,
+    };
+  }, [filtroRefinaCards, kpiRpc, kpiClient, totalPedidosPeriodo]);
+  const prevKpis = useMemo(() => {
+    if (filtroRefinaCards || !prevKpiRpc) return prevKpiClient;
+    return {
+      receita: Number(prevKpiRpc.receita ?? 0),
+      custo: Number(prevKpiRpc.cmv ?? 0) + Number(prevKpiRpc.imposto ?? 0),
+      margem: Number(prevKpiRpc.margem ?? 0),
+      mcPct: Number(prevKpiRpc.mc_pct ?? 0),
+      qtd: Number(prevKpiRpc.pedidos ?? 0),
+      cobertura: 0,
+    };
+  }, [filtroRefinaCards, prevKpiRpc, prevKpiClient]);
 
   // sorted + paginated
   const sorted = useMemo(() => {
@@ -1081,10 +1150,14 @@ function Th({
 
 function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) {
   const cmvMissing = p.cobertura_cmv !== "completo";
+  const semCusto = p.cobertura_cmv === "sem_dado";
   return (
     <tr
       onClick={onClick}
-      className="border-t hover:bg-accent/40 cursor-pointer transition"
+      className={cn(
+        "border-t hover:bg-accent/40 cursor-pointer transition",
+        semCusto && "opacity-60",
+      )}
     >
       <td className="px-3 py-2">
         <ProductThumb url={p.primeiro_produto_foto} />
@@ -1118,6 +1191,21 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
             >
               Devolução parcial
             </Badge>
+          )}
+          {semCusto && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="text-[10px] h-5 px-1.5 font-medium border border-muted-foreground/30 bg-muted text-muted-foreground"
+                >
+                  sem custo
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                Não entra nos totalizadores — custo não cadastrado
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
       </td>

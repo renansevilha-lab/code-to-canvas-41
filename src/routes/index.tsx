@@ -164,6 +164,9 @@ function Dashboard() {
   const [alertaBaixaConf, setAlertaBaixaConf] = useState(0);
   const [alertaAcos, setAlertaAcos] = useState(0);
   const [alertaAmazon, setAlertaAmazon] = useState(0);
+  const [anomSemCusto, setAnomSemCusto] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
+  const [anomCmvMaior, setAnomCmvMaior] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
+  const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -213,8 +216,15 @@ function Dashboard() {
           .select("sem_cadastro,tem_mapeamento")
           .eq("sem_cadastro", true);
 
-        const [k, d, pr, acos, am] = await Promise.all([
-          kpisQ, diasQ, produtosQ, acosQ, amazonQ,
+        // Anomalias resumidas
+        const anomaliasQ = supabaseExternal
+          .from("view_anomalias")
+          .select("tipo, receita")
+          .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
+          .limit(20000);
+
+        const [k, d, pr, acos, am, anoms] = await Promise.all([
+          kpisQ, diasQ, produtosQ, acosQ, amazonQ, anomaliasQ,
         ]);
         if (cancel) return;
 
@@ -273,6 +283,20 @@ function Dashboard() {
         if (!am.error) {
           const rows = (am.data ?? []) as { tem_mapeamento: boolean | null }[];
           setAlertaAmazon(rows.filter((r) => !r.tem_mapeamento).length);
+        }
+
+        if (!anoms.error) {
+          const rows = (anoms.data ?? []) as { tipo: string; receita: number | null }[];
+          const acc = { sku_sem_custo: { count: 0, receita: 0 }, cmv_maior_que_receita: { count: 0, receita: 0 }, sem_recebido: { count: 0, receita: 0 } };
+          for (const r of rows) {
+            const g = acc[r.tipo as keyof typeof acc];
+            if (!g) continue;
+            g.count++;
+            g.receita += Number(r.receita ?? 0);
+          }
+          setAnomSemCusto(acc.sku_sem_custo);
+          setAnomCmvMaior(acc.cmv_maior_que_receita);
+          setAnomSemRecebido({ count: acc.sem_recebido.count });
         }
       } catch (e) {
         if (!cancel) setErro((e as Error).message);
@@ -473,6 +497,30 @@ function Dashboard() {
             Alertas acionáveis
           </h2>
           <ul className="space-y-2">
+            {anomSemCusto.count > 0 && (
+              <AlertaItem
+                dot="red"
+                to="/anomalias"
+                search={{ tipo: "sku_sem_custo", severidade: "alta" }}
+                text={`${anomSemCusto.count} SKUs sem custo — ${formatBRL(anomSemCusto.receita, { compact: true })} de receita fora dos totais`}
+              />
+            )}
+            {anomCmvMaior.count > 0 && (
+              <AlertaItem
+                dot="red"
+                to="/anomalias"
+                search={{ tipo: "cmv_maior_que_receita", severidade: "alta" }}
+                text={`${anomCmvMaior.count} pedidos com custo maior que a venda — provável erro de dado`}
+              />
+            )}
+            {anomSemRecebido.count > 0 && (
+              <AlertaItem
+                dot="orange"
+                to="/anomalias"
+                search={{ tipo: "sem_recebido" }}
+                text={`${anomSemRecebido.count} pedidos com repasse não informado`}
+              />
+            )}
             {alertaPrejuizo > 0 && (
               <AlertaItem
                 dot="red"
@@ -485,13 +533,6 @@ function Dashboard() {
                 dot="orange"
                 to="/ads-shopee"
                 text={`${alertaAcos} anúncios com ACOS acima de 20% (últimos 7 dias)`}
-              />
-            )}
-            {alertaBaixaConf > 0 && (
-              <AlertaItem
-                dot="yellow"
-                to="/produtos-margem"
-                text={`${alertaBaixaConf} produtos sem custo cadastrado (baixa confiança)`}
               />
             )}
             {alertaAmazon > 0 && (
@@ -508,7 +549,7 @@ function Dashboard() {
                 text={`${kpis.contas_atrasadas_qtd} contas atrasadas · ${formatBRL(kpis.contas_atrasadas_valor, { compact: true })}`}
               />
             )}
-            {alertaPrejuizo === 0 && alertaAcos === 0 && alertaBaixaConf === 0 && alertaAmazon === 0 && (!kpis || kpis.contas_atrasadas_qtd === 0) && (
+            {alertaPrejuizo === 0 && alertaAcos === 0 && alertaAmazon === 0 && anomSemCusto.count === 0 && anomCmvMaior.count === 0 && anomSemRecebido.count === 0 && (!kpis || kpis.contas_atrasadas_qtd === 0) && (
               <li className="flex items-center gap-2 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
               </li>
@@ -913,11 +954,15 @@ function CanalCard({ data, dias }: { data: MetaRealizado; dias: DiaRow[] }) {
   );
 }
 
-function AlertaItem({ dot, to, text }: { dot: "red" | "orange" | "yellow"; to: string; text: string }) {
+function AlertaItem({ dot, to, text, search }: { dot: "red" | "orange" | "yellow"; to: string; text: string; search?: Record<string, string> }) {
   const cor = { red: "bg-destructive", orange: "bg-warning", yellow: "bg-yellow-500" }[dot];
   return (
     <li>
-      <Link to={to} className="flex items-center justify-between gap-3 rounded-md p-3 hover:bg-muted/50 transition-colors">
+      <Link
+        to={to}
+        search={search as never}
+        className="flex items-center justify-between gap-3 rounded-md p-3 hover:bg-muted/50 transition-colors"
+      >
         <span className="flex items-center gap-2.5 text-sm">
           <span className={`h-2.5 w-2.5 rounded-full ${cor}`} />
           {text}
