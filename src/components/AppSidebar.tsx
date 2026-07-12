@@ -12,6 +12,7 @@ import {
   Boxes,
   PackageCheck,
   ShoppingCart,
+  Link2,
 } from "lucide-react";
 
 
@@ -50,6 +51,7 @@ const principal: NavItem[] = [
 const modulos: NavItem[] = [
   { title: "Vendas", url: "/vendas", icon: ShoppingBag, status: "ready" },
   { title: "Amazon", url: "/amazon", icon: ShoppingCart, status: "ready" },
+  { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2, status: "ready" },
   { title: "Anúncios", url: "/ads", icon: Megaphone, status: "ready" },
   { title: "Margem (CMV)", url: "/cmv", icon: TrendingUp, status: "ready" },
   { title: "Tendências", url: "/tendencias", icon: TrendingUp, status: "ready" },

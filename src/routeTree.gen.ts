@@ -16,6 +16,7 @@ import { Route as ResultadoRouteImport } from './routes/resultado'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
 import { Route as PedidosRouteImport } from './routes/pedidos'
+import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as ConexoesRouteImport } from './routes/conexoes'
@@ -59,6 +60,11 @@ const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
 const PedidosRoute = PedidosRouteImport.update({
   id: '/pedidos',
   path: '/pedidos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MapeamentoSkusRoute = MapeamentoSkusRouteImport.update({
+  id: '/mapeamento-skus',
+  path: '/mapeamento-skus',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
@@ -116,6 +122,7 @@ export interface FileRoutesByFullPath {
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -134,6 +141,7 @@ export interface FileRoutesByTo {
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -153,6 +161,7 @@ export interface FileRoutesById {
   '/conexoes': typeof ConexoesRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
+    | '/mapeamento-skus'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -191,6 +201,7 @@ export interface FileRouteTypes {
     | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
+    | '/mapeamento-skus'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -209,6 +220,7 @@ export interface FileRouteTypes {
     | '/conexoes'
     | '/contas-pagar'
     | '/fluxo-caixa'
+    | '/mapeamento-skus'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -228,6 +240,7 @@ export interface RootRouteChildren {
   ConexoesRoute: typeof ConexoesRoute
   ContasPagarRoute: typeof ContasPagarRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
+  MapeamentoSkusRoute: typeof MapeamentoSkusRoute
   PedidosRoute: typeof PedidosRoute
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
@@ -287,6 +300,13 @@ declare module '@tanstack/react-router' {
       path: '/pedidos'
       fullPath: '/pedidos'
       preLoaderRoute: typeof PedidosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mapeamento-skus': {
+      id: '/mapeamento-skus'
+      path: '/mapeamento-skus'
+      fullPath: '/mapeamento-skus'
+      preLoaderRoute: typeof MapeamentoSkusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fluxo-caixa': {
@@ -364,6 +384,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConexoesRoute: ConexoesRoute,
   ContasPagarRoute: ContasPagarRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
+  MapeamentoSkusRoute: MapeamentoSkusRoute,
   PedidosRoute: PedidosRoute,
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
