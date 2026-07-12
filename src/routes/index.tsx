@@ -25,8 +25,6 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  Line,
-  LineChart,
 } from "recharts";
 import {
   format,
@@ -73,6 +71,7 @@ type KpiCanal = {
   shop_id: string | null;
   pedidos: number;
   receita: number;
+  receita_com_custo: number;
   cmv: number;
   imposto: number;
   margem: number;
@@ -113,6 +112,12 @@ type MetaRealizado = {
   receita_pct_meta: number | null;
   margem_pct_meta: number | null;
   acos_estourou: boolean | null;
+  meta_receita_diaria: number | null;
+  receita_media_diaria: number | null;
+  projecao_receita: number | null;
+  projecao_pct_meta: number | null;
+  dias_decorridos: number | null;
+  dias_no_mes: number | null;
 };
 
 type ProdutoRow = {
@@ -131,12 +136,18 @@ type ProdutoRow = {
 // ============================================================
 // Period presets
 // ============================================================
-type PresetKey = "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
+type PresetKey = "hoje" | "ontem" | "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
 
 function computeRange(preset: PresetKey, custom?: { from: string; to: string }): { from: string; to: string } {
   const today = new Date();
   const ymd = (d: Date) => format(d, "yyyy-MM-dd");
   switch (preset) {
+    case "hoje":
+      return { from: ymd(today), to: ymd(today) };
+    case "ontem": {
+      const y = subDays(today, 1);
+      return { from: ymd(y), to: ymd(y) };
+    }
     case "mes_atual":
       return { from: ymd(startOfMonth(today)), to: ymd(today) };
     case "ult_7":
@@ -153,6 +164,8 @@ function computeRange(preset: PresetKey, custom?: { from: string; to: string }):
 }
 
 const PRESET_LABEL: Record<PresetKey, string> = {
+  hoje: "Hoje",
+  ontem: "Ontem",
   mes_atual: "Mês atual",
   ult_7: "Últimos 7 dias",
   ult_30: "Últimos 30 dias",
@@ -294,7 +307,7 @@ function Dashboard() {
         const rowsPrev = (canaisPrevR.data ?? []) as CanalPrevRow[];
 
         // Agrega período atual por canal
-        const agg = new Map<string, KpiCanal & { receita_com_custo: number }>();
+        const agg = new Map<string, KpiCanal>();
         for (const r of rows) {
           const key = `${r.canal}|${r.shop_id ?? ""}`;
           const cur = agg.get(key) ?? {
@@ -441,13 +454,14 @@ function Dashboard() {
   // Totais consolidados
   const totais = useMemo(() => {
     const t = {
-      pedidos: 0, receita: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
+      pedidos: 0, receita: 0, receita_com_custo: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
       pedidos_ant: 0, receita_ant: 0, margem_ant: 0,
       ticket_medio: 0, acos: 0, mc_pct: 0,
     };
     for (const r of kpisVisiveis) {
       t.pedidos += Number(r.pedidos ?? 0);
       t.receita += Number(r.receita ?? 0);
+      t.receita_com_custo += Number(r.receita_com_custo ?? 0);
       t.margem += Number(r.margem ?? 0);
       t.ads += Number(r.ads ?? 0);
       t.cmv += Number(r.cmv ?? 0);
@@ -458,7 +472,8 @@ function Dashboard() {
     }
     t.ticket_medio = t.pedidos > 0 ? t.receita / t.pedidos : 0;
     t.acos = t.receita > 0 ? (t.ads / t.receita) * 100 : 0;
-    t.mc_pct = t.receita > 0 ? (t.margem / t.receita) * 100 : 0;
+    // Margem contrib % sobre base coberta (receita_com_custo)
+    t.mc_pct = t.receita_com_custo > 0 ? (t.margem / t.receita_com_custo) * 100 : 0;
     return t;
   }, [kpisVisiveis]);
 
@@ -674,6 +689,7 @@ function Dashboard() {
             <VisaoItem
               label="Margem contrib."
               value={formatBRL(totais.margem, { compact: true })}
+              extra={totais.receita_com_custo > 0 ? formatPercent(totais.mc_pct) : undefined}
               atual={totais.margem}
               anterior={totais.margem_ant}
               altaBoa
@@ -721,7 +737,7 @@ function Dashboard() {
             {[...kpisVisiveis]
               .sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0))
               .map((c) => (
-                <CanalCard key={c.canal} data={c} diario={diarioVisivel.filter((d) => d.canal === c.canal)} />
+                <CanalCard key={c.canal} data={c} />
               ))}
           </div>
         )}
@@ -869,7 +885,7 @@ function PeriodoPicker({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="text-xs">Período</DropdownMenuLabel>
-        {(["mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
+        {(["hoje", "ontem", "mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
           <DropdownMenuCheckboxItem
             key={p}
             checked={preset === p}
@@ -961,7 +977,7 @@ function CanalFilter({
 // ============================================================
 // Canal card
 // ============================================================
-function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[] }) {
+function CanalCard({ data }: { data: KpiCanal }) {
   const cor = colorForCanal(data.canal);
   const receita = Number(data.receita ?? 0);
   const pedidos = Number(data.pedidos ?? 0);
@@ -976,10 +992,6 @@ function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[]
   const margemAposAds = ads == null ? margem : margem - ads;
   const margemAposAdsPct = receita > 0 ? (margemAposAds / receita) * 100 : 0;
 
-  const spark = diario
-    .slice()
-    .sort((a, b) => a.data.localeCompare(b.data))
-    .map((d) => ({ data: d.data, receita: Number(d.receita ?? 0) }));
 
   return (
     <Card className="p-5 space-y-4">
@@ -1015,15 +1027,6 @@ function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[]
         </div>
       </div>
 
-      {spark.length > 1 && (
-        <div className="h-10">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={spark} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
-              <Line type="monotone" dataKey="receita" stroke={cor} strokeWidth={1.75} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       <div className="space-y-1.5 text-sm">
         <Linha
@@ -1158,19 +1161,24 @@ function VisaoItem({
   atual,
   anterior,
   altaBoa,
+  extra,
 }: {
   label: string;
   value: string;
   atual: number;
   anterior: number | null;
   altaBoa: boolean;
+  extra?: string;
 }) {
   const temHist = anterior != null && anterior !== 0;
   const delta = temHist ? ((atual - anterior!) / Math.abs(anterior!)) * 100 : null;
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
+      <div className="flex items-baseline gap-1.5 mt-1">
+        <p className="text-xl font-semibold tabular-nums">{value}</p>
+        {extra && <span className="text-xs text-muted-foreground tabular-nums">{extra}</span>}
+      </div>
       <div className="mt-0.5">
         <VariacaoInline valor={delta} temHistorico={temHist} altaBoa={altaBoa} />
       </div>
@@ -1187,10 +1195,19 @@ function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
   const temMeta = meta != null && meta > 0;
   const pct = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
   const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
+
+  const metaDiaria = data?.meta_receita_diaria != null ? Number(data.meta_receita_diaria) : null;
+  const ritmo = data?.receita_media_diaria != null ? Number(data.receita_media_diaria) : null;
+  const projecao = data?.projecao_receita != null ? Number(data.projecao_receita) : null;
+  const projPct = data?.projecao_pct_meta != null ? Number(data.projecao_pct_meta) : null;
+  const noRitmo = metaDiaria != null && ritmo != null && ritmo >= metaDiaria;
+
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de receita</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+          {temMeta ? "Meta de receita" : "Receita realizada"}
+        </p>
         <TrendingUp className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
@@ -1207,6 +1224,18 @@ function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
           <p className="text-xs text-muted-foreground">
             {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
           </p>
+          {metaDiaria != null && ritmo != null && (
+            <p className={cn("text-xs font-medium inline-flex items-center gap-1", noRitmo ? "text-success" : "text-destructive")}>
+              {noRitmo ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+              Ritmo: {formatBRL(ritmo, { compact: true })}/dia · Meta: {formatBRL(metaDiaria, { compact: true })}/dia
+            </p>
+          )}
+          {projecao != null && (
+            <p className="text-xs text-muted-foreground">
+              Projeção do mês: {formatBRL(projecao, { compact: true })}
+              {projPct != null && ` (${formatPercent(projPct)} da meta)`}
+            </p>
+          )}
         </>
       ) : (
         <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
@@ -1226,7 +1255,9 @@ function MetaMargemCard({ data }: { data: MetaRealizado | null }) {
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de margem</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+          {temMeta ? "Meta de margem" : "Margem realizada"}
+        </p>
         <Wallet className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
@@ -1274,7 +1305,7 @@ function MetaAcosCard({ data }: { data: MetaRealizado | null }) {
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Teto de ACOS</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{temTeto ? "Teto de ACOS" : "ACOS realizado"}</p>
         <Megaphone className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className={cn("text-2xl font-semibold tabular-nums", textCls)}>{formatPercent(acos)}</p>
