@@ -41,6 +41,8 @@ import { ptBR } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Info } from "lucide-react";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
@@ -57,13 +59,25 @@ type MetaRealizado = {
   marketplace: string;
   receita_realizada: number | null;
   margem_realizada: number | null;
+  margem_pct_receita: number | null;
   ads_realizado: number | null;
+  acos_realizado: number | null;
   meta_receita: number | null;
   meta_margem: number | null;
-  meta_ads: number | null;
+  meta_acos: number | null;
   receita_pct_meta: number | null;
   margem_pct_meta: number | null;
-  ads_pct_meta: number | null;
+  acos_estourou: boolean | null;
+  dias_no_mes: number | null;
+  dias_decorridos: number | null;
+  receita_media_diaria: number | null;
+  meta_receita_diaria: number | null;
+  projecao_receita: number | null;
+  projecao_margem: number | null;
+  projecao_pct_meta: number | null;
+  // legado (algumas views ainda expõem)
+  meta_ads?: number | null;
+  ads_pct_meta?: number | null;
 };
 
 type Kpis = {
@@ -291,6 +305,7 @@ function Dashboard() {
   const canaisAtivos = chartData.canais;
 
   const metaDiariaReceita = useMemo(() => {
+    if (metasAtual?.meta_receita_diaria != null) return Number(metasAtual.meta_receita_diaria);
     const meta = Number(metasAtual?.meta_receita ?? 0);
     return meta > 0 ? meta / diasNoMes : 0;
   }, [metasAtual, diasNoMes]);
@@ -326,38 +341,11 @@ function Dashboard() {
 
       {/* 3.1 — Metas do mês */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <MetaCard
-          label="Receita"
-          icon={TrendingUp}
-          realizado={receitaAtual}
-          meta={metasAtual?.meta_receita ?? null}
-          pct={metasAtual?.receita_pct_meta ?? null}
-          invertida={false}
-        />
-        <MetaCard
-          label="Margem de contribuição"
-          icon={Wallet}
-          realizado={margemAtual}
-          meta={metasAtual?.meta_margem ?? null}
-          pct={metasAtual?.margem_pct_meta ?? null}
-          invertida={false}
-          footer={
-            receitaAtual > 0
-              ? `${formatPercent((margemAtual / receitaAtual) * 100)} da receita`
-              : undefined
-          }
-        />
-        <MetaCard
-          label="Gasto com ADS"
-          icon={Megaphone}
-          realizado={adsAtual}
-          meta={metasAtual?.meta_ads ?? null}
-          pct={metasAtual?.ads_pct_meta ?? null}
-          invertida={true}
-          tetoLabel
-          footer={`ACOS geral: ${formatPercent(acosGeral)}`}
-        />
+        <ReceitaMetaCard data={metasAtual} realizadoFallback={receitaAtual} />
+        <MargemMetaCard data={metasAtual} realizadoFallback={margemAtual} receita={receitaAtual} />
+        <AcosMetaCard data={metasAtual} adsRealizado={adsAtual} acosFallback={acosGeral} />
       </section>
+
 
       {/* 3.2 — Comparativo mesmo intervalo do mês anterior */}
       <section>
@@ -640,36 +628,40 @@ function Dashboard() {
 // ============================================================
 // Subcomponentes
 // ============================================================
-function MetaCard({
-  label, icon: Icon, realizado, meta, pct, invertida, tetoLabel, footer,
+const CORES = {
+  success: "bg-success/10 text-success border-success/20",
+  warning: "bg-warning/10 text-warning border-warning/20",
+  danger: "bg-destructive/10 text-destructive border-destructive/20",
+  muted: "bg-muted text-muted-foreground border-border",
+} as const;
+
+type Cor = keyof typeof CORES;
+
+function corPorMeta(pct: number): Cor {
+  if (pct >= 100) return "success";
+  if (pct >= 70) return "warning";
+  return "danger";
+}
+function corProjecao(pct: number): Cor {
+  if (pct >= 100) return "success";
+  if (pct >= 90) return "warning";
+  return "danger";
+}
+function progressClass(cor: Cor) {
+  if (cor === "danger") return "[&>div]:bg-destructive";
+  if (cor === "warning") return "[&>div]:bg-warning";
+  if (cor === "success") return "[&>div]:bg-success";
+  return "";
+}
+
+function CardShell({
+  label, icon: Icon, children, badge,
 }: {
   label: string;
   icon: typeof TrendingUp;
-  realizado: number;
-  meta: number | null;
-  pct: number | null;
-  invertida: boolean;
-  tetoLabel?: boolean;
-  footer?: string;
+  children: React.ReactNode;
+  badge?: React.ReactNode;
 }) {
-  const temMeta = meta != null && meta > 0;
-  const pctVal = temMeta ? Number(pct ?? (realizado / meta! * 100)) : 0;
-  let cor: "success" | "warning" | "danger" | "muted" = "muted";
-  if (temMeta) {
-    if (invertida) {
-      cor = pctVal < 85 ? "success" : pctVal <= 100 ? "warning" : "danger";
-    } else {
-      cor = pctVal >= 100 ? "success" : pctVal >= 70 ? "warning" : "danger";
-    }
-  }
-  const corClasses = {
-    success: "bg-success/10 text-success border-success/20",
-    warning: "bg-warning/10 text-warning border-warning/20",
-    danger: "bg-destructive/10 text-destructive border-destructive/20",
-    muted: "bg-muted text-muted-foreground border-border",
-  }[cor];
-  const diff = temMeta ? (invertida ? meta! - realizado : meta! - realizado) : 0;
-
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
@@ -679,10 +671,38 @@ function MetaCard({
           </div>
           <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{label}</span>
         </div>
-        {temMeta && (
-          <Badge className={corClasses}>{formatPercent(pctVal)}</Badge>
-        )}
+        {badge}
       </div>
+      {children}
+    </Card>
+  );
+}
+
+function ReceitaMetaCard({ data, realizadoFallback }: { data: MetaRealizado | null; realizadoFallback: number }) {
+  const realizado = Number(data?.receita_realizada ?? realizadoFallback);
+  const meta = data?.meta_receita != null ? Number(data.meta_receita) : null;
+  const temMeta = meta != null && meta > 0;
+  const pctVal = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
+  const cor = temMeta ? corPorMeta(pctVal) : "muted";
+
+  const media = Number(data?.receita_media_diaria ?? 0);
+  const metaDia = Number(data?.meta_receita_diaria ?? 0);
+  const noRitmo = metaDia > 0 && media >= metaDia;
+
+  const projecao = Number(data?.projecao_receita ?? 0);
+  const projPct = Number(data?.projecao_pct_meta ?? 0);
+  const projCor = temMeta ? corProjecao(projPct) : "muted";
+  const projTextClass = { success: "text-success", warning: "text-warning", danger: "text-destructive", muted: "text-muted-foreground" }[projCor];
+
+  const diasDec = Number(data?.dias_decorridos ?? 0);
+  const diasMes = Number(data?.dias_no_mes ?? 0);
+
+  return (
+    <CardShell
+      label="Receita"
+      icon={TrendingUp}
+      badge={temMeta ? <Badge className={CORES[cor]}>{formatPercent(pctVal)}</Badge> : undefined}
+    >
       <div>
         <p className="text-3xl font-bold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
         {!temMeta && (
@@ -693,22 +713,135 @@ function MetaCard({
       </div>
       {temMeta && (
         <>
-          <Progress
-            value={Math.min(100, pctVal)}
-            className={cor === "danger" ? "[&>div]:bg-destructive" : cor === "warning" ? "[&>div]:bg-warning" : cor === "success" ? "[&>div]:bg-success" : ""}
-          />
+          <Progress value={Math.min(100, pctVal)} className={progressClass(cor)} />
           <p className="text-xs text-muted-foreground">
-            {tetoLabel ? "Teto" : "Meta"}: {formatBRL(meta!, { compact: true })}
-            {diff > 0 && !invertida && ` · Faltam ${formatBRL(diff, { compact: true })}`}
-            {invertida && diff > 0 && ` · Sobra ${formatBRL(diff, { compact: true })}`}
-            {invertida && diff < 0 && ` · Estourou em ${formatBRL(-diff, { compact: true })}`}
+            Meta: {formatBRL(meta!, { compact: true })}
+            {realizado < meta! && ` · Faltam ${formatBRL(meta! - realizado, { compact: true })}`}
           </p>
         </>
       )}
-      {footer && <p className="text-xs text-muted-foreground">{footer}</p>}
-    </Card>
+      {metaDia > 0 && (
+        <p className={`text-xs inline-flex items-center gap-1 ${noRitmo ? "text-success" : "text-destructive"}`}>
+          <span>{noRitmo ? "✓" : "▼"}</span>
+          Ritmo: {formatBRL(media, { compact: true })}/dia · Meta: {formatBRL(metaDia, { compact: true })}/dia
+        </p>
+      )}
+      {temMeta && projecao > 0 && (
+        <div className={`text-xs flex items-center gap-1 ${projTextClass}`}>
+          <span>Projeção do mês: <strong>{formatBRL(projecao, { compact: true })}</strong> ({formatPercent(projPct)} da meta)</span>
+          <TooltipProvider>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <button type="button" className="inline-flex"><Info className="h-3 w-3" /></button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                Projeção linear: média diária dos {diasDec} dias × {diasMes} dias do mês. Não considera sazonalidade.
+              </TooltipContent>
+            </UITooltip>
+          </TooltipProvider>
+        </div>
+      )}
+    </CardShell>
   );
 }
+
+function MargemMetaCard({ data, realizadoFallback, receita }: { data: MetaRealizado | null; realizadoFallback: number; receita: number }) {
+  const realizado = Number(data?.margem_realizada ?? realizadoFallback);
+  const meta = data?.meta_margem != null ? Number(data.meta_margem) : null;
+  const temMeta = meta != null && meta > 0;
+  const pctVal = temMeta ? Number(data?.margem_pct_meta ?? (realizado / meta! * 100)) : 0;
+  const cor = temMeta ? corPorMeta(pctVal) : "muted";
+
+  const margemPctReceita = data?.margem_pct_receita != null
+    ? Number(data.margem_pct_receita)
+    : receita > 0 ? (realizado / receita) * 100 : 0;
+
+  const projecao = Number(data?.projecao_margem ?? 0);
+  const diasDec = Number(data?.dias_decorridos ?? 0);
+  const diasMes = Number(data?.dias_no_mes ?? 0);
+
+  return (
+    <CardShell
+      label="Margem de contribuição"
+      icon={Wallet}
+      badge={temMeta ? <Badge className={CORES[cor]}>{formatPercent(pctVal)}</Badge> : undefined}
+    >
+      <div>
+        <p className="text-3xl font-bold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
+        <p className="text-xs text-muted-foreground mt-1">{formatPercent(margemPctReceita)} da receita</p>
+      </div>
+      {temMeta ? (
+        <>
+          <Progress value={Math.min(100, pctVal)} className={progressClass(cor)} />
+          <p className="text-xs text-muted-foreground">Meta: {formatBRL(meta!, { compact: true })}</p>
+        </>
+      ) : (
+        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+          <Target className="h-3 w-3" /> Definir meta
+        </Link>
+      )}
+      {projecao > 0 && (
+        <div className="text-xs text-muted-foreground flex items-center gap-1">
+          <span>Projeção do mês: <strong>{formatBRL(projecao, { compact: true })}</strong></span>
+          <TooltipProvider>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <button type="button" className="inline-flex"><Info className="h-3 w-3" /></button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                Projeção linear: média diária dos {diasDec} dias × {diasMes} dias do mês. Não considera sazonalidade.
+              </TooltipContent>
+            </UITooltip>
+          </TooltipProvider>
+        </div>
+      )}
+    </CardShell>
+  );
+}
+
+function AcosMetaCard({ data, adsRealizado, acosFallback }: { data: MetaRealizado | null; adsRealizado: number; acosFallback: number }) {
+  const ads = Number(data?.ads_realizado ?? adsRealizado);
+  const acos = Number(data?.acos_realizado ?? acosFallback);
+  const teto = data?.meta_acos != null ? Number(data.meta_acos) : null;
+  const temTeto = teto != null && teto > 0;
+  const estourou = data?.acos_estourou === true || (temTeto && acos > teto!);
+
+  let cor: Cor = "muted";
+  if (temTeto) {
+    const razao = acos / teto!;
+    if (estourou) cor = "danger";
+    else if (razao >= 0.85) cor = "warning";
+    else cor = "success";
+  }
+
+  return (
+    <CardShell
+      label="ACOS · publicidade"
+      icon={Megaphone}
+      badge={temTeto ? <Badge className={CORES[cor]}>Teto {formatPercent(teto!)}</Badge> : undefined}
+    >
+      <div>
+        <p className={`text-3xl font-bold tabular-nums ${temTeto ? { success: "text-success", warning: "text-warning", danger: "text-destructive", muted: "" }[cor] : ""}`}>
+          {formatPercent(acos)}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {formatBRL(ads, { compact: true })} investidos
+        </p>
+      </div>
+      {temTeto ? (
+        <p className="text-xs text-muted-foreground">
+          Teto: {formatPercent(teto!)}
+          {estourou && ` · Estourou em ${formatPercent(acos - teto!)}`}
+        </p>
+      ) : (
+        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+          <Target className="h-3 w-3" /> Definir teto
+        </Link>
+      )}
+    </CardShell>
+  );
+}
+
 
 function VariacaoLine({
   label, atual, anterior, altaBoa,

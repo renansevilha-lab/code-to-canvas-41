@@ -26,17 +26,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, formatPercent } from "@/lib/format";
 
 export const Route = createFileRoute("/metas")({
   component: MetasPage,
 });
 
 type Marketplace = "todos" | "shopee" | "mercadolivre" | "amazon";
-type Tipo = "receita" | "margem" | "ads";
+type Tipo = "receita" | "margem" | "acos";
 
 type MetaRow = {
-  competencia: string; // YYYY-MM-DD
+  competencia: string;
   marketplace: Marketplace;
   tipo: Tipo;
   valor: number;
@@ -53,7 +53,7 @@ const MARKETPLACES: { value: Marketplace; label: string }[] = [
 const TIPO_LABEL: Record<Tipo, string> = {
   receita: "Receita",
   margem: "Margem de contribuição",
-  ads: "Gasto com ADS (teto)",
+  acos: "Teto de ACOS",
 };
 
 function competenciaAtual(): string {
@@ -70,7 +70,7 @@ function MetasPage() {
 
   const [receita, setReceita] = useState<string>("");
   const [margem, setMargem] = useState<string>("");
-  const [ads, setAds] = useState<string>("");
+  const [acos, setAcos] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   const [todas, setTodas] = useState<MetaRow[]>([]);
@@ -88,7 +88,11 @@ function MetasPage() {
         .order("marketplace")
         .order("tipo");
       if (error) throw error;
-      setTodas((data ?? []) as MetaRow[]);
+      // Ignora registros legados com tipo = 'ads' (substituído por 'acos')
+      const filtered = ((data ?? []) as MetaRow[]).filter(
+        (r) => r.tipo === "receita" || r.tipo === "margem" || r.tipo === "acos",
+      );
+      setTodas(filtered);
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -100,14 +104,13 @@ function MetasPage() {
     load();
   }, []);
 
-  // Pré-popular os campos com metas já cadastradas do mês/canal selecionado
   useEffect(() => {
     const found = todas.filter(
       (m) => m.competencia === competencia && m.marketplace === marketplace,
     );
     setReceita(found.find((m) => m.tipo === "receita")?.valor.toString() ?? "");
     setMargem(found.find((m) => m.tipo === "margem")?.valor.toString() ?? "");
-    setAds(found.find((m) => m.tipo === "ads")?.valor.toString() ?? "");
+    setAcos(found.find((m) => m.tipo === "acos")?.valor.toString() ?? "");
   }, [competencia, marketplace, todas]);
 
   const opcoesCompetencia = useMemo(() => {
@@ -116,7 +119,6 @@ function MetasPage() {
     for (let i = -6; i <= 6; i++) {
       meses.push(format(addMonths(base, i), "yyyy-MM-dd"));
     }
-    // inclui competências já cadastradas fora do range
     for (const m of todas) {
       if (!meses.includes(m.competencia)) meses.push(m.competencia);
     }
@@ -134,18 +136,12 @@ function MetasPage() {
       const push = (tipo: Tipo, v: string) => {
         const n = parse(v);
         if (n !== null) {
-          rows.push({
-            competencia,
-            marketplace,
-            tipo,
-            valor: n,
-            observacao: null,
-          });
+          rows.push({ competencia, marketplace, tipo, valor: n, observacao: null });
         }
       };
       push("receita", receita);
       push("margem", margem);
-      push("ads", ads);
+      push("acos", acos);
 
       if (rows.length === 0) {
         toast.error("Informe pelo menos uma meta.");
@@ -188,6 +184,9 @@ function MetasPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const formatValor = (row: MetaRow) =>
+    row.tipo === "acos" ? formatPercent(Number(row.valor)) : formatBRL(Number(row.valor));
+
   return (
     <div className="p-6 md:p-10 max-w-5xl mx-auto space-y-8">
       <header className="space-y-3">
@@ -197,7 +196,7 @@ function MetasPage() {
         </Badge>
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Metas</h1>
         <p className="text-muted-foreground text-sm max-w-2xl">
-          Defina metas mensais de receita, margem de contribuição e teto de gasto com ADS.
+          Defina metas mensais de receita, margem de contribuição e teto de ACOS.
           As metas alimentam o dashboard principal.
         </p>
       </header>
@@ -250,22 +249,27 @@ function MetasPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Meta de Gasto com ADS · TETO (R$)</Label>
-            <Input
-              type="number"
-              inputMode="decimal"
-              value={ads}
-              onChange={(e) => setAds(e.target.value)}
-              placeholder="0,00"
-            />
+            <Label>Teto de ACOS (%)</Label>
+            <div className="relative">
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={acos}
+                onChange={(e) => setAcos(e.target.value)}
+                placeholder="ex: 8"
+                className="pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
           <Info className="h-4 w-4 text-warning shrink-0 mt-0.5" />
           <span>
-            A <strong>meta de ADS é um limite de gasto (teto)</strong> — ficar abaixo é bom.
-            No dashboard, a cor é invertida: verde quando o gasto está abaixo do teto.
+            <strong>ACOS = gasto com ADS ÷ receita.</strong> É um teto — ficar abaixo é bom.
+            No dashboard, a cor é invertida: verde quando o ACOS está abaixo do teto.
           </span>
         </div>
 
@@ -304,7 +308,7 @@ function MetasPage() {
                   <TableCell>{labelCompetencia(r.competencia)}</TableCell>
                   <TableCell className="capitalize">{r.marketplace}</TableCell>
                   <TableCell>{TIPO_LABEL[r.tipo]}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatBRL(Number(r.valor))}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatValor(r)}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button size="icon" variant="ghost" onClick={() => editar(r)}>
