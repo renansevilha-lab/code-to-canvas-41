@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import {
   Megaphone,
   Wallet,
@@ -13,6 +14,7 @@ import {
   Link2,
   Target,
   ShoppingBag,
+  AlertTriangle,
 } from "lucide-react";
 
 import {
@@ -27,16 +29,19 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { supabaseExternal } from "@/integrations/supabase/external-client";
 
 type NavItem = {
   title: string;
   url: string;
   icon: typeof ShoppingBag;
+  badgeKey?: "anomalias";
 };
 
 const principal: NavItem[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Metas", url: "/metas", icon: Target },
+  { title: "Anomalias", url: "/anomalias", icon: AlertTriangle, badgeKey: "anomalias" },
   { title: "Pedidos", url: "/pedidos", icon: ClipboardList },
   { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes },
   { title: "Separação", url: "/separacao", icon: PackageCheck },
