@@ -13,6 +13,7 @@ import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as ResultadoRouteImport } from './routes/resultado'
+import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
 import { Route as PedidosRouteImport } from './routes/pedidos'
@@ -45,6 +46,11 @@ const SeparacaoRoute = SeparacaoRouteImport.update({
 const ResultadoRoute = ResultadoRouteImport.update({
   id: '/resultado',
   path: '/resultado',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProdutosMargemRoute = ProdutosMargemRouteImport.update({
+  id: '/produtos-margem',
+  path: '/produtos-margem',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProdutosRoute = ProdutosRouteImport.update({
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
+  '/produtos-margem': typeof ProdutosMargemRoute
   '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -145,6 +152,7 @@ export interface FileRoutesByTo {
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
+  '/produtos-margem': typeof ProdutosMargemRoute
   '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -165,6 +173,7 @@ export interface FileRoutesById {
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
+  '/produtos-margem': typeof ProdutosMargemRoute
   '/resultado': typeof ResultadoRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
+    | '/produtos-margem'
     | '/resultado'
     | '/separacao'
     | '/tendencias'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
+    | '/produtos-margem'
     | '/resultado'
     | '/separacao'
     | '/tendencias'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
+    | '/produtos-margem'
     | '/resultado'
     | '/separacao'
     | '/tendencias'
@@ -244,6 +256,7 @@ export interface RootRouteChildren {
   PedidosRoute: typeof PedidosRoute
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
+  ProdutosMargemRoute: typeof ProdutosMargemRoute
   ResultadoRoute: typeof ResultadoRoute
   SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
@@ -279,6 +292,13 @@ declare module '@tanstack/react-router' {
       path: '/resultado'
       fullPath: '/resultado'
       preLoaderRoute: typeof ResultadoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/produtos-margem': {
+      id: '/produtos-margem'
+      path: '/produtos-margem'
+      fullPath: '/produtos-margem'
+      preLoaderRoute: typeof ProdutosMargemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/produtos': {
@@ -388,6 +408,7 @@ const rootRouteChildren: RootRouteChildren = {
   PedidosRoute: PedidosRoute,
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
+  ProdutosMargemRoute: ProdutosMargemRoute,
   ResultadoRoute: ResultadoRoute,
   SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,
