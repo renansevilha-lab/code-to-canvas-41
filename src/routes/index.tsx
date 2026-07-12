@@ -164,6 +164,9 @@ function Dashboard() {
   const [alertaBaixaConf, setAlertaBaixaConf] = useState(0);
   const [alertaAcos, setAlertaAcos] = useState(0);
   const [alertaAmazon, setAlertaAmazon] = useState(0);
+  const [anomSemCusto, setAnomSemCusto] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
+  const [anomCmvMaior, setAnomCmvMaior] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
+  const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
