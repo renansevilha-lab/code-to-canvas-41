@@ -129,7 +129,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/ads-shopee': typeof AdsShopeeRoute
-  '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
@@ -150,6 +149,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
+  '/ads-shopee': typeof AdsShopeeRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
