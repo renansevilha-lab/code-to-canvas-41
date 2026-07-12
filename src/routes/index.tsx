@@ -6,46 +6,59 @@ import {
   AlertTriangle,
   Package,
   Wallet,
-  Calendar,
   ArrowRight,
   ArrowUp,
   ArrowDown,
   Target,
-  Receipt,
-  CheckCircle2,
   Megaphone,
-  Link2,
+  CheckCircle2,
+  Info,
+  RefreshCw,
 } from "lucide-react";
 import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ReferenceLine,
+  Area,
+  AreaChart,
+  Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
+  Line,
+  LineChart,
 } from "recharts";
 import {
   format,
   parseISO,
   startOfMonth,
-  subMonths,
   endOfMonth,
-  getDate,
-  getDaysInMonth,
+  subMonths,
   subDays,
+  differenceInCalendarDays,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Info } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
-import { SyncStatusFooter } from "@/components/SyncStatusFooter";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   component: Dashboard,
@@ -54,12 +67,44 @@ export const Route = createFileRoute("/")({
 // ============================================================
 // Types
 // ============================================================
+type KpiCanal = {
+  canal: string;
+  marketplace: string;
+  shop_id: string | null;
+  pedidos: number;
+  receita: number;
+  cmv: number;
+  imposto: number;
+  margem: number;
+  mc_pct: number;
+  ticket_medio: number;
+  ads: number | null;
+  acos: number | null;
+  pedidos_ant: number | null;
+  receita_ant: number | null;
+  margem_ant: number | null;
+  var_receita_pct: number | null;
+  var_margem_pct: number | null;
+  var_pedidos_pct: number | null;
+  cobertura_pct: number | null;
+};
+
+type ReceitaDiaCanal = {
+  canal: string;
+  marketplace: string;
+  shop_id: string | null;
+  data: string;
+  pedidos: number;
+  receita: number;
+  margem: number;
+  ticket_medio: number;
+};
+
 type MetaRealizado = {
   competencia: string;
   marketplace: string;
   receita_realizada: number | null;
   margem_realizada: number | null;
-  margem_pct_receita: number | null;
   ads_realizado: number | null;
   acos_realizado: number | null;
   meta_receita: number | null;
@@ -68,39 +113,6 @@ type MetaRealizado = {
   receita_pct_meta: number | null;
   margem_pct_meta: number | null;
   acos_estourou: boolean | null;
-  dias_no_mes: number | null;
-  dias_decorridos: number | null;
-  receita_media_diaria: number | null;
-  meta_receita_diaria: number | null;
-  projecao_receita: number | null;
-  projecao_margem: number | null;
-  projecao_pct_meta: number | null;
-  // legado (algumas views ainda expõem)
-  meta_ads?: number | null;
-  ads_pct_meta?: number | null;
-};
-
-type Kpis = {
-  pedidos_qtd: number;
-  pedidos_receita: number;
-  pedidos_ticket_medio: number;
-  pedidos_hoje_qtd: number;
-  pedidos_hoje_receita: number;
-  pedidos_ontem_qtd: number;
-  pedidos_ontem_receita: number;
-  contas_atrasadas_qtd: number;
-  contas_atrasadas_valor: number;
-  contas_7dias_qtd: number;
-  contas_7dias_valor: number;
-  contas_aberto_qtd: number;
-  contas_aberto_valor: number;
-};
-
-type DiaRow = {
-  dia: string;
-  marca_canal: string | null;
-  qtd_pedidos: number;
-  receita: number;
 };
 
 type ProdutoRow = {
@@ -116,93 +128,111 @@ type ProdutoRow = {
   confiavel: boolean | null;
 };
 
-const CHART_COLORS = [
-  "hsl(217 91% 60%)",
-  "hsl(142 71% 45%)",
-  "hsl(38 92% 50%)",
-  "hsl(280 65% 60%)",
-  "hsl(0 84% 60%)",
-];
+// ============================================================
+// Period presets
+// ============================================================
+type PresetKey = "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
 
-function ymd(d: Date) {
-  return format(d, "yyyy-MM-dd");
+function computeRange(preset: PresetKey, custom?: { from: string; to: string }): { from: string; to: string } {
+  const today = new Date();
+  const ymd = (d: Date) => format(d, "yyyy-MM-dd");
+  switch (preset) {
+    case "mes_atual":
+      return { from: ymd(startOfMonth(today)), to: ymd(today) };
+    case "ult_7":
+      return { from: ymd(subDays(today, 6)), to: ymd(today) };
+    case "ult_30":
+      return { from: ymd(subDays(today, 29)), to: ymd(today) };
+    case "mes_anterior": {
+      const m = subMonths(today, 1);
+      return { from: ymd(startOfMonth(m)), to: ymd(endOfMonth(m)) };
+    }
+    case "custom":
+      return custom ?? { from: ymd(startOfMonth(today)), to: ymd(today) };
+  }
+}
+
+const PRESET_LABEL: Record<PresetKey, string> = {
+  mes_atual: "Mês atual",
+  ult_7: "Últimos 7 dias",
+  ult_30: "Últimos 30 dias",
+  mes_anterior: "Mês anterior",
+  custom: "Personalizado",
+};
+
+// ============================================================
+// Canal colors
+// ============================================================
+function colorForCanal(canal: string): string {
+  const c = (canal ?? "").toLowerCase();
+  if (c.includes("shopee") && c.includes("ottz")) return "hsl(24 95% 53%)"; // laranja
+  if (c.includes("shopee") && (c.includes("svl") || c.includes("sv "))) return "hsl(270 60% 55%)"; // roxo
+  if (c.includes("shopee")) return "hsl(24 95% 53%)";
+  if (c.includes("mercado")) return "hsl(45 93% 47%)"; // amarelo
+  if (c.includes("amazon")) return "hsl(215 60% 22%)"; // azul escuro
+  return "hsl(215 15% 55%)";
 }
 
 // ============================================================
 // Component
 // ============================================================
 function Dashboard() {
-  const today = useMemo(() => new Date(), []);
-  const compAtual = useMemo(() => ymd(startOfMonth(today)), [today]);
-  const compAnterior = useMemo(() => ymd(startOfMonth(subMonths(today, 1))), [today]);
-  const diaAtual = useMemo(() => getDate(today), [today]);
-  const diasNoMes = useMemo(() => getDaysInMonth(today), [today]);
+  const [preset, setPreset] = useState<PresetKey>("mes_atual");
+  const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
+  const range = useMemo(
+    () => computeRange(preset, customRange ?? undefined),
+    [preset, customRange],
+  );
 
-  // Ranges do mês atual (do dia 1 até hoje)
-  const rangeAtual = useMemo(() => ({
-    from: compAtual,
-    to: ymd(today),
-  }), [compAtual, today]);
-
-  // Mesmo intervalo do mês anterior (dia 1 ao dia atual)
-  const rangeMesmoIntervaloAnterior = useMemo(() => {
-    const de = parseISO(compAnterior);
-    const ate = new Date(de.getFullYear(), de.getMonth(), diaAtual);
-    const fimMesAnt = endOfMonth(de);
-    return { from: ymd(de), to: ymd(ate > fimMesAnt ? fimMesAnt : ate) };
-  }, [compAnterior, diaAtual]);
-
-  // Estados
-  const [metasAtual, setMetasAtual] = useState<MetaRealizado | null>(null);
-  const [metasAnterior, setMetasAnterior] = useState<MetaRealizado | null>(null);
-  const [porCanal, setPorCanal] = useState<MetaRealizado[]>([]);
-  const [kpis, setKpis] = useState<Kpis | null>(null);
-  const [dias, setDias] = useState<DiaRow[]>([]);
+  const [canaisFiltro, setCanaisFiltro] = useState<string[] | null>(null); // null = todos
+  const [kpisCanal, setKpisCanal] = useState<KpiCanal[]>([]);
+  const [diario, setDiario] = useState<ReceitaDiaCanal[]>([]);
+  const [metas, setMetas] = useState<MetaRealizado[]>([]);
   const [topProdutos, setTopProdutos] = useState<ProdutoRow[]>([]);
-  const [produtosOcultos, setProdutosOcultos] = useState(0);
-  const [alertaPrejuizo, setAlertaPrejuizo] = useState(0);
-  const [alertaBaixaConf, setAlertaBaixaConf] = useState(0);
   const [alertaAcos, setAlertaAcos] = useState(0);
   const [alertaAmazon, setAlertaAmazon] = useState(0);
   const [anomSemCusto, setAnomSemCusto] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
   const [anomCmvMaior, setAnomCmvMaior] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
   const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
+  const [alertaPrejuizo, setAlertaPrejuizo] = useState(0);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const compAtual = useMemo(() => format(startOfMonth(new Date()), "yyyy-MM-dd"), []);
 
   useEffect(() => {
     let cancel = false;
     setLoading(true);
     setErro(null);
+
     (async () => {
       try {
-        // Metas x Realizado — atual + anterior + por canal
-        const metasQ = await supabaseExternal
+        const kpiQ = supabaseExternal.rpc("kpi_canais", {
+          data_ini: range.from,
+          data_fim: range.to,
+        });
+        const diaQ = supabaseExternal
+          .from("view_receita_diaria_canal")
+          .select("canal,marketplace,shop_id,data,pedidos,receita,margem,ticket_medio")
+          .gte("data", range.from)
+          .lte("data", range.to)
+          .order("data", { ascending: true })
+          .limit(20000);
+
+        const metasQ = supabaseExternal
           .from("view_metas_realizado")
           .select("*")
-          .in("competencia", [compAtual, compAnterior]);
+          .eq("competencia", compAtual);
 
-        // KPIs snapshot + diário do mês atual
-        const kpisQ = supabaseExternal.rpc("get_dashboard_kpis", {
-          p_data_inicio: rangeAtual.from,
-          p_data_fim: rangeAtual.to,
-        });
-        const diasQ = supabaseExternal.rpc("get_vendas_dia", {
-          p_data_inicio: rangeAtual.from,
-          p_data_fim: rangeAtual.to,
-        });
-
-        // Top produtos + alertas
         const produtosQ = supabaseExternal
           .from("view_produtos_dashboard")
-          .select(
-            "marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel",
-          )
+          .select("marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel")
           .limit(2000);
 
-        // ACOS alto últimos 7 dias
-        const de7 = ymd(subDays(today, 6));
-        const ate7 = ymd(today);
+        const de7 = format(subDays(new Date(), 6), "yyyy-MM-dd");
+        const ate7 = format(new Date(), "yyyy-MM-dd");
         const acosQ = supabaseExternal
           .from("view_shopee_ads_anuncios")
           .select("campaign_id,investimento,vendas_direto")
@@ -210,60 +240,39 @@ function Dashboard() {
           .lte("data", ate7)
           .limit(20000);
 
-        // Amazon SKUs sem cadastro e sem mapeamento
         const amazonQ = supabaseExternal
           .from("view_amazon_skus_mapear")
           .select("sem_cadastro,tem_mapeamento")
           .eq("sem_cadastro", true);
 
-        // Anomalias resumidas
-        const anomaliasQ = supabaseExternal
+        const anomsQ = supabaseExternal
           .from("view_anomalias")
           .select("tipo, receita")
           .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
           .limit(20000);
 
-        const [k, d, pr, acos, am, anoms] = await Promise.all([
-          kpisQ, diasQ, produtosQ, acosQ, amazonQ, anomaliasQ,
+        const [kpi, dia, met, prod, acos, am, anoms] = await Promise.all([
+          kpiQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ,
         ]);
         if (cancel) return;
 
-        if (metasQ.error) throw metasQ.error;
-        const metasRows = (metasQ.data ?? []) as MetaRealizado[];
+        if (kpi.error) throw kpi.error;
+        const kpiRows = ((kpi.data ?? []) as KpiCanal[]).filter((r) => r.canal);
+        setKpisCanal(kpiRows);
 
-        const atualTodos = metasRows.find(
-          (m) => m.competencia === compAtual && m.marketplace === "todos",
-        );
-        const anteriorTodos = metasRows.find(
-          (m) => m.competencia === compAnterior && m.marketplace === "todos",
-        );
-        const canais = metasRows
-          .filter((m) => m.competencia === compAtual && m.marketplace !== "todos")
-          .sort((a, b) => Number(b.receita_realizada ?? 0) - Number(a.receita_realizada ?? 0));
+        if (!dia.error) setDiario((dia.data ?? []) as ReceitaDiaCanal[]);
+        if (!met.error) setMetas((met.data ?? []) as MetaRealizado[]);
 
-        setMetasAtual(atualTodos ?? null);
-        setMetasAnterior(anteriorTodos ?? null);
-        setPorCanal(canais);
-
-        if (k.error) throw k.error;
-        const kRow = Array.isArray(k.data) ? k.data[0] : k.data;
-        setKpis(kRow as Kpis);
-
-        if (d.error) throw d.error;
-        setDias((d.data ?? []) as DiaRow[]);
-
-        if (pr.error) throw pr.error;
-        const produtos = (pr.data ?? []) as ProdutoRow[];
-        const confiaveis = produtos.filter((p) => p.confiavel !== false);
-        const oculto = produtos.length - confiaveis.length;
-        setProdutosOcultos(oculto);
-        setTopProdutos(
-          confiaveis
-            .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
-            .slice(0, 10),
-        );
-        setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
-        setAlertaBaixaConf(oculto);
+        if (!prod.error) {
+          const produtos = (prod.data ?? []) as ProdutoRow[];
+          const confiaveis = produtos.filter((p) => p.confiavel !== false);
+          setTopProdutos(
+            confiaveis
+              .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
+              .slice(0, 8),
+          );
+          setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
+        }
 
         if (!acos.error) {
           const map = new Map<string, { inv: number; vendas: number }>();
@@ -287,7 +296,11 @@ function Dashboard() {
 
         if (!anoms.error) {
           const rows = (anoms.data ?? []) as { tipo: string; receita: number | null }[];
-          const acc = { sku_sem_custo: { count: 0, receita: 0 }, cmv_maior_que_receita: { count: 0, receita: 0 }, sem_recebido: { count: 0, receita: 0 } };
+          const acc = {
+            sku_sem_custo: { count: 0, receita: 0 },
+            cmv_maior_que_receita: { count: 0, receita: 0 },
+            sem_recebido: { count: 0, receita: 0 },
+          };
           for (const r of rows) {
             const g = acc[r.tipo as keyof typeof acc];
             if (!g) continue;
@@ -298,6 +311,8 @@ function Dashboard() {
           setAnomCmvMaior(acc.cmv_maior_que_receita);
           setAnomSemRecebido({ count: acc.sem_recebido.count });
         }
+
+        setAtualizadoEm(new Date());
       } catch (e) {
         if (!cancel) setErro((e as Error).message);
       } finally {
@@ -305,153 +320,159 @@ function Dashboard() {
       }
     })();
     return () => { cancel = true; };
-  }, [compAtual, compAnterior, rangeAtual.from, rangeAtual.to, today]);
+  }, [range.from, range.to, compAtual, tick]);
 
-  // Comparativo: mesmo intervalo do mês anterior — precisa re-fetch de vendas do intervalo comparável
-  const [receitaAnteriorMesmoIntervalo, setReceitaAnteriorMesmoIntervalo] = useState<number | null>(null);
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      try {
-        const { data } = await supabaseExternal.rpc("get_vendas_dia", {
-          p_data_inicio: rangeMesmoIntervaloAnterior.from,
-          p_data_fim: rangeMesmoIntervaloAnterior.to,
-        });
-        if (cancel) return;
-        const soma = ((data ?? []) as DiaRow[]).reduce((s, r) => s + Number(r.receita ?? 0), 0);
-        setReceitaAnteriorMesmoIntervalo(soma);
-      } catch { /* silencioso */ }
-    })();
-    return () => { cancel = true; };
-  }, [rangeMesmoIntervaloAnterior.from, rangeMesmoIntervaloAnterior.to]);
+  // Lista de todos os canais conhecidos (para o filtro)
+  const canaisDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of kpisCanal) set.add(r.canal);
+    return Array.from(set).sort();
+  }, [kpisCanal]);
 
-  const chartData = useMemo(() => buildChartData(dias), [dias]);
-  const canaisAtivos = chartData.canais;
+  const kpisVisiveis = useMemo(() => {
+    if (!canaisFiltro) return kpisCanal;
+    const s = new Set(canaisFiltro);
+    return kpisCanal.filter((r) => s.has(r.canal));
+  }, [kpisCanal, canaisFiltro]);
 
-  const metaDiariaReceita = useMemo(() => {
-    if (metasAtual?.meta_receita_diaria != null) return Number(metasAtual.meta_receita_diaria);
-    const meta = Number(metasAtual?.meta_receita ?? 0);
-    return meta > 0 ? meta / diasNoMes : 0;
-  }, [metasAtual, diasNoMes]);
+  const diarioVisivel = useMemo(() => {
+    if (!canaisFiltro) return diario;
+    const s = new Set(canaisFiltro);
+    return diario.filter((r) => s.has(r.canal));
+  }, [diario, canaisFiltro]);
 
-  if (erro && !kpis) {
-    return (
-      <div className="p-6 md:p-10 max-w-7xl mx-auto">
-        <Card className="p-6 border-destructive/30 bg-destructive/5">
-          <h2 className="font-semibold text-destructive">Erro ao carregar dashboard</h2>
-          <p className="text-sm text-muted-foreground mt-1">{erro}</p>
-        </Card>
-      </div>
-    );
-  }
+  // Totais consolidados
+  const totais = useMemo(() => {
+    const t = {
+      pedidos: 0, receita: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
+      pedidos_ant: 0, receita_ant: 0, margem_ant: 0,
+      ticket_medio: 0, acos: 0, mc_pct: 0,
+    };
+    for (const r of kpisVisiveis) {
+      t.pedidos += Number(r.pedidos ?? 0);
+      t.receita += Number(r.receita ?? 0);
+      t.margem += Number(r.margem ?? 0);
+      t.ads += Number(r.ads ?? 0);
+      t.cmv += Number(r.cmv ?? 0);
+      t.imposto += Number(r.imposto ?? 0);
+      t.pedidos_ant += Number(r.pedidos_ant ?? 0);
+      t.receita_ant += Number(r.receita_ant ?? 0);
+      t.margem_ant += Number(r.margem_ant ?? 0);
+    }
+    t.ticket_medio = t.pedidos > 0 ? t.receita / t.pedidos : 0;
+    t.acos = t.receita > 0 ? (t.ads / t.receita) * 100 : 0;
+    t.mc_pct = t.receita > 0 ? (t.margem / t.receita) * 100 : 0;
+    return t;
+  }, [kpisVisiveis]);
 
-  const receitaAtual = Number(metasAtual?.receita_realizada ?? kpis?.pedidos_receita ?? 0);
-  const margemAtual = Number(metasAtual?.margem_realizada ?? 0);
-  const adsAtual = Number(metasAtual?.ads_realizado ?? 0);
-  const acosGeral = receitaAtual > 0 ? (adsAtual / receitaAtual) * 100 : 0;
+  const ticketMedioAnt = totais.pedidos_ant > 0 ? totais.receita_ant / totais.pedidos_ant : 0;
 
-  const diasIntervaloAnt = getDate(parseISO(rangeMesmoIntervaloAnterior.to));
+  // Série diária consolidada
+  const serieTotal = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of diarioVisivel) {
+      m.set(r.data, (m.get(r.data) ?? 0) + Number(r.receita ?? 0));
+    }
+    return Array.from(m.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([data, receita]) => ({ data, receita }));
+  }, [diarioVisivel]);
+
+  const donutData = useMemo(() => {
+    return kpisVisiveis
+      .filter((r) => Number(r.receita ?? 0) > 0)
+      .sort((a, b) => Number(b.receita) - Number(a.receita))
+      .map((r) => ({
+        name: r.canal,
+        value: Number(r.receita),
+        color: colorForCanal(r.canal),
+      }));
+  }, [kpisVisiveis]);
+
+  const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
+
+  // Metas
+  const metaTodos = metas.find((m) => m.marketplace === "todos") ?? null;
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground text-sm">
-          {format(parseISO(compAtual), "MMMM 'de' yyyy", { locale: ptBR })} · Metas, realizado, alertas.
-        </p>
+    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8 bg-background">
+      {/* Header + filtros */}
+      <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
+            {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
+            {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <PeriodoPicker
+            preset={preset}
+            onPreset={(p) => {
+              setPreset(p);
+              if (p !== "custom") setCustomRange(null);
+            }}
+            customRange={customRange}
+            onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
+          />
+          <CanalFilter
+            canais={canaisDisponiveis}
+            selecionados={canaisFiltro}
+            onChange={setCanaisFiltro}
+          />
+          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} className="gap-2">
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            {atualizadoEm ? `Atualizado ${format(atualizadoEm, "HH:mm")}` : "Atualizar"}
+          </Button>
+        </div>
       </header>
 
-      <SyncStatusFooter area="dashboard" />
-
-      {/* 3.1 — Metas do mês */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ReceitaMetaCard data={metasAtual} realizadoFallback={receitaAtual} />
-        <MargemMetaCard data={metasAtual} realizadoFallback={margemAtual} receita={receitaAtual} />
-        <AcosMetaCard data={metasAtual} adsRealizado={adsAtual} acosFallback={acosGeral} />
-      </section>
-
-
-      {/* 3.2 — Comparativo mesmo intervalo do mês anterior */}
-      <section>
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-              Comparativo: 1–{diaAtual} {format(today, "MMM", { locale: ptBR })} vs
-              1–{diasIntervaloAnt} {format(parseISO(compAnterior), "MMM", { locale: ptBR })}
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <VariacaoLine
-              label="Receita"
-              atual={receitaAtual}
-              anterior={receitaAnteriorMesmoIntervalo ?? 0}
-              altaBoa
-            />
-            <VariacaoLine
-              label="Margem"
-              atual={margemAtual}
-              anterior={Number(metasAnterior?.margem_realizada ?? 0)}
-              altaBoa
-            />
-            <VariacaoLine
-              label="ADS"
-              atual={adsAtual}
-              anterior={Number(metasAnterior?.ads_realizado ?? 0)}
-              altaBoa={false}
-            />
-          </div>
+      {erro && (
+        <Card className="p-4 border-destructive/30 bg-destructive/5">
+          <p className="text-sm text-destructive font-medium">Erro ao carregar dashboard</p>
+          <p className="text-xs text-muted-foreground mt-1">{erro}</p>
         </Card>
-      </section>
+      )}
 
-      {/* 3.3 — Visão por canal */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-          Por canal · {format(parseISO(compAtual), "MMMM", { locale: ptBR })}
-        </h2>
-        {porCanal.length === 0 ? (
-          <Card className="p-6 text-sm text-muted-foreground">
-            Sem dados por canal. Verifique se <code>view_metas_realizado</code> retorna linhas por marketplace.
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {porCanal.map((c) => (
-              <CanalCard key={c.marketplace} data={c} dias={dias} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* 3.4 — Evolução */}
-      <section>
-        <Card className="p-6">
-          <div className="mb-4">
-            <h2 className="font-semibold">Evolução de receita por canal</h2>
-            <p className="text-xs text-muted-foreground">
-              Receita diária no mês · linha tracejada = meta diária
-              {metaDiariaReceita > 0 ? ` (${formatBRL(metaDiariaReceita, { compact: true })})` : " (sem meta)"}
-            </p>
+      {/* 2.1 — Linha superior: Total das vendas + Donut */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2 p-6 space-y-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Total das vendas</p>
+              <p className="text-4xl font-semibold tabular-nums mt-1">{formatBRL(totais.receita, { compact: true })}</p>
+              <div className="mt-2">
+                <VariacaoBadge atual={totais.receita} anterior={totais.receita_ant} altaBoa />
+              </div>
+            </div>
+            <Link to="/pedidos" className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
+              Expandir detalhes <ArrowRight className="h-3 w-3" />
+            </Link>
           </div>
           {loading ? (
-            <div className="h-72 animate-pulse bg-muted/40 rounded-md" />
-          ) : chartData.rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
+            <div className="h-40 animate-pulse bg-muted/40 rounded-md" />
+          ) : serieTotal.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-12 text-center">Sem vendas no período.</p>
           ) : (
-            <div className="h-72">
+            <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData.rows} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
+                <AreaChart data={serieTotal} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(215 80% 55%)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(215 80% 55%)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <XAxis
-                    dataKey="dia"
-                    tickFormatter={(v) => format(parseISO(v), "dd/MM", { locale: ptBR })}
+                    dataKey="data"
+                    tickFormatter={(v) => format(parseISO(v), "dd/MM")}
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={11}
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
                   />
-                  <YAxis
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={11}
-                    tickFormatter={(v) => formatBRL(Number(v), { compact: true })}
-                    width={70}
-                  />
+                  <YAxis hide />
                   <Tooltip
                     contentStyle={{
                       background: "hsl(var(--popover))",
@@ -460,65 +481,235 @@ function Dashboard() {
                       fontSize: 12,
                     }}
                     labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                    formatter={(value) => formatBRL(Number(value ?? 0))}
+                    formatter={(value) => [formatBRL(Number(value ?? 0)), "Receita"]}
                   />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  {metaDiariaReceita > 0 && (
-                    <ReferenceLine
-                      y={metaDiariaReceita}
-                      stroke="hsl(var(--warning))"
-                      strokeDasharray="4 4"
-                      label={{ value: "meta/dia", position: "insideTopRight", fontSize: 10, fill: "hsl(var(--warning))" }}
-                    />
-                  )}
-                  {canaisAtivos.map((canal, i) => (
-                    <Line
-                      key={canal}
-                      type="monotone"
-                      dataKey={canal}
-                      stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                  ))}
-                </LineChart>
+                  <Area
+                    type="monotone"
+                    dataKey="receita"
+                    stroke="hsl(215 80% 55%)"
+                    strokeWidth={2}
+                    fill="url(#gradReceita)"
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
         </Card>
+
+        <Card className="p-6 space-y-4">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Receita por canal</p>
+            <p className="text-xs text-muted-foreground mt-1">Participação no período</p>
+          </div>
+          {donutData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-12 text-center">—</p>
+          ) : (
+            <>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donutData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={45}
+                      outerRadius={70}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {donutData.map((d, i) => (
+                        <Cell key={i} fill={d.color} stroke="transparent" />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: "hsl(var(--popover))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      formatter={(value) => formatBRL(Number(value ?? 0))}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <ul className="space-y-1.5">
+                {donutData.map((d) => {
+                  const pct = totais.receita > 0 ? (d.value / totais.receita) * 100 : 0;
+                  return (
+                    <li key={d.name} className="flex items-center gap-2 text-xs">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-sm shrink-0"
+                        style={{ background: d.color }}
+                      />
+                      <span className="truncate flex-1">{d.name}</span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {formatBRL(d.value, { compact: true })} · {pct.toFixed(1).replace(".", ",")}%
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </Card>
       </section>
 
-      {/* Alertas acionáveis */}
+      {/* 2.2 — Visão geral */}
       <section>
+        <Card className="p-6">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-4">Visão geral</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
+            <VisaoItem
+              label="Pedidos"
+              value={formatNumber(totais.pedidos)}
+              atual={totais.pedidos}
+              anterior={totais.pedidos_ant}
+              altaBoa
+            />
+            <VisaoItem
+              label="Receita"
+              value={formatBRL(totais.receita, { compact: true })}
+              atual={totais.receita}
+              anterior={totais.receita_ant}
+              altaBoa
+            />
+            <VisaoItem
+              label="Margem contrib."
+              value={formatBRL(totais.margem, { compact: true })}
+              atual={totais.margem}
+              anterior={totais.margem_ant}
+              altaBoa
+            />
+            <VisaoItem
+              label="Ticket médio"
+              value={formatBRL(totais.ticket_medio)}
+              atual={totais.ticket_medio}
+              anterior={ticketMedioAnt}
+              altaBoa
+            />
+            <VisaoItem
+              label="Gasto com ADS"
+              value={formatBRL(totais.ads, { compact: true })}
+              atual={totais.ads}
+              anterior={null}
+              altaBoa={false}
+            />
+            <VisaoItem
+              label="ACOS geral"
+              value={formatPercent(totais.acos)}
+              atual={totais.acos}
+              anterior={null}
+              altaBoa={false}
+            />
+          </div>
+        </Card>
+      </section>
+
+      {/* 2.3 — Cards por canal */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Desempenho por canal</h2>
+        </div>
+        {loading && kpisVisiveis.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-64 rounded-lg bg-muted/40 animate-pulse" />
+            ))}
+          </div>
+        ) : kpisVisiveis.length === 0 ? (
+          <Card className="p-6 text-sm text-muted-foreground">Nenhum canal no período selecionado.</Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[...kpisVisiveis]
+              .sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0))
+              .map((c) => (
+                <CanalCard key={c.canal} data={c} diario={diarioVisivel.filter((d) => d.canal === c.canal)} />
+              ))}
+          </div>
+        )}
+      </section>
+
+      {/* 2.4 — Metas */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Metas · {format(parseISO(compAtual), "MMMM", { locale: ptBR })}
+          </h2>
+          <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+            Configurar <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <MetaReceitaCard data={metaTodos} />
+          <MetaMargemCard data={metaTodos} />
+          <MetaAcosCard data={metaTodos} />
+        </div>
+      </section>
+
+      {/* Alertas + Top produtos */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="p-6 lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">Top produtos por margem líquida</h2>
+            <Link to="/produtos-margem" className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
+              Ver todos <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+          {topProdutos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Sem dados.</p>
+          ) : (
+            <ul className="space-y-2">
+              {topProdutos.map((p, i) => (
+                <li key={`${p.marketplace}-${p.sku}-${i}`} className="flex items-center gap-3 py-1.5 border-b last:border-0">
+                  <div className="h-9 w-9 rounded bg-muted overflow-hidden flex items-center justify-center shrink-0">
+                    {p.foto ? (
+                      <img src={p.foto} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate font-medium" title={p.produto ?? p.sku}>
+                      {p.produto ?? p.sku}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground font-mono">{p.sku} · {p.marketplace}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-medium tabular-nums">{formatBRL(Number(p.margem_liquida ?? 0), { compact: true })}</div>
+                    <div className="text-[11px] text-muted-foreground tabular-nums">{formatPercent(Number(p.margem_liquida_pct ?? 0))}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
         <Card className="p-6">
           <h2 className="font-semibold mb-4 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-warning" />
-            Alertas acionáveis
+            Alertas
           </h2>
           <ul className="space-y-2">
             {anomSemCusto.count > 0 && (
               <AlertaItem
                 dot="red"
                 to="/anomalias"
-                search={{ tipo: "sku_sem_custo", severidade: "alta" }}
-                text={`${anomSemCusto.count} SKUs sem custo — ${formatBRL(anomSemCusto.receita, { compact: true })} de receita fora dos totais`}
+                text={`${anomSemCusto.count} SKUs sem custo · ${formatBRL(anomSemCusto.receita, { compact: true })}`}
               />
             )}
             {anomCmvMaior.count > 0 && (
               <AlertaItem
                 dot="red"
                 to="/anomalias"
-                search={{ tipo: "cmv_maior_que_receita", severidade: "alta" }}
-                text={`${anomCmvMaior.count} pedidos com custo maior que a venda — provável erro de dado`}
+                text={`${anomCmvMaior.count} pedidos com custo > venda`}
               />
             )}
             {anomSemRecebido.count > 0 && (
               <AlertaItem
                 dot="orange"
                 to="/anomalias"
-                search={{ tipo: "sem_recebido" }}
-                text={`${anomSemRecebido.count} pedidos com repasse não informado`}
+                text={`${anomSemRecebido.count} pedidos sem repasse informado`}
               />
             )}
             {alertaPrejuizo > 0 && (
@@ -532,7 +723,7 @@ function Dashboard() {
               <AlertaItem
                 dot="orange"
                 to="/ads-shopee"
-                text={`${alertaAcos} anúncios com ACOS acima de 20% (últimos 7 dias)`}
+                text={`${alertaAcos} anúncios com ACOS > 20% (7 dias)`}
               />
             )}
             {alertaAmazon > 0 && (
@@ -542,14 +733,7 @@ function Dashboard() {
                 text={`${alertaAmazon} SKUs da Amazon sem mapeamento`}
               />
             )}
-            {kpis && kpis.contas_atrasadas_qtd > 0 && (
-              <AlertaItem
-                dot="red"
-                to="/contas-pagar"
-                text={`${kpis.contas_atrasadas_qtd} contas atrasadas · ${formatBRL(kpis.contas_atrasadas_valor, { compact: true })}`}
-              />
-            )}
-            {alertaPrejuizo === 0 && alertaAcos === 0 && alertaAmazon === 0 && anomSemCusto.count === 0 && anomCmvMaior.count === 0 && anomSemRecebido.count === 0 && (!kpis || kpis.contas_atrasadas_qtd === 0) && (
+            {anomSemCusto.count + anomCmvMaior.count + anomSemRecebido.count + alertaPrejuizo + alertaAcos + alertaAmazon === 0 && (
               <li className="flex items-center gap-2 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
               </li>
@@ -557,469 +741,480 @@ function Dashboard() {
           </ul>
         </Card>
       </section>
-
-      {/* KPIs mantidos */}
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SmallKpi icon={ShoppingCart} label="Pedidos no mês" value={kpis ? formatNumber(kpis.pedidos_qtd) : "—"} />
-        <SmallKpi icon={Receipt} label="Ticket médio" value={kpis ? formatBRL(kpis.pedidos_ticket_medio) : "—"} />
-        <SmallKpi
-          icon={ShoppingCart}
-          label="Receita hoje"
-          value={kpis ? formatBRL(kpis.pedidos_hoje_receita, { compact: true }) : "—"}
-          sub={kpis ? `${formatNumber(kpis.pedidos_hoje_qtd)} pedidos` : undefined}
-        />
-        <SmallKpi
-          icon={ShoppingCart}
-          label="Receita ontem"
-          value={kpis ? formatBRL(kpis.pedidos_ontem_receita, { compact: true }) : "—"}
-          sub={kpis ? `${formatNumber(kpis.pedidos_ontem_qtd)} pedidos` : undefined}
-        />
-      </section>
-
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SmallKpi
-          icon={AlertTriangle}
-          label="Contas atrasadas"
-          value={kpis ? formatNumber(kpis.contas_atrasadas_qtd) : "—"}
-          sub={kpis ? formatBRL(kpis.contas_atrasadas_valor, { compact: true }) : undefined}
-          accent="danger"
-        />
-        <SmallKpi
-          icon={Calendar}
-          label="Vencem em 7 dias"
-          value={kpis ? formatNumber(kpis.contas_7dias_qtd) : "—"}
-          sub={kpis ? formatBRL(kpis.contas_7dias_valor, { compact: true }) : undefined}
-          accent="warning"
-        />
-        <SmallKpi
-          icon={Wallet}
-          label="Total em aberto"
-          value={kpis ? formatBRL(kpis.contas_aberto_valor, { compact: true }) : "—"}
-          sub={kpis ? `${formatNumber(kpis.contas_aberto_qtd)} contas` : undefined}
-        />
-      </section>
-
-      {/* Top produtos */}
-      <section>
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">Top produtos por margem líquida</h2>
-            <Link to="/produtos-margem" className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
-              Ver todos <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {topProdutos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sem dados.</p>
-          ) : (
-            <div className="overflow-x-auto -mx-2">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase text-muted-foreground border-b">
-                    <th className="px-2 py-2 font-medium w-12"></th>
-                    <th className="px-2 py-2 font-medium">Produto</th>
-                    <th className="px-2 py-2 font-medium">Canal</th>
-                    <th className="px-2 py-2 font-medium text-right">Receita</th>
-                    <th className="px-2 py-2 font-medium text-right">ADS</th>
-                    <th className="px-2 py-2 font-medium text-right">Margem líq.</th>
-                    <th className="px-2 py-2 font-medium text-right">%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topProdutos.map((p, i) => (
-                    <tr key={`${p.marketplace}-${p.sku}-${i}`} className="border-b last:border-0">
-                      <td className="px-2 py-2">
-                        <div className="h-10 w-10 rounded bg-muted overflow-hidden flex items-center justify-center">
-                          {p.foto ? (
-                            <img src={p.foto} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <Package className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 max-w-xs">
-                        <div className="truncate font-medium" title={p.produto ?? p.sku}>
-                          {p.produto ?? p.sku}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div>
-                      </td>
-                      <td className="px-2 py-2 capitalize">{p.marketplace}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatBRL(Number(p.receita ?? 0), { compact: true })}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatBRL(Number(p.gasto_ads ?? 0), { compact: true })}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatBRL(Number(p.margem_liquida ?? 0), { compact: true })}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">
-                        <Badge variant="secondary">{formatPercent(Number(p.margem_liquida_pct ?? 0))}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {produtosOcultos > 0 && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  {produtosOcultos} produtos ocultos por cobertura de custo insuficiente.
-                </p>
-              )}
-            </div>
-          )}
-        </Card>
-      </section>
     </div>
   );
 }
 
 // ============================================================
-// Subcomponentes
+// Filtros
 // ============================================================
-const CORES = {
-  success: "bg-success/10 text-success border-success/20",
-  warning: "bg-warning/10 text-warning border-warning/20",
-  danger: "bg-destructive/10 text-destructive border-destructive/20",
-  muted: "bg-muted text-muted-foreground border-border",
-} as const;
-
-type Cor = keyof typeof CORES;
-
-function corPorMeta(pct: number): Cor {
-  if (pct >= 100) return "success";
-  if (pct >= 70) return "warning";
-  return "danger";
-}
-function corProjecao(pct: number): Cor {
-  if (pct >= 100) return "success";
-  if (pct >= 90) return "warning";
-  return "danger";
-}
-function progressClass(cor: Cor) {
-  if (cor === "danger") return "[&>div]:bg-destructive";
-  if (cor === "warning") return "[&>div]:bg-warning";
-  if (cor === "success") return "[&>div]:bg-success";
-  return "";
-}
-
-function CardShell({
-  label, icon: Icon, children, badge,
+function PeriodoPicker({
+  preset,
+  onPreset,
+  customRange,
+  onCustom,
 }: {
-  label: string;
-  icon: typeof TrendingUp;
-  children: React.ReactNode;
-  badge?: React.ReactNode;
+  preset: PresetKey;
+  onPreset: (p: PresetKey) => void;
+  customRange: { from: string; to: string } | null;
+  onCustom: (r: { from: string; to: string }) => void;
 }) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [from, setFrom] = useState(customRange?.from ?? "");
+  const [to, setTo] = useState(customRange?.to ?? "");
+
   return (
-    <Card className="p-6 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-primary/10 text-primary flex items-center justify-center">
-            <Icon className="h-4 w-4" />
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-2">
+          {PRESET_LABEL[preset]}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs">Período</DropdownMenuLabel>
+        {(["mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
+          <DropdownMenuCheckboxItem
+            key={p}
+            checked={preset === p}
+            onSelect={(e) => { e.preventDefault(); onPreset(p); }}
+          >
+            {PRESET_LABEL[p]}
+          </DropdownMenuCheckboxItem>
+        ))}
+        <DropdownMenuSeparator />
+        <div className="p-2 space-y-2">
+          <p className="text-xs text-muted-foreground">Personalizado</p>
+          <div className="flex gap-1">
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="text-xs border rounded px-2 py-1 flex-1 min-w-0"
+            />
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="text-xs border rounded px-2 py-1 flex-1 min-w-0"
+            />
           </div>
-          <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{label}</span>
+          <Button
+            size="sm"
+            className="w-full"
+            disabled={!from || !to || from > to}
+            onClick={() => { onCustom({ from, to }); setCustomOpen(false); }}
+          >
+            Aplicar
+          </Button>
         </div>
-        {badge}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function CanalFilter({
+  canais,
+  selecionados,
+  onChange,
+}: {
+  canais: string[];
+  selecionados: string[] | null;
+  onChange: (v: string[] | null) => void;
+}) {
+  const todos = selecionados === null;
+  const count = todos ? canais.length : selecionados.length;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm">
+          Canais ({todos ? "todos" : count})
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuCheckboxItem
+          checked={todos}
+          onSelect={(e) => { e.preventDefault(); onChange(null); }}
+        >
+          Todos os canais
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
+        {canais.map((c) => {
+          const on = todos || selecionados?.includes(c);
+          return (
+            <DropdownMenuCheckboxItem
+              key={c}
+              checked={!!on}
+              onSelect={(e) => {
+                e.preventDefault();
+                const base = todos ? [...canais] : [...(selecionados ?? [])];
+                const next = on ? base.filter((x) => x !== c) : [...base, c];
+                onChange(next.length === canais.length ? null : next.length === 0 ? [] : next);
+              }}
+            >
+              <span className="inline-block h-2.5 w-2.5 rounded-sm mr-2" style={{ background: colorForCanal(c) }} />
+              {c}
+            </DropdownMenuCheckboxItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// ============================================================
+// Canal card
+// ============================================================
+function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[] }) {
+  const cor = colorForCanal(data.canal);
+  const receita = Number(data.receita ?? 0);
+  const pedidos = Number(data.pedidos ?? 0);
+  const margem = Number(data.margem ?? 0);
+  const mcPct = Number(data.mc_pct ?? 0);
+  const ads = data.ads == null ? null : Number(data.ads);
+  const acos = data.acos == null ? null : Number(data.acos);
+  const ticket = Number(data.ticket_medio ?? 0);
+  const cobertura = data.cobertura_pct == null ? null : Number(data.cobertura_pct);
+  const temHistorico = data.receita_ant != null;
+
+  const margemAposAds = ads == null ? margem : margem - ads;
+  const margemAposAdsPct = receita > 0 ? (margemAposAds / receita) * 100 : 0;
+
+  const spark = diario
+    .slice()
+    .sort((a, b) => a.data.localeCompare(b.data))
+    .map((d) => ({ data: d.data, receita: Number(d.receita ?? 0) }));
+
+  return (
+    <Card className="p-5 space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="inline-block h-3 w-3 rounded-sm shrink-0" style={{ background: cor }} />
+          <p className="font-medium truncate">{data.canal}</p>
+        </div>
+        {cobertura != null && cobertura < 95 && (
+          <TooltipProvider>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-warning border-warning/30 bg-warning/5 gap-1">
+                  <Info className="h-3 w-3" /> {cobertura.toFixed(0)}%
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                {cobertura.toFixed(0)}% da receita tem custo conhecido — a margem deste canal é parcial.
+              </TooltipContent>
+            </UITooltip>
+          </TooltipProvider>
+        )}
       </div>
-      {children}
+
+      <div>
+        <div className="flex items-baseline gap-3">
+          <p className="text-2xl font-semibold tabular-nums">{formatBRL(receita, { compact: true })}</p>
+          <VariacaoInline valor={data.var_receita_pct} temHistorico={temHistorico} altaBoa />
+        </div>
+        <div className="flex items-baseline gap-3 mt-1">
+          <p className="text-sm text-muted-foreground tabular-nums">{formatNumber(pedidos)} pedidos</p>
+          <VariacaoInline valor={data.var_pedidos_pct} temHistorico={temHistorico} altaBoa small />
+        </div>
+      </div>
+
+      {spark.length > 1 && (
+        <div className="h-10">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={spark} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+              <Line type="monotone" dataKey="receita" stroke={cor} strokeWidth={1.75} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="space-y-1.5 text-sm">
+        <Linha
+          label="Margem contrib."
+          valor={formatBRL(margem, { compact: true })}
+          extra={formatPercent(mcPct)}
+        />
+        <Linha
+          label="ADS"
+          valor={ads == null ? "—" : formatBRL(ads, { compact: true })}
+          extra={acos == null ? "—" : `ACOS ${formatPercent(acos)}`}
+        />
+        <div className="border-t pt-2 mt-2">
+          <Linha
+            label="Margem após ADS"
+            valor={formatBRL(margemAposAds, { compact: true })}
+            extra={formatPercent(margemAposAdsPct)}
+            destaque
+            corValor={margemAposAds < 0 ? "text-destructive" : undefined}
+          />
+        </div>
+        <div className="pt-1 space-y-1">
+          <Linha label="Ticket médio" valor={formatBRL(ticket)} muted />
+          {cobertura != null && (
+            <Linha
+              label="Cobertura"
+              valor={`${cobertura.toFixed(0)}%`}
+              muted
+              corValor={cobertura < 95 ? "text-warning" : undefined}
+            />
+          )}
+        </div>
+      </div>
     </Card>
   );
 }
 
-function ReceitaMetaCard({ data, realizadoFallback }: { data: MetaRealizado | null; realizadoFallback: number }) {
-  const realizado = Number(data?.receita_realizada ?? realizadoFallback);
-  const meta = data?.meta_receita != null ? Number(data.meta_receita) : null;
-  const temMeta = meta != null && meta > 0;
-  const pctVal = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
-  const cor = temMeta ? corPorMeta(pctVal) : "muted";
-
-  const media = Number(data?.receita_media_diaria ?? 0);
-  const metaDia = Number(data?.meta_receita_diaria ?? 0);
-  const noRitmo = metaDia > 0 && media >= metaDia;
-
-  const projecao = Number(data?.projecao_receita ?? 0);
-  const projPct = Number(data?.projecao_pct_meta ?? 0);
-  const projCor = temMeta ? corProjecao(projPct) : "muted";
-  const projTextClass = { success: "text-success", warning: "text-warning", danger: "text-destructive", muted: "text-muted-foreground" }[projCor];
-
-  const diasDec = Number(data?.dias_decorridos ?? 0);
-  const diasMes = Number(data?.dias_no_mes ?? 0);
-
+function Linha({
+  label,
+  valor,
+  extra,
+  destaque,
+  muted,
+  corValor,
+}: {
+  label: string;
+  valor: string;
+  extra?: string;
+  destaque?: boolean;
+  muted?: boolean;
+  corValor?: string;
+}) {
   return (
-    <CardShell
-      label="Receita"
-      icon={TrendingUp}
-      badge={temMeta ? <Badge className={CORES[cor]}>{formatPercent(pctVal)}</Badge> : undefined}
-    >
-      <div>
-        <p className="text-3xl font-bold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
-        {!temMeta && (
-          <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1 mt-1">
-            <Target className="h-3 w-3" /> Definir meta
-          </Link>
-        )}
-      </div>
-      {temMeta && (
-        <>
-          <Progress value={Math.min(100, pctVal)} className={progressClass(cor)} />
-          <p className="text-xs text-muted-foreground">
-            Meta: {formatBRL(meta!, { compact: true })}
-            {realizado < meta! && ` · Faltam ${formatBRL(meta! - realizado, { compact: true })}`}
-          </p>
-        </>
-      )}
-      {metaDia > 0 && (
-        <p className={`text-xs inline-flex items-center gap-1 ${noRitmo ? "text-success" : "text-destructive"}`}>
-          <span>{noRitmo ? "✓" : "▼"}</span>
-          Ritmo: {formatBRL(media, { compact: true })}/dia · Meta: {formatBRL(metaDia, { compact: true })}/dia
-        </p>
-      )}
-      {temMeta && projecao > 0 && (
-        <div className={`text-xs flex items-center gap-1 ${projTextClass}`}>
-          <span>Projeção do mês: <strong>{formatBRL(projecao, { compact: true })}</strong> ({formatPercent(projPct)} da meta)</span>
-          <TooltipProvider>
-            <UITooltip>
-              <TooltipTrigger asChild>
-                <button type="button" className="inline-flex"><Info className="h-3 w-3" /></button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                Projeção linear: média diária dos {diasDec} dias × {diasMes} dias do mês. Não considera sazonalidade.
-              </TooltipContent>
-            </UITooltip>
-          </TooltipProvider>
-        </div>
-      )}
-    </CardShell>
+    <div className="flex items-baseline justify-between gap-2">
+      <span className={cn("text-xs", muted ? "text-muted-foreground" : "text-muted-foreground", destaque && "font-medium text-foreground")}>
+        {label}
+      </span>
+      <span className={cn("tabular-nums", destaque ? "font-semibold text-base" : "text-sm", corValor)}>
+        {valor}
+        {extra && <span className={cn("ml-2 text-xs", destaque ? "text-muted-foreground font-normal" : "text-muted-foreground")}>{extra}</span>}
+      </span>
+    </div>
   );
 }
 
-function MargemMetaCard({ data, realizadoFallback, receita }: { data: MetaRealizado | null; realizadoFallback: number; receita: number }) {
-  const realizado = Number(data?.margem_realizada ?? realizadoFallback);
-  const meta = data?.meta_margem != null ? Number(data.meta_margem) : null;
-  const temMeta = meta != null && meta > 0;
-  const pctVal = temMeta ? Number(data?.margem_pct_meta ?? (realizado / meta! * 100)) : 0;
-  const cor = temMeta ? corPorMeta(pctVal) : "muted";
-
-  const margemPctReceita = data?.margem_pct_receita != null
-    ? Number(data.margem_pct_receita)
-    : receita > 0 ? (realizado / receita) * 100 : 0;
-
-  const projecao = Number(data?.projecao_margem ?? 0);
-  const diasDec = Number(data?.dias_decorridos ?? 0);
-  const diasMes = Number(data?.dias_no_mes ?? 0);
-
+// ============================================================
+// Variações
+// ============================================================
+function VariacaoInline({
+  valor,
+  temHistorico,
+  altaBoa,
+  small,
+}: {
+  valor: number | null;
+  temHistorico: boolean;
+  altaBoa: boolean;
+  small?: boolean;
+}) {
+  if (!temHistorico || valor == null) {
+    return <span className={cn("text-muted-foreground", small ? "text-[11px]" : "text-xs")}>—</span>;
+  }
+  const v = Number(valor);
+  const subiu = v > 0.05;
+  const desceu = v < -0.05;
+  const bom = altaBoa ? subiu : desceu;
+  const ruim = altaBoa ? desceu : subiu;
+  const cls = bom ? "text-success" : ruim ? "text-destructive" : "text-muted-foreground";
+  const Icon = subiu ? ArrowUp : desceu ? ArrowDown : null;
   return (
-    <CardShell
-      label="Margem de contribuição"
-      icon={Wallet}
-      badge={temMeta ? <Badge className={CORES[cor]}>{formatPercent(pctVal)}</Badge> : undefined}
-    >
-      <div>
-        <p className="text-3xl font-bold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
-        <p className="text-xs text-muted-foreground mt-1">{formatPercent(margemPctReceita)} da receita</p>
+    <span className={cn("inline-flex items-center gap-0.5 font-medium", cls, small ? "text-[11px]" : "text-xs")}>
+      {Icon && <Icon className={small ? "h-2.5 w-2.5" : "h-3 w-3"} />}
+      {`${v > 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")}%`}
+    </span>
+  );
+}
+
+function VariacaoBadge({
+  atual,
+  anterior,
+  altaBoa,
+}: {
+  atual: number;
+  anterior: number | null;
+  altaBoa: boolean;
+}) {
+  if (anterior == null || anterior === 0) {
+    return <Badge variant="outline" className="text-xs text-muted-foreground">Sem comparativo</Badge>;
+  }
+  const delta = ((atual - anterior) / Math.abs(anterior)) * 100;
+  const subiu = delta > 0.05;
+  const desceu = delta < -0.05;
+  const bom = altaBoa ? subiu : desceu;
+  const cls = bom
+    ? "bg-success/10 text-success border-success/20"
+    : (altaBoa ? desceu : subiu)
+    ? "bg-destructive/10 text-destructive border-destructive/20"
+    : "bg-muted text-muted-foreground";
+  const Icon = subiu ? ArrowUp : desceu ? ArrowDown : null;
+  return (
+    <Badge variant="outline" className={cn("gap-1 text-xs", cls)}>
+      {Icon && <Icon className="h-3 w-3" />}
+      {`${delta > 0 ? "+" : ""}${delta.toFixed(1).replace(".", ",")}%`}
+      <span className="text-muted-foreground font-normal">vs anterior</span>
+    </Badge>
+  );
+}
+
+function VisaoItem({
+  label,
+  value,
+  atual,
+  anterior,
+  altaBoa,
+}: {
+  label: string;
+  value: string;
+  atual: number;
+  anterior: number | null;
+  altaBoa: boolean;
+}) {
+  const temHist = anterior != null && anterior !== 0;
+  const delta = temHist ? ((atual - anterior!) / Math.abs(anterior!)) * 100 : null;
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
+      <div className="mt-0.5">
+        <VariacaoInline valor={delta} temHistorico={temHist} altaBoa={altaBoa} />
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Metas
+// ============================================================
+function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
+  const realizado = Number(data?.receita_realizada ?? 0);
+  const meta = data?.meta_receita != null ? Number(data.meta_receita) : null;
+  const temMeta = meta != null && meta > 0;
+  const pct = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
+  const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
+  return (
+    <Card className="p-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de receita</p>
+        <TrendingUp className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
       {temMeta ? (
         <>
-          <Progress value={Math.min(100, pctVal)} className={progressClass(cor)} />
-          <p className="text-xs text-muted-foreground">Meta: {formatBRL(meta!, { compact: true })}</p>
+          <Progress
+            value={Math.min(100, pct)}
+            className={cn(
+              cor === "destructive" && "[&>div]:bg-destructive",
+              cor === "warning" && "[&>div]:bg-warning",
+              cor === "success" && "[&>div]:bg-success",
+            )}
+          />
+          <p className="text-xs text-muted-foreground">
+            {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
+          </p>
         </>
       ) : (
         <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
           <Target className="h-3 w-3" /> Definir meta
         </Link>
       )}
-      {projecao > 0 && (
-        <div className="text-xs text-muted-foreground flex items-center gap-1">
-          <span>Projeção do mês: <strong>{formatBRL(projecao, { compact: true })}</strong></span>
-          <TooltipProvider>
-            <UITooltip>
-              <TooltipTrigger asChild>
-                <button type="button" className="inline-flex"><Info className="h-3 w-3" /></button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                Projeção linear: média diária dos {diasDec} dias × {diasMes} dias do mês. Não considera sazonalidade.
-              </TooltipContent>
-            </UITooltip>
-          </TooltipProvider>
-        </div>
-      )}
-    </CardShell>
+    </Card>
   );
 }
 
-function AcosMetaCard({ data, adsRealizado, acosFallback }: { data: MetaRealizado | null; adsRealizado: number; acosFallback: number }) {
-  const ads = Number(data?.ads_realizado ?? adsRealizado);
-  const acos = Number(data?.acos_realizado ?? acosFallback);
+function MetaMargemCard({ data }: { data: MetaRealizado | null }) {
+  const realizado = Number(data?.margem_realizada ?? 0);
+  const meta = data?.meta_margem != null ? Number(data.meta_margem) : null;
+  const temMeta = meta != null && meta > 0;
+  const pct = temMeta ? Number(data?.margem_pct_meta ?? (realizado / meta! * 100)) : 0;
+  const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
+  return (
+    <Card className="p-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de margem</p>
+        <Wallet className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
+      {temMeta ? (
+        <>
+          <Progress
+            value={Math.min(100, pct)}
+            className={cn(
+              cor === "destructive" && "[&>div]:bg-destructive",
+              cor === "warning" && "[&>div]:bg-warning",
+              cor === "success" && "[&>div]:bg-success",
+            )}
+          />
+          <p className="text-xs text-muted-foreground">
+            {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
+          </p>
+        </>
+      ) : (
+        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+          <Target className="h-3 w-3" /> Definir meta
+        </Link>
+      )}
+    </Card>
+  );
+}
+
+function MetaAcosCard({ data }: { data: MetaRealizado | null }) {
+  const acos = Number(data?.acos_realizado ?? 0);
   const teto = data?.meta_acos != null ? Number(data.meta_acos) : null;
   const temTeto = teto != null && teto > 0;
   const estourou = data?.acos_estourou === true || (temTeto && acos > teto!);
-
-  let cor: Cor = "muted";
-  if (temTeto) {
-    const razao = acos / teto!;
-    if (estourou) cor = "danger";
-    else if (razao >= 0.85) cor = "warning";
-    else cor = "success";
-  }
-
+  const cor: "success" | "warning" | "destructive" | "muted" = !temTeto
+    ? "muted"
+    : estourou
+    ? "destructive"
+    : acos / teto! >= 0.85
+    ? "warning"
+    : "success";
+  const textCls = {
+    success: "text-success",
+    warning: "text-warning",
+    destructive: "text-destructive",
+    muted: "",
+  }[cor];
   return (
-    <CardShell
-      label="ACOS · publicidade"
-      icon={Megaphone}
-      badge={temTeto ? <Badge className={CORES[cor]}>Teto {formatPercent(teto!)}</Badge> : undefined}
-    >
-      <div>
-        <p className={`text-3xl font-bold tabular-nums ${temTeto ? { success: "text-success", warning: "text-warning", danger: "text-destructive", muted: "" }[cor] : ""}`}>
-          {formatPercent(acos)}
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {formatBRL(ads, { compact: true })} investidos
-        </p>
+    <Card className="p-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Teto de ACOS</p>
+        <Megaphone className="h-4 w-4 text-muted-foreground" />
       </div>
+      <p className={cn("text-2xl font-semibold tabular-nums", textCls)}>{formatPercent(acos)}</p>
       {temTeto ? (
         <p className="text-xs text-muted-foreground">
-          Teto: {formatPercent(teto!)}
-          {estourou && ` · Estourou em ${formatPercent(acos - teto!)}`}
+          Teto {formatPercent(teto!)}
+          {estourou && ` · estourou em ${formatPercent(acos - teto!)}`}
         </p>
       ) : (
         <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
           <Target className="h-3 w-3" /> Definir teto
         </Link>
       )}
-    </CardShell>
-  );
-}
-
-
-function VariacaoLine({
-  label, atual, anterior, altaBoa,
-}: {
-  label: string;
-  atual: number;
-  anterior: number;
-  altaBoa: boolean;
-}) {
-  const delta = anterior > 0 ? ((atual - anterior) / Math.abs(anterior)) * 100 : 0;
-  const subiu = delta > 0.05;
-  const desceu = delta < -0.05;
-  const bom = altaBoa ? subiu : desceu;
-  const ruim = altaBoa ? desceu : subiu;
-  const cor = bom ? "text-success" : ruim ? "text-destructive" : "text-muted-foreground";
-  const Arrow = subiu ? ArrowUp : desceu ? ArrowDown : ArrowRight;
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`inline-flex items-center gap-1 font-semibold tabular-nums ${cor}`}>
-        <Arrow className="h-3.5 w-3.5" />
-        {delta > 0 ? "+" : ""}{delta.toFixed(1).replace(".", ",")}%
-      </span>
-    </div>
-  );
-}
-
-function CanalCard({ data, dias }: { data: MetaRealizado; dias: DiaRow[] }) {
-  const receita = Number(data.receita_realizada ?? 0);
-  const margem = Number(data.margem_realizada ?? 0);
-  const ads = Number(data.ads_realizado ?? 0);
-  const margemPct = receita > 0 ? (margem / receita) * 100 : 0;
-
-  const spark = useMemo(() => {
-    const filtered = dias.filter((d) =>
-      (d.marca_canal ?? "").toLowerCase().includes(data.marketplace.toLowerCase()),
-    );
-    const map = new Map<string, number>();
-    for (const d of filtered) {
-      map.set(d.dia, (map.get(d.dia) ?? 0) + Number(d.receita ?? 0));
-    }
-    return [...map.entries()].sort().map(([dia, v]) => ({ dia, v }));
-  }, [dias, data.marketplace]);
-
-  return (
-    <Card className="p-5 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold capitalize">{data.marketplace}</h3>
-      </div>
-      <div className="space-y-1">
-        <p className="text-2xl font-bold tabular-nums">{formatBRL(receita, { compact: true })}</p>
-        <p className="text-xs text-muted-foreground">
-          Margem: {formatBRL(margem, { compact: true })} ({formatPercent(margemPct)})
-        </p>
-        <p className="text-xs text-muted-foreground">
-          ADS: {ads > 0 ? formatBRL(ads, { compact: true }) : "—"}
-        </p>
-      </div>
-      {spark.length > 1 && (
-        <div className="h-12 -mx-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={spark}>
-              <Line type="monotone" dataKey="v" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
     </Card>
   );
 }
 
-function AlertaItem({ dot, to, text, search }: { dot: "red" | "orange" | "yellow"; to: string; text: string; search?: Record<string, string> }) {
-  const cor = { red: "bg-destructive", orange: "bg-warning", yellow: "bg-yellow-500" }[dot];
+// ============================================================
+// Alerta item
+// ============================================================
+function AlertaItem({
+  dot,
+  to,
+  text,
+}: {
+  dot: "red" | "orange" | "yellow";
+  to: string;
+  text: string;
+}) {
+  const cls = { red: "bg-destructive", orange: "bg-warning", yellow: "bg-yellow-500" }[dot];
   return (
     <li>
-      <Link
-        to={to}
-        search={search as never}
-        className="flex items-center justify-between gap-3 rounded-md p-3 hover:bg-muted/50 transition-colors"
-      >
-        <span className="flex items-center gap-2.5 text-sm">
-          <span className={`h-2.5 w-2.5 rounded-full ${cor}`} />
-          {text}
-        </span>
-        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+      <Link to={to} className="flex items-start gap-2 text-sm hover:underline">
+        <span className={cn("inline-block h-2 w-2 rounded-full mt-1.5 shrink-0", cls)} />
+        <span className="flex-1">{text}</span>
+        <ArrowRight className="h-3 w-3 text-muted-foreground mt-1" />
       </Link>
     </li>
   );
-}
-
-function SmallKpi({
-  icon: Icon, label, value, sub, accent,
-}: {
-  icon: typeof TrendingUp;
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: "success" | "warning" | "danger";
-}) {
-  const map = {
-    success: "bg-success/10 text-success",
-    warning: "bg-warning/10 text-warning",
-    danger: "bg-destructive/10 text-destructive",
-  };
-  const iconClass = accent ? map[accent] : "bg-primary/10 text-primary";
-  return (
-    <Card className="p-5">
-      <div className={`h-9 w-9 rounded-lg flex items-center justify-center mb-3 ${iconClass}`}>
-        <Icon className="h-4 w-4" />
-      </div>
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-      <p className="text-2xl font-semibold mt-1 tabular-nums">{value}</p>
-      {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
-    </Card>
-  );
-}
-
-function buildChartData(rows: DiaRow[]) {
-  const totals = new Map<string, number>();
-  for (const r of rows) {
-    const k = r.marca_canal ?? "Sem canal";
-    totals.set(k, (totals.get(k) ?? 0) + Number(r.receita ?? 0));
-  }
-  const canais = [...totals.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([nome]) => nome);
-  const set = new Set(canais);
-  const byDay = new Map<string, Record<string, number | string>>();
-  for (const r of rows) {
-    const nome = r.marca_canal ?? "Sem canal";
-    if (!set.has(nome)) continue;
-    const key = r.dia;
-    if (!byDay.has(key)) byDay.set(key, { dia: key });
-    const acc = byDay.get(key)!;
-    acc[nome] = (Number(acc[nome] ?? 0) + Number(r.receita ?? 0));
-  }
-  const out = [...byDay.values()].sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
-  return { rows: out, canais };
 }
