@@ -497,6 +497,30 @@ function Dashboard() {
             Alertas acionáveis
           </h2>
           <ul className="space-y-2">
+            {anomSemCusto.count > 0 && (
+              <AlertaItem
+                dot="red"
+                to="/anomalias"
+                search={{ tipo: "sku_sem_custo", severidade: "alta" }}
+                text={`${anomSemCusto.count} SKUs sem custo — ${formatBRL(anomSemCusto.receita, { compact: true })} de receita fora dos totais`}
+              />
+            )}
+            {anomCmvMaior.count > 0 && (
+              <AlertaItem
+                dot="red"
+                to="/anomalias"
+                search={{ tipo: "cmv_maior_que_receita", severidade: "alta" }}
+                text={`${anomCmvMaior.count} pedidos com custo maior que a venda — provável erro de dado`}
+              />
+            )}
+            {anomSemRecebido.count > 0 && (
+              <AlertaItem
+                dot="orange"
+                to="/anomalias"
+                search={{ tipo: "sem_recebido" }}
+                text={`${anomSemRecebido.count} pedidos com repasse não informado`}
+              />
+            )}
             {alertaPrejuizo > 0 && (
               <AlertaItem
                 dot="red"
@@ -509,13 +533,6 @@ function Dashboard() {
                 dot="orange"
                 to="/ads-shopee"
                 text={`${alertaAcos} anúncios com ACOS acima de 20% (últimos 7 dias)`}
-              />
-            )}
-            {alertaBaixaConf > 0 && (
-              <AlertaItem
-                dot="yellow"
-                to="/produtos-margem"
-                text={`${alertaBaixaConf} produtos sem custo cadastrado (baixa confiança)`}
               />
             )}
             {alertaAmazon > 0 && (
@@ -532,7 +549,7 @@ function Dashboard() {
                 text={`${kpis.contas_atrasadas_qtd} contas atrasadas · ${formatBRL(kpis.contas_atrasadas_valor, { compact: true })}`}
               />
             )}
-            {alertaPrejuizo === 0 && alertaAcos === 0 && alertaBaixaConf === 0 && alertaAmazon === 0 && (!kpis || kpis.contas_atrasadas_qtd === 0) && (
+            {alertaPrejuizo === 0 && alertaAcos === 0 && alertaAmazon === 0 && anomSemCusto.count === 0 && anomCmvMaior.count === 0 && anomSemRecebido.count === 0 && (!kpis || kpis.contas_atrasadas_qtd === 0) && (
               <li className="flex items-center gap-2 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
               </li>
