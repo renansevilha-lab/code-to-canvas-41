@@ -59,13 +59,25 @@ type MetaRealizado = {
   marketplace: string;
   receita_realizada: number | null;
   margem_realizada: number | null;
+  margem_pct_receita: number | null;
   ads_realizado: number | null;
+  acos_realizado: number | null;
   meta_receita: number | null;
   meta_margem: number | null;
-  meta_ads: number | null;
+  meta_acos: number | null;
   receita_pct_meta: number | null;
   margem_pct_meta: number | null;
-  ads_pct_meta: number | null;
+  acos_estourou: boolean | null;
+  dias_no_mes: number | null;
+  dias_decorridos: number | null;
+  receita_media_diaria: number | null;
+  meta_receita_diaria: number | null;
+  projecao_receita: number | null;
+  projecao_margem: number | null;
+  projecao_pct_meta: number | null;
+  // legado (algumas views ainda expõem)
+  meta_ads?: number | null;
+  ads_pct_meta?: number | null;
 };
 
 type Kpis = {
