@@ -309,7 +309,7 @@ function Dashboard() {
         const rowsPrev = (canaisPrevR.data ?? []) as CanalPrevRow[];
 
         // Agrega período atual por canal
-        const agg = new Map<string, KpiCanal & { receita_com_custo: number }>();
+        const agg = new Map<string, KpiCanal>();
         for (const r of rows) {
           const key = `${r.canal}|${r.shop_id ?? ""}`;
           const cur = agg.get(key) ?? {
