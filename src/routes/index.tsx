@@ -1195,10 +1195,19 @@ function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
   const temMeta = meta != null && meta > 0;
   const pct = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
   const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
+
+  const metaDiaria = data?.meta_receita_diaria != null ? Number(data.meta_receita_diaria) : null;
+  const ritmo = data?.receita_media_diaria != null ? Number(data.receita_media_diaria) : null;
+  const projecao = data?.projecao_receita != null ? Number(data.projecao_receita) : null;
+  const projPct = data?.projecao_pct_meta != null ? Number(data.projecao_pct_meta) : null;
+  const noRitmo = metaDiaria != null && ritmo != null && ritmo >= metaDiaria;
+
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de receita</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+          {temMeta ? "Meta de receita" : "Receita realizada"}
+        </p>
         <TrendingUp className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
@@ -1215,6 +1224,18 @@ function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
           <p className="text-xs text-muted-foreground">
             {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
           </p>
+          {metaDiaria != null && ritmo != null && (
+            <p className={cn("text-xs font-medium inline-flex items-center gap-1", noRitmo ? "text-success" : "text-destructive")}>
+              {noRitmo ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+              Ritmo: {formatBRL(ritmo, { compact: true })}/dia · Meta: {formatBRL(metaDiaria, { compact: true })}/dia
+            </p>
+          )}
+          {projecao != null && (
+            <p className="text-xs text-muted-foreground">
+              Projeção do mês: {formatBRL(projecao, { compact: true })}
+              {projPct != null && ` (${formatPercent(projPct)} da meta)`}
+            </p>
+          )}
         </>
       ) : (
         <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
@@ -1234,7 +1255,9 @@ function MetaMargemCard({ data }: { data: MetaRealizado | null }) {
   return (
     <Card className="p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Meta de margem</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+          {temMeta ? "Meta de margem" : "Margem realizada"}
+        </p>
         <Wallet className="h-4 w-4 text-muted-foreground" />
       </div>
       <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
