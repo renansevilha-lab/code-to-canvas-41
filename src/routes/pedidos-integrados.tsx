@@ -105,6 +105,16 @@ interface PedidoIntegrado {
   primeira_categoria: string | null;
 }
 
+interface KpiRpcRow {
+  pedidos: number | null;
+  receita: number | null;
+  cmv: number | null;
+  imposto: number | null;
+  margem: number | null;
+  mc_pct: number | null;
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
