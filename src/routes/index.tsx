@@ -691,6 +691,7 @@ function Dashboard() {
             <VisaoItem
               label="Margem contrib."
               value={formatBRL(totais.margem, { compact: true })}
+              extra={totais.receita_com_custo > 0 ? formatPercent(totais.mc_pct) : undefined}
               atual={totais.margem}
               anterior={totais.margem_ant}
               altaBoa
