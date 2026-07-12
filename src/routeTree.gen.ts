@@ -25,7 +25,6 @@ import { Route as CmvRouteImport } from './routes/cmv'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AmazonRouteImport } from './routes/amazon'
 import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
-import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
 import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
@@ -113,6 +112,11 @@ const AdsShopeeRoute = AdsShopeeRouteImport.update({
 const AdsRoute = AdsRouteImport.update({
   id: '/ads',
   path: '/ads',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdsShopeeRoute = AdsShopeeRouteImport.update({
+  id: '/ads-shopee',
+  path: '/ads-shopee',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
