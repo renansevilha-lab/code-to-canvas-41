@@ -73,6 +73,7 @@ type KpiCanal = {
   shop_id: string | null;
   pedidos: number;
   receita: number;
+  receita_com_custo: number;
   cmv: number;
   imposto: number;
   margem: number;
