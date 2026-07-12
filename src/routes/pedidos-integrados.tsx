@@ -1192,6 +1192,21 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
               Devolução parcial
             </Badge>
           )}
+          {semCusto && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="text-[10px] h-5 px-1.5 font-medium border border-muted-foreground/30 bg-muted text-muted-foreground"
+                >
+                  sem custo
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                Não entra nos totalizadores — custo não cadastrado
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </td>
       <td className="px-3 py-2 text-xs whitespace-nowrap">{p.empresa ?? "—"}</td>
