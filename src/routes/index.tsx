@@ -977,7 +977,7 @@ function CanalFilter({
 // ============================================================
 // Canal card
 // ============================================================
-function CanalCard({ data, diario }: { data: KpiCanal; diario: ReceitaDiaCanal[] }) {
+function CanalCard({ data }: { data: KpiCanal }) {
   const cor = colorForCanal(data.canal);
   const receita = Number(data.receita ?? 0);
   const pedidos = Number(data.pedidos ?? 0);
