@@ -209,10 +209,27 @@ function Dashboard() {
 
     (async () => {
       try {
-        const kpiQ = supabaseExternal.rpc("kpi_canais", {
-          data_ini: range.from,
-          data_fim: range.to,
-        });
+        // Período anterior (mesmo nº de dias, imediatamente antes)
+        const dFrom = parseISO(range.from);
+        const dTo = parseISO(range.to);
+        const nDias = differenceInCalendarDays(dTo, dFrom) + 1;
+        const prevTo = format(subDays(dFrom, 1), "yyyy-MM-dd");
+        const prevFrom = format(subDays(dFrom, nDias), "yyyy-MM-dd");
+
+        const canaisQ = supabaseExternal
+          .from("view_canais_diario")
+          .select("canal,marketplace,shop_id,data,pedidos,receita,receita_com_custo,cmv,margem,ads")
+          .gte("data", range.from)
+          .lte("data", range.to)
+          .limit(20000);
+
+        const canaisPrevQ = supabaseExternal
+          .from("view_canais_diario")
+          .select("canal,shop_id,pedidos,receita,margem,ads")
+          .gte("data", prevFrom)
+          .lte("data", prevTo)
+          .limit(20000);
+
         const diaQ = supabaseExternal
           .from("view_receita_diaria_canal")
           .select("canal,marketplace,shop_id,data,pedidos,receita,margem,ticket_medio")
@@ -251,59 +268,95 @@ function Dashboard() {
           .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
           .limit(20000);
 
-        const [kpi, dia, met, prod, acos, am, anoms] = await Promise.all([
-          kpiQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ,
+        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms] = await Promise.all([
+          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ,
         ]);
         if (cancel) return;
 
-        console.log("kpi_canais →", { data: kpi.data, error: kpi.error, range });
-        if (kpi.error) {
-          setErro(`kpi_canais: ${kpi.error.message}`);
+        console.log("view_canais_diario →", {
+          rows: canaisR.data?.length ?? 0,
+          error: canaisR.error,
+          range,
+        });
+        if (canaisR.error) setErro(`view_canais_diario: ${canaisR.error.message}`);
+
+        type CanalRow = {
+          canal: string; marketplace: string; shop_id: string | null; data: string;
+          pedidos: number | null; receita: number | null; receita_com_custo: number | null;
+          cmv: number | null; margem: number | null; ads: number | null;
+        };
+        type CanalPrevRow = {
+          canal: string; shop_id: string | null;
+          pedidos: number | null; receita: number | null; margem: number | null; ads: number | null;
+        };
+
+        const rows = (canaisR.data ?? []) as CanalRow[];
+        const rowsPrev = (canaisPrevR.data ?? []) as CanalPrevRow[];
+
+        // Agrega período atual por canal
+        const agg = new Map<string, KpiCanal & { receita_com_custo: number }>();
+        for (const r of rows) {
+          const key = `${r.canal}|${r.shop_id ?? ""}`;
+          const cur = agg.get(key) ?? {
+            canal: r.canal,
+            marketplace: r.marketplace,
+            shop_id: r.shop_id,
+            pedidos: 0, receita: 0, cmv: 0, imposto: 0, margem: 0,
+            mc_pct: 0, ticket_medio: 0,
+            ads: 0, acos: null,
+            pedidos_ant: null, receita_ant: null, margem_ant: null,
+            var_receita_pct: null, var_margem_pct: null, var_pedidos_pct: null,
+            cobertura_pct: null,
+            receita_com_custo: 0,
+          };
+          cur.pedidos += Number(r.pedidos ?? 0);
+          cur.receita += Number(r.receita ?? 0);
+          cur.receita_com_custo += Number(r.receita_com_custo ?? 0);
+          cur.cmv += Number(r.cmv ?? 0);
+          cur.margem += Number(r.margem ?? 0);
+          cur.ads = (cur.ads ?? 0) + Number(r.ads ?? 0);
+          agg.set(key, cur);
         }
-        let kpiRows = ((kpi.data ?? []) as KpiCanal[]).filter((r) => r.canal);
+
+        // Agrega período anterior por canal
+        const aggPrev = new Map<string, { pedidos: number; receita: number; margem: number; ads: number }>();
+        for (const r of rowsPrev) {
+          const key = `${r.canal}|${r.shop_id ?? ""}`;
+          const cur = aggPrev.get(key) ?? { pedidos: 0, receita: 0, margem: 0, ads: 0 };
+          cur.pedidos += Number(r.pedidos ?? 0);
+          cur.receita += Number(r.receita ?? 0);
+          cur.margem += Number(r.margem ?? 0);
+          cur.ads += Number(r.ads ?? 0);
+          aggPrev.set(key, cur);
+        }
+
+        const pctVar = (cur: number, prev: number): number | null => {
+          if (!prev) return null;
+          return ((cur - prev) / Math.abs(prev)) * 100;
+        };
+
+        const kpiRows: KpiCanal[] = [];
+        for (const [key, v] of agg) {
+          v.ticket_medio = v.pedidos > 0 ? v.receita / v.pedidos : 0;
+          // Margem de contribuição % sobre receita_com_custo (base coberta)
+          v.mc_pct = v.receita_com_custo > 0 ? (v.margem / v.receita_com_custo) * 100 : 0;
+          v.acos = v.receita > 0 ? ((v.ads ?? 0) / v.receita) * 100 : null;
+          v.cobertura_pct = v.receita > 0 ? (v.receita_com_custo / v.receita) * 100 : null;
+
+          const p = aggPrev.get(key);
+          if (p) {
+            v.pedidos_ant = p.pedidos;
+            v.receita_ant = p.receita;
+            v.margem_ant = p.margem;
+            v.var_receita_pct = pctVar(v.receita, p.receita);
+            v.var_margem_pct = pctVar(v.margem, p.margem);
+            v.var_pedidos_pct = pctVar(v.pedidos, p.pedidos);
+          }
+          kpiRows.push(v);
+        }
 
         const diaRows = !dia.error ? ((dia.data ?? []) as ReceitaDiaCanal[]) : [];
         setDiario(diaRows);
-
-        // Fallback: se kpi_canais vier vazio mas houver dados diários,
-        // agrega os cards a partir de view_receita_diaria_canal.
-        if (kpiRows.length === 0 && diaRows.length > 0) {
-          console.warn("kpi_canais vazio — agregando fallback a partir de view_receita_diaria_canal");
-          const agg = new Map<string, KpiCanal>();
-          for (const r of diaRows) {
-            const key = `${r.canal}|${r.shop_id ?? ""}`;
-            const cur = agg.get(key) ?? {
-              canal: r.canal,
-              marketplace: r.marketplace,
-              shop_id: r.shop_id,
-              pedidos: 0,
-              receita: 0,
-              cmv: 0,
-              imposto: 0,
-              margem: 0,
-              mc_pct: 0,
-              ticket_medio: 0,
-              ads: null,
-              acos: null,
-              pedidos_ant: null,
-              receita_ant: null,
-              margem_ant: null,
-              var_receita_pct: null,
-              var_margem_pct: null,
-              var_pedidos_pct: null,
-              cobertura_pct: null,
-            };
-            cur.pedidos += Number(r.pedidos ?? 0);
-            cur.receita += Number(r.receita ?? 0);
-            cur.margem += Number(r.margem ?? 0);
-            agg.set(key, cur);
-          }
-          for (const v of agg.values()) {
-            v.ticket_medio = v.pedidos > 0 ? v.receita / v.pedidos : 0;
-            v.mc_pct = v.receita > 0 ? (v.margem / v.receita) * 100 : 0;
-          }
-          kpiRows = Array.from(agg.values());
-        }
         setKpisCanal(kpiRows);
         if (!met.error) setMetas((met.data ?? []) as MetaRealizado[]);
 
