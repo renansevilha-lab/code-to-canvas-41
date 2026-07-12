@@ -235,6 +235,9 @@ function PedidosIntegradosPage() {
 
   const [data, setData] = useState<PedidoIntegrado[]>([]);
   const [prevData, setPrevData] = useState<PedidoIntegrado[]>([]);
+  const [kpiRpc, setKpiRpc] = useState<KpiRpcRow | null>(null);
+  const [prevKpiRpc, setPrevKpiRpc] = useState<KpiRpcRow | null>(null);
+  const [totalPedidosPeriodo, setTotalPedidosPeriodo] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
