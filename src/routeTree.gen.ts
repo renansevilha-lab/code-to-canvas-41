@@ -114,11 +114,6 @@ const AdsRoute = AdsRouteImport.update({
   path: '/ads',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdsShopeeRoute = AdsShopeeRouteImport.update({
-  id: '/ads-shopee',
-  path: '/ads-shopee',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
