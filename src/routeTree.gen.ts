@@ -172,7 +172,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ads': typeof AdsRoute
   '/ads-shopee': typeof AdsShopeeRoute
-  '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/carteira': typeof CarteiraRoute
   '/cmv': typeof CmvRoute
