@@ -456,13 +456,14 @@ function Dashboard() {
   // Totais consolidados
   const totais = useMemo(() => {
     const t = {
-      pedidos: 0, receita: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
+      pedidos: 0, receita: 0, receita_com_custo: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
       pedidos_ant: 0, receita_ant: 0, margem_ant: 0,
       ticket_medio: 0, acos: 0, mc_pct: 0,
     };
     for (const r of kpisVisiveis) {
       t.pedidos += Number(r.pedidos ?? 0);
       t.receita += Number(r.receita ?? 0);
+      t.receita_com_custo += Number(r.receita_com_custo ?? 0);
       t.margem += Number(r.margem ?? 0);
       t.ads += Number(r.ads ?? 0);
       t.cmv += Number(r.cmv ?? 0);
@@ -473,7 +474,8 @@ function Dashboard() {
     }
     t.ticket_medio = t.pedidos > 0 ? t.receita / t.pedidos : 0;
     t.acos = t.receita > 0 ? (t.ads / t.receita) * 100 : 0;
-    t.mc_pct = t.receita > 0 ? (t.margem / t.receita) * 100 : 0;
+    // Margem contrib % sobre base coberta (receita_com_custo)
+    t.mc_pct = t.receita_com_custo > 0 ? (t.margem / t.receita_com_custo) * 100 : 0;
     return t;
   }, [kpisVisiveis]);
 
