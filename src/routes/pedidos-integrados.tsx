@@ -413,9 +413,34 @@ function PedidosIntegradosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prevData, empresas, canais, statuses]);
 
-  // KPIs
-  const kpis = useMemo(() => computeKpis(filtered), [filtered]);
-  const prevKpis = useMemo(() => computeKpis(filteredPrev), [filteredPrev]);
+  // KPIs — os totais principais vêm do RPC kpi_pedidos (agrega no banco,
+  // ignorando o cap de 1000 rows do PostgREST). Os filtros de empresa/status
+  // afetam apenas a lista abaixo; os cards refletem período + canal.
+  const filtroRefinaCards = empresas.length > 0 || statuses.length !== DEFAULT_STATUSES.length || debounced.length > 0;
+  const kpiClient = useMemo(() => computeKpis(filtered), [filtered]);
+  const prevKpiClient = useMemo(() => computeKpis(filteredPrev), [filteredPrev]);
+  const kpis = useMemo(() => {
+    if (filtroRefinaCards || !kpiRpc) return kpiClient;
+    return {
+      receita: Number(kpiRpc.receita ?? 0),
+      custo: Number(kpiRpc.cmv ?? 0) + Number(kpiRpc.imposto ?? 0),
+      margem: Number(kpiRpc.margem ?? 0),
+      mcPct: Number(kpiRpc.mc_pct ?? 0),
+      qtd: totalPedidosPeriodo || Number(kpiRpc.pedidos ?? 0),
+      cobertura: totalPedidosPeriodo > 0 ? Number(kpiRpc.pedidos ?? 0) / totalPedidosPeriodo : 0,
+    };
+  }, [filtroRefinaCards, kpiRpc, kpiClient, totalPedidosPeriodo]);
+  const prevKpis = useMemo(() => {
+    if (filtroRefinaCards || !prevKpiRpc) return prevKpiClient;
+    return {
+      receita: Number(prevKpiRpc.receita ?? 0),
+      custo: Number(prevKpiRpc.cmv ?? 0) + Number(prevKpiRpc.imposto ?? 0),
+      margem: Number(prevKpiRpc.margem ?? 0),
+      mcPct: Number(prevKpiRpc.mc_pct ?? 0),
+      qtd: Number(prevKpiRpc.pedidos ?? 0),
+      cobertura: 0,
+    };
+  }, [filtroRefinaCards, prevKpiRpc, prevKpiClient]);
 
   // sorted + paginated
   const sorted = useMemo(() => {
