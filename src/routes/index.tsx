@@ -937,11 +937,15 @@ function CanalCard({ data, dias }: { data: MetaRealizado; dias: DiaRow[] }) {
   );
 }
 
-function AlertaItem({ dot, to, text }: { dot: "red" | "orange" | "yellow"; to: string; text: string }) {
+function AlertaItem({ dot, to, text, search }: { dot: "red" | "orange" | "yellow"; to: string; text: string; search?: Record<string, string> }) {
   const cor = { red: "bg-destructive", orange: "bg-warning", yellow: "bg-yellow-500" }[dot];
   return (
     <li>
-      <Link to={to} className="flex items-center justify-between gap-3 rounded-md p-3 hover:bg-muted/50 transition-colors">
+      <Link
+        to={to}
+        search={search as never}
+        className="flex items-center justify-between gap-3 rounded-md p-3 hover:bg-muted/50 transition-colors"
+      >
         <span className="flex items-center gap-2.5 text-sm">
           <span className={`h-2.5 w-2.5 rounded-full ${cor}`} />
           {text}
