@@ -76,11 +76,20 @@ export const FORWARD_PRESETS: PeriodPreset[] = [
   "next90",
 ];
 
-const fmt = (d: Date) => format(d, "yyyy-MM-dd");
+// Date key (YYYY-MM-DD) on the São Paulo wall clock, regardless of the
+// browser's timezone. Prevents UTC drift for "Hoje"/"Ontem"/etc.
+const spKey = (d: Date) =>
+  d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+
+// Anchor a YYYY-MM-DD key at 12:00 UTC so date-fns arithmetic stays on the
+// same calendar day when we re-serialize via toISOString().slice(0,10).
+const keyToAnchor = (key: string) => new Date(`${key}T12:00:00Z`);
+
+const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
 export function computeRange(
   preset: PeriodPreset,
-  today = new Date(),
+  today: Date = keyToAnchor(spKey(new Date())),
 ): { from: string; to: string } {
   switch (preset) {
     case "today":
@@ -111,6 +120,7 @@ export function computeRange(
       return { from: fmt(startOfMonth(today)), to: fmt(today) };
   }
 }
+
 
 export function resolveRange(
   preset: PeriodPreset,
