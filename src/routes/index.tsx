@@ -268,8 +268,9 @@ function Dashboard() {
           .select("marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel")
           .limit(2000);
 
-        const de7 = format(subDays(new Date(), 6), "yyyy-MM-dd");
-        const ate7 = format(new Date(), "yyyy-MM-dd");
+        const _today = spToday();
+        const de7 = spKey(subDays(_today, 6));
+        const ate7 = spKey(_today);
         const acosQ = supabaseExternal
           .from("view_shopee_ads_anuncios")
           .select("campaign_id,investimento,vendas_direto")
