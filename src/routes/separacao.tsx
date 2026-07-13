@@ -538,6 +538,7 @@ function FilaPriorizada() {
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
   const [aplicando, setAplicando] = useState<string | null>(null);
+  const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
 
   const tagsPorGrupo = useMemo(() => {
     const m = new Map<string, TagLoteRow>();
@@ -546,6 +547,7 @@ function FilaPriorizada() {
   }, [lotesHoje]);
 
   async function aplicarTag(grupo: string) {
+    if (aplicando || bloqueados.has(grupo)) return;
     setAplicando(grupo);
     try {
       const data = await callSeparacaoFn<TagLoteResponse>(
@@ -571,6 +573,20 @@ function FilaPriorizada() {
         toast.warning("Todos os pedidos já receberam tag hoje", {
           description: err.message,
         });
+      } else if (err.status === undefined) {
+        // Falha de rede — a requisição pode ter chegado ao servidor mesmo assim.
+        // Bloqueia novo clique automático pra evitar criar lote duplicado sobre pedidos já tagueados.
+        setBloqueados((prev) => {
+          const next = new Set(prev);
+          next.add(grupo);
+          return next;
+        });
+        toast.error("Falha de rede ao aplicar TAG", {
+          description:
+            "Verifique no painel de Lotes se a TAG foi criada antes de tentar de novo.",
+          duration: 12000,
+        });
+        await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
       } else {
         toast.error("Erro ao aplicar TAG", { description: err.message });
       }
@@ -578,6 +594,15 @@ function FilaPriorizada() {
       setAplicando(null);
     }
   }
+
+  function desbloquear(grupo: string) {
+    setBloqueados((prev) => {
+      const next = new Set(prev);
+      next.delete(grupo);
+      return next;
+    });
+  }
+
 
 
   const enviosDisponiveis = useMemo(() => {
