@@ -14,6 +14,9 @@ import {
   Loader2,
   CheckCircle2,
   Package,
+  Tag as TagIcon,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -22,11 +25,107 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  supabaseExternal,
+  EXTERNAL_URL,
+  EXTERNAL_PUBLISHABLE_KEY,
+} from "@/integrations/supabase/external-client";
 import { formatNumber } from "@/lib/format";
+
+// ============ Edge function helpers ============
+
+interface TagLoteResponse {
+  tag: string;
+  grupo: string;
+  pedidos_tagueados: number;
+  pedidos_pulados: number;
+  aviso: string | null;
+  proximo_passo: string;
+}
+
+interface EmbalarLoteResponse {
+  tag: string;
+  embaladas: number;
+  total: number;
+  erros: unknown[];
+}
+
+async function callSeparacaoFn<T>(qs: string): Promise<T> {
+  const url = `${EXTERNAL_URL}/functions/v1/tiny-separacao?${qs}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as T & {
+    error?: string;
+    message?: string;
+  };
+  if (!resp.ok) {
+    const err = new Error(
+      (data as { error?: string; message?: string }).error ??
+        (data as { message?: string }).message ??
+        `HTTP ${resp.status}`,
+    ) as Error & { status?: number; body?: unknown };
+    err.status = resp.status;
+    err.body = data;
+    throw err;
+  }
+  return data as T;
+}
+
+interface TagLoteRow {
+  id: number;
+  data: string;
+  sequencia: number;
+  tag: string;
+  grupo_origem: string;
+  sku: string | null;
+  tipo_envio: string | null;
+  qtd_pedidos: number;
+  qtd_pulados: number;
+  status: "aplicada" | "embalada" | string;
+  embalado_em: string | null;
+  criado_em: string;
+}
+
+function useTagsDoDia() {
+  return useQuery({
+    queryKey: ["separacao", "tags_lote", "hoje"],
+    queryFn: async () => {
+      const hoje = new Date().toISOString().slice(0, 10);
+      const { data, error } = await supabaseExternal
+        .from("tags_lote")
+        .select("*")
+        .eq("data", hoje)
+        .order("sequencia", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as TagLoteRow[];
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("TAG copiada", { description: text });
+  } catch {
+    toast.error("Não foi possível copiar");
+  }
+}
+
 
 interface PriorizadaRow {
   prioridade: number;
@@ -226,11 +325,260 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+// ============ Lotes do dia panel ============
+
+function LotesDoDia() {
+  const qc = useQueryClient();
+  const { data: lotes, isLoading, error } = useTagsDoDia();
+  const [ajudaAberta, setAjudaAberta] = useState(false);
+  const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
+  const [embalando, setEmbalando] = useState<string | null>(null);
+
+  async function marcarEmbalado(lote: TagLoteRow) {
+    setEmbalando(lote.tag);
+    try {
+      const data = await callSeparacaoFn<EmbalarLoteResponse>(
+        `modulo=embalar-lote&tag=${encodeURIComponent(lote.tag)}&confirmar=1`,
+      );
+      if (data.erros && data.erros.length > 0) {
+        toast.warning(
+          `${data.embaladas} de ${data.total} embalados — ${data.erros.length} erro(s)`,
+          { description: JSON.stringify(data.erros).slice(0, 200) },
+        );
+      } else {
+        toast.success(
+          `${data.embaladas} de ${data.total} pedidos marcados como embalados`,
+          { description: `Lote ${data.tag}` },
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      const err = e as Error;
+      toast.error("Erro ao marcar embalado", { description: err.message });
+    } finally {
+      setEmbalando(null);
+      setConfirmar(null);
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <TagIcon className="h-4 w-4 text-primary" />
+          <h2 className="font-semibold text-sm">Lotes do dia</h2>
+          {lotes && lotes.length > 0 && (
+            <Badge variant="secondary">{lotes.length}</Badge>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setAjudaAberta((v) => !v)}
+          className="text-xs h-7"
+        >
+          Como usar
+          {ajudaAberta ? (
+            <ChevronUp className="h-3 w-3 ml-1" />
+          ) : (
+            <ChevronDown className="h-3 w-3 ml-1" />
+          )}
+        </Button>
+      </div>
+
+      {ajudaAberta && (
+        <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
+          <p><strong className="text-foreground">1.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
+          <p><strong className="text-foreground">2.</strong> Vá ao Tiny, filtre pelo marcador <span className="font-mono">1307-01</span> e imprima as etiquetas em massa.</p>
+          <p><strong className="text-foreground">3.</strong> Volte aqui e clique em <strong>Marcar embalado</strong> no lote.</p>
+        </div>
+      )}
+
+      {isLoading && <Skeleton className="h-16 w-full" />}
+
+      {error && (
+        <div className="text-xs text-destructive">
+          Erro ao carregar lotes: {(error as Error).message}
+        </div>
+      )}
+
+      {!isLoading && !error && (lotes?.length ?? 0) === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Nenhum lote aplicado hoje ainda. Clique em <strong>Aplicar TAG</strong> num bloco abaixo pra começar.
+        </p>
+      )}
+
+      {!isLoading && lotes && lotes.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b">
+                <th className="text-left py-2 pr-3 font-medium">TAG</th>
+                <th className="text-left py-2 pr-3 font-medium">Bloco</th>
+                <th className="text-right py-2 pr-3 font-medium">Pedidos</th>
+                <th className="text-left py-2 pr-3 font-medium">Status</th>
+                <th className="text-right py-2 font-medium">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lotes.map((l) => {
+                const embalada = l.status === "embalada";
+                return (
+                  <tr key={l.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-base font-semibold tabular-nums">
+                          {l.tag}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => copyToClipboard(l.tag)}
+                          title="Copiar tag"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">{l.grupo_origem}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
+                      {formatNumber(l.qtd_pedidos)}
+                      {l.qtd_pulados > 0 && (
+                        <span className="text-xs text-amber-600 ml-1">
+                          (+{l.qtd_pulados} pulados)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {embalada ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                          <CheckCircle2 className="h-3 w-3" /> Embalada
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                          <Hourglass className="h-3 w-3" /> Aguardando impressão
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {!embalada && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={embalando === l.tag}
+                          onClick={() => setConfirmar(l)}
+                        >
+                          {embalando === l.tag ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            "Marcar embalado"
+                          )}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <AlertDialog
+        open={confirmar !== null}
+        onOpenChange={(o) => !o && setConfirmar(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Marcar o lote{" "}
+              <span className="font-mono">{confirmar?.tag}</span> como embalado?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  <strong>{confirmar?.qtd_pedidos ?? 0} pedidos</strong> sairão
+                  da fila de separação e passarão para <strong>EMBALADO</strong>{" "}
+                  no Tiny.
+                </p>
+                <p className="text-amber-600 dark:text-amber-400">
+                  ⚠️ Só faça isso depois de imprimir as etiquetas. Esta ação
+                  não pode ser desfeita.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={embalando !== null}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={embalando !== null}
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmar) void marcarEmbalado(confirmar);
+              }}
+            >
+              Confirmar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+
 function FilaPriorizada() {
+  const qc = useQueryClient();
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
+  const { data: lotesHoje } = useTagsDoDia();
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
+  const [aplicando, setAplicando] = useState<string | null>(null);
+
+  const tagsPorGrupo = useMemo(() => {
+    const m = new Map<string, TagLoteRow>();
+    (lotesHoje ?? []).forEach((l) => m.set(l.grupo_origem, l));
+    return m;
+  }, [lotesHoje]);
+
+  async function aplicarTag(grupo: string) {
+    setAplicando(grupo);
+    try {
+      const data = await callSeparacaoFn<TagLoteResponse>(
+        `modulo=tag-lote&grupo=${encodeURIComponent(grupo)}`,
+      );
+      toast.success(`TAG ${data.tag} aplicada em ${data.pedidos_tagueados} pedidos`, {
+        description: `${data.proximo_passo}${data.aviso ? ` · ${data.aviso}` : ""}`,
+        action: {
+          label: "Copiar tag",
+          onClick: () => void copyToClipboard(data.tag),
+        },
+        duration: 8000,
+      });
+      if (data.pedidos_pulados > 0 && data.aviso) {
+        toast.warning(`${data.pedidos_pulados} pedidos pulados`, {
+          description: data.aviso,
+        });
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.status === 409) {
+        toast.warning("Todos os pedidos já receberam tag hoje", {
+          description: err.message,
+        });
+      } else {
+        toast.error("Erro ao aplicar TAG", { description: err.message });
+      }
+    } finally {
+      setAplicando(null);
+    }
+  }
+
 
   const enviosDisponiveis = useMemo(() => {
     const set = new Set<string>();
@@ -328,6 +676,8 @@ function FilaPriorizada() {
   return (
     <div className="space-y-5">
       <SeparacaoTotaisCards />
+      <LotesDoDia />
+
 
       {/* Resumo */}
       <Card className="p-4 space-y-3">
@@ -498,7 +848,48 @@ function FilaPriorizada() {
                         </div>
                         unidades
                       </div>
+                      {(() => {
+                        const grupo = item.tag_sugerida ?? "";
+                        const loteAplicado = grupo ? tagsPorGrupo.get(grupo) : undefined;
+                        if (loteAplicado) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => void copyToClipboard(loteAplicado.tag)}
+                              className={cn(
+                                "inline-flex items-center gap-1 font-mono font-semibold text-sm px-3 py-2 rounded-md w-28 justify-center",
+                                loteAplicado.status === "embalada"
+                                  ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+                              )}
+                              title="Copiar tag"
+                            >
+                              <TagIcon className="h-3 w-3" />
+                              {loteAplicado.tag}
+                            </button>
+                          );
+                        }
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!grupo || aplicando === grupo}
+                            onClick={() => void aplicarTag(grupo)}
+                            className="w-28"
+                          >
+                            {aplicando === grupo ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <TagIcon className="h-3 w-3 mr-1" />
+                                Aplicar TAG
+                              </>
+                            )}
+                          </Button>
+                        );
+                      })()}
                     </div>
+
                   </Card>
                 );
               })}
