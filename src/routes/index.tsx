@@ -138,9 +138,16 @@ type ProdutoRow = {
 // ============================================================
 type PresetKey = "hoje" | "ontem" | "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
 
+// YYYY-MM-DD no fuso America/Sao_Paulo (independente do fuso do browser/servidor)
+const spKey = (d: Date) =>
+  d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+// Ancora YYYY-MM-DD às 12:00 UTC para aritmética de datas sem drift
+const spAnchor = (key: string) => new Date(`${key}T12:00:00Z`);
+const spToday = () => spAnchor(spKey(new Date()));
+
 function computeRange(preset: PresetKey, custom?: { from: string; to: string }): { from: string; to: string } {
-  const today = new Date();
-  const ymd = (d: Date) => format(d, "yyyy-MM-dd");
+  const today = spToday();
+  const ymd = (d: Date) => spKey(d);
   switch (preset) {
     case "hoje":
       return { from: ymd(today), to: ymd(today) };
@@ -213,7 +220,7 @@ function Dashboard() {
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [tick, setTick] = useState(0);
 
-  const compAtual = useMemo(() => format(startOfMonth(new Date()), "yyyy-MM-dd"), []);
+  const compAtual = useMemo(() => spKey(startOfMonth(spToday())), []);
 
   useEffect(() => {
     let cancel = false;
@@ -222,12 +229,12 @@ function Dashboard() {
 
     (async () => {
       try {
-        // Período anterior (mesmo nº de dias, imediatamente antes)
-        const dFrom = parseISO(range.from);
-        const dTo = parseISO(range.to);
+        // Período anterior (mesmo nº de dias, imediatamente antes) — em SP tz
+        const dFrom = spAnchor(range.from);
+        const dTo = spAnchor(range.to);
         const nDias = differenceInCalendarDays(dTo, dFrom) + 1;
-        const prevTo = format(subDays(dFrom, 1), "yyyy-MM-dd");
-        const prevFrom = format(subDays(dFrom, nDias), "yyyy-MM-dd");
+        const prevTo = spKey(subDays(dFrom, 1));
+        const prevFrom = spKey(subDays(dFrom, nDias));
 
         const canaisQ = supabaseExternal
           .from("view_canais_diario")
@@ -261,8 +268,9 @@ function Dashboard() {
           .select("marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel")
           .limit(2000);
 
-        const de7 = format(subDays(new Date(), 6), "yyyy-MM-dd");
-        const ate7 = format(new Date(), "yyyy-MM-dd");
+        const _today = spToday();
+        const de7 = spKey(subDays(_today, 6));
+        const ate7 = spKey(_today);
         const acosQ = supabaseExternal
           .from("view_shopee_ads_anuncios")
           .select("campaign_id,investimento,vendas_direto")
@@ -533,10 +541,15 @@ function Dashboard() {
             selecionados={canaisFiltro}
             onChange={setCanaisFiltro}
           />
-          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            {atualizadoEm ? `Atualizado ${format(atualizadoEm, "HH:mm")}` : "Atualizar"}
+            Atualizar
           </Button>
+          {atualizadoEm && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {format(atualizadoEm, "HH:mm:ss")}
+            </span>
+          )}
         </div>
       </header>
 
