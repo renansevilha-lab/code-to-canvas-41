@@ -14,6 +14,9 @@ import {
   Loader2,
   CheckCircle2,
   Package,
+  Tag as TagIcon,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -22,11 +25,107 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  supabaseExternal,
+  EXTERNAL_URL,
+  EXTERNAL_PUBLISHABLE_KEY,
+} from "@/integrations/supabase/external-client";
 import { formatNumber } from "@/lib/format";
+
+// ============ Edge function helpers ============
+
+interface TagLoteResponse {
+  tag: string;
+  grupo: string;
+  pedidos_tagueados: number;
+  pedidos_pulados: number;
+  aviso: string | null;
+  proximo_passo: string;
+}
+
+interface EmbalarLoteResponse {
+  tag: string;
+  embaladas: number;
+  total: number;
+  erros: unknown[];
+}
+
+async function callSeparacaoFn<T>(qs: string): Promise<T> {
+  const url = `${EXTERNAL_URL}/functions/v1/tiny-separacao?${qs}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as T & {
+    error?: string;
+    message?: string;
+  };
+  if (!resp.ok) {
+    const err = new Error(
+      (data as { error?: string; message?: string }).error ??
+        (data as { message?: string }).message ??
+        `HTTP ${resp.status}`,
+    ) as Error & { status?: number; body?: unknown };
+    err.status = resp.status;
+    err.body = data;
+    throw err;
+  }
+  return data as T;
+}
+
+interface TagLoteRow {
+  id: number;
+  data: string;
+  sequencia: number;
+  tag: string;
+  grupo_origem: string;
+  sku: string | null;
+  tipo_envio: string | null;
+  qtd_pedidos: number;
+  qtd_pulados: number;
+  status: "aplicada" | "embalada" | string;
+  embalado_em: string | null;
+  criado_em: string;
+}
+
+function useTagsDoDia() {
+  return useQuery({
+    queryKey: ["separacao", "tags_lote", "hoje"],
+    queryFn: async () => {
+      const hoje = new Date().toISOString().slice(0, 10);
+      const { data, error } = await supabaseExternal
+        .from("tags_lote")
+        .select("*")
+        .eq("data", hoje)
+        .order("sequencia", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as TagLoteRow[];
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("TAG copiada", { description: text });
+  } catch {
+    toast.error("Não foi possível copiar");
+  }
+}
+
 
 interface PriorizadaRow {
   prioridade: number;
