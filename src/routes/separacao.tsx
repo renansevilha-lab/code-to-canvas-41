@@ -848,7 +848,48 @@ function FilaPriorizada() {
                         </div>
                         unidades
                       </div>
+                      {(() => {
+                        const grupo = item.tag_sugerida ?? "";
+                        const loteAplicado = grupo ? tagsPorGrupo.get(grupo) : undefined;
+                        if (loteAplicado) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => void copyToClipboard(loteAplicado.tag)}
+                              className={cn(
+                                "inline-flex items-center gap-1 font-mono font-semibold text-sm px-3 py-2 rounded-md w-28 justify-center",
+                                loteAplicado.status === "embalada"
+                                  ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+                              )}
+                              title="Copiar tag"
+                            >
+                              <TagIcon className="h-3 w-3" />
+                              {loteAplicado.tag}
+                            </button>
+                          );
+                        }
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!grupo || aplicando === grupo}
+                            onClick={() => void aplicarTag(grupo)}
+                            className="w-28"
+                          >
+                            {aplicando === grupo ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <TagIcon className="h-3 w-3 mr-1" />
+                                Aplicar TAG
+                              </>
+                            )}
+                          </Button>
+                        );
+                      })()}
                     </div>
+
                   </Card>
                 );
               })}
