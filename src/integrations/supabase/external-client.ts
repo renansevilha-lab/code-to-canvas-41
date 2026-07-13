@@ -3,8 +3,8 @@
 // This client only reads views/tables that have RLS open for anon.
 import { createClient } from "@supabase/supabase-js";
 
-const EXTERNAL_URL = "https://vhogjofsxyhnyxdyglmq.supabase.co";
-const EXTERNAL_PUBLISHABLE_KEY = "sb_publishable_p9wUZdS4TdWF6cRgP8QwEA_Rh5jhqmA";
+export const EXTERNAL_URL = "https://vhogjofsxyhnyxdyglmq.supabase.co";
+export const EXTERNAL_PUBLISHABLE_KEY = "sb_publishable_p9wUZdS4TdWF6cRgP8QwEA_Rh5jhqmA";
 
 export const supabaseExternal = createClient(EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY, {
   auth: {
