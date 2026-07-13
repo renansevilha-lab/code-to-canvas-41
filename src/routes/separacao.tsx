@@ -531,10 +531,54 @@ function LotesDoDia() {
 
 
 function FilaPriorizada() {
+  const qc = useQueryClient();
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
+  const { data: lotesHoje } = useTagsDoDia();
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
+  const [aplicando, setAplicando] = useState<string | null>(null);
+
+  const tagsPorGrupo = useMemo(() => {
+    const m = new Map<string, TagLoteRow>();
+    (lotesHoje ?? []).forEach((l) => m.set(l.grupo_origem, l));
+    return m;
+  }, [lotesHoje]);
+
+  async function aplicarTag(grupo: string) {
+    setAplicando(grupo);
+    try {
+      const data = await callSeparacaoFn<TagLoteResponse>(
+        `modulo=tag-lote&grupo=${encodeURIComponent(grupo)}`,
+      );
+      toast.success(`TAG ${data.tag} aplicada em ${data.pedidos_tagueados} pedidos`, {
+        description: `${data.proximo_passo}${data.aviso ? ` · ${data.aviso}` : ""}`,
+        action: {
+          label: "Copiar tag",
+          onClick: () => void copyToClipboard(data.tag),
+        },
+        duration: 8000,
+      });
+      if (data.pedidos_pulados > 0 && data.aviso) {
+        toast.warning(`${data.pedidos_pulados} pedidos pulados`, {
+          description: data.aviso,
+        });
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.status === 409) {
+        toast.warning("Todos os pedidos já receberam tag hoje", {
+          description: err.message,
+        });
+      } else {
+        toast.error("Erro ao aplicar TAG", { description: err.message });
+      }
+    } finally {
+      setAplicando(null);
+    }
+  }
+
 
   const enviosDisponiveis = useMemo(() => {
     const set = new Set<string>();
