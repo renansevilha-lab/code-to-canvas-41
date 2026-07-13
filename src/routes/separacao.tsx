@@ -325,6 +325,211 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+// ============ Lotes do dia panel ============
+
+function LotesDoDia() {
+  const qc = useQueryClient();
+  const { data: lotes, isLoading, error } = useTagsDoDia();
+  const [ajudaAberta, setAjudaAberta] = useState(false);
+  const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
+  const [embalando, setEmbalando] = useState<string | null>(null);
+
+  async function marcarEmbalado(lote: TagLoteRow) {
+    setEmbalando(lote.tag);
+    try {
+      const data = await callSeparacaoFn<EmbalarLoteResponse>(
+        `modulo=embalar-lote&tag=${encodeURIComponent(lote.tag)}&confirmar=1`,
+      );
+      if (data.erros && data.erros.length > 0) {
+        toast.warning(
+          `${data.embaladas} de ${data.total} embalados — ${data.erros.length} erro(s)`,
+          { description: JSON.stringify(data.erros).slice(0, 200) },
+        );
+      } else {
+        toast.success(
+          `${data.embaladas} de ${data.total} pedidos marcados como embalados`,
+          { description: `Lote ${data.tag}` },
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      const err = e as Error;
+      toast.error("Erro ao marcar embalado", { description: err.message });
+    } finally {
+      setEmbalando(null);
+      setConfirmar(null);
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <TagIcon className="h-4 w-4 text-primary" />
+          <h2 className="font-semibold text-sm">Lotes do dia</h2>
+          {lotes && lotes.length > 0 && (
+            <Badge variant="secondary">{lotes.length}</Badge>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setAjudaAberta((v) => !v)}
+          className="text-xs h-7"
+        >
+          Como usar
+          {ajudaAberta ? (
+            <ChevronUp className="h-3 w-3 ml-1" />
+          ) : (
+            <ChevronDown className="h-3 w-3 ml-1" />
+          )}
+        </Button>
+      </div>
+
+      {ajudaAberta && (
+        <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
+          <p><strong className="text-foreground">1.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
+          <p><strong className="text-foreground">2.</strong> Vá ao Tiny, filtre pelo marcador <span className="font-mono">1307-01</span> e imprima as etiquetas em massa.</p>
+          <p><strong className="text-foreground">3.</strong> Volte aqui e clique em <strong>Marcar embalado</strong> no lote.</p>
+        </div>
+      )}
+
+      {isLoading && <Skeleton className="h-16 w-full" />}
+
+      {error && (
+        <div className="text-xs text-destructive">
+          Erro ao carregar lotes: {(error as Error).message}
+        </div>
+      )}
+
+      {!isLoading && !error && (lotes?.length ?? 0) === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Nenhum lote aplicado hoje ainda. Clique em <strong>Aplicar TAG</strong> num bloco abaixo pra começar.
+        </p>
+      )}
+
+      {!isLoading && lotes && lotes.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b">
+                <th className="text-left py-2 pr-3 font-medium">TAG</th>
+                <th className="text-left py-2 pr-3 font-medium">Bloco</th>
+                <th className="text-right py-2 pr-3 font-medium">Pedidos</th>
+                <th className="text-left py-2 pr-3 font-medium">Status</th>
+                <th className="text-right py-2 font-medium">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lotes.map((l) => {
+                const embalada = l.status === "embalada";
+                return (
+                  <tr key={l.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-base font-semibold tabular-nums">
+                          {l.tag}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => copyToClipboard(l.tag)}
+                          title="Copiar tag"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">{l.grupo_origem}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
+                      {formatNumber(l.qtd_pedidos)}
+                      {l.qtd_pulados > 0 && (
+                        <span className="text-xs text-amber-600 ml-1">
+                          (+{l.qtd_pulados} pulados)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {embalada ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                          <CheckCircle2 className="h-3 w-3" /> Embalada
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                          <Hourglass className="h-3 w-3" /> Aguardando impressão
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {!embalada && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={embalando === l.tag}
+                          onClick={() => setConfirmar(l)}
+                        >
+                          {embalando === l.tag ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            "Marcar embalado"
+                          )}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <AlertDialog
+        open={confirmar !== null}
+        onOpenChange={(o) => !o && setConfirmar(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Marcar o lote{" "}
+              <span className="font-mono">{confirmar?.tag}</span> como embalado?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  <strong>{confirmar?.qtd_pedidos ?? 0} pedidos</strong> sairão
+                  da fila de separação e passarão para <strong>EMBALADO</strong>{" "}
+                  no Tiny.
+                </p>
+                <p className="text-amber-600 dark:text-amber-400">
+                  ⚠️ Só faça isso depois de imprimir as etiquetas. Esta ação
+                  não pode ser desfeita.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={embalando !== null}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={embalando !== null}
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmar) void marcarEmbalado(confirmar);
+              }}
+            >
+              Confirmar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+
 function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
