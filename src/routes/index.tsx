@@ -220,7 +220,7 @@ function Dashboard() {
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [tick, setTick] = useState(0);
 
-  const compAtual = useMemo(() => format(startOfMonth(new Date()), "yyyy-MM-dd"), []);
+  const compAtual = useMemo(() => spKey(startOfMonth(spToday())), []);
 
   useEffect(() => {
     let cancel = false;
