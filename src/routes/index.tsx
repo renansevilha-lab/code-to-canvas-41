@@ -138,9 +138,16 @@ type ProdutoRow = {
 // ============================================================
 type PresetKey = "hoje" | "ontem" | "mes_atual" | "ult_7" | "ult_30" | "mes_anterior" | "custom";
 
+// YYYY-MM-DD no fuso America/Sao_Paulo (independente do fuso do browser/servidor)
+const spKey = (d: Date) =>
+  d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+// Ancora YYYY-MM-DD às 12:00 UTC para aritmética de datas sem drift
+const spAnchor = (key: string) => new Date(`${key}T12:00:00Z`);
+const spToday = () => spAnchor(spKey(new Date()));
+
 function computeRange(preset: PresetKey, custom?: { from: string; to: string }): { from: string; to: string } {
-  const today = new Date();
-  const ymd = (d: Date) => format(d, "yyyy-MM-dd");
+  const today = spToday();
+  const ymd = (d: Date) => spKey(d);
   switch (preset) {
     case "hoje":
       return { from: ymd(today), to: ymd(today) };
