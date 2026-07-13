@@ -895,23 +895,38 @@ function FilaPriorizada() {
                           );
                         }
                         return (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!grupo || aplicando === grupo}
-                            onClick={() => void aplicarTag(grupo)}
-                            className="w-28"
-                          >
-                            {aplicando === grupo ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <>
-                                <TagIcon className="h-3 w-3 mr-1" />
-                                Aplicar TAG
-                              </>
+                          <div className="flex flex-col items-end gap-1">
+                            <Button
+                              size="sm"
+                              variant={bloqueados.has(grupo) ? "secondary" : "outline"}
+                              disabled={!grupo || aplicando === grupo || bloqueados.has(grupo)}
+                              onClick={() => void aplicarTag(grupo)}
+                              className="w-28"
+                            >
+                              {aplicando === grupo ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <TagIcon className="h-3 w-3 mr-1" />
+                                  Aplicar TAG
+                                </>
+                              )}
+                            </Button>
+                            {bloqueados.has(grupo) && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
+                                Verifique no painel de Lotes se a TAG foi criada antes de tentar de novo.
+                                <button
+                                  type="button"
+                                  onClick={() => desbloquear(grupo)}
+                                  className="ml-1 underline"
+                                >
+                                  Reabilitar
+                                </button>
+                              </div>
                             )}
-                          </Button>
+                          </div>
                         );
+
                       })()}
                     </div>
 
