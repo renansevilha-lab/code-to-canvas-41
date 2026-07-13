@@ -229,12 +229,12 @@ function Dashboard() {
 
     (async () => {
       try {
-        // Período anterior (mesmo nº de dias, imediatamente antes)
-        const dFrom = parseISO(range.from);
-        const dTo = parseISO(range.to);
+        // Período anterior (mesmo nº de dias, imediatamente antes) — em SP tz
+        const dFrom = spAnchor(range.from);
+        const dTo = spAnchor(range.to);
         const nDias = differenceInCalendarDays(dTo, dFrom) + 1;
-        const prevTo = format(subDays(dFrom, 1), "yyyy-MM-dd");
-        const prevFrom = format(subDays(dFrom, nDias), "yyyy-MM-dd");
+        const prevTo = spKey(subDays(dFrom, 1));
+        const prevFrom = spKey(subDays(dFrom, nDias));
 
         const canaisQ = supabaseExternal
           .from("view_canais_diario")
