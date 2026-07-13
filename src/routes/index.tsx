@@ -541,10 +541,15 @@ function Dashboard() {
             selecionados={canaisFiltro}
             onChange={setCanaisFiltro}
           />
-          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            {atualizadoEm ? `Atualizado ${format(atualizadoEm, "HH:mm")}` : "Atualizar"}
+            Atualizar
           </Button>
+          {atualizadoEm && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {format(atualizadoEm, "HH:mm:ss")}
+            </span>
+          )}
         </div>
       </header>
 
