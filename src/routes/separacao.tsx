@@ -17,6 +17,8 @@ import {
   Tag as TagIcon,
   ChevronDown,
   ChevronUp,
+  Printer,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
