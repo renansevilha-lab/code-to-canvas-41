@@ -19,6 +19,7 @@ import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
+import { Route as CarteiraSaldosRouteImport } from './routes/carteira-saldos'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AnomaliasRouteImport } from './routes/anomalias'
 import { Route as AmazonRouteImport } from './routes/amazon'
@@ -76,6 +77,11 @@ const ContasPagarRoute = ContasPagarRouteImport.update({
   path: '/contas-pagar',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CarteiraSaldosRoute = CarteiraSaldosRouteImport.update({
+  id: '/carteira-saldos',
+  path: '/carteira-saldos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CarteiraRoute = CarteiraRouteImport.update({
   id: '/carteira',
   path: '/carteira',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
+  '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -131,6 +138,7 @@ export interface FileRoutesByTo {
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
+  '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
   '/carteira': typeof CarteiraRoute
+  '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
@@ -170,6 +179,7 @@ export interface FileRouteTypes {
     | '/amazon'
     | '/anomalias'
     | '/carteira'
+    | '/carteira-saldos'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -188,6 +198,7 @@ export interface FileRouteTypes {
     | '/amazon'
     | '/anomalias'
     | '/carteira'
+    | '/carteira-saldos'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -206,6 +217,7 @@ export interface FileRouteTypes {
     | '/amazon'
     | '/anomalias'
     | '/carteira'
+    | '/carteira-saldos'
     | '/contas-pagar'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
@@ -225,6 +237,7 @@ export interface RootRouteChildren {
   AmazonRoute: typeof AmazonRoute
   AnomaliasRoute: typeof AnomaliasRoute
   CarteiraRoute: typeof CarteiraRoute
+  CarteiraSaldosRoute: typeof CarteiraSaldosRoute
   ContasPagarRoute: typeof ContasPagarRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
@@ -310,6 +323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContasPagarRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/carteira-saldos': {
+      id: '/carteira-saldos'
+      path: '/carteira-saldos'
+      fullPath: '/carteira-saldos'
+      preLoaderRoute: typeof CarteiraSaldosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/carteira': {
       id: '/carteira'
       path: '/carteira'
@@ -361,6 +381,7 @@ const rootRouteChildren: RootRouteChildren = {
   AmazonRoute: AmazonRoute,
   AnomaliasRoute: AnomaliasRoute,
   CarteiraRoute: CarteiraRoute,
+  CarteiraSaldosRoute: CarteiraSaldosRoute,
   ContasPagarRoute: ContasPagarRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,

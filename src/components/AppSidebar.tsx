@@ -57,6 +57,7 @@ const modulos: NavItem[] = [
   { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone },
   { title: "Tendências", url: "/tendencias", icon: TrendingUp },
   { title: "Carteira", url: "/carteira", icon: Wallet },
+  { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet },
 ];
 
 export function AppSidebar() {
