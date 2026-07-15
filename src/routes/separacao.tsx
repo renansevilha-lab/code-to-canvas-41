@@ -500,11 +500,45 @@ function LotesDoDia() {
         </Button>
       </div>
 
+      {/* Impressora */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <Printer className="h-4 w-4 text-muted-foreground" />
+        <span className="text-muted-foreground">Impressora:</span>
+        <Select
+          value={String(printerId)}
+          onValueChange={(v) => setPrinterId(Number(v))}
+          disabled={loadingImpressoras}
+        >
+          <SelectTrigger className="h-8 w-[320px] text-xs">
+            <SelectValue placeholder={loadingImpressoras ? "Carregando..." : "Selecione"} />
+          </SelectTrigger>
+          <SelectContent>
+            {(impressoras ?? []).map((p) => (
+              <SelectItem key={p.printer_id} value={String(p.printer_id)}>
+                {p.nome} — {p.computador} ({p.estado})
+              </SelectItem>
+            ))}
+            {!loadingImpressoras && (impressoras ?? []).length === 0 && (
+              <SelectItem value="_" disabled>
+                Nenhuma ZD220 encontrada
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        {impressoraSelecionada?.estado === "offline" && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <AlertTriangle className="h-3 w-3" />
+            Impressora offline — o job pode ficar preso na fila até ela reconectar.
+          </span>
+        )}
+      </div>
+
       {ajudaAberta && (
         <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
-          <p><strong className="text-foreground">1.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
-          <p><strong className="text-foreground">2.</strong> Vá ao Tiny, filtre pelo marcador <span className="font-mono">1307-01</span> e imprima as etiquetas em massa.</p>
-          <p><strong className="text-foreground">3.</strong> Volte aqui e clique em <strong>Marcar embalado</strong> no lote.</p>
+          <p><strong className="text-foreground">1.</strong> Escolha a impressora acima (só precisa uma vez).</p>
+          <p><strong className="text-foreground">2.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
+          <p><strong className="text-foreground">3.</strong> Aqui no painel, clique em <strong>Imprimir</strong> — as etiquetas saem na Zebra.</p>
+          <p><strong className="text-foreground">4.</strong> Confira as etiquetas e clique em <strong>Marcar embalado</strong>.</p>
         </div>
       )}
 
