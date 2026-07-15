@@ -608,21 +608,63 @@ function LotesDoDia() {
                           <Hourglass className="h-3 w-3" /> Aguardando impressão
                         </span>
                       )}
+                      {l.impresso_em && (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400 ml-2"
+                          title={`Impresso em ${new Date(l.impresso_em).toLocaleString("pt-BR")}`}
+                        >
+                          <Check className="h-3 w-3" /> Impresso
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 text-right">
                       {!embalada && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={embalando === l.tag}
-                          onClick={() => setConfirmar(l)}
-                        >
-                          {embalando === l.tag ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            "Marcar embalado"
-                          )}
-                        </Button>
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                          <Select
+                            value={lojaDoLote(l)}
+                            onValueChange={(v) =>
+                              setLojaPorTag((prev) => ({
+                                ...prev,
+                                [l.tag]: v as "ottz" | "svl",
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-8 w-[90px] text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ottz">Ottz</SelectItem>
+                              <SelectItem value="svl">SVL</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            disabled={imprimindo === l.tag || imprimindo !== null}
+                            onClick={() => void imprimirLote(l)}
+                          >
+                            {imprimindo === l.tag ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Printer className="h-3 w-3 mr-1" />
+                                Imprimir
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={embalando === l.tag}
+                            onClick={() => setConfirmar(l)}
+                          >
+                            {embalando === l.tag ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              "Marcar embalado"
+                            )}
+                          </Button>
+                        </div>
                       )}
                     </td>
                   </tr>
