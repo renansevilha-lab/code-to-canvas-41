@@ -17,6 +17,8 @@ import {
   Tag as TagIcon,
   ChevronDown,
   ChevronUp,
+  Printer,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -25,6 +27,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,7 +106,52 @@ interface TagLoteRow {
   qtd_pulados: number;
   status: "aplicada" | "embalada" | string;
   embalado_em: string | null;
+  impresso_em?: string | null;
   criado_em: string;
+}
+
+// ============ Impressoras (PrintNode via edge fn) ============
+
+interface Impressora {
+  printer_id: number;
+  nome: string;
+  computador: string;
+  estado: "online" | "offline" | string;
+  descricao: string;
+}
+
+const DEFAULT_PRINTER_ID = 75638226;
+
+function useImpressoras() {
+  return useQuery({
+    queryKey: ["separacao", "impressoras"],
+    queryFn: async () => {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const data = (await resp.json().catch(() => ({}))) as {
+        impressoras?: Impressora[];
+      };
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Somente ZD220 (etiqueta Shopee ZPL)
+      return (data.impressoras ?? []).filter((p) =>
+        (p.descricao ?? "").toLowerCase().includes("zdesigner zd220"),
+      );
+    },
+    refetchInterval: 60_000,
+  });
+}
+
+interface ImprimirResponse {
+  modulo: string;
+  tag: string;
+  printnode_job_id: number;
+  etiquetas_enviadas: number;
+  pedidos_no_lote: number;
+  etiquetas_prontas: number;
+  aviso: string | null;
+  erro?: string;
 }
 
 function useTagsDoDia() {
@@ -330,9 +384,69 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 function LotesDoDia() {
   const qc = useQueryClient();
   const { data: lotes, isLoading, error } = useTagsDoDia();
+  const { data: impressoras, isLoading: loadingImpressoras } = useImpressoras();
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
+  const [imprimindo, setImprimindo] = useState<string | null>(null);
+  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
+  const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
+
+  const impressoraSelecionada = useMemo(
+    () => (impressoras ?? []).find((p) => p.printer_id === printerId),
+    [impressoras, printerId],
+  );
+
+  function lojaDoLote(lote: TagLoteRow): "ottz" | "svl" {
+    if (lojaPorTag[lote.tag]) return lojaPorTag[lote.tag];
+    const g = (lote.grupo_origem ?? "").toLowerCase();
+    if (g.includes("svl") || g.includes("sevilla")) return "svl";
+    return "ottz";
+  }
+
+  async function imprimirLote(lote: TagLoteRow) {
+    if (imprimindo) return;
+    setImprimindo(lote.tag);
+    try {
+      const loja = lojaDoLote(lote);
+      const url =
+        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+        `?modulo=imprimir&loja=${loja}` +
+        `&tag=${encodeURIComponent(lote.tag)}` +
+        `&printer_id=${printerId}`;
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+      });
+      const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+      if (!resp.ok || data.erro) {
+        toast.error("Erro ao imprimir", {
+          description: data.erro ?? `HTTP ${resp.status}`,
+        });
+        return;
+      }
+      if (data.etiquetas_prontas < data.pedidos_no_lote) {
+        toast.warning(
+          `Lote ${data.tag}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
+          {
+            description:
+              data.aviso ??
+              "Alguns pedidos não tinham etiqueta pronta na Shopee e não foram impressos.",
+            duration: 10000,
+          },
+        );
+      } else {
+        toast.success(
+          `Lote ${data.tag} enviado para impressão (${data.etiquetas_enviadas} etiquetas)`,
+          { description: impressoraSelecionada?.nome ?? "" },
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindo(null);
+    }
+  }
 
   async function marcarEmbalado(lote: TagLoteRow) {
     setEmbalando(lote.tag);
@@ -386,11 +500,45 @@ function LotesDoDia() {
         </Button>
       </div>
 
+      {/* Impressora */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <Printer className="h-4 w-4 text-muted-foreground" />
+        <span className="text-muted-foreground">Impressora:</span>
+        <Select
+          value={String(printerId)}
+          onValueChange={(v) => setPrinterId(Number(v))}
+          disabled={loadingImpressoras}
+        >
+          <SelectTrigger className="h-8 w-[320px] text-xs">
+            <SelectValue placeholder={loadingImpressoras ? "Carregando..." : "Selecione"} />
+          </SelectTrigger>
+          <SelectContent>
+            {(impressoras ?? []).map((p) => (
+              <SelectItem key={p.printer_id} value={String(p.printer_id)}>
+                {p.nome} — {p.computador} ({p.estado})
+              </SelectItem>
+            ))}
+            {!loadingImpressoras && (impressoras ?? []).length === 0 && (
+              <SelectItem value="_" disabled>
+                Nenhuma ZD220 encontrada
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        {impressoraSelecionada?.estado === "offline" && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <AlertTriangle className="h-3 w-3" />
+            Impressora offline — o job pode ficar preso na fila até ela reconectar.
+          </span>
+        )}
+      </div>
+
       {ajudaAberta && (
         <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
-          <p><strong className="text-foreground">1.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
-          <p><strong className="text-foreground">2.</strong> Vá ao Tiny, filtre pelo marcador <span className="font-mono">1307-01</span> e imprima as etiquetas em massa.</p>
-          <p><strong className="text-foreground">3.</strong> Volte aqui e clique em <strong>Marcar embalado</strong> no lote.</p>
+          <p><strong className="text-foreground">1.</strong> Escolha a impressora acima (só precisa uma vez).</p>
+          <p><strong className="text-foreground">2.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
+          <p><strong className="text-foreground">3.</strong> Aqui no painel, clique em <strong>Imprimir</strong> — as etiquetas saem na Zebra.</p>
+          <p><strong className="text-foreground">4.</strong> Confira as etiquetas e clique em <strong>Marcar embalado</strong>.</p>
         </div>
       )}
 
@@ -460,21 +608,63 @@ function LotesDoDia() {
                           <Hourglass className="h-3 w-3" /> Aguardando impressão
                         </span>
                       )}
+                      {l.impresso_em && (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400 ml-2"
+                          title={`Impresso em ${new Date(l.impresso_em).toLocaleString("pt-BR")}`}
+                        >
+                          <Check className="h-3 w-3" /> Impresso
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 text-right">
                       {!embalada && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={embalando === l.tag}
-                          onClick={() => setConfirmar(l)}
-                        >
-                          {embalando === l.tag ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            "Marcar embalado"
-                          )}
-                        </Button>
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                          <Select
+                            value={lojaDoLote(l)}
+                            onValueChange={(v) =>
+                              setLojaPorTag((prev) => ({
+                                ...prev,
+                                [l.tag]: v as "ottz" | "svl",
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-8 w-[90px] text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ottz">Ottz</SelectItem>
+                              <SelectItem value="svl">SVL</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            disabled={imprimindo === l.tag || imprimindo !== null}
+                            onClick={() => void imprimirLote(l)}
+                          >
+                            {imprimindo === l.tag ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Printer className="h-3 w-3 mr-1" />
+                                Imprimir
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={embalando === l.tag}
+                            onClick={() => setConfirmar(l)}
+                          >
+                            {embalando === l.tag ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              "Marcar embalado"
+                            )}
+                          </Button>
+                        </div>
                       )}
                     </td>
                   </tr>
