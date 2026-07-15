@@ -384,9 +384,69 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 function LotesDoDia() {
   const qc = useQueryClient();
   const { data: lotes, isLoading, error } = useTagsDoDia();
+  const { data: impressoras, isLoading: loadingImpressoras } = useImpressoras();
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
+  const [imprimindo, setImprimindo] = useState<string | null>(null);
+  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
+  const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
+
+  const impressoraSelecionada = useMemo(
+    () => (impressoras ?? []).find((p) => p.printer_id === printerId),
+    [impressoras, printerId],
+  );
+
+  function lojaDoLote(lote: TagLoteRow): "ottz" | "svl" {
+    if (lojaPorTag[lote.tag]) return lojaPorTag[lote.tag];
+    const g = (lote.grupo_origem ?? "").toLowerCase();
+    if (g.includes("svl") || g.includes("sevilla")) return "svl";
+    return "ottz";
+  }
+
+  async function imprimirLote(lote: TagLoteRow) {
+    if (imprimindo) return;
+    setImprimindo(lote.tag);
+    try {
+      const loja = lojaDoLote(lote);
+      const url =
+        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+        `?modulo=imprimir&loja=${loja}` +
+        `&tag=${encodeURIComponent(lote.tag)}` +
+        `&printer_id=${printerId}`;
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+      });
+      const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+      if (!resp.ok || data.erro) {
+        toast.error("Erro ao imprimir", {
+          description: data.erro ?? `HTTP ${resp.status}`,
+        });
+        return;
+      }
+      if (data.etiquetas_prontas < data.pedidos_no_lote) {
+        toast.warning(
+          `Lote ${data.tag}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
+          {
+            description:
+              data.aviso ??
+              "Alguns pedidos não tinham etiqueta pronta na Shopee e não foram impressos.",
+            duration: 10000,
+          },
+        );
+      } else {
+        toast.success(
+          `Lote ${data.tag} enviado para impressão (${data.etiquetas_enviadas} etiquetas)`,
+          { description: impressoraSelecionada?.nome ?? "" },
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindo(null);
+    }
+  }
 
   async function marcarEmbalado(lote: TagLoteRow) {
     setEmbalando(lote.tag);
