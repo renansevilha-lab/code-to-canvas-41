@@ -97,7 +97,52 @@ interface TagLoteRow {
   qtd_pulados: number;
   status: "aplicada" | "embalada" | string;
   embalado_em: string | null;
+  impresso_em?: string | null;
   criado_em: string;
+}
+
+// ============ Impressoras (PrintNode via edge fn) ============
+
+interface Impressora {
+  printer_id: number;
+  nome: string;
+  computador: string;
+  estado: "online" | "offline" | string;
+  descricao: string;
+}
+
+const DEFAULT_PRINTER_ID = 75638226;
+
+function useImpressoras() {
+  return useQuery({
+    queryKey: ["separacao", "impressoras"],
+    queryFn: async () => {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const data = (await resp.json().catch(() => ({}))) as {
+        impressoras?: Impressora[];
+      };
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Somente ZD220 (etiqueta Shopee ZPL)
+      return (data.impressoras ?? []).filter((p) =>
+        (p.descricao ?? "").toLowerCase().includes("zdesigner zd220"),
+      );
+    },
+    refetchInterval: 60_000,
+  });
+}
+
+interface ImprimirResponse {
+  modulo: string;
+  tag: string;
+  printnode_job_id: number;
+  etiquetas_enviadas: number;
+  pedidos_no_lote: number;
+  etiquetas_prontas: number;
+  aviso: string | null;
+  erro?: string;
 }
 
 function useTagsDoDia() {
