@@ -290,11 +290,11 @@ function CarteiraSaldosPage() {
                     borderRadius: 8,
                     fontSize: 12,
                   }}
-                  formatter={(v: number, _n, p) => [
-                    formatBRL(v),
-                    `${p.payload.pagamentos} pagamento${p.payload.pagamentos === 1 ? "" : "s"}`,
+                  formatter={(v: unknown, _n: unknown, p: { payload?: LiberacaoRow }) => [
+                    formatBRL(Number(v) || 0),
+                    `${p.payload?.pagamentos ?? 0} pagamento${(p.payload?.pagamentos ?? 0) === 1 ? "" : "s"}`,
                   ]}
-                  labelFormatter={(l: string) => `Dia ${formatDia(l)}`}
+                  labelFormatter={(l: unknown) => `Dia ${formatDia(String(l))}`}
                 />
                 <Bar
                   dataKey="valor_a_liberar"
