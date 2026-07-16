@@ -1546,25 +1546,35 @@ function FilaPriorizada() {
                       </div>
                       {(() => {
                         const grupo = item.tag_sugerida ?? "";
-                        const loteAplicado = grupo ? tagsPorGrupo.get(grupo) : undefined;
-                        if (loteAplicado) {
+                        // Fonte da verdade: tag_lote dos pedidos ATUAIS da linha
+                        // (view_separacao_pedidos), não lotesHoje. Isso evita mostrar
+                        // tag velha quando pedidos novos entraram sem tag.
+                        const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                        const info = tagsPorLinha?.get(linhaKey);
+                        const estado = info?.estado ?? "sem_tag";
+                        const tagAtual = info?.tag;
+                        const lote = tagAtual ? lotesPorTag.get(tagAtual) : undefined;
+
+                        if (estado === "com_tag" && tagAtual) {
                           return (
                             <button
                               type="button"
-                              onClick={() => void copyToClipboard(loteAplicado.tag)}
+                              onClick={() => void copyToClipboard(tagAtual)}
                               className={cn(
                                 "inline-flex items-center gap-1 font-mono font-semibold text-sm px-3 py-2 rounded-md w-28 justify-center",
-                                loteAplicado.status === "embalada"
+                                lote?.status === "embalada"
                                   ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
                                   : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
                               )}
                               title="Copiar tag"
                             >
                               <TagIcon className="h-3 w-3" />
-                              {loteAplicado.tag}
+                              {tagAtual}
                             </button>
                           );
                         }
+                        // sem_tag, parcial ou tags_mistas → oferecer Aplicar TAG
+                        // (pedidos sem tag na linha sempre podem receber uma tag nova)
                         return (
                           <div className="flex flex-col items-end gap-1">
                             <Button
@@ -1583,6 +1593,16 @@ function FilaPriorizada() {
                                 </>
                               )}
                             </Button>
+                            {estado === "parcial" && tagAtual && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
+                                {info?.comTag} c/ TAG <span className="font-mono">{tagAtual}</span>, {info?.semTag} sem TAG
+                              </div>
+                            )}
+                            {estado === "tags_mistas" && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
+                                Pedidos com TAGs diferentes nesta linha
+                              </div>
+                            )}
                             {bloqueados.has(grupo) && (
                               <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
                                 Verifique no painel de Lotes se a TAG foi criada antes de tentar de novo.
