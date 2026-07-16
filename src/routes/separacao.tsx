@@ -1023,6 +1023,7 @@ function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
+  const { data: tagsPorLinha } = useTagsPorLinha();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
   const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
