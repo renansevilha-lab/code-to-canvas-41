@@ -1281,14 +1281,30 @@ function FilaPriorizada() {
             <div className="grid gap-2">
               {g.items.map((item) => {
                 const isER = item.tipo_envio === "ER";
+                const skuKey = `${item.sku}|${item.tipo_envio}`;
+                const busyImprimir = imprimindoKey === `sku:${item.sku}:${item.tipo_envio}`;
+                const busyEmbalar = embalandoKey === `sku:${item.sku}:${item.tipo_envio}`;
+                const isExpanded = expandedSku.has(skuKey);
                 return (
+                  <div key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}>
                   <Card
-                    key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}
                     className={cn(
                       "p-3 flex items-center gap-4",
                       isER && "border-destructive/40",
                     )}
                   >
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(skuKey)}
+                      className="p-1 rounded hover:bg-muted shrink-0"
+                      title={isExpanded ? "Recolher" : "Ver pedidos"}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                    </button>
                     <div className="text-2xl md:text-3xl font-bold text-muted-foreground w-14 text-center tabular-nums shrink-0">
                       #{item.prioridade}
                     </div>
@@ -1374,11 +1390,55 @@ function FilaPriorizada() {
                             )}
                           </div>
                         );
-
                       })()}
+                      <div className="flex flex-col gap-1">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          disabled={busyImprimir || imprimindoKey !== null}
+                          onClick={() => void imprimirPorSku(item)}
+                          className="w-36"
+                          title="Imprime todas as etiquetas Shopee deste SKU"
+                        >
+                          {busyImprimir ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Printer className="h-3 w-3 mr-1" />
+                              Imprimir etiqueta
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busyEmbalar || embalandoKey !== null}
+                          onClick={() => void embalarPorSku(item)}
+                          className="w-36"
+                        >
+                          {busyEmbalar ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Package className="h-3 w-3 mr-1" />
+                              Marcar embalado
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
-
                   </Card>
+                  {isExpanded && (
+                    <PedidosDoSku
+                      sku={item.sku}
+                      tipoEnvio={item.tipo_envio}
+                      imprimindoKey={imprimindoKey}
+                      embalandoKey={embalandoKey}
+                      onImprimir={imprimirPedido}
+                      onEmbalar={embalarPedido}
+                    />
+                  )}
+                  </div>
                 );
               })}
             </div>
