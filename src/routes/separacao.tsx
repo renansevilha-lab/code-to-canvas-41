@@ -17,6 +17,7 @@ import {
   Tag as TagIcon,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Printer,
   AlertTriangle,
 } from "lucide-react";
