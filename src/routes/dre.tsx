@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Info } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, Loader2 } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
@@ -74,6 +74,19 @@ interface DreOperacionalRow {
   margem_contribuicao: number | null;
 }
 
+interface DespesaDetalheRow {
+  mes: string;
+  categoria: string;
+  fornecedor_nome: string | null;
+  descricao: string | null;
+  valor_total: number | null;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  status: string | null;
+}
+
+type EmpresaFiltro = "consolidado" | "ACZ Pet" | "SVL Store";
+
 const brl = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const brlFull = (v: number | null | undefined) =>
@@ -92,11 +105,28 @@ function formatMes(m: string): string {
   return `${nomes[Number(mm) - 1] ?? mm}/${y.slice(2)}`;
 }
 
+// Mapeia label da linha → chave de categoria na view view_dre_despesas_detalhe
+const DESPESA_CATEGORIAS: Record<string, string | null> = {
+  "Marketing / ADS": null, // ADS não vem da view de detalhe
+  Pessoal: "Pessoal",
+  Aluguel: "Aluguel",
+  Administrativas: "Administrativas",
+  Embalagem: "Embalagem",
+  "Frete / Logística": "Frete / Logística",
+  Financeiras: "Financeiras",
+  Outras: "Outras",
+  "A revisar": "A revisar",
+};
+
 function DREPage() {
   const [dre, setDre] = useState<DreRow[]>([]);
   const [operacional, setOperacional] = useState<DreOperacionalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesSel, setMesSel] = useState<string | undefined>();
+  const [empresaSel, setEmpresaSel] = useState<EmpresaFiltro>("consolidado");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [detalhes, setDetalhes] = useState<Record<string, DespesaDetalheRow[]>>({});
+  const [loadingDet, setLoadingDet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancel = false;
@@ -135,7 +165,19 @@ function DREPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ao mudar mês, reseta expansões
+  useEffect(() => {
+    setExpanded(new Set());
+  }, [mesSel, empresaSel]);
+
   const mesAtual = useMemo(() => dre.find((r) => r.mes === mesSel), [dre, mesSel]);
+  const opAtual = useMemo(
+    () =>
+      empresaSel !== "consolidado"
+        ? operacional.find((r) => r.mes === mesSel && r.empresa === empresaSel)
+        : undefined,
+    [operacional, mesSel, empresaSel],
+  );
 
   const evolucao = useMemo(
     () =>
@@ -160,6 +202,44 @@ function DREPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [operacional]);
 
+  const toggleDespesa = async (label: string) => {
+    if (!mesSel) return;
+    const categoria = DESPESA_CATEGORIAS[label];
+    const key = `${mesSel}::${label}`;
+    const next = new Set(expanded);
+    if (next.has(key)) {
+      next.delete(key);
+      setExpanded(next);
+      return;
+    }
+    next.add(key);
+    setExpanded(next);
+    if (!categoria) return; // ADS/Impostos sem drill
+    if (detalhes[key]) return;
+    const ld = new Set(loadingDet);
+    ld.add(key);
+    setLoadingDet(ld);
+    try {
+      const { data, error } = await supabaseExternal
+        .from("view_dre_despesas_detalhe")
+        .select("*")
+        .eq("mes", mesSel)
+        .eq("categoria", categoria)
+        .order("valor_total", { ascending: false });
+      if (error) throw error;
+      setDetalhes((prev) => ({ ...prev, [key]: (data ?? []) as DespesaDetalheRow[] }));
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao carregar detalhamento", { description: (e as Error).message });
+    } finally {
+      setLoadingDet((prev) => {
+        const n = new Set(prev);
+        n.delete(key);
+        return n;
+      });
+    }
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -167,8 +247,18 @@ function DREPage() {
           <h1 className="text-2xl font-semibold tracking-tight">DRE — Demonstração de Resultado</h1>
           <p className="text-sm text-muted-foreground">Cascata mensal: receita → margem de contribuição → lucro líquido.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <AvisosPopover />
+          <Select value={empresaSel} onValueChange={(v) => setEmpresaSel(v as EmpresaFiltro)}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="consolidado">Consolidado</SelectItem>
+              <SelectItem value="ACZ Pet">ACZ Pet</SelectItem>
+              <SelectItem value="SVL Store">SVL Store</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={mesSel} onValueChange={setMesSel}>
             <SelectTrigger className="w-[160px]">
               <SelectValue placeholder="Selecione o mês" />
@@ -192,13 +282,22 @@ function DREPage() {
             Nenhum mês disponível.
           </CardContent>
         </Card>
+      ) : empresaSel === "consolidado" ? (
+        <Cascata
+          row={mesAtual}
+          expanded={expanded}
+          detalhes={detalhes}
+          loadingDet={loadingDet}
+          onToggle={toggleDespesa}
+          mesSel={mesSel!}
+        />
       ) : (
-        <Cascata row={mesAtual} />
+        <CascataEmpresa mes={mesSel!} empresa={empresaSel} row={opAtual} />
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Evolução mensal</CardTitle>
+          <CardTitle className="text-base">Evolução mensal (consolidado)</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -294,7 +393,21 @@ function DREPage() {
   );
 }
 
-function Cascata({ row }: { row: DreRow }) {
+function Cascata({
+  row,
+  expanded,
+  detalhes,
+  loadingDet,
+  onToggle,
+  mesSel,
+}: {
+  row: DreRow;
+  expanded: Set<string>;
+  detalhes: Record<string, DespesaDetalheRow[]>;
+  loadingDet: Set<string>;
+  onToggle: (label: string) => void;
+  mesSel: string;
+}) {
   const receita = row.receita_liquida ?? 0;
   const lucroPos = (row.lucro_liquido ?? 0) >= 0;
 
@@ -306,21 +419,21 @@ function Cascata({ row }: { row: DreRow }) {
   ];
 
   const despesas: Array<{ label: string; valor: number | null }> = [
-    { label: "(−) Marketing / ADS", valor: row.ads },
-    { label: "(−) Pessoal", valor: row.pessoal },
-    { label: "(−) Aluguel", valor: row.aluguel },
-    { label: "(−) Administrativas", valor: row.administrativas },
-    { label: "(−) Embalagem", valor: row.embalagem },
-    { label: "(−) Frete / Logística", valor: row.frete_logistica },
-    { label: "(−) Financeiras", valor: row.financeiras },
-    { label: "(−) Outras", valor: row.outras },
-    { label: "(−) A revisar", valor: row.creative_revisar },
+    { label: "Marketing / ADS", valor: row.ads },
+    { label: "Pessoal", valor: row.pessoal },
+    { label: "Aluguel", valor: row.aluguel },
+    { label: "Administrativas", valor: row.administrativas },
+    { label: "Embalagem", valor: row.embalagem },
+    { label: "Frete / Logística", valor: row.frete_logistica },
+    { label: "Financeiras", valor: row.financeiras },
+    { label: "Outras", valor: row.outras },
+    { label: "A revisar", valor: row.creative_revisar },
   ].filter((d) => (d.valor ?? 0) !== 0);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{formatMes(row.mes)}</CardTitle>
+        <CardTitle className="text-base">{formatMes(row.mes)} — Consolidado</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1">
         {linhasTop.map((l) => (
@@ -339,9 +452,72 @@ function Cascata({ row }: { row: DreRow }) {
           />
         </div>
 
-        {despesas.map((d) => (
-          <Linha key={d.label} label={d.label} valor={d.valor} receita={receita} muted />
-        ))}
+        {despesas.map((d) => {
+          const key = `${mesSel}::${d.label}`;
+          const isOpen = expanded.has(key);
+          const hasDrill = DESPESA_CATEGORIAS[d.label] != null;
+          const items = detalhes[key];
+          const isLoading = loadingDet.has(key);
+          return (
+            <div key={d.label}>
+              <button
+                type="button"
+                onClick={() => onToggle(d.label)}
+                className={cn(
+                  "w-full flex items-center justify-between gap-4 py-1 text-left rounded px-1 -mx-1",
+                  "text-muted-foreground hover:bg-accent/50 transition-colors",
+                  !hasDrill && "cursor-default hover:bg-transparent",
+                )}
+                disabled={!hasDrill}
+              >
+                <span className="flex items-center gap-1">
+                  {hasDrill ? (
+                    isOpen ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )
+                  ) : (
+                    <span className="w-3.5" />
+                  )}
+                  (−) {d.label}
+                </span>
+                <div className="flex items-center gap-6">
+                  <span className="tabular-nums">{brlFull(d.valor)}</span>
+                  <span className="text-xs w-16 text-right tabular-nums">{pct(d.valor, receita)}</span>
+                </div>
+              </button>
+              {isOpen && hasDrill && (
+                <div className="ml-6 border-l border-border pl-3 py-1 space-y-0.5">
+                  {isLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Carregando…
+                    </div>
+                  ) : !items || items.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-2">Sem itens detalhados.</p>
+                  ) : (
+                    items.map((it, i) => (
+                      <div
+                        key={`${it.fornecedor_nome ?? "—"}-${i}`}
+                        className="flex items-start justify-between gap-4 py-0.5 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-foreground">{it.fornecedor_nome ?? "—"}</span>
+                          {it.descricao && (
+                            <span className="text-muted-foreground"> — {it.descricao}</span>
+                          )}
+                        </div>
+                        <span className="tabular-nums text-foreground/80 shrink-0">
+                          {brlFull(it.valor_total)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         <div className="border-t my-2" />
 
@@ -368,6 +544,75 @@ function Cascata({ row }: { row: DreRow }) {
               </span>
             </div>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CascataEmpresa({
+  mes,
+  empresa,
+  row,
+}: {
+  mes: string;
+  empresa: string;
+  row: DreOperacionalRow | undefined;
+}) {
+  if (!row) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {formatMes(mes)} — {empresa}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+          Sem dados para {empresa} em {formatMes(mes)}.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const receita = row.receita_liquida ?? 0;
+  const mc = row.margem_contribuicao ?? 0;
+  const mcPos = mc >= 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          {formatMes(mes)} — {empresa}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          {row.pedidos ?? 0} pedidos no mês.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        <Linha label="RECEITA LÍQUIDA" valor={row.receita_liquida} receita={receita} bold />
+        <Linha label="(−) CMV" valor={row.cmv} receita={receita} />
+        <Linha label="(−) Comissões + Frete" valor={row.comissoes_frete} receita={receita} />
+        <Linha label="(−) Impostos" valor={row.impostos} receita={receita} />
+
+        <div className="border-t my-2" />
+
+        <div
+          className={cn(
+            "rounded-md px-3 py-2 border",
+            mcPos
+              ? "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900"
+              : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
+          )}
+        >
+          <Linha label="= MARGEM DE CONTRIBUIÇÃO" valor={mc} receita={receita} bold larger />
+        </div>
+
+        <div className="mt-4 rounded-md border border-dashed p-3 text-xs text-muted-foreground flex gap-2 items-start">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>
+            Despesas fixas (ADS, Pessoal, Aluguel, etc.) não são separadas por empresa —
+            veja o Lucro Líquido no modo <strong>Consolidado</strong>.
+          </span>
         </div>
       </CardContent>
     </Card>
