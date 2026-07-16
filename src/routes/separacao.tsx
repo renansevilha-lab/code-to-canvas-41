@@ -211,6 +211,54 @@ function usePriorizadaRows() {
   });
 }
 
+/**
+ * Lê tag_lote de todos os pedidos atualmente na fila de separação
+ * (view_separacao_pedidos) e agrupa por `${sku_unico}|${tipo_envio}`.
+ *
+ * Fonte da verdade para decidir se a linha mostra selo de TAG ou botão
+ * "Aplicar TAG". Nunca use lotesHoje (tags_lote) pra isso — aquilo é
+ * histórico do dia e mantém tags de lotes já impressos, o que faz aparecer
+ * tag velha em linhas com pedidos novos sem tag.
+ */
+interface TagsPorLinha {
+  estado: "sem_tag" | "com_tag" | "tags_mistas" | "parcial";
+  tag?: string;
+  semTag: number;
+  comTag: number;
+}
+function useTagsPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "tags_por_linha"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("sku_unico, tipo_envio, tag_lote")
+        .limit(20000);
+      if (error) throw error;
+      const map = new Map<string, TagsPorLinha>();
+      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number }>();
+      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null }[]) {
+        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0 };
+        if (p.tag_lote) { b.tags.add(p.tag_lote); b.com++; }
+        else { b.sem++; }
+        buckets.set(key, b);
+      }
+      for (const [key, b] of buckets) {
+        const tagsArr = [...b.tags];
+        let estado: TagsPorLinha["estado"];
+        let tag: string | undefined;
+        if (tagsArr.length === 0) estado = "sem_tag";
+        else if (tagsArr.length === 1 && b.sem === 0) { estado = "com_tag"; tag = tagsArr[0]; }
+        else if (tagsArr.length === 1 && b.sem > 0) { estado = "parcial"; tag = tagsArr[0]; }
+        else estado = "tags_mistas";
+        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com });
+      }
+      return map;
+    },
+  });
+}
+
 function useFullCount() {
   return useQuery({
     queryKey: ["separacao", "full_count"],
@@ -975,6 +1023,7 @@ function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
+  const { data: tagsPorLinha } = useTagsPorLinha();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
   const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
@@ -1135,9 +1184,9 @@ function FilaPriorizada() {
     }
   }
 
-  const tagsPorGrupo = useMemo(() => {
+  const lotesPorTag = useMemo(() => {
     const m = new Map<string, TagLoteRow>();
-    (lotesHoje ?? []).forEach((l) => m.set(l.grupo_origem, l));
+    (lotesHoje ?? []).forEach((l) => m.set(l.tag, l));
     return m;
   }, [lotesHoje]);
 
@@ -1492,25 +1541,35 @@ function FilaPriorizada() {
                       </div>
                       {(() => {
                         const grupo = item.tag_sugerida ?? "";
-                        const loteAplicado = grupo ? tagsPorGrupo.get(grupo) : undefined;
-                        if (loteAplicado) {
+                        // Fonte da verdade: tag_lote dos pedidos ATUAIS da linha
+                        // (view_separacao_pedidos), não lotesHoje. Isso evita mostrar
+                        // tag velha quando pedidos novos entraram sem tag.
+                        const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                        const info = tagsPorLinha?.get(linhaKey);
+                        const estado = info?.estado ?? "sem_tag";
+                        const tagAtual = info?.tag;
+                        const lote = tagAtual ? lotesPorTag.get(tagAtual) : undefined;
+
+                        if (estado === "com_tag" && tagAtual) {
                           return (
                             <button
                               type="button"
-                              onClick={() => void copyToClipboard(loteAplicado.tag)}
+                              onClick={() => void copyToClipboard(tagAtual)}
                               className={cn(
                                 "inline-flex items-center gap-1 font-mono font-semibold text-sm px-3 py-2 rounded-md w-28 justify-center",
-                                loteAplicado.status === "embalada"
+                                lote?.status === "embalada"
                                   ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
                                   : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
                               )}
                               title="Copiar tag"
                             >
                               <TagIcon className="h-3 w-3" />
-                              {loteAplicado.tag}
+                              {tagAtual}
                             </button>
                           );
                         }
+                        // sem_tag, parcial ou tags_mistas → oferecer Aplicar TAG
+                        // (pedidos sem tag na linha sempre podem receber uma tag nova)
                         return (
                           <div className="flex flex-col items-end gap-1">
                             <Button
@@ -1529,6 +1588,16 @@ function FilaPriorizada() {
                                 </>
                               )}
                             </Button>
+                            {estado === "parcial" && tagAtual && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
+                                {info?.comTag} c/ TAG <span className="font-mono">{tagAtual}</span>, {info?.semTag} sem TAG
+                              </div>
+                            )}
+                            {estado === "tags_mistas" && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
+                                Pedidos com TAGs diferentes nesta linha
+                              </div>
+                            )}
                             {bloqueados.has(grupo) && (
                               <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
                                 Verifique no painel de Lotes se a TAG foi criada antes de tentar de novo.
