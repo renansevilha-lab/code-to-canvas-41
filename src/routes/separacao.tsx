@@ -17,6 +17,7 @@ import {
   Tag as TagIcon,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Printer,
   AlertTriangle,
 } from "lucide-react";
@@ -379,23 +380,272 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+// ============ Impressão helpers (compartilhados) ============
+
+interface PedidoSepRow {
+  tag_lote: string | null;
+  numero_ecommerce: string | null;
+  marca_canal: string | null;
+  tipo_envio: string | null;
+  sku_unico: string | null;
+  venda_numero: string | null;
+  embalado_em?: string | null;
+  impresso_em?: string | null;
+}
+
+function marcaToLoja(m: string | null): "ottz" | "svl" | "tiktok" | null {
+  if (!m) return null;
+  const s = m.toLowerCase();
+  if (s.includes("ottz")) return "ottz";
+  if (s.includes("svl") || s.includes("sevilla")) return "svl";
+  if (s.includes("tiktok")) return "tiktok";
+  return null;
+}
+
+async function imprimirLoteApi(
+  loja: "ottz" | "svl",
+  tag: string,
+  printerId: number,
+  printerNome?: string,
+) {
+  const url =
+    `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+    `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+  if (!resp.ok || data.erro) {
+    toast.error(`Falha ao imprimir lote ${tag}`, {
+      description: data.erro ?? `HTTP ${resp.status}`,
+    });
+    return;
+  }
+  if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 0)) {
+    toast.warning(
+      `Lote ${tag}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
+      {
+        description:
+          data.aviso ?? "Alguns pedidos não tinham etiqueta pronta na Shopee.",
+        duration: 10000,
+      },
+    );
+  } else {
+    toast.success(
+      `Lote ${tag}: ${data.etiquetas_enviadas} etiqueta(s) enviadas`,
+      { description: printerNome ?? "" },
+    );
+  }
+}
+
+async function imprimirPedidoApi(
+  loja: "ottz" | "svl",
+  orderSn: string,
+  printerId: number,
+  printerNome?: string,
+) {
+  const url =
+    `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+    `?modulo=imprimir&loja=${loja}&order_sn=${encodeURIComponent(orderSn)}&printer_id=${printerId}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+  if (!resp.ok || data.erro) {
+    toast.error(`Falha ao imprimir ${orderSn}`, {
+      description: data.erro ?? `HTTP ${resp.status}`,
+    });
+    return;
+  }
+  if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 1)) {
+    toast.warning(`Etiqueta ${orderSn} não estava pronta na Shopee`, {
+      description: data.aviso ?? "Pedido não foi impresso.",
+      duration: 10000,
+    });
+  } else {
+    toast.success(`Etiqueta ${orderSn} enviada`, {
+      description: printerNome ?? "",
+    });
+  }
+}
+
+// ============ Pedidos individuais expandidos (por SKU) ============
+
+interface PedidosDoSkuProps {
+  sku: string | null;
+  tipoEnvio: string | null;
+  imprimindoKey: string | null;
+  embalandoKey: string | null;
+  onImprimir: (p: PedidoSepRow) => void;
+  onEmbalar: (p: PedidoSepRow) => void;
+}
+
+function PedidosDoSku({
+  sku,
+  tipoEnvio,
+  imprimindoKey,
+  embalandoKey,
+  onImprimir,
+  onEmbalar,
+}: PedidosDoSkuProps) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio],
+    enabled: !!sku,
+    queryFn: async () => {
+      let q = supabaseExternal.from("view_separacao_pedidos").select("*");
+      if (sku) q = q.eq("sku_unico", sku);
+      if (tipoEnvio) q = q.eq("tipo_envio", tipoEnvio);
+      const { data: d, error: e } = await q.limit(1000);
+      if (e) throw e;
+      return (d ?? []) as PedidoSepRow[];
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="pl-8 py-2">
+        <Skeleton className="h-16 w-full" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="pl-8 py-2 text-xs text-destructive">
+        Erro: {(error as Error).message}
+      </div>
+    );
+  }
+  const pedidos = data ?? [];
+  if (pedidos.length === 0) {
+    return (
+      <div className="pl-8 py-2 text-xs text-muted-foreground">
+        Nenhum pedido encontrado.
+      </div>
+    );
+  }
+  return (
+    <div className="ml-8 mt-1 mb-2 border-l-2 border-muted pl-3">
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase text-muted-foreground">
+          <tr className="border-b">
+            <th className="text-left py-1 pr-2 font-medium">Pedido</th>
+            <th className="text-left py-1 pr-2 font-medium">Canal</th>
+            <th className="text-left py-1 pr-2 font-medium">Lote</th>
+            <th className="text-left py-1 pr-2 font-medium">Status</th>
+            <th className="text-right py-1 font-medium">Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pedidos.map((p, i) => {
+            const loja = marcaToLoja(p.marca_canal);
+            const isTiktok = loja === "tiktok";
+            const key = `ped:${p.numero_ecommerce}`;
+            const busyImp = imprimindoKey === key;
+            const busyEmb = embalandoKey === key;
+            return (
+              <tr key={`${p.numero_ecommerce}-${i}`} className="border-b last:border-0">
+                <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
+                <td className="py-1 pr-2">
+                  <span
+                    className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded",
+                      isTiktok
+                        ? "bg-black text-white"
+                        : loja === "svl"
+                          ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                          : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
+                    )}
+                  >
+                    {p.marca_canal ?? "—"}
+                  </span>
+                </td>
+                <td className="py-1 pr-2 font-mono">{p.tag_lote ?? "—"}</td>
+                <td className="py-1 pr-2">
+                  <div className="flex items-center gap-1">
+                    {p.impresso_em && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
+                        <Printer className="h-2.5 w-2.5" /> impresso
+                      </span>
+                    )}
+                    {p.embalado_em && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
+                        <CheckCircle2 className="h-2.5 w-2.5" /> embalado
+                      </span>
+                    )}
+                    {!p.impresso_em && !p.embalado_em && (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-1 text-right">
+                  <div className="inline-flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      disabled={isTiktok || busyImp || imprimindoKey !== null}
+                      onClick={() => onImprimir(p)}
+                      title={
+                        isTiktok
+                          ? "TikTok não usa etiqueta Shopee"
+                          : "Imprimir etiqueta"
+                      }
+                    >
+                      {busyImp ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Printer className="h-3 w-3" />
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      disabled={busyEmb || embalandoKey !== null}
+                      onClick={() => onEmbalar(p)}
+                      title="Marcar embalado"
+                    >
+                      {busyEmb ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Package className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ============ Lotes do dia panel ============
 
-function LotesDoDia() {
+interface LotesDoDiaProps {
+  printerId: number;
+  setPrinterId: (id: number) => void;
+  impressoras: Impressora[];
+  loadingImpressoras: boolean;
+  impressoraSelecionada: Impressora | undefined;
+}
+
+function LotesDoDia({
+  printerId,
+  setPrinterId,
+  impressoras,
+  loadingImpressoras,
+  impressoraSelecionada,
+}: LotesDoDiaProps) {
   const qc = useQueryClient();
   const { data: lotes, isLoading, error } = useTagsDoDia();
-  const { data: impressoras, isLoading: loadingImpressoras } = useImpressoras();
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
-  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
   const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
-
-  const impressoraSelecionada = useMemo(
-    () => (impressoras ?? []).find((p) => p.printer_id === printerId),
-    [impressoras, printerId],
-  );
 
   function lojaDoLote(lote: TagLoteRow): "ottz" | "svl" {
     if (lojaPorTag[lote.tag]) return lojaPorTag[lote.tag];
@@ -725,10 +975,165 @@ function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
+  const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
+  const impressoras = impressorasData ?? [];
+  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
+  const impressoraSelecionada = useMemo(
+    () => impressoras.find((p) => p.printer_id === printerId),
+    [impressoras, printerId],
+  );
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
+  const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
+  const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
+  const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
+
+  function toggleExpand(key: string) {
+    setExpandedSku((prev) => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  }
+
+  async function imprimirPorSku(item: PriorizadaRow) {
+    const key = `sku:${item.sku}:${item.tipo_envio}`;
+    if (imprimindoKey) return;
+    if (impressoraSelecionada?.estado === "offline") {
+      if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+    }
+    setImprimindoKey(key);
+    try {
+      const { data, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("tag_lote, marca_canal, numero_ecommerce")
+        .eq("sku_unico", item.sku ?? "")
+        .eq("tipo_envio", item.tipo_envio ?? "");
+      if (e1) throw e1;
+      const groups = new Map<string, { loja: "ottz" | "svl"; tag: string }>();
+      let skTiktok = 0, skNoLote = 0;
+      for (const p of (data ?? []) as PedidoSepRow[]) {
+        const loja = marcaToLoja(p.marca_canal);
+        if (loja === "tiktok" || loja === null) { skTiktok++; continue; }
+        if (!p.tag_lote) { skNoLote++; continue; }
+        groups.set(`${loja}|${p.tag_lote}`, { loja, tag: p.tag_lote });
+      }
+      if (groups.size === 0) {
+        toast.warning("Nada para imprimir", {
+          description: skNoLote > 0 ? "Nenhum pedido com TAG aplicada ainda." : "Só há pedidos TikTok neste SKU.",
+        });
+        return;
+      }
+      for (const g of groups.values()) {
+        await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+      }
+      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
+      if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoKey(null);
+    }
+  }
+
+  async function embalarPorSku(item: PriorizadaRow) {
+    const key = `sku:${item.sku}:${item.tipo_envio}`;
+    if (embalandoKey) return;
+    setEmbalandoKey(key);
+    try {
+      const { data, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("tag_lote")
+        .eq("sku_unico", item.sku ?? "")
+        .eq("tipo_envio", item.tipo_envio ?? "");
+      if (e1) throw e1;
+      const tags = Array.from(
+        new Set(
+          ((data ?? []) as { tag_lote: string | null }[])
+            .map((p) => p.tag_lote)
+            .filter((t): t is string => !!t),
+        ),
+      );
+      if (tags.length === 0) {
+        toast.warning("Nenhum lote encontrado para este SKU");
+        return;
+      }
+      let ok = 0, tot = 0, errs = 0;
+      for (const tag of tags) {
+        try {
+          const r = await callSeparacaoFn<EmbalarLoteResponse>(
+            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
+          );
+          ok += r.embaladas; tot += r.total; errs += r.erros?.length ?? 0;
+        } catch (e) {
+          toast.error(`Lote ${tag}`, { description: (e as Error).message });
+        }
+      }
+      toast.success(`${ok}/${tot} pedidos embalados em ${tags.length} lote(s)`, {
+        description: errs > 0 ? `${errs} erro(s)` : undefined,
+      });
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+    } finally {
+      setEmbalandoKey(null);
+    }
+  }
+
+  async function imprimirPedido(p: PedidoSepRow) {
+    const key = `ped:${p.numero_ecommerce}`;
+    const loja = marcaToLoja(p.marca_canal);
+    if (loja === "tiktok" || !loja) { toast.error("TikTok não usa etiqueta Shopee"); return; }
+    if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
+    if (imprimindoKey) return;
+    if (impressoraSelecionada?.estado === "offline") {
+      if (!window.confirm("Impressora offline. Continuar?")) return;
+    }
+    setImprimindoKey(key);
+    try {
+      await imprimirPedidoApi(loja, p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoKey(null);
+    }
+  }
+
+  async function embalarPedido(p: PedidoSepRow) {
+    const key = `ped:${p.numero_ecommerce}`;
+    if (embalandoKey || !p.numero_ecommerce) return;
+    setEmbalandoKey(key);
+    try {
+      try {
+        await callSeparacaoFn(
+          `modulo=embalar-pedido&order_sn=${encodeURIComponent(p.numero_ecommerce)}&confirmar=1`,
+        );
+        toast.success(`Pedido ${p.numero_ecommerce} marcado como embalado`);
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        if ((err.status === 404 || err.status === 400) && p.tag_lote) {
+          await callSeparacaoFn(
+            `modulo=embalar-lote&tag=${encodeURIComponent(p.tag_lote)}&confirmar=1`,
+          );
+          toast.warning(
+            `Módulo por-pedido indisponível — lote ${p.tag_lote} inteiro embalado`,
+          );
+        } else {
+          throw e;
+        }
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+    } finally {
+      setEmbalandoKey(null);
+    }
+  }
 
   const tagsPorGrupo = useMemo(() => {
     const m = new Map<string, TagLoteRow>();
@@ -891,7 +1296,13 @@ function FilaPriorizada() {
   return (
     <div className="space-y-5">
       <SeparacaoTotaisCards />
-      <LotesDoDia />
+      <LotesDoDia
+        printerId={printerId}
+        setPrinterId={setPrinterId}
+        impressoras={impressoras}
+        loadingImpressoras={loadingImpressoras}
+        impressoraSelecionada={impressoraSelecionada}
+      />
 
 
       {/* Resumo */}
@@ -1023,14 +1434,30 @@ function FilaPriorizada() {
             <div className="grid gap-2">
               {g.items.map((item) => {
                 const isER = item.tipo_envio === "ER";
+                const skuKey = `${item.sku}|${item.tipo_envio}`;
+                const busyImprimir = imprimindoKey === `sku:${item.sku}:${item.tipo_envio}`;
+                const busyEmbalar = embalandoKey === `sku:${item.sku}:${item.tipo_envio}`;
+                const isExpanded = expandedSku.has(skuKey);
                 return (
+                  <div key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}>
                   <Card
-                    key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}
                     className={cn(
                       "p-3 flex items-center gap-4",
                       isER && "border-destructive/40",
                     )}
                   >
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(skuKey)}
+                      className="p-1 rounded hover:bg-muted shrink-0"
+                      title={isExpanded ? "Recolher" : "Ver pedidos"}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                    </button>
                     <div className="text-2xl md:text-3xl font-bold text-muted-foreground w-14 text-center tabular-nums shrink-0">
                       #{item.prioridade}
                     </div>
@@ -1116,11 +1543,55 @@ function FilaPriorizada() {
                             )}
                           </div>
                         );
-
                       })()}
+                      <div className="flex flex-col gap-1">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          disabled={busyImprimir || imprimindoKey !== null}
+                          onClick={() => void imprimirPorSku(item)}
+                          className="w-36"
+                          title="Imprime todas as etiquetas Shopee deste SKU"
+                        >
+                          {busyImprimir ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Printer className="h-3 w-3 mr-1" />
+                              Imprimir etiqueta
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busyEmbalar || embalandoKey !== null}
+                          onClick={() => void embalarPorSku(item)}
+                          className="w-36"
+                        >
+                          {busyEmbalar ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Package className="h-3 w-3 mr-1" />
+                              Marcar embalado
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
-
                   </Card>
+                  {isExpanded && (
+                    <PedidosDoSku
+                      sku={item.sku}
+                      tipoEnvio={item.tipo_envio}
+                      imprimindoKey={imprimindoKey}
+                      embalandoKey={embalandoKey}
+                      onImprimir={imprimirPedido}
+                      onEmbalar={embalarPedido}
+                    />
+                  )}
+                  </div>
                 );
               })}
             </div>
