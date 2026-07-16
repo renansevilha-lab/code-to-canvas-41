@@ -469,6 +469,159 @@ async function imprimirPedidoApi(
   }
 }
 
+// ============ Pedidos individuais expandidos (por SKU) ============
+
+interface PedidosDoSkuProps {
+  sku: string | null;
+  tipoEnvio: string | null;
+  imprimindoKey: string | null;
+  embalandoKey: string | null;
+  onImprimir: (p: PedidoSepRow) => void;
+  onEmbalar: (p: PedidoSepRow) => void;
+}
+
+function PedidosDoSku({
+  sku,
+  tipoEnvio,
+  imprimindoKey,
+  embalandoKey,
+  onImprimir,
+  onEmbalar,
+}: PedidosDoSkuProps) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio],
+    enabled: !!sku,
+    queryFn: async () => {
+      let q = supabaseExternal.from("view_separacao_pedidos").select("*");
+      if (sku) q = q.eq("sku_unico", sku);
+      if (tipoEnvio) q = q.eq("tipo_envio", tipoEnvio);
+      const { data: d, error: e } = await q.limit(1000);
+      if (e) throw e;
+      return (d ?? []) as PedidoSepRow[];
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="pl-8 py-2">
+        <Skeleton className="h-16 w-full" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="pl-8 py-2 text-xs text-destructive">
+        Erro: {(error as Error).message}
+      </div>
+    );
+  }
+  const pedidos = data ?? [];
+  if (pedidos.length === 0) {
+    return (
+      <div className="pl-8 py-2 text-xs text-muted-foreground">
+        Nenhum pedido encontrado.
+      </div>
+    );
+  }
+  return (
+    <div className="ml-8 mt-1 mb-2 border-l-2 border-muted pl-3">
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase text-muted-foreground">
+          <tr className="border-b">
+            <th className="text-left py-1 pr-2 font-medium">Pedido</th>
+            <th className="text-left py-1 pr-2 font-medium">Canal</th>
+            <th className="text-left py-1 pr-2 font-medium">Lote</th>
+            <th className="text-left py-1 pr-2 font-medium">Status</th>
+            <th className="text-right py-1 font-medium">Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pedidos.map((p, i) => {
+            const loja = marcaToLoja(p.marca_canal);
+            const isTiktok = loja === "tiktok";
+            const key = `ped:${p.numero_ecommerce}`;
+            const busyImp = imprimindoKey === key;
+            const busyEmb = embalandoKey === key;
+            return (
+              <tr key={`${p.numero_ecommerce}-${i}`} className="border-b last:border-0">
+                <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
+                <td className="py-1 pr-2">
+                  <span
+                    className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded",
+                      isTiktok
+                        ? "bg-black text-white"
+                        : loja === "svl"
+                          ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                          : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
+                    )}
+                  >
+                    {p.marca_canal ?? "—"}
+                  </span>
+                </td>
+                <td className="py-1 pr-2 font-mono">{p.tag_lote ?? "—"}</td>
+                <td className="py-1 pr-2">
+                  <div className="flex items-center gap-1">
+                    {p.impresso_em && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
+                        <Printer className="h-2.5 w-2.5" /> impresso
+                      </span>
+                    )}
+                    {p.embalado_em && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
+                        <CheckCircle2 className="h-2.5 w-2.5" /> embalado
+                      </span>
+                    )}
+                    {!p.impresso_em && !p.embalado_em && (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-1 text-right">
+                  <div className="inline-flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      disabled={isTiktok || busyImp || imprimindoKey !== null}
+                      onClick={() => onImprimir(p)}
+                      title={
+                        isTiktok
+                          ? "TikTok não usa etiqueta Shopee"
+                          : "Imprimir etiqueta"
+                      }
+                    >
+                      {busyImp ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Printer className="h-3 w-3" />
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      disabled={busyEmb || embalandoKey !== null}
+                      onClick={() => onEmbalar(p)}
+                      title="Marcar embalado"
+                    >
+                      {busyEmb ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Package className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ============ Lotes do dia panel ============
 
 interface LotesDoDiaProps {
