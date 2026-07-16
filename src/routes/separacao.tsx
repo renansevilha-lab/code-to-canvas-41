@@ -733,10 +733,165 @@ function FilaPriorizada() {
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
+  const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
+  const impressoras = impressorasData ?? [];
+  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
+  const impressoraSelecionada = useMemo(
+    () => impressoras.find((p) => p.printer_id === printerId),
+    [impressoras, printerId],
+  );
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
+  const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
+  const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
+  const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
+
+  function toggleExpand(key: string) {
+    setExpandedSku((prev) => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  }
+
+  async function imprimirPorSku(item: PriorizadaRow) {
+    const key = `sku:${item.sku}:${item.tipo_envio}`;
+    if (imprimindoKey) return;
+    if (impressoraSelecionada?.estado === "offline") {
+      if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+    }
+    setImprimindoKey(key);
+    try {
+      const { data, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("tag_lote, marca_canal, numero_ecommerce")
+        .eq("sku_unico", item.sku ?? "")
+        .eq("tipo_envio", item.tipo_envio ?? "");
+      if (e1) throw e1;
+      const groups = new Map<string, { loja: "ottz" | "svl"; tag: string }>();
+      let skTiktok = 0, skNoLote = 0;
+      for (const p of (data ?? []) as PedidoSepRow[]) {
+        const loja = marcaToLoja(p.marca_canal);
+        if (loja === "tiktok" || loja === null) { skTiktok++; continue; }
+        if (!p.tag_lote) { skNoLote++; continue; }
+        groups.set(`${loja}|${p.tag_lote}`, { loja, tag: p.tag_lote });
+      }
+      if (groups.size === 0) {
+        toast.warning("Nada para imprimir", {
+          description: skNoLote > 0 ? "Nenhum pedido com TAG aplicada ainda." : "Só há pedidos TikTok neste SKU.",
+        });
+        return;
+      }
+      for (const g of groups.values()) {
+        await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+      }
+      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
+      if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoKey(null);
+    }
+  }
+
+  async function embalarPorSku(item: PriorizadaRow) {
+    const key = `sku:${item.sku}:${item.tipo_envio}`;
+    if (embalandoKey) return;
+    setEmbalandoKey(key);
+    try {
+      const { data, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("tag_lote")
+        .eq("sku_unico", item.sku ?? "")
+        .eq("tipo_envio", item.tipo_envio ?? "");
+      if (e1) throw e1;
+      const tags = Array.from(
+        new Set(
+          ((data ?? []) as { tag_lote: string | null }[])
+            .map((p) => p.tag_lote)
+            .filter((t): t is string => !!t),
+        ),
+      );
+      if (tags.length === 0) {
+        toast.warning("Nenhum lote encontrado para este SKU");
+        return;
+      }
+      let ok = 0, tot = 0, errs = 0;
+      for (const tag of tags) {
+        try {
+          const r = await callSeparacaoFn<EmbalarLoteResponse>(
+            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
+          );
+          ok += r.embaladas; tot += r.total; errs += r.erros?.length ?? 0;
+        } catch (e) {
+          toast.error(`Lote ${tag}`, { description: (e as Error).message });
+        }
+      }
+      toast.success(`${ok}/${tot} pedidos embalados em ${tags.length} lote(s)`, {
+        description: errs > 0 ? `${errs} erro(s)` : undefined,
+      });
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+    } finally {
+      setEmbalandoKey(null);
+    }
+  }
+
+  async function imprimirPedido(p: PedidoSepRow) {
+    const key = `ped:${p.numero_ecommerce}`;
+    const loja = marcaToLoja(p.marca_canal);
+    if (loja === "tiktok" || !loja) { toast.error("TikTok não usa etiqueta Shopee"); return; }
+    if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
+    if (imprimindoKey) return;
+    if (impressoraSelecionada?.estado === "offline") {
+      if (!window.confirm("Impressora offline. Continuar?")) return;
+    }
+    setImprimindoKey(key);
+    try {
+      await imprimirPedidoApi(loja, p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoKey(null);
+    }
+  }
+
+  async function embalarPedido(p: PedidoSepRow) {
+    const key = `ped:${p.numero_ecommerce}`;
+    if (embalandoKey || !p.numero_ecommerce) return;
+    setEmbalandoKey(key);
+    try {
+      try {
+        await callSeparacaoFn(
+          `modulo=embalar-pedido&order_sn=${encodeURIComponent(p.numero_ecommerce)}&confirmar=1`,
+        );
+        toast.success(`Pedido ${p.numero_ecommerce} marcado como embalado`);
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        if ((err.status === 404 || err.status === 400) && p.tag_lote) {
+          await callSeparacaoFn(
+            `modulo=embalar-lote&tag=${encodeURIComponent(p.tag_lote)}&confirmar=1`,
+          );
+          toast.warning(
+            `Módulo por-pedido indisponível — lote ${p.tag_lote} inteiro embalado`,
+          );
+        } else {
+          throw e;
+        }
+      }
+      await qc.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+    } finally {
+      setEmbalandoKey(null);
+    }
+  }
 
   const tagsPorGrupo = useMemo(() => {
     const m = new Map<string, TagLoteRow>();
