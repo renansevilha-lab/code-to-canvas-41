@@ -18,6 +18,7 @@ import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
+import { Route as DreRouteImport } from './routes/dre'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as CarteiraSaldosRouteImport } from './routes/carteira-saldos'
 import { Route as CarteiraRouteImport } from './routes/carteira'
@@ -72,6 +73,11 @@ const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
   path: '/fluxo-caixa',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DreRoute = DreRouteImport.update({
+  id: '/dre',
+  path: '/dre',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ContasPagarRoute = ContasPagarRouteImport.update({
   id: '/contas-pagar',
   path: '/contas-pagar',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
@@ -140,6 +147,7 @@ export interface FileRoutesByTo {
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
   '/contas-pagar': typeof ContasPagarRoute
+  '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/carteira-saldos'
     | '/contas-pagar'
+    | '/dre'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
     | '/metas'
@@ -200,6 +210,7 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/carteira-saldos'
     | '/contas-pagar'
+    | '/dre'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
     | '/metas'
@@ -219,6 +230,7 @@ export interface FileRouteTypes {
     | '/carteira'
     | '/carteira-saldos'
     | '/contas-pagar'
+    | '/dre'
     | '/fluxo-caixa'
     | '/mapeamento-skus'
     | '/metas'
@@ -239,6 +251,7 @@ export interface RootRouteChildren {
   CarteiraRoute: typeof CarteiraRoute
   CarteiraSaldosRoute: typeof CarteiraSaldosRoute
   ContasPagarRoute: typeof ContasPagarRoute
+  DreRoute: typeof DreRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
   MetasRoute: typeof MetasRoute
@@ -316,6 +329,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FluxoCaixaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dre': {
+      id: '/dre'
+      path: '/dre'
+      fullPath: '/dre'
+      preLoaderRoute: typeof DreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/contas-pagar': {
       id: '/contas-pagar'
       path: '/contas-pagar'
@@ -383,6 +403,7 @@ const rootRouteChildren: RootRouteChildren = {
   CarteiraRoute: CarteiraRoute,
   CarteiraSaldosRoute: CarteiraSaldosRoute,
   ContasPagarRoute: ContasPagarRoute,
+  DreRoute: DreRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,
   MetasRoute: MetasRoute,
@@ -397,12 +418,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

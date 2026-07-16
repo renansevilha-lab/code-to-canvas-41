@@ -223,7 +223,7 @@ function DREPage() {
                     tickFormatter={(v) => `${v.toFixed(0)}%`}
                   />
                   <RTooltip
-                    formatter={(v: unknown, name: string) => {
+                    formatter={(v: unknown, name: unknown) => {
                       const n = Number(v);
                       if (name === "Margem %") return `${n.toFixed(1).replace(".", ",")}%`;
                       return brlFull(n);
