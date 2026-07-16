@@ -211,6 +211,54 @@ function usePriorizadaRows() {
   });
 }
 
+/**
+ * Lê tag_lote de todos os pedidos atualmente na fila de separação
+ * (view_separacao_pedidos) e agrupa por `${sku_unico}|${tipo_envio}`.
+ *
+ * Fonte da verdade para decidir se a linha mostra selo de TAG ou botão
+ * "Aplicar TAG". Nunca use lotesHoje (tags_lote) pra isso — aquilo é
+ * histórico do dia e mantém tags de lotes já impressos, o que faz aparecer
+ * tag velha em linhas com pedidos novos sem tag.
+ */
+interface TagsPorLinha {
+  estado: "sem_tag" | "com_tag" | "tags_mistas" | "parcial";
+  tag?: string;
+  semTag: number;
+  comTag: number;
+}
+function useTagsPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "tags_por_linha"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("sku_unico, tipo_envio, tag_lote")
+        .limit(20000);
+      if (error) throw error;
+      const map = new Map<string, TagsPorLinha>();
+      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number }>();
+      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null }[]) {
+        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0 };
+        if (p.tag_lote) { b.tags.add(p.tag_lote); b.com++; }
+        else { b.sem++; }
+        buckets.set(key, b);
+      }
+      for (const [key, b] of buckets) {
+        const tagsArr = [...b.tags];
+        let estado: TagsPorLinha["estado"];
+        let tag: string | undefined;
+        if (tagsArr.length === 0) estado = "sem_tag";
+        else if (tagsArr.length === 1 && b.sem === 0) { estado = "com_tag"; tag = tagsArr[0]; }
+        else if (tagsArr.length === 1 && b.sem > 0) { estado = "parcial"; tag = tagsArr[0]; }
+        else estado = "tags_mistas";
+        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com });
+      }
+      return map;
+    },
+  });
+}
+
 function useFullCount() {
   return useQuery({
     queryKey: ["separacao", "full_count"],
