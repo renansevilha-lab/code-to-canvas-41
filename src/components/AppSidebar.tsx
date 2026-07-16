@@ -15,6 +15,7 @@ import {
   Target,
   ShoppingBag,
   AlertTriangle,
+  FileBarChart,
 } from "lucide-react";
 
 import {
@@ -48,6 +49,7 @@ const principal: NavItem[] = [
   { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt },
   { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet },
   { title: "Catálogo", url: "/produtos", icon: Package },
+  { title: "DRE", url: "/dre", icon: FileBarChart },
 ];
 
 const modulos: NavItem[] = [
