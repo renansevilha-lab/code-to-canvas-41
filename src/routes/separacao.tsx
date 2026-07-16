@@ -1189,6 +1189,11 @@ function FilaPriorizada() {
     (lotesHoje ?? []).forEach((l) => m.set(l.grupo_origem, l));
     return m;
   }, [lotesHoje]);
+  const lotesPorTag = useMemo(() => {
+    const m = new Map<string, TagLoteRow>();
+    (lotesHoje ?? []).forEach((l) => m.set(l.tag, l));
+    return m;
+  }, [lotesHoje]);
 
   async function aplicarTag(grupo: string) {
     if (aplicando || bloqueados.has(grupo)) return;
