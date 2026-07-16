@@ -1143,7 +1143,13 @@ function FilaPriorizada() {
   return (
     <div className="space-y-5">
       <SeparacaoTotaisCards />
-      <LotesDoDia />
+      <LotesDoDia
+        printerId={printerId}
+        setPrinterId={setPrinterId}
+        impressoras={impressoras}
+        loadingImpressoras={loadingImpressoras}
+        impressoraSelecionada={impressoraSelecionada}
+      />
 
 
       {/* Resumo */}
