@@ -382,21 +382,28 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 
 // ============ Lotes do dia panel ============
 
-function LotesDoDia() {
+interface LotesDoDiaProps {
+  printerId: number;
+  setPrinterId: (id: number) => void;
+  impressoras: Impressora[];
+  loadingImpressoras: boolean;
+  impressoraSelecionada: Impressora | undefined;
+}
+
+function LotesDoDia({
+  printerId,
+  setPrinterId,
+  impressoras,
+  loadingImpressoras,
+  impressoraSelecionada,
+}: LotesDoDiaProps) {
   const qc = useQueryClient();
   const { data: lotes, isLoading, error } = useTagsDoDia();
-  const { data: impressoras, isLoading: loadingImpressoras } = useImpressoras();
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
-  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
   const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
-
-  const impressoraSelecionada = useMemo(
-    () => (impressoras ?? []).find((p) => p.printer_id === printerId),
-    [impressoras, printerId],
-  );
 
   function lojaDoLote(lote: TagLoteRow): "ottz" | "svl" {
     if (lojaPorTag[lote.tag]) return lojaPorTag[lote.tag];
