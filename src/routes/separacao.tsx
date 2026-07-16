@@ -380,6 +380,95 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+// ============ Impressão helpers (compartilhados) ============
+
+interface PedidoSepRow {
+  tag_lote: string | null;
+  numero_ecommerce: string | null;
+  marca_canal: string | null;
+  tipo_envio: string | null;
+  sku_unico: string | null;
+  venda_numero: string | null;
+  embalado_em?: string | null;
+  impresso_em?: string | null;
+}
+
+function marcaToLoja(m: string | null): "ottz" | "svl" | "tiktok" | null {
+  if (!m) return null;
+  const s = m.toLowerCase();
+  if (s.includes("ottz")) return "ottz";
+  if (s.includes("svl") || s.includes("sevilla")) return "svl";
+  if (s.includes("tiktok")) return "tiktok";
+  return null;
+}
+
+async function imprimirLoteApi(
+  loja: "ottz" | "svl",
+  tag: string,
+  printerId: number,
+  printerNome?: string,
+) {
+  const url =
+    `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+    `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+  if (!resp.ok || data.erro) {
+    toast.error(`Falha ao imprimir lote ${tag}`, {
+      description: data.erro ?? `HTTP ${resp.status}`,
+    });
+    return;
+  }
+  if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 0)) {
+    toast.warning(
+      `Lote ${tag}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
+      {
+        description:
+          data.aviso ?? "Alguns pedidos não tinham etiqueta pronta na Shopee.",
+        duration: 10000,
+      },
+    );
+  } else {
+    toast.success(
+      `Lote ${tag}: ${data.etiquetas_enviadas} etiqueta(s) enviadas`,
+      { description: printerNome ?? "" },
+    );
+  }
+}
+
+async function imprimirPedidoApi(
+  loja: "ottz" | "svl",
+  orderSn: string,
+  printerId: number,
+  printerNome?: string,
+) {
+  const url =
+    `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
+    `?modulo=imprimir&loja=${loja}&order_sn=${encodeURIComponent(orderSn)}&printer_id=${printerId}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
+  if (!resp.ok || data.erro) {
+    toast.error(`Falha ao imprimir ${orderSn}`, {
+      description: data.erro ?? `HTTP ${resp.status}`,
+    });
+    return;
+  }
+  if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 1)) {
+    toast.warning(`Etiqueta ${orderSn} não estava pronta na Shopee`, {
+      description: data.aviso ?? "Pedido não foi impresso.",
+      duration: 10000,
+    });
+  } else {
+    toast.success(`Etiqueta ${orderSn} enviada`, {
+      description: printerNome ?? "",
+    });
+  }
+}
+
 // ============ Lotes do dia panel ============
 
 interface LotesDoDiaProps {
