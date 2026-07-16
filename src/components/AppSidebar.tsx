@@ -15,6 +15,7 @@ import {
   Target,
   ShoppingBag,
   AlertTriangle,
+  FileBarChart,
 } from "lucide-react";
 
 import {
