@@ -1276,6 +1276,7 @@ function FilaPriorizada() {
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
   const { data: tagsPorLinha } = useTagsPorLinha();
+  const { data: impressaoEstados } = useImpressaoEstados();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
   const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
@@ -1290,6 +1291,7 @@ function FilaPriorizada() {
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
+  const [forcarSku, setForcarSku] = useState<PriorizadaRow | null>(null);
 
   function toggleExpand(key: string) {
     setExpandedSku((prev) => {
