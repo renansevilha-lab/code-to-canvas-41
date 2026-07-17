@@ -2080,6 +2080,34 @@ function FilaPriorizada() {
           </div>
         </div>
       )}
+
+      <ForcarEmbalarDialog
+        open={forcarSku !== null}
+        titulo={`Forçar embalado — ${forcarSku?.sku ?? ""} · ${forcarSku?.tipo_envio ?? ""}`}
+        descricao={
+          (() => {
+            const linhaKey = `${forcarSku?.sku ?? ""}|${forcarSku?.tipo_envio ?? ""}`;
+            const agg = impressaoEstados?.porLinha.get(linhaKey);
+            const bloq = (agg?.error ?? 0) + (agg?.ausente ?? 0);
+            const aguard = agg?.sent ?? 0;
+            const total = agg?.total ?? 0;
+            return (
+              <p>
+                <strong>{total}</strong> pedido(s) nesta linha serão marcados
+                como embalados no Tiny — incluindo <strong>{bloq}</strong> sem
+                confirmação de impressão e <strong>{aguard}</strong> ainda
+                aguardando.
+              </p>
+            );
+          })()
+        }
+        loading={embalandoKey === `sku:${forcarSku?.sku}:${forcarSku?.tipo_envio}`}
+        onCancel={() => setForcarSku(null)}
+        onConfirm={(nome, motivo) => {
+          if (forcarSku) void embalarPorSku(forcarSku, { nome, motivo });
+          setForcarSku(null);
+        }}
+      />
     </div>
   );
 }
