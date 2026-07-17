@@ -259,6 +259,197 @@ function useTagsPorLinha() {
   });
 }
 
+// ============ Estado da impressão (impressao_etiquetas) ============
+
+export type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
+
+function rankEstado(e: EstadoImpressao): number {
+  return e === "done" ? 4 : e === "forcado" ? 3 : e === "sent" ? 2 : e === "error" ? 1 : 0;
+}
+
+export interface AggImpressao {
+  done: number;
+  forcado: number;
+  sent: number;
+  error: number;
+  ausente: number;
+  total: number;
+  seps: number[];
+}
+
+/**
+ * Une view_separacao_pedidos + impressao_etiquetas para dizer, por SKU/tipo_envio
+ * (linha da fila) e por separacao_id, em que estado está a impressão.
+ * Polling curto (5s) enquanto houver 'sent' — o backend confirma em poucos segundos.
+ */
+function useImpressaoEstados() {
+  return useQuery({
+    queryKey: ["separacao", "impressao_estados"],
+    queryFn: async () => {
+      const { data: peds, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("separacao_id, sku_unico, tipo_envio")
+        .limit(20000);
+      if (e1) throw e1;
+      const sepList = (peds ?? []) as {
+        separacao_id: number | null;
+        sku_unico: string | null;
+        tipo_envio: string | null;
+      }[];
+      const sepIds = sepList.map((p) => p.separacao_id).filter((n): n is number => n != null);
+
+      const porSep = new Map<number, EstadoImpressao>();
+      // pega em chunks pra evitar URL gigante
+      const chunk = 500;
+      for (let i = 0; i < sepIds.length; i += chunk) {
+        const slice = sepIds.slice(i, i + chunk);
+        const { data: imps, error: e2 } = await supabaseExternal
+          .from("impressao_etiquetas")
+          .select("separacao_id, estado")
+          .in("separacao_id", slice);
+        if (e2) throw e2;
+        for (const r of (imps ?? []) as { separacao_id: number; estado: string }[]) {
+          const est = (r.estado as EstadoImpressao) ?? "ausente";
+          const cur = porSep.get(r.separacao_id) ?? "ausente";
+          if (rankEstado(est) > rankEstado(cur)) porSep.set(r.separacao_id, est);
+        }
+      }
+
+      const porLinha = new Map<string, AggImpressao>();
+      for (const p of sepList) {
+        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+        const agg =
+          porLinha.get(key) ??
+          ({ done: 0, forcado: 0, sent: 0, error: 0, ausente: 0, total: 0, seps: [] } as AggImpressao);
+        agg.total++;
+        if (p.separacao_id != null) agg.seps.push(p.separacao_id);
+        const est: EstadoImpressao =
+          p.separacao_id != null ? (porSep.get(p.separacao_id) ?? "ausente") : "ausente";
+        agg[est]++;
+        porLinha.set(key, agg);
+      }
+
+      const hasSent = [...porSep.values()].some((e) => e === "sent");
+      return { porSep, porLinha, hasSent };
+    },
+    refetchInterval: (q) => {
+      const d = q.state.data as { hasSent?: boolean } | undefined;
+      return d?.hasSent ? 5_000 : 30_000;
+    },
+  });
+}
+
+/**
+ * Deriva o estado do botão "Embalar" para uma linha de SKU.
+ * - liberado: todos done/forcado
+ * - aguardando: nenhum liberado ainda mas há 'sent'
+ * - parcial: há liberados E bloqueados/aguardando
+ * - bloqueado: nenhum liberado, sem sent (só error/ausente)
+ */
+export type EstadoBotao = "liberado" | "aguardando" | "parcial" | "bloqueado" | "vazio";
+function estadoBotaoLinha(a: AggImpressao | undefined): EstadoBotao {
+  if (!a || a.total === 0) return "vazio";
+  const liberados = a.done + a.forcado;
+  if (liberados === a.total) return "liberado";
+  if (liberados > 0) return "parcial";
+  if (a.sent > 0) return "aguardando";
+  return "bloqueado";
+}
+
+// ============ Dialog: Forçar embalar ============
+
+interface ForcarDialogProps {
+  open: boolean;
+  titulo: string;
+  descricao: React.ReactNode;
+  onCancel: () => void;
+  onConfirm: (nome: string, motivo: string) => void;
+  loading?: boolean;
+}
+function ForcarEmbalarDialog({
+  open,
+  titulo,
+  descricao,
+  onCancel,
+  onConfirm,
+  loading,
+}: ForcarDialogProps) {
+  const [nome, setNome] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [confirmado, setConfirmado] = useState(false);
+  const podeConfirmar = nome.trim().length >= 2 && confirmado;
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          onCancel();
+          setNome("");
+          setMotivo("");
+          setConfirmado(false);
+        }
+      }}
+    >
+      <AlertDialogContent className="border-destructive">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-destructive flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> {titulo}
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3 text-sm">
+              <div>{descricao}</div>
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                Esta ação pula a trava de segurança "só embala quem imprimiu".
+                Use só quando a etiqueta física já saiu mas o sistema não confirmou.
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Quem está forçando *</label>
+                <Input
+                  autoFocus
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  placeholder="Seu nome"
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Motivo (opcional)</label>
+                <Input
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                  placeholder="Ex.: impressora imprimiu mas não confirmou"
+                  className="h-8"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={confirmado}
+                  onChange={(e) => setConfirmado(e.target.checked)}
+                />
+                Confirmo que a etiqueta física já saiu e quero forçar o embalado.
+              </label>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!podeConfirmar || loading}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm(nome.trim(), motivo.trim());
+            }}
+          >
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Forçar embalar"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function useFullCount() {
   return useQuery({
     queryKey: ["separacao", "full_count"],
@@ -431,6 +622,7 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 // ============ Impressão helpers (compartilhados) ============
 
 interface PedidoSepRow {
+  separacao_id: number | null;
   tag_lote: string | null;
   numero_ecommerce: string | null;
   marca_canal: string | null;
@@ -525,7 +717,8 @@ interface PedidosDoSkuProps {
   imprimindoKey: string | null;
   embalandoKey: string | null;
   onImprimir: (p: PedidoSepRow) => void;
-  onEmbalar: (p: PedidoSepRow) => void;
+  onEmbalar: (p: PedidoSepRow, forcado?: { nome: string; motivo: string }) => void;
+  estadosPorSep?: Map<number, EstadoImpressao>;
 }
 
 function PedidosDoSku({
@@ -535,7 +728,9 @@ function PedidosDoSku({
   embalandoKey,
   onImprimir,
   onEmbalar,
+  estadosPorSep,
 }: PedidosDoSkuProps) {
+  const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio],
     enabled: !!sku,
@@ -579,7 +774,7 @@ function PedidosDoSku({
             <th className="text-left py-1 pr-2 font-medium">Pedido</th>
             <th className="text-left py-1 pr-2 font-medium">Canal</th>
             <th className="text-left py-1 pr-2 font-medium">Lote</th>
-            <th className="text-left py-1 pr-2 font-medium">Status</th>
+            <th className="text-left py-1 pr-2 font-medium">Impressão</th>
             <th className="text-right py-1 font-medium">Ação</th>
           </tr>
         </thead>
@@ -590,6 +785,13 @@ function PedidosDoSku({
             const key = `ped:${p.numero_ecommerce}`;
             const busyImp = imprimindoKey === key;
             const busyEmb = embalandoKey === key;
+            const estado: EstadoImpressao =
+              p.separacao_id != null
+                ? (estadosPorSep?.get(p.separacao_id) ?? "ausente")
+                : "ausente";
+            const liberado = estado === "done" || estado === "forcado";
+            const aguardando = estado === "sent";
+            const bloqueado = estado === "error" || estado === "ausente";
             return (
               <tr key={`${p.numero_ecommerce}-${i}`} className="border-b last:border-0">
                 <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
@@ -609,21 +811,29 @@ function PedidosDoSku({
                 </td>
                 <td className="py-1 pr-2 font-mono">{p.tag_lote ?? "—"}</td>
                 <td className="py-1 pr-2">
-                  <div className="flex items-center gap-1">
-                    {p.impresso_em && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
-                        <Printer className="h-2.5 w-2.5" /> impresso
-                      </span>
-                    )}
-                    {p.embalado_em && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
-                        <CheckCircle2 className="h-2.5 w-2.5" /> embalado
-                      </span>
-                    )}
-                    {!p.impresso_em && !p.embalado_em && (
-                      <span className="text-[10px] text-muted-foreground">—</span>
-                    )}
-                  </div>
+                  {estado === "done" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                      <Check className="h-2.5 w-2.5" /> impresso
+                    </span>
+                  )}
+                  {estado === "forcado" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                      <Check className="h-2.5 w-2.5" /> forçado
+                    </span>
+                  )}
+                  {estado === "sent" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      <Hourglass className="h-2.5 w-2.5" /> aguardando
+                    </span>
+                  )}
+                  {estado === "error" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">
+                      <AlertTriangle className="h-2.5 w-2.5" /> erro
+                    </span>
+                  )}
+                  {estado === "ausente" && (
+                    <span className="text-[10px] text-muted-foreground">sem impressão</span>
+                  )}
                 </td>
                 <td className="py-1 text-right">
                   <div className="inline-flex gap-1">
@@ -647,11 +857,21 @@ function PedidosDoSku({
                     </Button>
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="h-7 px-2"
-                      disabled={busyEmb || embalandoKey !== null}
+                      variant={liberado ? "default" : "ghost"}
+                      className={cn(
+                        "h-7 px-2",
+                        aguardando && "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+                        bloqueado && "opacity-50",
+                      )}
+                      disabled={busyEmb || embalandoKey !== null || !liberado}
                       onClick={() => onEmbalar(p)}
-                      title="Marcar embalado"
+                      title={
+                        liberado
+                          ? "Marcar embalado"
+                          : aguardando
+                            ? "Aguardando confirmação de impressão"
+                            : "Bloqueado — imprima antes ou force embalado"
+                      }
                     >
                       {busyEmb ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -659,6 +879,18 @@ function PedidosDoSku({
                         <Package className="h-3 w-3" />
                       )}
                     </Button>
+                    {bloqueado && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-destructive hover:text-destructive"
+                        disabled={busyEmb || embalandoKey !== null}
+                        onClick={() => setForcar(p)}
+                        title="Forçar embalado (pula trava)"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -666,6 +898,26 @@ function PedidosDoSku({
           })}
         </tbody>
       </table>
+      <ForcarEmbalarDialog
+        open={forcar !== null}
+        titulo={`Forçar embalado do pedido ${forcar?.numero_ecommerce ?? ""}`}
+        descricao={
+          <p>
+            A impressão deste pedido não foi confirmada
+            {forcar?.tag_lote ? (
+              <> (lote <span className="font-mono">{forcar.tag_lote}</span>)</>
+            ) : null}
+            . Ao confirmar, ele será marcado como embalado no Tiny mesmo sem
+            confirmação de etiqueta.
+          </p>
+        }
+        loading={embalandoKey === `ped:${forcar?.numero_ecommerce}`}
+        onCancel={() => setForcar(null)}
+        onConfirm={(nome, motivo) => {
+          if (forcar) onEmbalar(forcar, { nome, motivo });
+          setForcar(null);
+        }}
+      />
     </div>
   );
 }
@@ -1024,6 +1276,7 @@ function FilaPriorizada() {
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
   const { data: tagsPorLinha } = useTagsPorLinha();
+  const { data: impressaoEstados } = useImpressaoEstados();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
   const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
@@ -1038,6 +1291,7 @@ function FilaPriorizada() {
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
+  const [forcarSku, setForcarSku] = useState<PriorizadaRow | null>(null);
 
   function toggleExpand(key: string) {
     setExpandedSku((prev) => {
@@ -1089,42 +1343,53 @@ function FilaPriorizada() {
     }
   }
 
-  async function embalarPorSku(item: PriorizadaRow) {
+  async function embalarPorSku(
+    item: PriorizadaRow,
+    forcado?: { nome: string; motivo: string },
+  ) {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (embalandoKey) return;
+    const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+    const agg = impressaoEstados?.porLinha.get(linhaKey);
+    const seps = agg?.seps ?? [];
+    // Sem "forcar", só embala as separações cujo estado é done/forcado.
+    const alvos = forcado
+      ? seps
+      : seps.filter((id) => {
+          const e = impressaoEstados?.porSep.get(id) ?? "ausente";
+          return e === "done" || e === "forcado";
+        });
+    if (alvos.length === 0) {
+      toast.warning("Nada pra embalar", {
+        description: forcado
+          ? "Nenhum pedido nesta linha."
+          : "Nenhum pedido teve impressão confirmada ainda.",
+      });
+      return;
+    }
     setEmbalandoKey(key);
     try {
-      const { data, error: e1 } = await supabaseExternal
-        .from("view_separacao_pedidos")
-        .select("tag_lote")
-        .eq("sku_unico", item.sku ?? "")
-        .eq("tipo_envio", item.tipo_envio ?? "");
-      if (e1) throw e1;
-      const tags = Array.from(
-        new Set(
-          ((data ?? []) as { tag_lote: string | null }[])
-            .map((p) => p.tag_lote)
-            .filter((t): t is string => !!t),
-        ),
-      );
-      if (tags.length === 0) {
-        toast.warning("Nenhum lote encontrado para este SKU");
-        return;
-      }
-      let ok = 0, tot = 0, errs = 0;
-      for (const tag of tags) {
+      let ok = 0, errs = 0;
+      const qs = forcado
+        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
+        : "";
+      // Batelada: chama embalar-um separacao_id por id
+      for (const id of alvos) {
         try {
-          const r = await callSeparacaoFn<EmbalarLoteResponse>(
-            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
+          await callSeparacaoFn(
+            `modulo=embalar-um&separacao_id=${id}&confirmar=1${qs}`,
           );
-          ok += r.embaladas; tot += r.total; errs += r.erros?.length ?? 0;
+          ok++;
         } catch (e) {
-          toast.error(`Lote ${tag}`, { description: (e as Error).message });
+          errs++;
+          console.warn("embalar-um falhou", id, (e as Error).message);
         }
       }
-      toast.success(`${ok}/${tot} pedidos embalados em ${tags.length} lote(s)`, {
-        description: errs > 0 ? `${errs} erro(s)` : undefined,
-      });
+      if (errs > 0) {
+        toast.warning(`${ok}/${alvos.length} embalados — ${errs} erro(s)`);
+      } else {
+        toast.success(`${ok} pedido(s) marcados como embalados`);
+      }
       await qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao marcar embalado", { description: (e as Error).message });
@@ -1153,32 +1418,39 @@ function FilaPriorizada() {
     }
   }
 
-  async function embalarPedido(p: PedidoSepRow) {
+  async function embalarPedido(
+    p: PedidoSepRow,
+    forcado?: { nome: string; motivo: string },
+  ) {
     const key = `ped:${p.numero_ecommerce}`;
-    if (embalandoKey || !p.numero_ecommerce) return;
+    if (embalandoKey || p.separacao_id == null) {
+      if (p.separacao_id == null) toast.error("Sem separacao_id");
+      return;
+    }
     setEmbalandoKey(key);
     try {
-      try {
-        await callSeparacaoFn(
-          `modulo=embalar-pedido&order_sn=${encodeURIComponent(p.numero_ecommerce)}&confirmar=1`,
-        );
-        toast.success(`Pedido ${p.numero_ecommerce} marcado como embalado`);
-      } catch (e) {
-        const err = e as Error & { status?: number };
-        if ((err.status === 404 || err.status === 400) && p.tag_lote) {
-          await callSeparacaoFn(
-            `modulo=embalar-lote&tag=${encodeURIComponent(p.tag_lote)}&confirmar=1`,
-          );
-          toast.warning(
-            `Módulo por-pedido indisponível — lote ${p.tag_lote} inteiro embalado`,
-          );
-        } else {
-          throw e;
-        }
-      }
+      const qs = forcado
+        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
+        : "";
+      await callSeparacaoFn(
+        `modulo=embalar-um&separacao_id=${p.separacao_id}&confirmar=1${qs}`,
+      );
+      toast.success(
+        forcado
+          ? `Pedido ${p.numero_ecommerce} embalado (forçado)`
+          : `Pedido ${p.numero_ecommerce} marcado como embalado`,
+      );
       await qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
-      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+      const err = e as Error & { status?: number; body?: unknown };
+      if (err.status === 409) {
+        toast.error("Bloqueado: impressão não confirmada", {
+          description:
+            "Imprima a etiqueta primeiro, ou use ⚠️ Forçar embalar se a etiqueta física já saiu.",
+        });
+      } else {
+        toast.error("Erro ao marcar embalado", { description: err.message });
+      }
     } finally {
       setEmbalandoKey(null);
     }
@@ -1631,22 +1903,105 @@ function FilaPriorizada() {
                             </>
                           )}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyEmbalar || embalandoKey !== null}
-                          onClick={() => void embalarPorSku(item)}
-                          className="w-36"
-                        >
-                          {busyEmbalar ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <>
-                              <Package className="h-3 w-3 mr-1" />
-                              Marcar embalado
-                            </>
-                          )}
-                        </Button>
+                        {(() => {
+                          const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                          const agg = impressaoEstados?.porLinha.get(linhaKey);
+                          const estBtn = estadoBotaoLinha(agg);
+                          const liberados = (agg?.done ?? 0) + (agg?.forcado ?? 0);
+                          const total = agg?.total ?? 0;
+                          const bloq = (agg?.error ?? 0) + (agg?.ausente ?? 0);
+                          const aguard = agg?.sent ?? 0;
+
+                          if (estBtn === "vazio") {
+                            return (
+                              <Button size="sm" variant="outline" disabled className="w-36">
+                                <Package className="h-3 w-3 mr-1" />
+                                Marcar embalado
+                              </Button>
+                            );
+                          }
+                          if (estBtn === "aguardando") {
+                            return (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled
+                                className="w-36 bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300"
+                                title={`${aguard} pedido(s) aguardando confirmação de impressão`}
+                              >
+                                <Hourglass className="h-3 w-3 mr-1" />
+                                Aguardando {aguard}
+                              </Button>
+                            );
+                          }
+                          if (estBtn === "bloqueado") {
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled
+                                  className="w-36 opacity-60"
+                                  title="Nenhuma etiqueta confirmada — imprima antes"
+                                >
+                                  <Package className="h-3 w-3 mr-1" />
+                                  Bloqueado ({bloq})
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="w-36 text-destructive hover:text-destructive text-xs h-7"
+                                  disabled={busyEmbalar || embalandoKey !== null}
+                                  onClick={() => setForcarSku(item)}
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Forçar embalar
+                                </Button>
+                              </div>
+                            );
+                          }
+                          // liberado ou parcial
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <Button
+                                size="sm"
+                                variant={estBtn === "liberado" ? "default" : "secondary"}
+                                disabled={busyEmbalar || embalandoKey !== null}
+                                onClick={() => void embalarPorSku(item)}
+                                className="w-36"
+                                title={
+                                  estBtn === "liberado"
+                                    ? "Todos os pedidos com impressão confirmada"
+                                    : `Só ${liberados} de ${total} pedidos serão embalados agora`
+                                }
+                              >
+                                {busyEmbalar ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Package className="h-3 w-3 mr-1" />
+                                    {estBtn === "liberado"
+                                      ? "Marcar embalado"
+                                      : `Embalar ${liberados}/${total}`}
+                                  </>
+                                )}
+                              </Button>
+                              {estBtn === "parcial" && (bloq > 0 || aguard > 0) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="w-36 text-destructive hover:text-destructive text-xs h-7"
+                                  disabled={busyEmbalar || embalandoKey !== null}
+                                  onClick={() => setForcarSku(item)}
+                                  title={`${bloq} bloqueado(s), ${aguard} aguardando`}
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Forçar restante
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </Card>
@@ -1658,9 +2013,11 @@ function FilaPriorizada() {
                       embalandoKey={embalandoKey}
                       onImprimir={imprimirPedido}
                       onEmbalar={embalarPedido}
+                      estadosPorSep={impressaoEstados?.porSep}
                     />
                   )}
                   </div>
+
                 );
               })}
             </div>
@@ -1723,6 +2080,34 @@ function FilaPriorizada() {
           </div>
         </div>
       )}
+
+      <ForcarEmbalarDialog
+        open={forcarSku !== null}
+        titulo={`Forçar embalado — ${forcarSku?.sku ?? ""} · ${forcarSku?.tipo_envio ?? ""}`}
+        descricao={
+          (() => {
+            const linhaKey = `${forcarSku?.sku ?? ""}|${forcarSku?.tipo_envio ?? ""}`;
+            const agg = impressaoEstados?.porLinha.get(linhaKey);
+            const bloq = (agg?.error ?? 0) + (agg?.ausente ?? 0);
+            const aguard = agg?.sent ?? 0;
+            const total = agg?.total ?? 0;
+            return (
+              <p>
+                <strong>{total}</strong> pedido(s) nesta linha serão marcados
+                como embalados no Tiny — incluindo <strong>{bloq}</strong> sem
+                confirmação de impressão e <strong>{aguard}</strong> ainda
+                aguardando.
+              </p>
+            );
+          })()
+        }
+        loading={embalandoKey === `sku:${forcarSku?.sku}:${forcarSku?.tipo_envio}`}
+        onCancel={() => setForcarSku(null)}
+        onConfirm={(nome, motivo) => {
+          if (forcarSku) void embalarPorSku(forcarSku, { nome, motivo });
+          setForcarSku(null);
+        }}
+      />
     </div>
   );
 }
