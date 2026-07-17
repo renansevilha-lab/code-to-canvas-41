@@ -259,6 +259,197 @@ function useTagsPorLinha() {
   });
 }
 
+// ============ Estado da impressão (impressao_etiquetas) ============
+
+export type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
+
+function rankEstado(e: EstadoImpressao): number {
+  return e === "done" ? 4 : e === "forcado" ? 3 : e === "sent" ? 2 : e === "error" ? 1 : 0;
+}
+
+export interface AggImpressao {
+  done: number;
+  forcado: number;
+  sent: number;
+  error: number;
+  ausente: number;
+  total: number;
+  seps: number[];
+}
+
+/**
+ * Une view_separacao_pedidos + impressao_etiquetas para dizer, por SKU/tipo_envio
+ * (linha da fila) e por separacao_id, em que estado está a impressão.
+ * Polling curto (5s) enquanto houver 'sent' — o backend confirma em poucos segundos.
+ */
+function useImpressaoEstados() {
+  return useQuery({
+    queryKey: ["separacao", "impressao_estados"],
+    queryFn: async () => {
+      const { data: peds, error: e1 } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("separacao_id, sku_unico, tipo_envio")
+        .limit(20000);
+      if (e1) throw e1;
+      const sepList = (peds ?? []) as {
+        separacao_id: number | null;
+        sku_unico: string | null;
+        tipo_envio: string | null;
+      }[];
+      const sepIds = sepList.map((p) => p.separacao_id).filter((n): n is number => n != null);
+
+      const porSep = new Map<number, EstadoImpressao>();
+      // pega em chunks pra evitar URL gigante
+      const chunk = 500;
+      for (let i = 0; i < sepIds.length; i += chunk) {
+        const slice = sepIds.slice(i, i + chunk);
+        const { data: imps, error: e2 } = await supabaseExternal
+          .from("impressao_etiquetas")
+          .select("separacao_id, estado")
+          .in("separacao_id", slice);
+        if (e2) throw e2;
+        for (const r of (imps ?? []) as { separacao_id: number; estado: string }[]) {
+          const est = (r.estado as EstadoImpressao) ?? "ausente";
+          const cur = porSep.get(r.separacao_id) ?? "ausente";
+          if (rankEstado(est) > rankEstado(cur)) porSep.set(r.separacao_id, est);
+        }
+      }
+
+      const porLinha = new Map<string, AggImpressao>();
+      for (const p of sepList) {
+        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+        const agg =
+          porLinha.get(key) ??
+          ({ done: 0, forcado: 0, sent: 0, error: 0, ausente: 0, total: 0, seps: [] } as AggImpressao);
+        agg.total++;
+        if (p.separacao_id != null) agg.seps.push(p.separacao_id);
+        const est: EstadoImpressao =
+          p.separacao_id != null ? (porSep.get(p.separacao_id) ?? "ausente") : "ausente";
+        agg[est]++;
+        porLinha.set(key, agg);
+      }
+
+      const hasSent = [...porSep.values()].some((e) => e === "sent");
+      return { porSep, porLinha, hasSent };
+    },
+    refetchInterval: (q) => {
+      const d = q.state.data as { hasSent?: boolean } | undefined;
+      return d?.hasSent ? 5_000 : 30_000;
+    },
+  });
+}
+
+/**
+ * Deriva o estado do botão "Embalar" para uma linha de SKU.
+ * - liberado: todos done/forcado
+ * - aguardando: nenhum liberado ainda mas há 'sent'
+ * - parcial: há liberados E bloqueados/aguardando
+ * - bloqueado: nenhum liberado, sem sent (só error/ausente)
+ */
+export type EstadoBotao = "liberado" | "aguardando" | "parcial" | "bloqueado" | "vazio";
+function estadoBotaoLinha(a: AggImpressao | undefined): EstadoBotao {
+  if (!a || a.total === 0) return "vazio";
+  const liberados = a.done + a.forcado;
+  if (liberados === a.total) return "liberado";
+  if (liberados > 0) return "parcial";
+  if (a.sent > 0) return "aguardando";
+  return "bloqueado";
+}
+
+// ============ Dialog: Forçar embalar ============
+
+interface ForcarDialogProps {
+  open: boolean;
+  titulo: string;
+  descricao: React.ReactNode;
+  onCancel: () => void;
+  onConfirm: (nome: string, motivo: string) => void;
+  loading?: boolean;
+}
+function ForcarEmbalarDialog({
+  open,
+  titulo,
+  descricao,
+  onCancel,
+  onConfirm,
+  loading,
+}: ForcarDialogProps) {
+  const [nome, setNome] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [confirmado, setConfirmado] = useState(false);
+  const podeConfirmar = nome.trim().length >= 2 && confirmado;
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          onCancel();
+          setNome("");
+          setMotivo("");
+          setConfirmado(false);
+        }
+      }}
+    >
+      <AlertDialogContent className="border-destructive">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-destructive flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> {titulo}
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3 text-sm">
+              <div>{descricao}</div>
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                Esta ação pula a trava de segurança "só embala quem imprimiu".
+                Use só quando a etiqueta física já saiu mas o sistema não confirmou.
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Quem está forçando *</label>
+                <Input
+                  autoFocus
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  placeholder="Seu nome"
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Motivo (opcional)</label>
+                <Input
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                  placeholder="Ex.: impressora imprimiu mas não confirmou"
+                  className="h-8"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={confirmado}
+                  onChange={(e) => setConfirmado(e.target.checked)}
+                />
+                Confirmo que a etiqueta física já saiu e quero forçar o embalado.
+              </label>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!podeConfirmar || loading}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm(nome.trim(), motivo.trim());
+            }}
+          >
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Forçar embalar"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function useFullCount() {
   return useQuery({
     queryKey: ["separacao", "full_count"],
