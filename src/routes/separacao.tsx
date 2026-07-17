@@ -1343,42 +1343,53 @@ function FilaPriorizada() {
     }
   }
 
-  async function embalarPorSku(item: PriorizadaRow) {
+  async function embalarPorSku(
+    item: PriorizadaRow,
+    forcado?: { nome: string; motivo: string },
+  ) {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (embalandoKey) return;
+    const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+    const agg = impressaoEstados?.porLinha.get(linhaKey);
+    const seps = agg?.seps ?? [];
+    // Sem "forcar", só embala as separações cujo estado é done/forcado.
+    const alvos = forcado
+      ? seps
+      : seps.filter((id) => {
+          const e = impressaoEstados?.porSep.get(id) ?? "ausente";
+          return e === "done" || e === "forcado";
+        });
+    if (alvos.length === 0) {
+      toast.warning("Nada pra embalar", {
+        description: forcado
+          ? "Nenhum pedido nesta linha."
+          : "Nenhum pedido teve impressão confirmada ainda.",
+      });
+      return;
+    }
     setEmbalandoKey(key);
     try {
-      const { data, error: e1 } = await supabaseExternal
-        .from("view_separacao_pedidos")
-        .select("tag_lote")
-        .eq("sku_unico", item.sku ?? "")
-        .eq("tipo_envio", item.tipo_envio ?? "");
-      if (e1) throw e1;
-      const tags = Array.from(
-        new Set(
-          ((data ?? []) as { tag_lote: string | null }[])
-            .map((p) => p.tag_lote)
-            .filter((t): t is string => !!t),
-        ),
-      );
-      if (tags.length === 0) {
-        toast.warning("Nenhum lote encontrado para este SKU");
-        return;
-      }
-      let ok = 0, tot = 0, errs = 0;
-      for (const tag of tags) {
+      let ok = 0, errs = 0;
+      const qs = forcado
+        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
+        : "";
+      // Batelada: chama embalar-um separacao_id por id
+      for (const id of alvos) {
         try {
-          const r = await callSeparacaoFn<EmbalarLoteResponse>(
-            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
+          await callSeparacaoFn(
+            `modulo=embalar-um&separacao_id=${id}&confirmar=1${qs}`,
           );
-          ok += r.embaladas; tot += r.total; errs += r.erros?.length ?? 0;
+          ok++;
         } catch (e) {
-          toast.error(`Lote ${tag}`, { description: (e as Error).message });
+          errs++;
+          console.warn("embalar-um falhou", id, (e as Error).message);
         }
       }
-      toast.success(`${ok}/${tot} pedidos embalados em ${tags.length} lote(s)`, {
-        description: errs > 0 ? `${errs} erro(s)` : undefined,
-      });
+      if (errs > 0) {
+        toast.warning(`${ok}/${alvos.length} embalados — ${errs} erro(s)`);
+      } else {
+        toast.success(`${ok} pedido(s) marcados como embalados`);
+      }
       await qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao marcar embalado", { description: (e as Error).message });
@@ -1407,32 +1418,39 @@ function FilaPriorizada() {
     }
   }
 
-  async function embalarPedido(p: PedidoSepRow) {
+  async function embalarPedido(
+    p: PedidoSepRow,
+    forcado?: { nome: string; motivo: string },
+  ) {
     const key = `ped:${p.numero_ecommerce}`;
-    if (embalandoKey || !p.numero_ecommerce) return;
+    if (embalandoKey || p.separacao_id == null) {
+      if (p.separacao_id == null) toast.error("Sem separacao_id");
+      return;
+    }
     setEmbalandoKey(key);
     try {
-      try {
-        await callSeparacaoFn(
-          `modulo=embalar-pedido&order_sn=${encodeURIComponent(p.numero_ecommerce)}&confirmar=1`,
-        );
-        toast.success(`Pedido ${p.numero_ecommerce} marcado como embalado`);
-      } catch (e) {
-        const err = e as Error & { status?: number };
-        if ((err.status === 404 || err.status === 400) && p.tag_lote) {
-          await callSeparacaoFn(
-            `modulo=embalar-lote&tag=${encodeURIComponent(p.tag_lote)}&confirmar=1`,
-          );
-          toast.warning(
-            `Módulo por-pedido indisponível — lote ${p.tag_lote} inteiro embalado`,
-          );
-        } else {
-          throw e;
-        }
-      }
+      const qs = forcado
+        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
+        : "";
+      await callSeparacaoFn(
+        `modulo=embalar-um&separacao_id=${p.separacao_id}&confirmar=1${qs}`,
+      );
+      toast.success(
+        forcado
+          ? `Pedido ${p.numero_ecommerce} embalado (forçado)`
+          : `Pedido ${p.numero_ecommerce} marcado como embalado`,
+      );
       await qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
-      toast.error("Erro ao marcar embalado", { description: (e as Error).message });
+      const err = e as Error & { status?: number; body?: unknown };
+      if (err.status === 409) {
+        toast.error("Bloqueado: impressão não confirmada", {
+          description:
+            "Imprima a etiqueta primeiro, ou use ⚠️ Forçar embalar se a etiqueta física já saiu.",
+        });
+      } else {
+        toast.error("Erro ao marcar embalado", { description: err.message });
+      }
     } finally {
       setEmbalandoKey(null);
     }
