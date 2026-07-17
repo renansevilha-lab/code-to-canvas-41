@@ -1903,22 +1903,105 @@ function FilaPriorizada() {
                             </>
                           )}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyEmbalar || embalandoKey !== null}
-                          onClick={() => void embalarPorSku(item)}
-                          className="w-36"
-                        >
-                          {busyEmbalar ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <>
-                              <Package className="h-3 w-3 mr-1" />
-                              Marcar embalado
-                            </>
-                          )}
-                        </Button>
+                        {(() => {
+                          const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                          const agg = impressaoEstados?.porLinha.get(linhaKey);
+                          const estBtn = estadoBotaoLinha(agg);
+                          const liberados = (agg?.done ?? 0) + (agg?.forcado ?? 0);
+                          const total = agg?.total ?? 0;
+                          const bloq = (agg?.error ?? 0) + (agg?.ausente ?? 0);
+                          const aguard = agg?.sent ?? 0;
+
+                          if (estBtn === "vazio") {
+                            return (
+                              <Button size="sm" variant="outline" disabled className="w-36">
+                                <Package className="h-3 w-3 mr-1" />
+                                Marcar embalado
+                              </Button>
+                            );
+                          }
+                          if (estBtn === "aguardando") {
+                            return (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled
+                                className="w-36 bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300"
+                                title={`${aguard} pedido(s) aguardando confirmação de impressão`}
+                              >
+                                <Hourglass className="h-3 w-3 mr-1" />
+                                Aguardando {aguard}
+                              </Button>
+                            );
+                          }
+                          if (estBtn === "bloqueado") {
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled
+                                  className="w-36 opacity-60"
+                                  title="Nenhuma etiqueta confirmada — imprima antes"
+                                >
+                                  <Package className="h-3 w-3 mr-1" />
+                                  Bloqueado ({bloq})
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="w-36 text-destructive hover:text-destructive text-xs h-7"
+                                  disabled={busyEmbalar || embalandoKey !== null}
+                                  onClick={() => setForcarSku(item)}
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Forçar embalar
+                                </Button>
+                              </div>
+                            );
+                          }
+                          // liberado ou parcial
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <Button
+                                size="sm"
+                                variant={estBtn === "liberado" ? "default" : "secondary"}
+                                disabled={busyEmbalar || embalandoKey !== null}
+                                onClick={() => void embalarPorSku(item)}
+                                className="w-36"
+                                title={
+                                  estBtn === "liberado"
+                                    ? "Todos os pedidos com impressão confirmada"
+                                    : `Só ${liberados} de ${total} pedidos serão embalados agora`
+                                }
+                              >
+                                {busyEmbalar ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Package className="h-3 w-3 mr-1" />
+                                    {estBtn === "liberado"
+                                      ? "Marcar embalado"
+                                      : `Embalar ${liberados}/${total}`}
+                                  </>
+                                )}
+                              </Button>
+                              {estBtn === "parcial" && (bloq > 0 || aguard > 0) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="w-36 text-destructive hover:text-destructive text-xs h-7"
+                                  disabled={busyEmbalar || embalandoKey !== null}
+                                  onClick={() => setForcarSku(item)}
+                                  title={`${bloq} bloqueado(s), ${aguard} aguardando`}
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Forçar restante
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </Card>
@@ -1930,9 +2013,11 @@ function FilaPriorizada() {
                       embalandoKey={embalandoKey}
                       onImprimir={imprimirPedido}
                       onEmbalar={embalarPedido}
+                      estadosPorSep={impressaoEstados?.porSep}
                     />
                   )}
                   </div>
+
                 );
               })}
             </div>
