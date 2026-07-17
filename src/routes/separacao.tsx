@@ -622,6 +622,7 @@ function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
 // ============ Impressão helpers (compartilhados) ============
 
 interface PedidoSepRow {
+  separacao_id: number | null;
   tag_lote: string | null;
   numero_ecommerce: string | null;
   marca_canal: string | null;
