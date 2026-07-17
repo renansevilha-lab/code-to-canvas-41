@@ -717,7 +717,8 @@ interface PedidosDoSkuProps {
   imprimindoKey: string | null;
   embalandoKey: string | null;
   onImprimir: (p: PedidoSepRow) => void;
-  onEmbalar: (p: PedidoSepRow) => void;
+  onEmbalar: (p: PedidoSepRow, forcado?: { nome: string; motivo: string }) => void;
+  estadosPorSep?: Map<number, EstadoImpressao>;
 }
 
 function PedidosDoSku({
@@ -727,7 +728,9 @@ function PedidosDoSku({
   embalandoKey,
   onImprimir,
   onEmbalar,
+  estadosPorSep,
 }: PedidosDoSkuProps) {
+  const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio],
     enabled: !!sku,
@@ -771,7 +774,7 @@ function PedidosDoSku({
             <th className="text-left py-1 pr-2 font-medium">Pedido</th>
             <th className="text-left py-1 pr-2 font-medium">Canal</th>
             <th className="text-left py-1 pr-2 font-medium">Lote</th>
-            <th className="text-left py-1 pr-2 font-medium">Status</th>
+            <th className="text-left py-1 pr-2 font-medium">Impressão</th>
             <th className="text-right py-1 font-medium">Ação</th>
           </tr>
         </thead>
@@ -782,6 +785,13 @@ function PedidosDoSku({
             const key = `ped:${p.numero_ecommerce}`;
             const busyImp = imprimindoKey === key;
             const busyEmb = embalandoKey === key;
+            const estado: EstadoImpressao =
+              p.separacao_id != null
+                ? (estadosPorSep?.get(p.separacao_id) ?? "ausente")
+                : "ausente";
+            const liberado = estado === "done" || estado === "forcado";
+            const aguardando = estado === "sent";
+            const bloqueado = estado === "error" || estado === "ausente";
             return (
               <tr key={`${p.numero_ecommerce}-${i}`} className="border-b last:border-0">
                 <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
@@ -801,21 +811,29 @@ function PedidosDoSku({
                 </td>
                 <td className="py-1 pr-2 font-mono">{p.tag_lote ?? "—"}</td>
                 <td className="py-1 pr-2">
-                  <div className="flex items-center gap-1">
-                    {p.impresso_em && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
-                        <Printer className="h-2.5 w-2.5" /> impresso
-                      </span>
-                    )}
-                    {p.embalado_em && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-green-700 dark:text-green-400">
-                        <CheckCircle2 className="h-2.5 w-2.5" /> embalado
-                      </span>
-                    )}
-                    {!p.impresso_em && !p.embalado_em && (
-                      <span className="text-[10px] text-muted-foreground">—</span>
-                    )}
-                  </div>
+                  {estado === "done" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                      <Check className="h-2.5 w-2.5" /> impresso
+                    </span>
+                  )}
+                  {estado === "forcado" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+                      <Check className="h-2.5 w-2.5" /> forçado
+                    </span>
+                  )}
+                  {estado === "sent" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      <Hourglass className="h-2.5 w-2.5" /> aguardando
+                    </span>
+                  )}
+                  {estado === "error" && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">
+                      <AlertTriangle className="h-2.5 w-2.5" /> erro
+                    </span>
+                  )}
+                  {estado === "ausente" && (
+                    <span className="text-[10px] text-muted-foreground">sem impressão</span>
+                  )}
                 </td>
                 <td className="py-1 text-right">
                   <div className="inline-flex gap-1">
@@ -839,11 +857,21 @@ function PedidosDoSku({
                     </Button>
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="h-7 px-2"
-                      disabled={busyEmb || embalandoKey !== null}
+                      variant={liberado ? "default" : "ghost"}
+                      className={cn(
+                        "h-7 px-2",
+                        aguardando && "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+                        bloqueado && "opacity-50",
+                      )}
+                      disabled={busyEmb || embalandoKey !== null || !liberado}
                       onClick={() => onEmbalar(p)}
-                      title="Marcar embalado"
+                      title={
+                        liberado
+                          ? "Marcar embalado"
+                          : aguardando
+                            ? "Aguardando confirmação de impressão"
+                            : "Bloqueado — imprima antes ou force embalado"
+                      }
                     >
                       {busyEmb ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -851,6 +879,18 @@ function PedidosDoSku({
                         <Package className="h-3 w-3" />
                       )}
                     </Button>
+                    {bloqueado && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-destructive hover:text-destructive"
+                        disabled={busyEmb || embalandoKey !== null}
+                        onClick={() => setForcar(p)}
+                        title="Forçar embalado (pula trava)"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -858,6 +898,26 @@ function PedidosDoSku({
           })}
         </tbody>
       </table>
+      <ForcarEmbalarDialog
+        open={forcar !== null}
+        titulo={`Forçar embalado do pedido ${forcar?.numero_ecommerce ?? ""}`}
+        descricao={
+          <p>
+            A impressão deste pedido não foi confirmada
+            {forcar?.tag_lote ? (
+              <> (lote <span className="font-mono">{forcar.tag_lote}</span>)</>
+            ) : null}
+            . Ao confirmar, ele será marcado como embalado no Tiny mesmo sem
+            confirmação de etiqueta.
+          </p>
+        }
+        loading={embalandoKey === `ped:${forcar?.numero_ecommerce}`}
+        onCancel={() => setForcar(null)}
+        onConfirm={(nome, motivo) => {
+          if (forcar) onEmbalar(forcar, { nome, motivo });
+          setForcar(null);
+        }}
+      />
     </div>
   );
 }
