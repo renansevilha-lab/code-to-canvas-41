@@ -503,27 +503,6 @@ function Dashboard() {
 
   const ticketMedioAnt = totais.pedidos_ant > 0 ? totais.receita_ant / totais.pedidos_ant : 0;
 
-  // Série diária consolidada
-  const serieTotal = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of diarioVisivel) {
-      m.set(r.data, (m.get(r.data) ?? 0) + Number(r.receita ?? 0));
-    }
-    return Array.from(m.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([data, receita]) => ({ data, receita }));
-  }, [diarioVisivel]);
-
-  const donutData = useMemo(() => {
-    return kpisVisiveis
-      .filter((r) => Number(r.receita ?? 0) > 0)
-      .sort((a, b) => Number(b.receita) - Number(a.receita))
-      .map((r) => ({
-        name: r.canal,
-        value: Number(r.receita),
-        color: colorForCanal(r.canal),
-      }));
-  }, [kpisVisiveis]);
 
   const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
 
