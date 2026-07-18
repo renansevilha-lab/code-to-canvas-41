@@ -133,6 +133,18 @@ type ProdutoRow = {
   confiavel: boolean | null;
 };
 
+type VisaoGeralRow = {
+  vendas: number | null;
+  custo_total: number | null;
+  margem_contrib: number | null;
+  margem_pct: number | null;
+  pedidos: number | null;
+  produtos: number | null;
+  ticket_medio: number | null;
+  projecao_vendas: number | null;
+  cobertura_pct: number | null;
+};
+
 // ============================================================
 // Period presets
 // ============================================================
@@ -215,6 +227,7 @@ function Dashboard() {
   const [anomCmvMaior, setAnomCmvMaior] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
   const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
   const [alertaPrejuizo, setAlertaPrejuizo] = useState(0);
+  const [visaoGeral, setVisaoGeral] = useState<VisaoGeralRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
@@ -289,10 +302,23 @@ function Dashboard() {
           .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
           .limit(20000);
 
-        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms] = await Promise.all([
-          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ,
+        const visaoQ = supabaseExternal.rpc("dashboard_visao_geral", {
+          data_inicial: range.from,
+          data_final: range.to,
+        });
+
+        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms, visao] = await Promise.all([
+          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ,
         ]);
         if (cancel) return;
+
+        if (!visao.error) {
+          const row = Array.isArray(visao.data) ? (visao.data as VisaoGeralRow[])[0] : (visao.data as VisaoGeralRow | null);
+          setVisaoGeral(row ?? null);
+        } else {
+          console.warn("dashboard_visao_geral →", visao.error);
+          setVisaoGeral(null);
+        }
 
         console.log("view_canais_diario →", {
           rows: canaisR.data?.length ?? 0,
@@ -517,14 +543,32 @@ function Dashboard() {
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8 bg-background">
       {/* Header + filtros */}
-      <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
-            {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
-            {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
-          </p>
+      <header className="space-y-4">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
+              {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
+              {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <CanalFilter
+              canais={canaisDisponiveis}
+              selecionados={canaisFiltro}
+              onChange={setCanaisFiltro}
+            />
+            <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              Atualizar
+            </Button>
+            {atualizadoEm && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {format(atualizadoEm, "HH:mm:ss")}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PeriodoPicker
@@ -536,20 +580,6 @@ function Dashboard() {
             customRange={customRange}
             onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
           />
-          <CanalFilter
-            canais={canaisDisponiveis}
-            selecionados={canaisFiltro}
-            onChange={setCanaisFiltro}
-          />
-          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            Atualizar
-          </Button>
-          {atualizadoEm && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {format(atualizadoEm, "HH:mm:ss")}
-            </span>
-          )}
         </div>
       </header>
 
@@ -680,54 +710,47 @@ function Dashboard() {
         </Card>
       </section>
 
-      {/* 2.2 — Visão geral */}
+      {/* 2.2 — Visão geral (fonte única: RPC dashboard_visao_geral) */}
       <section>
         <Card className="p-6">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-4">Visão geral</p>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
-            <VisaoItem
-              label="Pedidos"
-              value={formatNumber(totais.pedidos)}
-              atual={totais.pedidos}
-              anterior={totais.pedidos_ant}
-              altaBoa
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Visão geral</p>
+            {visaoGeral?.cobertura_pct != null && Number(visaoGeral.cobertura_pct) < 90 && (
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="text-warning border-warning/30 bg-warning/5 gap-1 text-[11px]">
+                      <Info className="h-3 w-3" />
+                      Margem parcial · {Number(visaoGeral.cobertura_pct).toFixed(0)}% coberto
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs">
+                    Margem calculada sobre {Number(visaoGeral.cobertura_pct).toFixed(0)}% da receita — o restante ainda não tem custo apurado.
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            )}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <VisaoSimples label="Vendas" value={formatBRL(Number(visaoGeral?.vendas ?? 0), { compact: true })} />
+            <VisaoSimples label="Custo total" value={formatBRL(Number(visaoGeral?.custo_total ?? 0), { compact: true })} />
+            <VisaoSimples label="Margem contribuição" value={formatBRL(Number(visaoGeral?.margem_contrib ?? 0), { compact: true })} />
+            <VisaoSimples
+              label="Margem contribuição %"
+              value={visaoGeral?.margem_pct != null ? formatPercent(Number(visaoGeral.margem_pct)) : "—"}
             />
-            <VisaoItem
-              label="Receita"
-              value={formatBRL(totais.receita, { compact: true })}
-              atual={totais.receita}
-              anterior={totais.receita_ant}
-              altaBoa
+            <VisaoSimples
+              label="Projeção de vendas"
+              value={
+                preset === "mes_atual" && visaoGeral?.projecao_vendas != null
+                  ? formatBRL(Number(visaoGeral.projecao_vendas), { compact: true })
+                  : "—"
+              }
+              hint={preset !== "mes_atual" ? "Só no mês atual" : undefined}
             />
-            <VisaoItem
-              label="Margem contrib."
-              value={formatBRL(totais.margem, { compact: true })}
-              extra={totais.receita_com_custo > 0 ? formatPercent(totais.mc_pct) : undefined}
-              atual={totais.margem}
-              anterior={totais.margem_ant}
-              altaBoa
-            />
-            <VisaoItem
-              label="Ticket médio"
-              value={formatBRL(totais.ticket_medio)}
-              atual={totais.ticket_medio}
-              anterior={ticketMedioAnt}
-              altaBoa
-            />
-            <VisaoItem
-              label="Gasto com ADS"
-              value={formatBRL(totais.ads, { compact: true })}
-              atual={totais.ads}
-              anterior={null}
-              altaBoa={false}
-            />
-            <VisaoItem
-              label="ACOS geral"
-              value={formatPercent(totais.acos)}
-              atual={totais.acos}
-              anterior={null}
-              altaBoa={false}
-            />
+            <VisaoSimples label="Pedidos" value={formatNumber(Number(visaoGeral?.pedidos ?? 0))} />
+            <VisaoSimples label="Produtos" value={formatNumber(Number(visaoGeral?.produtos ?? 0))} />
+            <VisaoSimples label="Ticket médio" value={formatBRL(Number(visaoGeral?.ticket_medio ?? 0))} />
           </div>
         </Card>
       </section>
@@ -1168,36 +1191,16 @@ function VariacaoBadge({
   );
 }
 
-function VisaoItem({
-  label,
-  value,
-  atual,
-  anterior,
-  altaBoa,
-  extra,
-}: {
-  label: string;
-  value: string;
-  atual: number;
-  anterior: number | null;
-  altaBoa: boolean;
-  extra?: string;
-}) {
-  const temHist = anterior != null && anterior !== 0;
-  const delta = temHist ? ((atual - anterior!) / Math.abs(anterior!)) * 100 : null;
+function VisaoSimples({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="flex items-baseline gap-1.5 mt-1">
-        <p className="text-xl font-semibold tabular-nums">{value}</p>
-        {extra && <span className="text-xs text-muted-foreground tabular-nums">{extra}</span>}
-      </div>
-      <div className="mt-0.5">
-        <VariacaoInline valor={delta} temHistorico={temHist} altaBoa={altaBoa} />
-      </div>
+      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
+      {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
     </div>
   );
 }
+
 
 // ============================================================
 // Metas
