@@ -16,17 +16,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   format,
   parseISO,
   startOfMonth,
