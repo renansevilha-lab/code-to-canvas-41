@@ -227,6 +227,7 @@ function Dashboard() {
   const [anomCmvMaior, setAnomCmvMaior] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
   const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
   const [alertaPrejuizo, setAlertaPrejuizo] = useState(0);
+  const [visaoGeral, setVisaoGeral] = useState<VisaoGeralRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
