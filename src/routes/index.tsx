@@ -1191,6 +1191,16 @@ function VariacaoBadge({
   );
 }
 
+function VisaoSimples({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
+      {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
+    </div>
+  );
+}
+
 function VisaoItem({
   label,
   value,
