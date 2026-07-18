@@ -302,10 +302,23 @@ function Dashboard() {
           .in("tipo", ["sku_sem_custo", "cmv_maior_que_receita", "sem_recebido"])
           .limit(20000);
 
-        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms] = await Promise.all([
-          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ,
+        const visaoQ = supabaseExternal.rpc("dashboard_visao_geral", {
+          data_inicial: range.from,
+          data_final: range.to,
+        });
+
+        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms, visao] = await Promise.all([
+          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ,
         ]);
         if (cancel) return;
+
+        if (!visao.error) {
+          const row = Array.isArray(visao.data) ? (visao.data as VisaoGeralRow[])[0] : (visao.data as VisaoGeralRow | null);
+          setVisaoGeral(row ?? null);
+        } else {
+          console.warn("dashboard_visao_geral →", visao.error);
+          setVisaoGeral(null);
+        }
 
         console.log("view_canais_diario →", {
           rows: canaisR.data?.length ?? 0,
