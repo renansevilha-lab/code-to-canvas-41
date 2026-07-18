@@ -133,6 +133,18 @@ type ProdutoRow = {
   confiavel: boolean | null;
 };
 
+type VisaoGeralRow = {
+  vendas: number | null;
+  custo_total: number | null;
+  margem_contrib: number | null;
+  margem_pct: number | null;
+  pedidos: number | null;
+  produtos: number | null;
+  ticket_medio: number | null;
+  projecao_vendas: number | null;
+  cobertura_pct: number | null;
+};
+
 // ============================================================
 // Period presets
 // ============================================================
