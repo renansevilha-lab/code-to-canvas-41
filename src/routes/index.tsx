@@ -57,6 +57,7 @@ import {
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
 
 export const Route = createFileRoute("/")({
   component: Dashboard,
