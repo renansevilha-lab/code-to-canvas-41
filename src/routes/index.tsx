@@ -57,6 +57,7 @@ import {
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
 
 export const Route = createFileRoute("/")({
   component: Dashboard,
@@ -592,64 +593,8 @@ function Dashboard() {
 
       {/* 2.1 — Linha superior: Total das vendas + Donut */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2 p-6 space-y-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Total das vendas</p>
-              <p className="text-4xl font-semibold tabular-nums mt-1">{formatBRL(totais.receita, { compact: true })}</p>
-              <div className="mt-2">
-                <VariacaoBadge atual={totais.receita} anterior={totais.receita_ant} altaBoa />
-              </div>
-            </div>
-            <Link to="/pedidos" className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
-              Expandir detalhes <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {loading ? (
-            <div className="h-40 animate-pulse bg-muted/40 rounded-md" />
-          ) : serieTotal.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-12 text-center">Sem vendas no período.</p>
-          ) : (
-            <div className="h-40">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={serieTotal} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(215 80% 55%)" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="hsl(215 80% 55%)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="data"
-                    tickFormatter={(v) => format(parseISO(v), "dd/MM")}
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={10}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis hide />
-                  <Tooltip
-                    contentStyle={{
-                      background: "hsl(var(--popover))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                    formatter={(value) => [formatBRL(Number(value ?? 0)), "Receita"]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="receita"
-                    stroke="hsl(215 80% 55%)"
-                    strokeWidth={2}
-                    fill="url(#gradReceita)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
+        <VendasMargemChart range={range} isMesAtual={preset === "mes_atual"} />
+
 
         <Card className="p-6 space-y-4">
           <div>
