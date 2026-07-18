@@ -591,69 +591,11 @@ function Dashboard() {
         </Card>
       )}
 
-      {/* 2.1 — Linha superior: Total das vendas + Donut */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* 2.1 — Vendas × Margem × Meta */}
+      <section>
         <VendasMargemChart range={range} isMesAtual={preset === "mes_atual"} />
-
-
-        <Card className="p-6 space-y-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Receita por canal</p>
-            <p className="text-xs text-muted-foreground mt-1">Participação no período</p>
-          </div>
-          {donutData.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-12 text-center">—</p>
-          ) : (
-            <>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={donutData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={45}
-                      outerRadius={70}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {donutData.map((d, i) => (
-                        <Cell key={i} fill={d.color} stroke="transparent" />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--popover))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value) => formatBRL(Number(value ?? 0))}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <ul className="space-y-1.5">
-                {donutData.map((d) => {
-                  const pct = totais.receita > 0 ? (d.value / totais.receita) * 100 : 0;
-                  return (
-                    <li key={d.name} className="flex items-center gap-2 text-xs">
-                      <span
-                        className="inline-block h-2.5 w-2.5 rounded-sm shrink-0"
-                        style={{ background: d.color }}
-                      />
-                      <span className="truncate flex-1">{d.name}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {formatBRL(d.value, { compact: true })} · {pct.toFixed(1).replace(".", ",")}%
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </Card>
       </section>
+
 
       {/* 2.2 — Visão geral (fonte única: RPC dashboard_visao_geral) */}
       <section>
