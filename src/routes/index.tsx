@@ -543,14 +543,32 @@ function Dashboard() {
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8 bg-background">
       {/* Header + filtros */}
-      <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
-            {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
-            {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
-          </p>
+      <header className="space-y-4">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
+              {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
+              {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <CanalFilter
+              canais={canaisDisponiveis}
+              selecionados={canaisFiltro}
+              onChange={setCanaisFiltro}
+            />
+            <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              Atualizar
+            </Button>
+            {atualizadoEm && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {format(atualizadoEm, "HH:mm:ss")}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PeriodoPicker
@@ -562,20 +580,6 @@ function Dashboard() {
             customRange={customRange}
             onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
           />
-          <CanalFilter
-            canais={canaisDisponiveis}
-            selecionados={canaisFiltro}
-            onChange={setCanaisFiltro}
-          />
-          <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            Atualizar
-          </Button>
-          {atualizadoEm && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {format(atualizadoEm, "HH:mm:ss")}
-            </span>
-          )}
         </div>
       </header>
 
