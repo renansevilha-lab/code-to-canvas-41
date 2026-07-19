@@ -88,7 +88,9 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGate>
-        <AppShell />
+        <PerfilProvider>
+          <AppShell />
+        </PerfilProvider>
       </AuthGate>
       <Toaster position="top-right" richColors />
     </QueryClientProvider>
