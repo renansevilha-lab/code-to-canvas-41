@@ -9,6 +9,8 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
 import { useAuth } from "@/hooks/useAuth";
+import { PerfilProvider } from "@/hooks/usePerfil";
+import { PerfilGate } from "@/components/PerfilGate";
 import { Button } from "@/components/ui/button";
 
 function NotFoundComponent() {
