@@ -172,8 +172,8 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-3">
-        {renderGroup("Principal", principal)}
-        {renderGroup("Módulos", modulos)}
+        {filtrar(principal).length > 0 && renderGroup("Principal", filtrar(principal))}
+        {filtrar(modulos).length > 0 && renderGroup("Módulos", filtrar(modulos))}
       </SidebarContent>
     </Sidebar>
   );
