@@ -31,35 +31,37 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { usePerfil } from "@/hooks/usePerfil";
 
 type NavItem = {
   title: string;
   url: string;
   icon: typeof ShoppingBag;
+  modulo: string;
   badgeKey?: "anomalias";
 };
 
 const principal: NavItem[] = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Metas", url: "/metas", icon: Target },
-  { title: "Anomalias", url: "/anomalias", icon: AlertTriangle, badgeKey: "anomalias" },
-  { title: "Pedidos", url: "/pedidos", icon: ClipboardList },
-  { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes },
-  { title: "Separação", url: "/separacao", icon: PackageCheck },
-  { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt },
-  { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet },
-  { title: "Catálogo", url: "/produtos", icon: Package },
-  { title: "DRE", url: "/dre", icon: FileBarChart },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard, modulo: "dashboard" },
+  { title: "Metas", url: "/metas", icon: Target, modulo: "dashboard" },
+  { title: "Anomalias", url: "/anomalias", icon: AlertTriangle, modulo: "dashboard", badgeKey: "anomalias" },
+  { title: "Pedidos", url: "/pedidos", icon: ClipboardList, modulo: "separacao" },
+  { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, modulo: "separacao" },
+  { title: "Separação", url: "/separacao", icon: PackageCheck, modulo: "separacao" },
+  { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
+  { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
+  { title: "Catálogo", url: "/produtos", icon: Package, modulo: "produtos" },
+  { title: "DRE", url: "/dre", icon: FileBarChart, modulo: "financeiro" },
 ];
 
 const modulos: NavItem[] = [
-  { title: "Produtos", url: "/produtos-margem", icon: Package },
-  { title: "Amazon", url: "/amazon", icon: ShoppingCart },
-  { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2 },
-  { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone },
-  { title: "Tendências", url: "/tendencias", icon: TrendingUp },
-  { title: "Carteira", url: "/carteira", icon: Wallet },
-  { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet },
+  { title: "Produtos", url: "/produtos-margem", icon: Package, modulo: "produtos" },
+  { title: "Amazon", url: "/amazon", icon: ShoppingCart, modulo: "produtos" },
+  { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2, modulo: "produtos" },
+  { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone, modulo: "ads" },
+  { title: "Tendências", url: "/tendencias", icon: TrendingUp, modulo: "dashboard" },
+  { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
+  { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet, modulo: "financeiro" },
 ];
 
 export function AppSidebar() {
@@ -68,6 +70,8 @@ export function AppSidebar() {
   const currentPath = useRouterState({
     select: (router) => router.location.pathname,
   });
+  const { temAcesso } = usePerfil();
+  const filtrar = (items: NavItem[]) => items.filter((i) => temAcesso(i.modulo));
 
   const [anomaliasCount, setAnomaliasCount] = useState<number>(0);
   useEffect(() => {
@@ -168,8 +172,8 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-3">
-        {renderGroup("Principal", principal)}
-        {renderGroup("Módulos", modulos)}
+        {filtrar(principal).length > 0 && renderGroup("Principal", filtrar(principal))}
+        {filtrar(modulos).length > 0 && renderGroup("Módulos", filtrar(modulos))}
       </SidebarContent>
     </Sidebar>
   );

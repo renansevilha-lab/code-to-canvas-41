@@ -9,6 +9,8 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
 import { useAuth } from "@/hooks/useAuth";
+import { PerfilProvider } from "@/hooks/usePerfil";
+import { PerfilGate } from "@/components/PerfilGate";
 import { Button } from "@/components/ui/button";
 
 function NotFoundComponent() {
@@ -86,7 +88,9 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGate>
-        <AppShell />
+        <PerfilProvider>
+          <AppShell />
+        </PerfilProvider>
       </AuthGate>
       <Toaster position="top-right" richColors />
     </QueryClientProvider>
@@ -118,7 +122,9 @@ function AppShell() {
             )}
           </header>
           <main className="flex-1 min-w-0">
-            <Outlet />
+            <PerfilGate>
+              <Outlet />
+            </PerfilGate>
           </main>
         </div>
         <Toaster position="top-right" richColors />
