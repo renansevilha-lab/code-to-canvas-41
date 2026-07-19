@@ -70,6 +70,8 @@ export function AppSidebar() {
   const currentPath = useRouterState({
     select: (router) => router.location.pathname,
   });
+  const { temAcesso } = usePerfil();
+  const filtrar = (items: NavItem[]) => items.filter((i) => temAcesso(i.modulo));
 
   const [anomaliasCount, setAnomaliasCount] = useState<number>(0);
   useEffect(() => {
