@@ -122,7 +122,9 @@ function AppShell() {
             )}
           </header>
           <main className="flex-1 min-w-0">
-            <Outlet />
+            <PerfilGate>
+              <Outlet />
+            </PerfilGate>
           </main>
         </div>
         <Toaster position="top-right" richColors />
