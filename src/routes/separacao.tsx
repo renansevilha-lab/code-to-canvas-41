@@ -2372,10 +2372,13 @@ function SeparacaoPage() {
             Fila de pedidos aguardando separação no galpão (Full excluído).
           </p>
         </div>
-        <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
-          <RefreshCw className={cn("h-4 w-4 mr-2", isFetching && "animate-spin")} />
-          Atualizar fila
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <AtualizarDoTinyButton />
+          <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
+            <RefreshCw className={cn("h-4 w-4 mr-2", isFetching && "animate-spin")} />
+            Atualizar fila
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="priorizada" className="space-y-4">
