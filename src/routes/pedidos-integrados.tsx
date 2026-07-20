@@ -1,6 +1,7 @@
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -12,6 +13,7 @@ import {
   Search,
   Package as PackageIcon,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import {
   Bar,
@@ -65,6 +67,7 @@ import {
   type PeriodRange,
 } from "@/lib/dashboard/period";
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
 
@@ -105,14 +108,27 @@ interface PedidoIntegrado {
   primeira_categoria: string | null;
 }
 
-interface KpiRpcRow {
+interface KpiDiaRow {
+  dia: string | null;
+  canal: string | null;
+  empresa: string | null;
+  marketplace: string | null;
   pedidos: number | null;
-  receita: number | null;
-  cmv: number | null;
+  venda: number | null;
+  comissao_total: number | null;
+  custo_prod: number | null;
   imposto: number | null;
+  custo_total: number | null;
+  recebido_estimado: number | null;
   margem: number | null;
-  mc_pct: number | null;
+  itens: number | null;
+  itens_sem_cmv: number | null;
 }
+
+// Colunas retornadas na listagem — apenas o que a tabela + drawer usam.
+const LIST_COLUMNS =
+  "order_sn,marketplace,loja_nome,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto";
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,13 +259,7 @@ function PedidosIntegradosPage() {
     try { localStorage.setItem(LS_CANAIS, JSON.stringify(canais)); } catch { /* noop */ }
   }, [canais]);
 
-  const [data, setData] = useState<PedidoIntegrado[]>([]);
-  const [prevData, setPrevData] = useState<PedidoIntegrado[]>([]);
-  const [kpiRpc, setKpiRpc] = useState<KpiRpcRow | null>(null);
-  const [prevKpiRpc, setPrevKpiRpc] = useState<KpiRpcRow | null>(null);
-  const [totalPedidosPeriodo, setTotalPedidosPeriodo] = useState<number>(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const [sortKey, setSortKey] = useState<SortKey>("data_pedido");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -262,101 +272,71 @@ function PedidosIntegradosPage() {
     return () => clearTimeout(t);
   }, [searchText]);
 
-  // fetch
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAll = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { fromIso, toIso } = rangeToSPIso(range.from, range.to);
-        const days =
-          (parseISO(`${range.to}T00:00:00`).getTime() -
-            parseISO(`${range.from}T00:00:00`).getTime()) /
-            (1000 * 60 * 60 * 24) +
-          1;
-        const prevTo = format(subDays(parseISO(`${range.from}T00:00:00`), 1), "yyyy-MM-dd");
-        const prevFrom = format(
-          subDays(parseISO(`${range.from}T00:00:00`), days),
-          "yyyy-MM-dd",
-        );
-        const { fromIso: prevFromIso, toIso: prevToIso } = rangeToSPIso(prevFrom, prevTo);
+  // Datas ISO do período atual e do período anterior
+  const { fromIso, toIso, prevFrom, prevTo } = useMemo(() => {
+    const iso = rangeToSPIso(range.from, range.to);
+    const days =
+      (parseISO(`${range.to}T00:00:00`).getTime() -
+        parseISO(`${range.from}T00:00:00`).getTime()) /
+        (1000 * 60 * 60 * 24) +
+      1;
+    const pTo = format(subDays(parseISO(`${range.from}T00:00:00`), 1), "yyyy-MM-dd");
+    const pFrom = format(subDays(parseISO(`${range.from}T00:00:00`), days), "yyyy-MM-dd");
+    return { fromIso: iso.fromIso, toIso: iso.toIso, prevFrom: pFrom, prevTo: pTo };
+  }, [range.from, range.to]);
 
-        const baseQuery = (fromI: string, toI: string) =>
-          supabaseExternal
-            .from("view_margem_pedido_v2")
-            .select("*")
-            .gte("data_pedido", fromI)
-            .lte("data_pedido", toI)
-            .order("data_pedido", { ascending: false })
-            .limit(5000);
+  const empresasKey = useMemo(() => [...empresas].sort().join("|"), [empresas]);
+  const canaisKey = useMemo(() => [...canais].sort().join("|"), [canais]);
+  const statusesKey = useMemo(() => [...statuses].sort().join("|"), [statuses]);
 
-        const canaisRpc =
-          selectedMarketplaces.length > 0 && selectedMarketplaces.length < 3
-            ? selectedMarketplaces
-            : null;
+  // ─── KPI agregado no banco (view_kpi_pedidos_dia) — período atual ───────
+  const kpiQuery = useQuery({
+    queryKey: ["pi-kpi-dia", range.from, range.to, empresasKey, canaisKey],
+    queryFn: async (): Promise<KpiDiaRow[]> => {
+      let q = supabaseExternal
+        .from("view_kpi_pedidos_dia")
+        .select(
+          "dia,canal,empresa,marketplace,pedidos,venda,comissao_total,custo_prod,imposto,custo_total,recebido_estimado,margem,itens,itens_sem_cmv",
+        )
+        .gte("dia", range.from)
+        .lte("dia", range.to);
+      if (empresas.length) q = q.in("empresa", empresas);
+      if (canais.length) q = q.in("canal", canais);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []) as KpiDiaRow[];
+    },
+  });
 
-        const [cur, prev, kpi, prevKpi, totalCount] = await Promise.all([
-          baseQuery(fromIso, toIso),
-          baseQuery(prevFromIso, prevToIso),
-          supabaseExternal.rpc("kpi_pedidos", {
-            data_ini: range.from,
-            data_fim: range.to,
-            canais: canaisRpc,
-          }),
-          supabaseExternal.rpc("kpi_pedidos", {
-            data_ini: prevFrom,
-            data_fim: prevTo,
-            canais: canaisRpc,
-          }),
-          supabaseExternal
-            .from("view_margem_pedido_v2")
-            .select("*", { count: "exact", head: true })
-            .gte("data_pedido", fromIso)
-            .lte("data_pedido", toIso),
-        ]);
-        if (cancelled) return;
-        if (cur.error) throw cur.error;
-        setData((cur.data ?? []) as PedidoIntegrado[]);
-        setPrevData((prev.data ?? []) as PedidoIntegrado[]);
-        if (!kpi.error) {
-          const row = Array.isArray(kpi.data) ? kpi.data[0] : kpi.data;
-          setKpiRpc((row ?? null) as KpiRpcRow | null);
-        }
-        if (!prevKpi.error) {
-          const row = Array.isArray(prevKpi.data) ? prevKpi.data[0] : prevKpi.data;
-          setPrevKpiRpc((row ?? null) as KpiRpcRow | null);
-        }
-        setTotalPedidosPeriodo(totalCount.count ?? 0);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Erro desconhecido");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    fetchAll();
-    const interval = setInterval(fetchAll, 5 * 60 * 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // selectedMarketplaces depends on canais; include canais list length
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range.from, range.to, canais.join(",")]);
+  const prevKpiQuery = useQuery({
+    queryKey: ["pi-kpi-dia-prev", prevFrom, prevTo, empresasKey, canaisKey],
+    queryFn: async (): Promise<KpiDiaRow[]> => {
+      let q = supabaseExternal
+        .from("view_kpi_pedidos_dia")
+        .select("pedidos,venda,custo_total,margem")
+        .gte("dia", prevFrom)
+        .lte("dia", prevTo);
+      if (empresas.length) q = q.in("empresa", empresas);
+      if (canais.length) q = q.in("canal", canais);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []) as KpiDiaRow[];
+    },
+  });
 
-  // Fetch distinct canais (e empresas) — dinâmico
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data: rows } = await supabaseExternal
-          .from("view_margem_pedido_v2")
-          .select("canal, empresa")
-          .limit(5000);
-        if (cancelled || !rows) return;
+  // ─── Options de filtro (canais/empresas) — vem do próprio kpi_dia ─────
+  useQuery({
+    queryKey: ["pi-filter-options"],
+    staleTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabaseExternal
+        .from("view_kpi_pedidos_dia")
+        .select("canal,empresa")
+        .limit(2000);
+      if (data) {
         const cset = new Set<string>();
         const eset = new Set<string>();
-        for (const r of rows as { canal: string | null; empresa: string | null }[]) {
+        for (const r of data as { canal: string | null; empresa: string | null }[]) {
           if (r.canal) cset.add(r.canal);
           if (r.empresa) eset.add(r.empresa);
         }
@@ -364,10 +344,58 @@ function PedidosIntegradosPage() {
         const es = [...eset].sort((a, b) => a.localeCompare(b, "pt-BR"));
         if (cs.length) setCanaisOptions(cs);
         if (es.length) setEmpresasOptions(es);
-      } catch { /* silencioso */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      }
+      return true;
+    },
+  });
+
+  // ─── Lista paginada (view_margem_pedido_v2) — apenas página atual ─────
+  const listQuery = useQuery({
+    queryKey: [
+      "pi-list",
+      fromIso,
+      toIso,
+      page,
+      sortKey,
+      sortDir,
+      empresasKey,
+      canaisKey,
+      statusesKey,
+      cobertura,
+      debounced,
+    ],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const start = (page - 1) * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+      let q = supabaseExternal
+        .from("view_margem_pedido_v2")
+        .select(LIST_COLUMNS, { count: "exact" })
+        .gte("data_pedido", fromIso)
+        .lte("data_pedido", toIso);
+      if (empresas.length) q = q.in("empresa", empresas);
+      if (canais.length) q = q.in("canal", canais);
+      if (statuses.length && statuses.length !== DEFAULT_STATUSES.length) {
+        q = q.in("status_pedido", statuses);
+      }
+      if (cobertura === "completo") q = q.eq("cobertura_cmv", "completo");
+      else if (cobertura === "incompletos") q = q.neq("cobertura_cmv", "completo");
+      if (debounced) {
+        const esc = debounced.replace(/[,%()]/g, " ").trim();
+        if (esc) q = q.or(`order_sn.ilike.%${esc}%,primeiro_produto_nome.ilike.%${esc}%`);
+      }
+      q = q.order(sortKey, { ascending: sortDir === "asc" }).range(start, end);
+      const { data, error, count } = await q;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as PedidoIntegrado[], count: count ?? 0 };
+    },
+  });
+
+  const loading = kpiQuery.isLoading || listQuery.isLoading;
+  const error =
+    (kpiQuery.error as Error | null)?.message ??
+    (listQuery.error as Error | null)?.message ??
+    null;
 
   // Derived selected marketplaces (para o filtro de status)
   const selectedMarketplaces = useMemo(() => {
@@ -380,95 +408,37 @@ function PedidosIntegradosPage() {
     return [...set];
   }, [canais, canaisOptions]);
 
-  // filtered
-  const matchesEmpresaCanal = (p: PedidoIntegrado): boolean => {
-    if (empresas.length && (!p.empresa || !empresas.includes(p.empresa))) return false;
-    if (canais.length && (!p.canal || !canais.includes(p.canal))) return false;
-    return true;
-  };
-
-  const filtered = useMemo(() => {
-    return data.filter((p) => {
-      if (!matchesEmpresaCanal(p)) return false;
-      if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
-        return false;
-      if (cobertura === "completo" && p.cobertura_cmv !== "completo") return false;
-      if (cobertura === "incompletos" && p.cobertura_cmv === "completo") return false;
-      if (debounced) {
-        const hay = `${p.order_sn} ${p.primeiro_produto_nome ?? ""}`.toLowerCase();
-        if (!hay.includes(debounced)) return false;
-      }
-      return true;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, empresas, canais, statuses, cobertura, debounced]);
-
-  const filteredPrev = useMemo(() => {
-    return prevData.filter((p) => {
-      if (!matchesEmpresaCanal(p)) return false;
-      if (statuses.length && (!p.status_pedido || !statuses.includes(p.status_pedido)))
-        return false;
-      return true;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevData, empresas, canais, statuses]);
-
-  // KPIs — os totais principais vêm do RPC kpi_pedidos (agrega no banco,
-  // ignorando o cap de 1000 rows do PostgREST). Os filtros de empresa/status
-  // afetam apenas a lista abaixo; os cards refletem período + canal.
-  const filtroRefinaCards = empresas.length > 0 || statuses.length !== DEFAULT_STATUSES.length || debounced.length > 0;
-  const kpiClient = useMemo(() => computeKpis(filtered), [filtered]);
-  const prevKpiClient = useMemo(() => computeKpis(filteredPrev), [filteredPrev]);
-  const kpis = useMemo(() => {
-    if (filtroRefinaCards || !kpiRpc) return kpiClient;
-    return {
-      receita: Number(kpiRpc.receita ?? 0),
-      custo: Number(kpiRpc.cmv ?? 0) + Number(kpiRpc.imposto ?? 0),
-      margem: Number(kpiRpc.margem ?? 0),
-      mcPct: Number(kpiRpc.mc_pct ?? 0),
-      qtd: totalPedidosPeriodo || Number(kpiRpc.pedidos ?? 0),
-      cobertura: totalPedidosPeriodo > 0 ? Number(kpiRpc.pedidos ?? 0) / totalPedidosPeriodo : 0,
-    };
-  }, [filtroRefinaCards, kpiRpc, kpiClient, totalPedidosPeriodo]);
-  const prevKpis = useMemo(() => {
-    if (filtroRefinaCards || !prevKpiRpc) return prevKpiClient;
-    return {
-      receita: Number(prevKpiRpc.receita ?? 0),
-      custo: Number(prevKpiRpc.cmv ?? 0) + Number(prevKpiRpc.imposto ?? 0),
-      margem: Number(prevKpiRpc.margem ?? 0),
-      mcPct: Number(prevKpiRpc.mc_pct ?? 0),
-      qtd: Number(prevKpiRpc.pedidos ?? 0),
-      cobertura: 0,
-    };
-  }, [filtroRefinaCards, prevKpiRpc, prevKpiClient]);
-
-  // sorted + paginated
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      const av = (a[sortKey] ?? null) as number | string | null;
-      const bv = (b[sortKey] ?? null) as number | string | null;
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return arr;
-  }, [filtered, sortKey, sortDir]);
+  const kpis = useMemo(() => aggregateKpiDia(kpiQuery.data ?? []), [kpiQuery.data]);
+  const prevKpis = useMemo(
+    () => aggregateKpiDia(prevKpiQuery.data ?? []),
+    [prevKpiQuery.data],
+  );
 
   useEffect(() => {
     setPage(1);
-  }, [debounced, empresas, canais, statuses, cobertura, range.from, range.to]);
+  }, [debounced, empresasKey, canaisKey, statusesKey, cobertura, range.from, range.to]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paged = listQuery.data?.rows ?? [];
+  const totalRows = listQuery.data?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
 
-  // chart data
-  const dailySeries = useMemo(() => buildDailySeries(filtered), [filtered]);
-  const worstProducts = useMemo(() => buildWorstProducts(filtered), [filtered]);
-  const marketplaceShare = useMemo(() => buildMarketplaceShare(filtered), [filtered]);
-  const ufRanking = useMemo(() => buildUfRanking(filtered), [filtered]);
+  // chart data (agregado no banco)
+  const dailySeries = useMemo(() => buildDailyFromKpi(kpiQuery.data ?? []), [kpiQuery.data]);
+  const marketplaceShare = useMemo(
+    () => buildMarketplaceShareFromKpi(kpiQuery.data ?? []),
+    [kpiQuery.data],
+  );
+  const empresaResumo = useMemo(
+    () => buildEmpresaResumoFromKpi(kpiQuery.data ?? []),
+    [kpiQuery.data],
+  );
+
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia"] });
+    queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia-prev"] });
+    queryClient.invalidateQueries({ queryKey: ["pi-list"] });
+  };
+
 
   const updatePeriod = (next: PeriodRange) => {
     navigate({
@@ -528,7 +498,11 @@ function PedidosIntegradosPage() {
                 className="pl-8 h-9 bg-card"
               />
             </div>
+            <Button variant="outline" size="sm" className="h-9" onClick={refreshAll} disabled={loading}>
+              Atualizar
+            </Button>
           </div>
+
 
           {(empresas.length > 0 || canais.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -620,7 +594,7 @@ function PedidosIntegradosPage() {
           />
         </section>
 
-        <EmpresaSubResumo rows={filtered} loading={loading} />
+        <EmpresaSubResumo groups={empresaResumo} loading={loading} />
 
 
         {/* Charts */}
@@ -655,42 +629,6 @@ function PedidosIntegradosPage() {
                       name="Margem"
                     />
                   </ComposedChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <h3 className="text-sm font-semibold mb-1">Top 10 produtos com pior margem</h3>
-            <p className="text-xs text-muted-foreground mb-3">
-              Apenas pedidos com cobertura completa e margem negativa
-            </p>
-            <div className="h-64">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : worstProducts.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                  Nenhum produto com margem negativa no período
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={worstProducts} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(v) => formatBRL(v, { compact: true })}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="nome"
-                      width={140}
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(v: string) => (v.length > 22 ? v.slice(0, 22) + "…" : v)}
-                    />
-                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="margem" fill="hsl(0 84% 60%)" />
-                  </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
@@ -743,49 +681,8 @@ function PedidosIntegradosPage() {
               )}
             </div>
           </Card>
-
-          <Card className="p-4">
-            <h3 className="text-sm font-semibold mb-1">Margem média por UF</h3>
-            <p className="text-xs text-muted-foreground mb-3">Top 10 estados (cobertura completa)</p>
-            <div className="h-64 overflow-auto">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : ufRanking.length === 0 ? (
-                <EmptyChart />
-              ) : (
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-muted-foreground sticky top-0 bg-card">
-                    <tr>
-                      <th className="text-left font-medium py-1.5">UF</th>
-                      <th className="text-right font-medium">Pedidos</th>
-                      <th className="text-right font-medium">Receita</th>
-                      <th className="text-right font-medium">Margem média</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ufRanking.map((u) => (
-                      <tr key={u.uf} className="border-t border-border/50">
-                        <td className="py-1.5 font-medium">{u.uf}</td>
-                        <td className="text-right tabular-nums">{u.qtd}</td>
-                        <td className="text-right tabular-nums">{formatBRL(u.receita)}</td>
-                        <td
-                          className={cn(
-                            "text-right tabular-nums font-medium",
-                            u.margemMedia >= 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-red-600 dark:text-red-400",
-                          )}
-                        >
-                          {formatBRL(u.margemMedia)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </Card>
         </section>
+
 
         {/* Tabela */}
         <Card className="overflow-hidden">
@@ -793,7 +690,7 @@ function PedidosIntegradosPage() {
             <h3 className="text-sm font-semibold">
               Pedidos{" "}
               <span className="text-muted-foreground font-normal">
-                ({formatNumber(sorted.length)})
+                ({formatNumber(totalRows)})
               </span>
             </h3>
           </div>
@@ -843,10 +740,10 @@ function PedidosIntegradosPage() {
             </table>
           </div>
 
-          {!loading && sorted.length > PAGE_SIZE && (
+          {!loading && totalRows > PAGE_SIZE && (
             <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
               <span className="text-muted-foreground">
-                Página {page} de {totalPages} · {formatNumber(sorted.length)} pedidos
+                Página {page} de {totalPages} · {formatNumber(totalRows)} pedidos
               </span>
               <div className="flex gap-2">
                 <Button
@@ -1450,30 +1347,9 @@ function Meta({ label, value, className }: { label: string; value: string; class
   );
 }
 
-function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading: boolean }) {
-  const groups = useMemo(() => {
-    const map = new Map<string, { receita: number; margem: number; mcReceita: number }>();
-    for (const r of rows) {
-      const key = r.empresa ?? "—";
-      const g = map.get(key) ?? { receita: 0, margem: 0, mcReceita: 0 };
-      g.receita += r.venda ?? 0;
-      if (r.cobertura_cmv === "completo") {
-        g.margem += r.margem ?? 0;
-        g.mcReceita += r.venda ?? 0;
-      }
-      map.set(key, g);
-    }
-    return Array.from(map.entries())
-      .filter(([k, g]) => k !== "—" && g.receita > 0)
-      .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
-      .map(([empresa, g]) => ({
-        empresa,
-        receita: g.receita,
-        margem: g.margem,
-        mcPct: g.mcReceita > 0 ? g.margem / g.mcReceita : 0,
-      }));
-  }, [rows]);
+type EmpresaResumo = { empresa: string; receita: number; margem: number; mcPct: number };
 
+function EmpresaSubResumo({ groups, loading }: { groups: EmpresaResumo[]; loading: boolean }) {
   if (loading || groups.length === 0) return null;
 
   return (
@@ -1520,23 +1396,19 @@ function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading:
 
 const DONUT_COLORS = ["hsl(var(--primary))", "hsl(25 95% 55%)", "hsl(280 70% 60%)", "hsl(160 70% 45%)"];
 
-function computeKpis(rows: PedidoIntegrado[]) {
-  const receita = sum(rows, (r) => r.venda);
-  const custo = sum(
-    rows.filter((r) => r.cobertura_cmv !== "sem_dado"),
-    (r) => r.custo_total,
-  );
-  const completos = rows.filter((r) => r.cobertura_cmv === "completo");
-  const margem = sum(completos, (r) => r.margem);
-  const mcReceita = sum(completos, (r) => r.venda);
-  const mcWeighted = sum(completos, (r) => (r.mc_pct ?? 0) * (r.venda ?? 0));
-  const mcPct = mcReceita > 0 ? mcWeighted / mcReceita : 0;
-  const cobertura = rows.length > 0 ? completos.length / rows.length : 0;
-  return { receita, custo, margem, mcPct, qtd: rows.length, cobertura };
-}
-
-function sum<T>(rows: T[], pick: (r: T) => number | null | undefined): number {
-  return rows.reduce((acc, r) => acc + (Number(pick(r) ?? 0) || 0), 0);
+function aggregateKpiDia(rows: KpiDiaRow[]) {
+  let receita = 0, custo = 0, margem = 0, pedidos = 0, itens = 0, semCmv = 0;
+  for (const r of rows) {
+    receita += Number(r.venda ?? 0) || 0;
+    custo += Number(r.custo_total ?? 0) || 0;
+    margem += Number(r.margem ?? 0) || 0;
+    pedidos += Number(r.pedidos ?? 0) || 0;
+    itens += Number(r.itens ?? 0) || 0;
+    semCmv += Number(r.itens_sem_cmv ?? 0) || 0;
+  }
+  const mcPct = receita > 0 ? margem / receita : 0;
+  const cobertura = itens > 0 ? (itens - semCmv) / itens : 0;
+  return { receita, custo, margem, mcPct, qtd: pedidos, cobertura };
 }
 
 function pctDelta(curr: number, prev: number): number | null {
@@ -1544,14 +1416,14 @@ function pctDelta(curr: number, prev: number): number | null {
   return ((curr - prev) / Math.abs(prev)) * 100;
 }
 
-function buildDailySeries(rows: PedidoIntegrado[]) {
+function buildDailyFromKpi(rows: KpiDiaRow[]) {
   const map = new Map<string, { date: string; receita: number; margem: number }>();
   for (const r of rows) {
-    if (!r.data_pedido) continue;
-    const day = r.data_pedido.slice(0, 10);
+    if (!r.dia) continue;
+    const day = r.dia.slice(0, 10);
     const e = map.get(day) ?? { date: day.slice(5), receita: 0, margem: 0 };
-    e.receita += r.venda ?? 0;
-    if (r.cobertura_cmv === "completo") e.margem += r.margem ?? 0;
+    e.receita += Number(r.venda ?? 0) || 0;
+    e.margem += Number(r.margem ?? 0) || 0;
     map.set(day, e);
   }
   return Array.from(map.entries())
@@ -1559,52 +1431,40 @@ function buildDailySeries(rows: PedidoIntegrado[]) {
     .map(([, v]) => v);
 }
 
-function buildWorstProducts(rows: PedidoIntegrado[]) {
-  const map = new Map<string, { nome: string; margem: number }>();
-  for (const r of rows) {
-    if (r.cobertura_cmv !== "completo" || (r.margem ?? 0) >= 0) continue;
-    const key = r.primeiro_produto_nome ?? r.skus ?? r.order_sn;
-    const e = map.get(key) ?? { nome: key, margem: 0 };
-    e.margem += r.margem ?? 0;
-    map.set(key, e);
-  }
-  return Array.from(map.values())
-    .sort((a, b) => a.margem - b.margem)
-    .slice(0, 10);
-}
-
-function buildMarketplaceShare(rows: PedidoIntegrado[]): { name: string; value: number; marketplace: string | null }[] {
+function buildMarketplaceShareFromKpi(
+  rows: KpiDiaRow[],
+): { name: string; value: number; marketplace: string | null }[] {
   const map = new Map<string, { value: number; marketplace: string | null }>();
   for (const r of rows) {
-    const key = r.canal ?? r.loja_nome ?? r.marketplace ?? "—";
+    const key = r.canal ?? r.marketplace ?? "—";
     const cur = map.get(key) ?? { value: 0, marketplace: r.marketplace ?? null };
-    cur.value += r.venda ?? 0;
+    cur.value += Number(r.venda ?? 0) || 0;
     map.set(key, cur);
   }
-  return Array.from(map.entries()).map(([name, v]) => ({ name, value: v.value, marketplace: v.marketplace }));
+  return Array.from(map.entries()).map(([name, v]) => ({
+    name,
+    value: v.value,
+    marketplace: v.marketplace,
+  }));
 }
 
-function buildUfRanking(rows: PedidoIntegrado[]) {
-  const map = new Map<string, { uf: string; qtd: number; receita: number; margemSoma: number; margemQtd: number }>();
+function buildEmpresaResumoFromKpi(rows: KpiDiaRow[]): EmpresaResumo[] {
+  const map = new Map<string, { receita: number; margem: number }>();
   for (const r of rows) {
-    const uf = (r.uf ?? "—").trim() || "—";
-    if (uf === "****") continue;
-    const e = map.get(uf) ?? { uf, qtd: 0, receita: 0, margemSoma: 0, margemQtd: 0 };
-    e.qtd += 1;
-    e.receita += r.venda ?? 0;
-    if (r.cobertura_cmv === "completo" && r.margem != null) {
-      e.margemSoma += r.margem;
-      e.margemQtd += 1;
-    }
-    map.set(uf, e);
+    const key = r.empresa ?? "—";
+    const g = map.get(key) ?? { receita: 0, margem: 0 };
+    g.receita += Number(r.venda ?? 0) || 0;
+    g.margem += Number(r.margem ?? 0) || 0;
+    map.set(key, g);
   }
-  return Array.from(map.values())
-    .map((e) => ({
-      uf: e.uf,
-      qtd: e.qtd,
-      receita: e.receita,
-      margemMedia: e.margemQtd > 0 ? e.margemSoma / e.margemQtd : 0,
-    }))
-    .sort((a, b) => b.receita - a.receita)
-    .slice(0, 10);
+  return Array.from(map.entries())
+    .filter(([k, g]) => k !== "—" && g.receita > 0)
+    .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
+    .map(([empresa, g]) => ({
+      empresa,
+      receita: g.receita,
+      margem: g.margem,
+      mcPct: g.receita > 0 ? g.margem / g.receita : 0,
+    }));
 }
+
