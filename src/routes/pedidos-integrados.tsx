@@ -590,7 +590,7 @@ function PedidosIntegradosPage() {
           />
         </section>
 
-        <EmpresaSubResumo rows={filtered} loading={loading} />
+        <EmpresaSubResumo groups={empresaResumo} loading={loading} />
 
 
         {/* Charts */}
@@ -625,42 +625,6 @@ function PedidosIntegradosPage() {
                       name="Margem"
                     />
                   </ComposedChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <h3 className="text-sm font-semibold mb-1">Top 10 produtos com pior margem</h3>
-            <p className="text-xs text-muted-foreground mb-3">
-              Apenas pedidos com cobertura completa e margem negativa
-            </p>
-            <div className="h-64">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : worstProducts.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                  Nenhum produto com margem negativa no período
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={worstProducts} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(v) => formatBRL(v, { compact: true })}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="nome"
-                      width={140}
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(v: string) => (v.length > 22 ? v.slice(0, 22) + "…" : v)}
-                    />
-                    <RTooltip formatter={(v: unknown) => formatBRL(Number(v) || 0)} contentStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="margem" fill="hsl(0 84% 60%)" />
-                  </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
@@ -713,49 +677,8 @@ function PedidosIntegradosPage() {
               )}
             </div>
           </Card>
-
-          <Card className="p-4">
-            <h3 className="text-sm font-semibold mb-1">Margem média por UF</h3>
-            <p className="text-xs text-muted-foreground mb-3">Top 10 estados (cobertura completa)</p>
-            <div className="h-64 overflow-auto">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : ufRanking.length === 0 ? (
-                <EmptyChart />
-              ) : (
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-muted-foreground sticky top-0 bg-card">
-                    <tr>
-                      <th className="text-left font-medium py-1.5">UF</th>
-                      <th className="text-right font-medium">Pedidos</th>
-                      <th className="text-right font-medium">Receita</th>
-                      <th className="text-right font-medium">Margem média</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ufRanking.map((u) => (
-                      <tr key={u.uf} className="border-t border-border/50">
-                        <td className="py-1.5 font-medium">{u.uf}</td>
-                        <td className="text-right tabular-nums">{u.qtd}</td>
-                        <td className="text-right tabular-nums">{formatBRL(u.receita)}</td>
-                        <td
-                          className={cn(
-                            "text-right tabular-nums font-medium",
-                            u.margemMedia >= 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-red-600 dark:text-red-400",
-                          )}
-                        >
-                          {formatBRL(u.margemMedia)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </Card>
         </section>
+
 
         {/* Tabela */}
         <Card className="overflow-hidden">
