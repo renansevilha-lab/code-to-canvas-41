@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { Loader2, Sparkles } from "lucide-react";
+import { AlertCircle, Loader2, Sparkles } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,13 +30,16 @@ function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    setErrorMsg(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
     if (error) {
+      setErrorMsg(error.message);
       toast.error("Falha no login", { description: error.message });
     } else {
       toast.success("Bem-vindo!");
@@ -83,6 +87,12 @@ function LoginScreen() {
                 autoComplete="current-password"
               />
             </div>
+            {errorMsg && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{errorMsg}</AlertDescription>
+              </Alert>
+            )}
             <Button type="submit" className="w-full" disabled={busy}>
               {busy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Entrar
