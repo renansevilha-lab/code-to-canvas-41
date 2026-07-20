@@ -498,7 +498,11 @@ function PedidosIntegradosPage() {
                 className="pl-8 h-9 bg-card"
               />
             </div>
+            <Button variant="outline" size="sm" className="h-9" onClick={refreshAll} disabled={loading}>
+              Atualizar
+            </Button>
           </div>
+
 
           {(empresas.length > 0 || canais.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
