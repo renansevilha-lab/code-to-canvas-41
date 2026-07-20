@@ -651,25 +651,7 @@ function SeparacaoTotaisCards() {
         <p className="text-xs text-muted-foreground">
           Atualizado há {tempoRelativo(data?.atualizado_em ?? null)}
         </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleSyncTiny}
-          disabled={syncing}
-          className="gap-2"
-        >
-          {syncing ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Sincronizando com o Tiny...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="h-3.5 w-3.5" />
-              Atualizar do Tiny
-            </>
-          )}
-        </Button>
+        <AtualizarDoTinyButton />
       </div>
     </div>
   );
