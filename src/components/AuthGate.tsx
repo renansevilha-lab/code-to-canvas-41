@@ -87,6 +87,12 @@ function LoginScreen() {
                 autoComplete="current-password"
               />
             </div>
+            {errorMsg && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{errorMsg}</AlertDescription>
+              </Alert>
+            )}
             <Button type="submit" className="w-full" disabled={busy}>
               {busy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Entrar
