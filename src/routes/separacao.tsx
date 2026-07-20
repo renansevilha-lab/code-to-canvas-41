@@ -513,8 +513,7 @@ interface SyncTinyResponse {
   pendentes_detalhe?: number;
 }
 
-function SeparacaoTotaisCards() {
-  const { data, isLoading, error } = useSeparacaoTotais();
+function AtualizarDoTinyButton() {
   const queryClient = useQueryClient();
   const [syncing, setSyncing] = useState(false);
 
@@ -547,6 +546,33 @@ function SeparacaoTotaisCards() {
       setSyncing(false);
     }
   };
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={handleSyncTiny}
+      disabled={syncing}
+      className="gap-2"
+    >
+      {syncing ? (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Sincronizando com o Tiny...
+        </>
+      ) : (
+        <>
+          <RefreshCw className="h-3.5 w-3.5" />
+          Atualizar do Tiny
+        </>
+      )}
+    </Button>
+  );
+}
+
+function SeparacaoTotaisCards() {
+  const { data, isLoading, error } = useSeparacaoTotais();
+
 
   const cards = [
     {
