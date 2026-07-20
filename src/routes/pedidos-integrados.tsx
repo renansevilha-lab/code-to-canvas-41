@@ -1343,30 +1343,9 @@ function Meta({ label, value, className }: { label: string; value: string; class
   );
 }
 
-function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading: boolean }) {
-  const groups = useMemo(() => {
-    const map = new Map<string, { receita: number; margem: number; mcReceita: number }>();
-    for (const r of rows) {
-      const key = r.empresa ?? "—";
-      const g = map.get(key) ?? { receita: 0, margem: 0, mcReceita: 0 };
-      g.receita += r.venda ?? 0;
-      if (r.cobertura_cmv === "completo") {
-        g.margem += r.margem ?? 0;
-        g.mcReceita += r.venda ?? 0;
-      }
-      map.set(key, g);
-    }
-    return Array.from(map.entries())
-      .filter(([k, g]) => k !== "—" && g.receita > 0)
-      .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
-      .map(([empresa, g]) => ({
-        empresa,
-        receita: g.receita,
-        margem: g.margem,
-        mcPct: g.mcReceita > 0 ? g.margem / g.mcReceita : 0,
-      }));
-  }, [rows]);
+type EmpresaResumo = { empresa: string; receita: number; margem: number; mcPct: number };
 
+function EmpresaSubResumo({ groups, loading }: { groups: EmpresaResumo[]; loading: boolean }) {
   if (loading || groups.length === 0) return null;
 
   return (
@@ -1413,23 +1392,19 @@ function EmpresaSubResumo({ rows, loading }: { rows: PedidoIntegrado[]; loading:
 
 const DONUT_COLORS = ["hsl(var(--primary))", "hsl(25 95% 55%)", "hsl(280 70% 60%)", "hsl(160 70% 45%)"];
 
-function computeKpis(rows: PedidoIntegrado[]) {
-  const receita = sum(rows, (r) => r.venda);
-  const custo = sum(
-    rows.filter((r) => r.cobertura_cmv !== "sem_dado"),
-    (r) => r.custo_total,
-  );
-  const completos = rows.filter((r) => r.cobertura_cmv === "completo");
-  const margem = sum(completos, (r) => r.margem);
-  const mcReceita = sum(completos, (r) => r.venda);
-  const mcWeighted = sum(completos, (r) => (r.mc_pct ?? 0) * (r.venda ?? 0));
-  const mcPct = mcReceita > 0 ? mcWeighted / mcReceita : 0;
-  const cobertura = rows.length > 0 ? completos.length / rows.length : 0;
-  return { receita, custo, margem, mcPct, qtd: rows.length, cobertura };
-}
-
-function sum<T>(rows: T[], pick: (r: T) => number | null | undefined): number {
-  return rows.reduce((acc, r) => acc + (Number(pick(r) ?? 0) || 0), 0);
+function aggregateKpiDia(rows: KpiDiaRow[]) {
+  let receita = 0, custo = 0, margem = 0, pedidos = 0, itens = 0, semCmv = 0;
+  for (const r of rows) {
+    receita += Number(r.venda ?? 0) || 0;
+    custo += Number(r.custo_total ?? 0) || 0;
+    margem += Number(r.margem ?? 0) || 0;
+    pedidos += Number(r.pedidos ?? 0) || 0;
+    itens += Number(r.itens ?? 0) || 0;
+    semCmv += Number(r.itens_sem_cmv ?? 0) || 0;
+  }
+  const mcPct = receita > 0 ? margem / receita : 0;
+  const cobertura = itens > 0 ? (itens - semCmv) / itens : 0;
+  return { receita, custo, margem, mcPct, qtd: pedidos, cobertura };
 }
 
 function pctDelta(curr: number, prev: number): number | null {
@@ -1437,14 +1412,14 @@ function pctDelta(curr: number, prev: number): number | null {
   return ((curr - prev) / Math.abs(prev)) * 100;
 }
 
-function buildDailySeries(rows: PedidoIntegrado[]) {
+function buildDailyFromKpi(rows: KpiDiaRow[]) {
   const map = new Map<string, { date: string; receita: number; margem: number }>();
   for (const r of rows) {
-    if (!r.data_pedido) continue;
-    const day = r.data_pedido.slice(0, 10);
+    if (!r.dia) continue;
+    const day = r.dia.slice(0, 10);
     const e = map.get(day) ?? { date: day.slice(5), receita: 0, margem: 0 };
-    e.receita += r.venda ?? 0;
-    if (r.cobertura_cmv === "completo") e.margem += r.margem ?? 0;
+    e.receita += Number(r.venda ?? 0) || 0;
+    e.margem += Number(r.margem ?? 0) || 0;
     map.set(day, e);
   }
   return Array.from(map.entries())
@@ -1452,52 +1427,40 @@ function buildDailySeries(rows: PedidoIntegrado[]) {
     .map(([, v]) => v);
 }
 
-function buildWorstProducts(rows: PedidoIntegrado[]) {
-  const map = new Map<string, { nome: string; margem: number }>();
-  for (const r of rows) {
-    if (r.cobertura_cmv !== "completo" || (r.margem ?? 0) >= 0) continue;
-    const key = r.primeiro_produto_nome ?? r.skus ?? r.order_sn;
-    const e = map.get(key) ?? { nome: key, margem: 0 };
-    e.margem += r.margem ?? 0;
-    map.set(key, e);
-  }
-  return Array.from(map.values())
-    .sort((a, b) => a.margem - b.margem)
-    .slice(0, 10);
-}
-
-function buildMarketplaceShare(rows: PedidoIntegrado[]): { name: string; value: number; marketplace: string | null }[] {
+function buildMarketplaceShareFromKpi(
+  rows: KpiDiaRow[],
+): { name: string; value: number; marketplace: string | null }[] {
   const map = new Map<string, { value: number; marketplace: string | null }>();
   for (const r of rows) {
-    const key = r.canal ?? r.loja_nome ?? r.marketplace ?? "—";
+    const key = r.canal ?? r.marketplace ?? "—";
     const cur = map.get(key) ?? { value: 0, marketplace: r.marketplace ?? null };
-    cur.value += r.venda ?? 0;
+    cur.value += Number(r.venda ?? 0) || 0;
     map.set(key, cur);
   }
-  return Array.from(map.entries()).map(([name, v]) => ({ name, value: v.value, marketplace: v.marketplace }));
+  return Array.from(map.entries()).map(([name, v]) => ({
+    name,
+    value: v.value,
+    marketplace: v.marketplace,
+  }));
 }
 
-function buildUfRanking(rows: PedidoIntegrado[]) {
-  const map = new Map<string, { uf: string; qtd: number; receita: number; margemSoma: number; margemQtd: number }>();
+function buildEmpresaResumoFromKpi(rows: KpiDiaRow[]): EmpresaResumo[] {
+  const map = new Map<string, { receita: number; margem: number }>();
   for (const r of rows) {
-    const uf = (r.uf ?? "—").trim() || "—";
-    if (uf === "****") continue;
-    const e = map.get(uf) ?? { uf, qtd: 0, receita: 0, margemSoma: 0, margemQtd: 0 };
-    e.qtd += 1;
-    e.receita += r.venda ?? 0;
-    if (r.cobertura_cmv === "completo" && r.margem != null) {
-      e.margemSoma += r.margem;
-      e.margemQtd += 1;
-    }
-    map.set(uf, e);
+    const key = r.empresa ?? "—";
+    const g = map.get(key) ?? { receita: 0, margem: 0 };
+    g.receita += Number(r.venda ?? 0) || 0;
+    g.margem += Number(r.margem ?? 0) || 0;
+    map.set(key, g);
   }
-  return Array.from(map.values())
-    .map((e) => ({
-      uf: e.uf,
-      qtd: e.qtd,
-      receita: e.receita,
-      margemMedia: e.margemQtd > 0 ? e.margemSoma / e.margemQtd : 0,
-    }))
-    .sort((a, b) => b.receita - a.receita)
-    .slice(0, 10);
+  return Array.from(map.entries())
+    .filter(([k, g]) => k !== "—" && g.receita > 0)
+    .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
+    .map(([empresa, g]) => ({
+      empresa,
+      receita: g.receita,
+      margem: g.margem,
+      mcPct: g.receita > 0 ? g.margem / g.receita : 0,
+    }));
 }
+
