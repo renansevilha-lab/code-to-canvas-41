@@ -736,10 +736,10 @@ function PedidosIntegradosPage() {
             </table>
           </div>
 
-          {!loading && sorted.length > PAGE_SIZE && (
+          {!loading && totalRows > PAGE_SIZE && (
             <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
               <span className="text-muted-foreground">
-                Página {page} de {totalPages} · {formatNumber(sorted.length)} pedidos
+                Página {page} de {totalPages} · {formatNumber(totalRows)} pedidos
               </span>
               <div className="flex gap-2">
                 <Button
