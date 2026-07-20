@@ -686,7 +686,7 @@ function PedidosIntegradosPage() {
             <h3 className="text-sm font-semibold">
               Pedidos{" "}
               <span className="text-muted-foreground font-normal">
-                ({formatNumber(sorted.length)})
+                ({formatNumber(totalRows)})
               </span>
             </h3>
           </div>
