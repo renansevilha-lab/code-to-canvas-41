@@ -1,7 +1,7 @@
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -140,7 +140,26 @@ type SearchParams = {
   period: PeriodPreset;
   from?: string;
   to?: string;
+  page: number;
+  empresas: string[];
+  canais: string[];
+  statuses: string[];
+  cobertura: CoberturaFilter;
+  q: string;
+  sort: SortKey;
+  dir: "asc" | "desc";
 };
+
+function stringArraySearch(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+function intSearch(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(1, Math.floor(parsed)) : fallback;
+}
 
 export const Route = createFileRoute("/pedidos-integrados")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
@@ -149,6 +168,18 @@ export const Route = createFileRoute("/pedidos-integrados")({
       : "last30",
     from: typeof s.from === "string" ? s.from : undefined,
     to: typeof s.to === "string" ? s.to : undefined,
+    page: intSearch(s.page ?? s.pagina, 1),
+    empresas: stringArraySearch(s.empresas),
+    canais: stringArraySearch(s.canais),
+    statuses: stringArraySearch(s.statuses).length ? stringArraySearch(s.statuses) : [...DEFAULT_STATUSES],
+    cobertura: ["todos", "completo", "incompletos"].includes(s.cobertura as string)
+      ? (s.cobertura as CoberturaFilter)
+      : "todos",
+    q: typeof s.q === "string" ? s.q : "",
+    sort: ["data_pedido", "venda", "custo_prod", "comissao_total", "imposto", "margem", "mc_pct"].includes(s.sort as string)
+      ? (s.sort as SortKey)
+      : "data_pedido",
+    dir: s.dir === "asc" ? "asc" : "desc",
   }),
   component: PedidosIntegradosPage,
 });
@@ -204,9 +235,6 @@ function colorForCanal(canal: string | null | undefined, mk?: string | null): st
   return m ? MARKETPLACE_COLORS[m] ?? null : null;
 }
 
-const LS_EMPRESAS = "pi.filtros.empresas";
-const LS_CANAIS = "pi.filtros.canais";
-
 type CoberturaFilter = "todos" | "completo" | "incompletos";
 type SortKey =
   | "data_pedido"
@@ -226,51 +254,40 @@ function PedidosIntegradosPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
 
+  const page = search.page;
+  const empresas = search.empresas;
+  const canais = search.canais;
+  const statuses = search.statuses;
+  const cobertura = search.cobertura;
+  const searchText = search.q;
+  const sortKey = search.sort;
+  const sortDir = search.dir;
+
   const range = useMemo<PeriodRange>(
     () => resolveRange(search.period, search.from, search.to),
     [search.period, search.from, search.to],
   );
 
-  const [empresas, setEmpresas] = useState<string[]>(() => {
-    try {
-      const s = localStorage.getItem(LS_EMPRESAS);
-      if (s) return JSON.parse(s) as string[];
-    } catch { /* noop */ }
-    return [];
-  });
-  const [canais, setCanais] = useState<string[]>(() => {
-    try {
-      const s = localStorage.getItem(LS_CANAIS);
-      if (s) return JSON.parse(s) as string[];
-    } catch { /* noop */ }
-    return [];
-  });
   const [canaisOptions, setCanaisOptions] = useState<string[]>([]);
   const [empresasOptions, setEmpresasOptions] = useState<string[]>(EMPRESAS_FALLBACK);
-  const [statuses, setStatuses] = useState<string[]>([...DEFAULT_STATUSES]);
-  const [cobertura, setCobertura] = useState<CoberturaFilter>("todos");
-  const [searchText, setSearchText] = useState("");
-  const [debounced, setDebounced] = useState("");
-
-  useEffect(() => {
-    try { localStorage.setItem(LS_EMPRESAS, JSON.stringify(empresas)); } catch { /* noop */ }
-  }, [empresas]);
-  useEffect(() => {
-    try { localStorage.setItem(LS_CANAIS, JSON.stringify(canais)); } catch { /* noop */ }
-  }, [canais]);
+  const [searchDraft, setSearchDraft] = useState(searchText);
 
   const queryClient = useQueryClient();
-
-  const [sortKey, setSortKey] = useState<SortKey>("data_pedido");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<PedidoIntegrado | null>(null);
 
-  // debounce search
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(searchText.trim().toLowerCase()), 250);
-    return () => clearTimeout(t);
+    setSearchDraft(searchText);
   }, [searchText]);
+
+  // debounce da busca antes de gravar na URL e disparar a query
+  useEffect(() => {
+    const next = searchDraft.trim().toLowerCase();
+    if (next === searchText) return;
+    const t = setTimeout(() => {
+      navigate({ search: (prev) => ({ ...prev, q: next, page: 1 }), replace: true });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [navigate, searchDraft, searchText]);
 
   // Datas ISO do período atual e do período anterior
   const { fromIso, toIso, prevFrom, prevTo } = useMemo(() => {
@@ -362,9 +379,8 @@ function PedidosIntegradosPage() {
       canaisKey,
       statusesKey,
       cobertura,
-      debounced,
+      searchText,
     ],
-    placeholderData: keepPreviousData,
     queryFn: async () => {
       const start = (page - 1) * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
@@ -380,8 +396,8 @@ function PedidosIntegradosPage() {
       }
       if (cobertura === "completo") q = q.eq("cobertura_cmv", "completo");
       else if (cobertura === "incompletos") q = q.neq("cobertura_cmv", "completo");
-      if (debounced) {
-        const esc = debounced.replace(/[,%()]/g, " ").trim();
+      if (searchText) {
+        const esc = searchText.replace(/[,%()]/g, " ").trim();
         if (esc) q = q.or(`order_sn.ilike.%${esc}%,primeiro_produto_nome.ilike.%${esc}%`);
       }
       q = q.order(sortKey, { ascending: sortDir === "asc" }).range(start, end);
@@ -414,10 +430,6 @@ function PedidosIntegradosPage() {
     [prevKpiQuery.data],
   );
 
-  useEffect(() => {
-    setPage(1);
-  }, [debounced, empresasKey, canaisKey, statusesKey, cobertura, range.from, range.to]);
-
   const paged = listQuery.data?.rows ?? [];
   const totalRows = listQuery.data?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
@@ -442,18 +454,34 @@ function PedidosIntegradosPage() {
 
   const updatePeriod = (next: PeriodRange) => {
     navigate({
-      search: { period: next.preset, from: next.from, to: next.to },
+      search: (prev) => ({ ...prev, period: next.preset, from: next.from, to: next.to, page: 1 }),
       replace: true,
     });
   };
 
+  const updateEmpresas = (next: string[]) => {
+    navigate({ search: (prev) => ({ ...prev, empresas: next, page: 1 }), replace: true });
+  };
+
+  const updateCanais = (next: string[]) => {
+    navigate({ search: (prev) => ({ ...prev, canais: next, page: 1 }), replace: true });
+  };
+
+  const updateStatuses = (next: string[]) => {
+    navigate({ search: (prev) => ({ ...prev, statuses: next, page: 1 }), replace: true });
+  };
+
+  const updateCobertura = (next: CoberturaFilter) => {
+    navigate({ search: (prev) => ({ ...prev, cobertura: next, page: 1 }), replace: true });
+  };
+
+  const goToPage = (next: number) => {
+    navigate({ search: (prev) => ({ ...prev, page: Math.max(1, Math.min(totalPages, next)) }), replace: true });
+  };
+
   const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("desc");
-    }
+    const nextDir = sortKey === key && sortDir === "desc" ? "asc" : "desc";
+    navigate({ search: (prev) => ({ ...prev, sort: key, dir: nextDir }), replace: true });
   };
 
   return (
@@ -474,26 +502,28 @@ function PedidosIntegradosPage() {
           <div className="flex flex-wrap items-center gap-2">
             <DashboardPeriodFilter value={range} onChange={updatePeriod} />
 
-            <EmpresaFilter value={empresas} options={empresasOptions} onChange={setEmpresas} />
-            <CanalFilter value={canais} options={canaisOptions} onChange={setCanais} />
-            <StatusFilter value={statuses} onChange={setStatuses} marketplaces={selectedMarketplaces} />
+            <EmpresaFilter value={empresas} options={empresasOptions} onChange={updateEmpresas} />
+            <CanalFilter value={canais} options={canaisOptions} onChange={updateCanais} />
+            <StatusFilter value={statuses} onChange={updateStatuses} marketplaces={selectedMarketplaces} />
             {(empresas.length > 0 || canais.length > 0) && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-9 px-2 text-xs text-muted-foreground"
-                onClick={() => { setEmpresas([]); setCanais([]); }}
+                onClick={() => {
+                  navigate({ search: (prev) => ({ ...prev, empresas: [], canais: [], page: 1 }), replace: true });
+                }}
               >
                 Limpar filtros
               </Button>
             )}
-            <CoberturaSegment value={cobertura} onChange={setCobertura} />
+            <CoberturaSegment value={cobertura} onChange={updateCobertura} />
 
             <div className="relative ml-auto w-full max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
                 placeholder="Buscar por pedido ou produto..."
                 className="pl-8 h-9 bg-card"
               />
@@ -511,7 +541,7 @@ function PedidosIntegradosPage() {
                   <span className="text-muted-foreground">Empresa:</span>
                   <span className="font-medium">{e}</span>
                   <button
-                    onClick={() => setEmpresas(empresas.filter((x) => x !== e))}
+                    onClick={() => updateEmpresas(empresas.filter((x) => x !== e))}
                     className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
                     aria-label={`Remover ${e}`}
                   >
@@ -524,7 +554,7 @@ function PedidosIntegradosPage() {
                   <MarketplaceDot canal={c} size={8} />
                   <span className="font-medium">{c}</span>
                   <button
-                    onClick={() => setCanais(canais.filter((x) => x !== c))}
+                    onClick={() => updateCanais(canais.filter((x) => x !== c))}
                     className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
                     aria-label={`Remover ${c}`}
                   >
@@ -750,7 +780,7 @@ function PedidosIntegradosPage() {
                   variant="outline"
                   size="sm"
                   disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => goToPage(page - 1)}
                 >
                   Anterior
                 </Button>
@@ -758,7 +788,7 @@ function PedidosIntegradosPage() {
                   variant="outline"
                   size="sm"
                   disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => goToPage(page + 1)}
                 >
                   Próxima
                 </Button>
