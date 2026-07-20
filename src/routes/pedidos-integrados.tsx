@@ -140,7 +140,7 @@ type SearchParams = {
   period: PeriodPreset;
   from?: string;
   to?: string;
-  page: number;
+  pagina: number;
   empresas: string[];
   canais: string[];
   statuses: string[];
@@ -168,7 +168,7 @@ export const Route = createFileRoute("/pedidos-integrados")({
       : "last30",
     from: typeof s.from === "string" ? s.from : undefined,
     to: typeof s.to === "string" ? s.to : undefined,
-    page: intSearch(s.page ?? s.pagina, 1),
+    pagina: intSearch(s.pagina ?? s.page, 1),
     empresas: stringArraySearch(s.empresas),
     canais: stringArraySearch(s.canais),
     statuses: stringArraySearch(s.statuses).length ? stringArraySearch(s.statuses) : [...DEFAULT_STATUSES],
@@ -254,7 +254,7 @@ function PedidosIntegradosPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
 
-  const page = search.page as number;
+  const page = search.pagina as number;
   const empresas = search.empresas as string[];
   const canais = search.canais as string[];
   const statuses = search.statuses as string[];
@@ -288,7 +288,7 @@ function PedidosIntegradosPage() {
     const next = searchDraft.trim().toLowerCase();
     if (next === searchText) return;
     const t = setTimeout(() => {
-      updateSearch({ q: next, page: 1 });
+      updateSearch({ q: next, pagina: 1 });
     }, 250);
     return () => clearTimeout(t);
   }, [searchDraft, searchText]);
@@ -457,27 +457,27 @@ function PedidosIntegradosPage() {
 
 
   const updatePeriod = (next: PeriodRange) => {
-    updateSearch({ period: next.preset, from: next.from, to: next.to, page: 1 });
+    updateSearch({ period: next.preset, from: next.from, to: next.to, pagina: 1 });
   };
 
   const updateEmpresas = (next: string[]) => {
-    updateSearch({ empresas: next, page: 1 });
+    updateSearch({ empresas: next, pagina: 1 });
   };
 
   const updateCanais = (next: string[]) => {
-    updateSearch({ canais: next, page: 1 });
+    updateSearch({ canais: next, pagina: 1 });
   };
 
   const updateStatuses = (next: string[]) => {
-    updateSearch({ statuses: next, page: 1 });
+    updateSearch({ statuses: next, pagina: 1 });
   };
 
   const updateCobertura = (next: CoberturaFilter) => {
-    updateSearch({ cobertura: next, page: 1 });
+    updateSearch({ cobertura: next, pagina: 1 });
   };
 
   const goToPage = (next: number) => {
-    updateSearch({ page: Math.max(1, Math.min(totalPages, next)) });
+    updateSearch({ pagina: Math.max(1, Math.min(totalPages, next)) });
   };
 
   const toggleSort = (key: SortKey) => {
@@ -512,7 +512,7 @@ function PedidosIntegradosPage() {
                 size="sm"
                 className="h-9 px-2 text-xs text-muted-foreground"
                 onClick={() => {
-                  updateSearch({ empresas: [], canais: [], page: 1 });
+                  updateSearch({ empresas: [], canais: [], pagina: 1 });
                 }}
               >
                 Limpar filtros
