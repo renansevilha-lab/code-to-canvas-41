@@ -1,6 +1,6 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+
 
 import { LogOut } from "lucide-react";
 import appCss from "../styles.css?url";
@@ -83,22 +83,21 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// QueryClient criado UMA vez no nível de módulo — nunca recriado em re-render.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
+      staleTime: 5 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
+      retry: 1,
+    },
+  },
+});
+
 function RootComponent() {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchOnWindowFocus: false,
-            refetchOnMount: false,
-            refetchOnReconnect: false,
-            staleTime: 5 * 60 * 1000,
-            gcTime: 30 * 60 * 1000,
-            retry: 1,
-          },
-        },
-      }),
-  );
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGate>
@@ -110,6 +109,7 @@ function RootComponent() {
     </QueryClientProvider>
   );
 }
+
 
 function AppShell() {
   const { user, signOut } = useAuth();
