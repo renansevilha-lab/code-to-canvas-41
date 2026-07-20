@@ -1,6 +1,7 @@
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -12,6 +13,7 @@ import {
   Search,
   Package as PackageIcon,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import {
   Bar,
@@ -64,6 +66,7 @@ import {
   type PeriodPreset,
   type PeriodRange,
 } from "@/lib/dashboard/period";
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
