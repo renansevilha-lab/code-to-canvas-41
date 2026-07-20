@@ -76,7 +76,7 @@ type Cobertura = "completo" | "parcial" | "sem_dado";
 interface PedidoIntegrado {
   order_sn: string;
   marketplace: string;
-  loja_nome: string | null;
+  
   shop_id: number | null;
   empresa: string | null;
   canal: string | null;
@@ -127,7 +127,7 @@ interface KpiDiaRow {
 
 // Colunas retornadas na listagem — apenas o que a tabela + drawer usam.
 const LIST_COLUMNS =
-  "order_sn,marketplace,loja_nome,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto";
+  "order_sn,marketplace,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto";
 
 
 
@@ -1110,7 +1110,7 @@ function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) 
       <td className="px-3 py-2 text-xs">
         <span className="inline-flex items-center gap-1.5">
           <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
-          <span>{p.canal ?? p.loja_nome ?? p.marketplace}</span>
+          <span>{p.canal ?? p.marketplace}</span>
         </span>
       </td>
       <td className="px-3 py-2 max-w-[260px]">
