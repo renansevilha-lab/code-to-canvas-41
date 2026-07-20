@@ -108,14 +108,27 @@ interface PedidoIntegrado {
   primeira_categoria: string | null;
 }
 
-interface KpiRpcRow {
+interface KpiDiaRow {
+  dia: string | null;
+  canal: string | null;
+  empresa: string | null;
+  marketplace: string | null;
   pedidos: number | null;
-  receita: number | null;
-  cmv: number | null;
+  venda: number | null;
+  comissao_total: number | null;
+  custo_prod: number | null;
   imposto: number | null;
+  custo_total: number | null;
+  recebido_estimado: number | null;
   margem: number | null;
-  mc_pct: number | null;
+  itens: number | null;
+  itens_sem_cmv: number | null;
 }
+
+// Colunas retornadas na listagem — apenas o que a tabela + drawer usam.
+const LIST_COLUMNS =
+  "order_sn,marketplace,loja_nome,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto";
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
