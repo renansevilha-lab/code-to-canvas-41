@@ -506,8 +506,47 @@ function tempoRelativo(iso: string | null): string {
   return `${d} dias`;
 }
 
+interface SyncTinyResponse {
+  total_na_fila?: number;
+  revertidas_para_fila?: number;
+  novos_detalhados?: number;
+  pendentes_detalhe?: number;
+}
+
 function SeparacaoTotaisCards() {
   const { data, isLoading, error } = useSeparacaoTotais();
+  const queryClient = useQueryClient();
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncTiny = async () => {
+    setSyncing(true);
+    try {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=sync&max=150`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+        },
+      );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const json = (await resp.json()) as SyncTinyResponse;
+      const total = json.total_na_fila ?? 0;
+      const rev = json.revertidas_para_fila ?? 0;
+      const novos = json.novos_detalhados ?? 0;
+      const pend = json.pendentes_detalhe ?? 0;
+      toast.success(
+        `Fila atualizada: ${formatNumber(total)} na fila, ${formatNumber(rev)} voltaram, ${formatNumber(novos)} novos`,
+        pend > 0
+          ? { description: `Ainda faltam ${formatNumber(pend)} — clique em Atualizar novamente.` }
+          : undefined,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["separacao"] });
+    } catch {
+      toast.error("Não foi possível sincronizar agora");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const cards = [
     {
@@ -582,9 +621,30 @@ function SeparacaoTotaisCards() {
           </Card>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Atualizado há {tempoRelativo(data?.atualizado_em ?? null)}
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          Atualizado há {tempoRelativo(data?.atualizado_em ?? null)}
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleSyncTiny}
+          disabled={syncing}
+          className="gap-2"
+        >
+          {syncing ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Sincronizando com o Tiny...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Atualizar do Tiny
+            </>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }
