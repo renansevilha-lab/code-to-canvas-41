@@ -487,7 +487,7 @@ function AdsShopeePage() {
   const chips: { label: string; onRemove: () => void }[] = [];
   if (sp.classif.length && sp.classif.length < CLASSIF_ALL.length) {
     chips.push({
-      label: `Classificação: ${sp.classif.map((c) => CLASSIF_META[c].label).join(", ")}`,
+      label: `Classificação: ${(sp.classif as Classificacao[]).map((c) => CLASSIF_META[c].label).join(", ")}`,
       onRemove: () => update({ classif: [] }),
     });
   }
