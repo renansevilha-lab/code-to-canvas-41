@@ -473,9 +473,9 @@ function AdsShopeePage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const toggleClassif = (c: Classificacao) => {
-    const set = new Set(sp.classif);
+    const set = new Set<Classificacao>(sp.classif);
     if (set.has(c)) set.delete(c); else set.add(c);
-    update({ classif: Array.from(set) });
+    update({ classif: Array.from(set) as Classificacao[] });
   };
 
   const onSort = (k: SortKey) => {
