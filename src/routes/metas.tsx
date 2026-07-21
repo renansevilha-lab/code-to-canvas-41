@@ -325,6 +325,142 @@ function MetasPage() {
           </Table>
         )}
       </Card>
+
+      <MetasAdsCard />
     </div>
   );
 }
+
+// ─── Metas de ADS (config_roas_faixas) ────────────────────────────────────
+
+function MetasAdsCard() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [excelente, setExcelente] = useState("");
+  const [bom, setBom] = useState("");
+  const [ok, setOk] = useState("");
+  const [acosAlvo, setAcosAlvo] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabaseExternal
+        .from("config_roas_faixas")
+        .select("roas_excelente,roas_bom,roas_ok,acos_alvo")
+        .eq("id", 1)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        setExcelente(String(data.roas_excelente));
+        setBom(String(data.roas_bom));
+        setOk(String(data.roas_ok));
+        setAcosAlvo(String(data.acos_alvo));
+      }
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const parse = (v: string) => {
+    const n = Number(v.replace(",", "."));
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const salvar = async () => {
+    const e = parse(excelente), b = parse(bom), o = parse(ok), a = parse(acosAlvo);
+    if ([e, b, o, a].some((n) => Number.isNaN(n) || n <= 0)) {
+      toast.error("Preencha todos os campos com valores maiores que zero.");
+      return;
+    }
+    if (!(e >= b && b >= o)) {
+      toast.error("As faixas precisam obedecer: excelente ≥ bom ≥ ok.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabaseExternal
+        .from("config_roas_faixas")
+        .upsert(
+          { id: 1, roas_excelente: e, roas_bom: b, roas_ok: o, acos_alvo: a },
+          { onConflict: "id" },
+        );
+      if (error) throw error;
+      toast.success("Metas de ADS salvas. Os selos serão atualizados automaticamente.");
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-6 space-y-6">
+      <div className="space-y-1">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Target className="h-4 w-4" /> Metas de ADS
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Faixas de ROAS usadas para classificar cada anúncio e teto de ACOS usado nos alertas.
+        </p>
+      </div>
+
+      {erro && <p className="text-sm text-destructive">{erro}</p>}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="space-y-1.5">
+          <Label>ROAS Excelente ≥</Label>
+          <div className="relative">
+            <Input type="number" step="0.1" value={excelente}
+              onChange={(e) => setExcelente(e.target.value)} disabled={loading} className="pr-8" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">x</span>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>ROAS Bom ≥</Label>
+          <div className="relative">
+            <Input type="number" step="0.1" value={bom}
+              onChange={(e) => setBom(e.target.value)} disabled={loading} className="pr-8" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">x</span>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>ROAS OK ≥</Label>
+          <div className="relative">
+            <Input type="number" step="0.1" value={ok}
+              onChange={(e) => setOk(e.target.value)} disabled={loading} className="pr-8" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">x</span>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Teto de ACOS</Label>
+          <div className="relative">
+            <Input type="number" step="0.1" value={acosAlvo}
+              onChange={(e) => setAcosAlvo(e.target.value)} disabled={loading} className="pr-8" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+        <Info className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+        <span>
+          Regra: <strong>excelente ≥ bom ≥ ok</strong>. Abaixo de "ok" → ruim.
+          Anúncios com gasto e sem venda ficam como "sem dado".
+        </span>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={salvar} disabled={saving || loading}>
+          {saving ? "Salvando…" : "Salvar faixas"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
