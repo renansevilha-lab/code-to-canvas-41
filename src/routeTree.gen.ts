@@ -17,6 +17,7 @@ import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrad
 import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
+import { Route as FulfillmentRouteImport } from './routes/fulfillment'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as DreRouteImport } from './routes/dre'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
@@ -66,6 +67,11 @@ const MetasRoute = MetasRouteImport.update({
 const MapeamentoSkusRoute = MapeamentoSkusRouteImport.update({
   id: '/mapeamento-skus',
   path: '/mapeamento-skus',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FulfillmentRoute = FulfillmentRouteImport.update({
+  id: '/fulfillment',
+  path: '/fulfillment',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
@@ -129,6 +135,7 @@ export interface FileRoutesByFullPath {
   '/contas-pagar': typeof ContasPagarRoute
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/pedidos': typeof PedidosRoute
@@ -149,6 +156,7 @@ export interface FileRoutesByTo {
   '/contas-pagar': typeof ContasPagarRoute
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/pedidos': typeof PedidosRoute
@@ -170,6 +178,7 @@ export interface FileRoutesById {
   '/contas-pagar': typeof ContasPagarRoute
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
+  '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/pedidos': typeof PedidosRoute
@@ -192,6 +201,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/dre'
     | '/fluxo-caixa'
+    | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
     | '/pedidos'
@@ -212,6 +222,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/dre'
     | '/fluxo-caixa'
+    | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
     | '/pedidos'
@@ -232,6 +243,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/dre'
     | '/fluxo-caixa'
+    | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
     | '/pedidos'
@@ -253,6 +265,7 @@ export interface RootRouteChildren {
   ContasPagarRoute: typeof ContasPagarRoute
   DreRoute: typeof DreRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
+  FulfillmentRoute: typeof FulfillmentRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
   MetasRoute: typeof MetasRoute
   PedidosRoute: typeof PedidosRoute
@@ -320,6 +333,13 @@ declare module '@tanstack/react-router' {
       path: '/mapeamento-skus'
       fullPath: '/mapeamento-skus'
       preLoaderRoute: typeof MapeamentoSkusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fulfillment': {
+      id: '/fulfillment'
+      path: '/fulfillment'
+      fullPath: '/fulfillment'
+      preLoaderRoute: typeof FulfillmentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fluxo-caixa': {
@@ -405,6 +425,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContasPagarRoute: ContasPagarRoute,
   DreRoute: DreRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
+  FulfillmentRoute: FulfillmentRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,
   MetasRoute: MetasRoute,
   PedidosRoute: PedidosRoute,
@@ -418,3 +439,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

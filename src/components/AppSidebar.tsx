@@ -16,6 +16,7 @@ import {
   ShoppingBag,
   AlertTriangle,
   FileBarChart,
+  Warehouse,
 } from "lucide-react";
 
 import {
@@ -48,6 +49,7 @@ const principal: NavItem[] = [
   { title: "Pedidos", url: "/pedidos", icon: ClipboardList, modulo: "separacao" },
   { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, modulo: "separacao" },
   { title: "Separação", url: "/separacao", icon: PackageCheck, modulo: "separacao" },
+  { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "separacao" },
   { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
   { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
   { title: "Catálogo", url: "/produtos", icon: Package, modulo: "produtos" },
