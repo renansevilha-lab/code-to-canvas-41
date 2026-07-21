@@ -78,17 +78,6 @@ type KpiCanal = {
   cobertura_pct: number | null;
 };
 
-type ReceitaDiaCanal = {
-  canal: string;
-  marketplace: string;
-  shop_id: string | null;
-  data: string;
-  pedidos: number;
-  receita: number;
-  margem: number;
-  ticket_medio: number;
-};
-
 type MetaRealizado = {
   competencia: string;
   marketplace: string;
@@ -208,7 +197,6 @@ function Dashboard() {
 
   const [canaisFiltro, setCanaisFiltro] = useState<string[] | null>(null); // null = todos
   const [kpisCanal, setKpisCanal] = useState<KpiCanal[]>([]);
-  const [diario, setDiario] = useState<ReceitaDiaCanal[]>([]);
   const [metas, setMetas] = useState<MetaRealizado[]>([]);
   const [topProdutos, setTopProdutos] = useState<ProdutoRow[]>([]);
   const [alertaAcos, setAlertaAcos] = useState(0);
@@ -243,23 +231,13 @@ function Dashboard() {
           .from("view_canais_diario")
           .select("canal,marketplace,shop_id,data,pedidos,receita,receita_com_custo,cmv,margem,ads")
           .gte("data", range.from)
-          .lte("data", range.to)
-          .limit(20000);
+          .lte("data", range.to);
 
         const canaisPrevQ = supabaseExternal
           .from("view_canais_diario")
-          .select("canal,shop_id,pedidos,receita,margem,ads")
+          .select("canal,shop_id,pedidos,receita,margem")
           .gte("data", prevFrom)
-          .lte("data", prevTo)
-          .limit(20000);
-
-        const diaQ = supabaseExternal
-          .from("view_receita_diaria_canal")
-          .select("canal,marketplace,shop_id,data,pedidos,receita,margem,ticket_medio")
-          .gte("data", range.from)
-          .lte("data", range.to)
-          .order("data", { ascending: true })
-          .limit(20000);
+          .lte("data", prevTo);
 
         const metasQ = supabaseExternal
           .from("view_metas_realizado")
@@ -271,15 +249,13 @@ function Dashboard() {
           .select("marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel")
           .limit(2000);
 
-        const _today = spToday();
-        const de7 = spKey(subDays(_today, 6));
-        const ate7 = spKey(_today);
+        // Alerta ACOS: view_ads_resumo já classifica cada anúncio por ROAS
+        // (agregado no servidor). Contamos os anúncios classificados como "ruim"
+        // em vez de somar milhares de linhas de view_shopee_ads_anuncios.
         const acosQ = supabaseExternal
-          .from("view_shopee_ads_anuncios")
-          .select("campaign_id,investimento,vendas_direto")
-          .gte("data", de7)
-          .lte("data", ate7)
-          .limit(20000);
+          .from("view_ads_resumo")
+          .select("classificacao_roas,anuncios")
+          .eq("classificacao_roas", "ruim");
 
         const amazonQ = supabaseExternal
           .from("view_amazon_skus_mapear")
@@ -297,8 +273,8 @@ function Dashboard() {
           data_final: range.to,
         });
 
-        const [canaisR, canaisPrevR, dia, met, prod, acos, am, anoms, visao] = await Promise.all([
-          canaisQ, canaisPrevQ, diaQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ,
+        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao] = await Promise.all([
+          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ,
         ]);
         if (cancel) return;
 
@@ -324,7 +300,7 @@ function Dashboard() {
         };
         type CanalPrevRow = {
           canal: string; shop_id: string | null;
-          pedidos: number | null; receita: number | null; margem: number | null; ads: number | null;
+          pedidos: number | null; receita: number | null; margem: number | null;
         };
 
         const rows = (canaisR.data ?? []) as CanalRow[];
@@ -356,14 +332,13 @@ function Dashboard() {
         }
 
         // Agrega período anterior por canal
-        const aggPrev = new Map<string, { pedidos: number; receita: number; margem: number; ads: number }>();
+        const aggPrev = new Map<string, { pedidos: number; receita: number; margem: number }>();
         for (const r of rowsPrev) {
           const key = `${r.canal}|${r.shop_id ?? ""}`;
-          const cur = aggPrev.get(key) ?? { pedidos: 0, receita: 0, margem: 0, ads: 0 };
+          const cur = aggPrev.get(key) ?? { pedidos: 0, receita: 0, margem: 0 };
           cur.pedidos += Number(r.pedidos ?? 0);
           cur.receita += Number(r.receita ?? 0);
           cur.margem += Number(r.margem ?? 0);
-          cur.ads += Number(r.ads ?? 0);
           aggPrev.set(key, cur);
         }
 
@@ -392,8 +367,6 @@ function Dashboard() {
           kpiRows.push(v);
         }
 
-        const diaRows = !dia.error ? ((dia.data ?? []) as ReceitaDiaCanal[]) : [];
-        setDiario(diaRows);
         setKpisCanal(kpiRows);
         if (!met.error) setMetas((met.data ?? []) as MetaRealizado[]);
 
@@ -409,17 +382,8 @@ function Dashboard() {
         }
 
         if (!acos.error) {
-          const map = new Map<string, { inv: number; vendas: number }>();
-          for (const r of (acos.data ?? []) as { campaign_id: string; investimento: number; vendas_direto: number }[]) {
-            const cur = map.get(r.campaign_id) ?? { inv: 0, vendas: 0 };
-            cur.inv += Number(r.investimento ?? 0);
-            cur.vendas += Number(r.vendas_direto ?? 0);
-            map.set(r.campaign_id, cur);
-          }
-          let n = 0;
-          for (const v of map.values()) {
-            if (v.inv > 0 && v.vendas > 0 && (v.inv / v.vendas) * 100 > 20) n++;
-          }
+          const rows = (acos.data ?? []) as { classificacao_roas: string; anuncios: number | null }[];
+          const n = rows.reduce((s, r) => s + Number(r.anuncios ?? 0), 0);
           setAlertaAcos(n);
         }
 
@@ -468,41 +432,6 @@ function Dashboard() {
     const s = new Set(canaisFiltro);
     return kpisCanal.filter((r) => s.has(r.canal));
   }, [kpisCanal, canaisFiltro]);
-
-  const diarioVisivel = useMemo(() => {
-    if (!canaisFiltro) return diario;
-    const s = new Set(canaisFiltro);
-    return diario.filter((r) => s.has(r.canal));
-  }, [diario, canaisFiltro]);
-
-  // Totais consolidados
-  const totais = useMemo(() => {
-    const t = {
-      pedidos: 0, receita: 0, receita_com_custo: 0, margem: 0, ads: 0, cmv: 0, imposto: 0,
-      pedidos_ant: 0, receita_ant: 0, margem_ant: 0,
-      ticket_medio: 0, acos: 0, mc_pct: 0,
-    };
-    for (const r of kpisVisiveis) {
-      t.pedidos += Number(r.pedidos ?? 0);
-      t.receita += Number(r.receita ?? 0);
-      t.receita_com_custo += Number(r.receita_com_custo ?? 0);
-      t.margem += Number(r.margem ?? 0);
-      t.ads += Number(r.ads ?? 0);
-      t.cmv += Number(r.cmv ?? 0);
-      t.imposto += Number(r.imposto ?? 0);
-      t.pedidos_ant += Number(r.pedidos_ant ?? 0);
-      t.receita_ant += Number(r.receita_ant ?? 0);
-      t.margem_ant += Number(r.margem_ant ?? 0);
-    }
-    t.ticket_medio = t.pedidos > 0 ? t.receita / t.pedidos : 0;
-    t.acos = t.receita > 0 ? (t.ads / t.receita) * 100 : 0;
-    // Margem contrib % sobre base coberta (receita_com_custo)
-    t.mc_pct = t.receita_com_custo > 0 ? (t.margem / t.receita_com_custo) * 100 : 0;
-    return t;
-  }, [kpisVisiveis]);
-
-  const ticketMedioAnt = totais.pedidos_ant > 0 ? totais.receita_ant / totais.pedidos_ant : 0;
-
 
   const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
 
