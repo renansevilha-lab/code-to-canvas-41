@@ -7,6 +7,7 @@ import {
   Search,
   AlertTriangle,
   RefreshCw,
+  Package as PackageIcon,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -92,6 +93,57 @@ const num = (v: unknown): number => {
 };
 
 const rowKey = (r: { marketplace: string; sku: string }) => `${r.marketplace}|${r.sku}`;
+
+// Busca fotos (produtos.foto_capa) apenas dos SKUs visíveis, em lotes ≤300 para
+// nunca esbarrar no corte de 1.000 linhas do PostgREST. É lookup de imagem por
+// SKU interno, não agregação — join no cliente é adequado aqui.
+function useFotos(skus: (string | null | undefined)[]) {
+  const chave = useMemo(
+    () => Array.from(new Set(skus.filter((s): s is string => !!s))).sort(),
+    [skus],
+  );
+  return useQuery({
+    queryKey: ["fulfillment", "fotos", chave],
+    enabled: chave.length > 0,
+    staleTime: 30 * 60 * 1000,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const map: Record<string, string> = {};
+      for (let i = 0; i < chave.length; i += 300) {
+        const lote = chave.slice(i, i + 300);
+        const { data, error } = await supabaseExternal
+          .from("produtos")
+          .select("sku,foto_capa")
+          .in("sku", lote);
+        if (error) throw error;
+        for (const r of (data ?? []) as { sku: string; foto_capa: string | null }[]) {
+          if (r.foto_capa) map[r.sku] = r.foto_capa;
+        }
+      }
+      return map;
+    },
+  });
+}
+
+function Thumb({ url, alt }: { url?: string | null; alt?: string }) {
+  if (!url) {
+    return (
+      <div className="h-9 w-9 rounded bg-muted flex items-center justify-center shrink-0">
+        <PackageIcon className="h-4 w-4 text-muted-foreground" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={alt ?? ""}
+      loading="lazy"
+      className="h-9 w-9 rounded object-cover bg-muted shrink-0"
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
@@ -263,6 +315,7 @@ function ReposicaoTab({
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [qtd, setQtd] = useState<Record<string, number>>({});
   const [envioAberto, setEnvioAberto] = useState(false);
+  const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -369,16 +422,21 @@ function ReposicaoTab({
                           onCheckedChange={(c) => setSel((s) => ({ ...s, [k]: c === true }))}
                         />
                       </td>
-                      <td className="px-3 py-2 max-w-[320px]">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate">{r.produto ?? "—"}</span>
-                          {r.eh_kit && (
-                            <Badge variant="secondary" className="h-4 px-1 text-[10px] shrink-0">
-                              kit
-                            </Badge>
-                          )}
+                      <td className="px-3 py-2 max-w-[340px]">
+                        <div className="flex items-center gap-2.5">
+                          <Thumb url={fotos[r.sku]} alt={r.produto ?? ""} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate">{r.produto ?? "—"}</span>
+                              {r.eh_kit && (
+                                <Badge variant="secondary" className="h-4 px-1 text-[10px] shrink-0">
+                                  kit
+                                </Badge>
+                              )}
+                            </div>
+                            <span className="font-mono text-[11px] text-muted-foreground">{r.sku}</span>
+                          </div>
                         </div>
-                        <span className="font-mono text-[11px] text-muted-foreground">{r.sku}</span>
                       </td>
                       <td className="px-3 py-2">
                         <MktDot marketplace={r.marketplace} />
@@ -450,6 +508,7 @@ function ReposicaoTab({
           marketplace: r.marketplace,
           sku: r.sku,
           produto: r.produto,
+          foto: fotos[r.sku] ?? null,
           quantidade: valorAEnviar(r),
         }))}
       />
@@ -464,7 +523,7 @@ function EnvioSheet({
 }: {
   aberto: boolean;
   onFechar: () => void;
-  itens: { marketplace: string; sku: string; produto: string | null; quantidade: number }[];
+  itens: { marketplace: string; sku: string; produto: string | null; foto: string | null; quantidade: number }[];
 }) {
   const porCanal = useMemo(() => {
     const map = new Map<string, typeof itens>();
@@ -506,9 +565,12 @@ function EnvioSheet({
                 <div className="space-y-1">
                   {itens.map((i) => (
                     <div key={`${marketplace}|${i.sku}`} className="flex items-center justify-between gap-2 text-sm py-0.5">
-                      <div className="min-w-0">
-                        <div className="truncate">{i.produto ?? "—"}</div>
-                        <span className="font-mono text-[11px] text-muted-foreground">{i.sku}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Thumb url={i.foto} alt={i.produto ?? ""} />
+                        <div className="min-w-0">
+                          <div className="truncate">{i.produto ?? "—"}</div>
+                          <span className="font-mono text-[11px] text-muted-foreground">{i.sku}</span>
+                        </div>
                       </div>
                       <span className="tabular-nums font-medium shrink-0">{formatNumber(i.quantidade)}</span>
                     </div>
@@ -548,6 +610,7 @@ function InventarioTab({
   error: string | null;
   busca: string;
 }) {
+  const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     if (!termo) return rows;
@@ -631,27 +694,32 @@ function InventarioTab({
                       key={`${r.marketplace}|${r.shop_id}|${r.sku_marketplace}|${r.warehouse}`}
                       className={cn("border-t hover:bg-accent/40 transition", semSku && "opacity-70")}
                     >
-                      <td className="px-3 py-2 max-w-[340px]">
-                        <div className="truncate">{r.titulo ?? "—"}</div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-[11px] text-muted-foreground">
-                            {r.sku ?? r.sku_marketplace}
-                          </span>
-                          {semSku && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge
-                                  variant="outline"
-                                  className="h-4 px-1 text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-300"
-                                >
-                                  sem SKU
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                Item do CD sem SKU interno mapeado — não entra na reposição
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
+                      <td className="px-3 py-2 max-w-[360px]">
+                        <div className="flex items-center gap-2.5">
+                          <Thumb url={r.sku ? fotos[r.sku] : null} alt={r.titulo ?? ""} />
+                          <div className="min-w-0">
+                            <div className="truncate">{r.titulo ?? "—"}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[11px] text-muted-foreground">
+                                {r.sku ?? r.sku_marketplace}
+                              </span>
+                              {semSku && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="outline"
+                                      className="h-4 px-1 text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-300"
+                                    >
+                                      sem SKU
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    Item do CD sem SKU interno mapeado — não entra na reposição
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td className="px-3 py-2">
