@@ -242,12 +242,21 @@ página da tabela, filtros e rolagem).
    linhas). O `count`/soma por tipo poderia ir para o servidor — opcional.
 5. `separacao.tsx` e `mapeamento-skus.tsx` usam `limit(5000)` como teto de fila
    operacional — **não são agregação, deixe como estão**.
-6. **"Puxar custo manual" em Pedidos Integrados (a fazer):** pedidos sem CMV
-   (badge "sem custo") em que o custo já existe no Tiny/`produtos` mas não está
-   sendo resolvido. Ação pretendida: botão por pedido/SKU que re-resolve o custo.
-   Diagnosticar a causa por SKU antes (kit sem componentes, SKU sem mapeamento,
-   produto sem `custo` no Tiny) — a solução muda conforme o caso. Regra de custo
-   mora no banco (ver seção 4: custo de kit, SKU pai vs filho).
+6. **"Puxar custo do Tiny" em Pedidos Integrados (FEITO em 21/jul/2026):**
+   botão no drawer de detalhe (quando `cobertura_cmv != completo`) que chama
+   `tiny-sync-produtos` (`modulo=detalhar`, `sku`) para re-detalhar cada SKU do
+   pedido e repopular `produtos`/`produto_kits`; depois invalida as queries de
+   margem. **Edge function `tiny-sync-produtos` foi para v12:** lê params por
+   query OU body JSON, e `detalhar?sku=X` re-detalha um SKU ignorando o filtro
+   `detalhe_atualizado_em IS NULL`.
+   - **Causa raiz que motivou:** kits cuja composição foi cadastrada/alterada no
+     Tiny DEPOIS do primeiro `detalhar` nunca eram revisitados (o cron só pega
+     `detalhe_atualizado_em IS NULL`). Ex.: kit 14808 destravou **1.631 pedidos**.
+   - **Limite:** se o Tiny **não tem** a composição do kit (array `kit` vazio),
+     re-detalhar não resolve — tem que cadastrar a composição no Tiny. Havia 15
+     kits sem composição; 4 resolvidos pelo re-detalhe, **11 seguem sem composição
+     no próprio Tiny** (14077 14078 14081 14082 14083 14085 14088 14612 14613
+     14614 14615) — correção é na origem (Tiny), não no app.
 
 **Padrões a manter:**
 - `QueryClient` no nível de módulo, com `refetchOnWindowFocus: false`,
