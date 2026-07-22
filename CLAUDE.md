@@ -132,14 +132,66 @@ Dois comportamentos que já geraram bug:
 
 ---
 
+## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
+
+**Semântica dos status Shopee (validada com dados 22/jul/2026 — é o INVERSO do
+que parece):**
+- **READY_TO_SHIP** = pago, **aguardando o vendedor confirmar o envio**. Não tem
+  rastreio nem etiqueta ainda. (Medido: 17 pedidos nesse status, 0 com rastreio,
+  0 com etiqueta.)
+- **`ship_order`** (confirmar envio) → Shopee atribui o **rastreio** → pedido vai
+  para **PROCESSED** → a **etiqueta fica imprimível**.
+- Ou seja: o gatilho real de "dá pra imprimir etiqueta" **não é o status** no
+  nosso espelho (`pedidos.status_pedido`, que atrasa e engana), é ter **rastreio
+  válido**. O sinal confiável no banco é `pedidos_tiny.codigo_rastreamento`
+  preenchido (o Tiny recebe o rastreio quando o envio é confirmado).
+
+**Quem confirma hoje:** o **Tiny** confirma o envio quando você **fatura a NF**
+(situação vira `pronto_envio` e surge o rastreio). Há um lag (~1h no teste).
+
+**Fluxo:** Tiny fatura NF → Shopee READY_TO_SHIP → (Tiny confirma envio) →
+PROCESSED + rastreio → `pregerar` salva a etiqueta.
+
+**Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
+- Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
+  loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
+  pelo `imprimir` (que gera na hora se não achar no cache — lento).
+- **Fix v41 (22/jul/2026):** o `pregerar` só grava depois que a Shopee cria +
+  libera o documento (READY) e o download do ZPL dá certo — o que **exige envio
+  confirmado (rastreio válido)**. Antes ele pegava os **40 pedidos mais recentes
+  sem cache**, quase todos **não confirmados** → falhavam com
+  `tracking_number_invalid` e cacheava **zero**; os que já dava pra imprimir
+  (mais antigos, com rastreio) nunca entravam na janela → cache vivia vazio e a
+  impressão baixava tudo na hora. Agora o `pregerar` **filtra por
+  `pedidos_tiny.codigo_rastreamento IS NOT NULL`** (só tenta os que a Shopee
+  consegue gerar). Pool de candidatos 200 → 500.
+- Depurar por SKU/loja: `imprimir?loja=svl&order_sn=X&dry=1` gera 1 pedido, salva
+  no cache e **não imprime** (o `dry` só pula o PrintNode; o save é antes).
+
+**`shopee-ship` (app confirma o envio — COEXISTE com o Tiny):**
+- `?modulo=ship-param&loja=X&order_sn=Y` — leitura pura (`get_shipping_parameter`).
+- `?modulo=confirmar&loja=X&order_sn=Y[&dry=1]` — `ship_order` (mutação). Lê os
+  params primeiro; se a Shopee disser "não elegível / já tem pacote" (Tiny já
+  arranjou), **pula** (sem corrida). Auto-seleciona endereço `default_address` +
+  slot `recommended`. As duas lojas usam canal **pickup** (precisa `address_id` +
+  `pickup_time_id`). `dry=1` mostra o payload sem confirmar.
+- **Está deployada mas fora do fluxo automático** — o Tiny dá conta hoje. Usar só
+  se decidir que o app assume a confirmação (para os que o Tiny ainda não pegou).
+- `ship_order` é **ação irreversível** (agenda coleta) — nunca disparar sem
+  confirmação explícita, por pedido.
+
+---
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v40 | Etiquetas (pregerar/imprimir), catálogo, ADS |
+| `shopee-sync-ads` | v41 | Etiquetas (pregerar/imprimir), catálogo, ADS |
+| `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
+| `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
 | `amazon-sync-pedidos` | v8 | Pedidos Amazon |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 
