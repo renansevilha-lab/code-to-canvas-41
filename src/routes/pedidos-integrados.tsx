@@ -14,7 +14,9 @@ import {
   Package as PackageIcon,
   ChevronDown,
   RefreshCw,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Bar,
   BarChart,
@@ -1261,6 +1263,63 @@ function EmptyChart() {
   );
 }
 
+function PuxarCustoTiny({ pedido }: { pedido: PedidoIntegrado }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+
+  const skus = (pedido.skus ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const puxar = async () => {
+    if (skus.length === 0) return;
+    setBusy(true);
+    try {
+      // Re-detalha cada SKU no Tiny (repopula produtos/produto_kits). A view de
+      // margem recalcula o custo sozinha na próxima leitura.
+      const resultados = await Promise.all(
+        skus.map((sku) =>
+          supabaseExternal.functions.invoke("tiny-sync-produtos", {
+            body: { modulo: "detalhar", sku },
+          }),
+        ),
+      );
+      const erro = resultados.find((r) => r.error)?.error;
+      if (erro) {
+        toast.error("Falha ao puxar custo", { description: erro.message });
+        return;
+      }
+      toast.success("Custo puxado do Tiny", { description: "Recalculando margem…" });
+      await queryClient.invalidateQueries({ queryKey: ["pi-list"] });
+      await queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia"] });
+    } catch (e) {
+      toast.error("Erro ao puxar custo", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-md border border-border p-3">
+      <p className="text-xs text-muted-foreground mb-2">
+        Pedido sem custo (CMV). Se o produto já tem custo cadastrado no Tiny, puxe agora para
+        recalcular a margem.
+      </p>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full gap-2"
+        onClick={puxar}
+        disabled={busy || skus.length === 0}
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        Puxar custo do Tiny
+      </Button>
+    </div>
+  );
+}
+
 function PedidoDetailSheet({
   pedido,
   onClose,
@@ -1326,6 +1385,8 @@ function PedidoDetailSheet({
                 </div>
               )}
             </div>
+
+            {pedido.cobertura_cmv !== "completo" && <PuxarCustoTiny pedido={pedido} />}
 
             <Button asChild variant="outline" className="w-full mt-6 gap-2">
               <a
