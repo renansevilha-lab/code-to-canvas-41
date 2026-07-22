@@ -57,6 +57,10 @@ agendamentos via `pg_cron`.
 | `view_separacao_pedidos` | Fila de separação — **só situação 1** (ver armadilha na seção 5) |
 | `view_tendencia_categoria / marca / produto` | Atual vs anterior por chave, com coluna `empresa` |
 | `view_amazon_dashboard` | Linha a linha de pedido Amazon (sem agregado pronto) |
+| `estoque_fulfillment` | Estoque nos CDs (Amazon FBA, ML Full, Shopee SBS) por marketplace/CD/sku_marketplace: sellable, reserved, in_transit, unsellable. Populada por `fulfillment-sync` (cron). Base do motor de reposição. Fonte da aba **Fulfillment › Inventário** |
+| `view_reposicao_full` | Motor de reposição por SKU interno: estoque_full, em_transito, cobertura_atual_dias, cobertura_alvo_dias, necessidade, **sugestao_envio**, estoque_empresa. Fonte da aba **Fulfillment › Reposição** |
+| `view_reposicao_skus_alvo` | Lista de SKUs-alvo da reposição |
+| `produtos.foto_capa` | Imagem do produto por **SKU interno**. Usada p/ miniaturas (Fulfillment, etc.). Atenção: 1.668 linhas — nunca puxar tudo (corte de 1.000 do PostgREST); buscar só os SKUs visíveis com `.in()` |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
 | `classificar_roas(numeric)` | excelente / bom / ok / ruim / sem_dado. **Fonte única da regra** |
 | `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, acos_alvo 20 |
@@ -206,6 +210,19 @@ página da tabela, filtros e rolagem).
 - Removido `limit(20000)` das duas queries de `view_canais_diario` (medido: 101
   linhas/30d, 204/90d — já agregada no servidor).
 
+**Feito em 21/jul/2026 — aba Fulfillment nova (`/fulfillment`):**
+- Duas sub-abas: **Inventário** (`estoque_fulfillment` por marketplace/CD) e
+  **Reposição** (`view_reposicao_full` — estoque no CD, cobertura em dias,
+  em trânsito, sugestão de envio, com qtd editável e montagem de envio).
+- Miniaturas de produto via `produtos.foto_capa`, buscando só os SKUs visíveis
+  (`.in()` em lotes ≤300, cache 30 min) — cobertura ~64%, fallback p/ ícone.
+- Item no menu (grupo Principal, módulo `separacao`) + `ROTA_MODULO` em
+  `usePerfil`. Estado (sub-aba/filtros) na URL.
+- **Follow-up:** o botão "Montar envio" **NÃO persiste** — falta uma tabela de
+  envios no banco (e, idealmente, inbound API de cada marketplace). Hoje só monta
+  rascunho + copia TSV. Pipeline de backend já está pronto e agendado
+  (`fulfillment-sync` cron: Amazon 2h, Shopee 2h, ML 30min).
+
 **Pendências conhecidas:**
 
 1. `useAuth` é hook com estado local chamado em 4 lugares (`usePerfil`,
@@ -225,6 +242,12 @@ página da tabela, filtros e rolagem).
    linhas). O `count`/soma por tipo poderia ir para o servidor — opcional.
 5. `separacao.tsx` e `mapeamento-skus.tsx` usam `limit(5000)` como teto de fila
    operacional — **não são agregação, deixe como estão**.
+6. **"Puxar custo manual" em Pedidos Integrados (a fazer):** pedidos sem CMV
+   (badge "sem custo") em que o custo já existe no Tiny/`produtos` mas não está
+   sendo resolvido. Ação pretendida: botão por pedido/SKU que re-resolve o custo.
+   Diagnosticar a causa por SKU antes (kit sem componentes, SKU sem mapeamento,
+   produto sem `custo` no Tiny) — a solução muda conforme o caso. Regra de custo
+   mora no banco (ver seção 4: custo de kit, SKU pai vs filho).
 
 **Padrões a manter:**
 - `QueryClient` no nível de módulo, com `refetchOnWindowFocus: false`,
