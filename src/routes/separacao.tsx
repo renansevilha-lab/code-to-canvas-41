@@ -1083,7 +1083,10 @@ function LotesDoDia({
           { description: `Lote ${data.tag}` },
         );
       }
-      await qc.invalidateQueries({ queryKey: ["separacao"] });
+      // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
+      // o estado "embalando" (que desabilita os botões) por vários segundos
+      // enquanto a lista de 5000 linhas recarregava.
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       const err = e as Error;
       toast.error("Erro ao marcar embalado", { description: err.message });
@@ -1403,7 +1406,10 @@ function FilaPriorizada() {
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
       if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
-      await qc.invalidateQueries({ queryKey: ["separacao"] });
+      // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
+      // o estado "embalando" (que desabilita os botões) por vários segundos
+      // enquanto a lista de 5000 linhas recarregava.
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao imprimir", { description: (e as Error).message });
     } finally {
@@ -1458,7 +1464,10 @@ function FilaPriorizada() {
       } else {
         toast.success(`${ok} pedido(s) marcados como embalados`);
       }
-      await qc.invalidateQueries({ queryKey: ["separacao"] });
+      // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
+      // o estado "embalando" (que desabilita os botões) por vários segundos
+      // enquanto a lista de 5000 linhas recarregava.
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao marcar embalado", { description: (e as Error).message });
     } finally {
@@ -1478,7 +1487,10 @@ function FilaPriorizada() {
     setImprimindoKey(key);
     try {
       await imprimirPedidoApi(loja, p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
-      await qc.invalidateQueries({ queryKey: ["separacao"] });
+      // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
+      // o estado "embalando" (que desabilita os botões) por vários segundos
+      // enquanto a lista de 5000 linhas recarregava.
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao imprimir", { description: (e as Error).message });
     } finally {
@@ -1508,7 +1520,10 @@ function FilaPriorizada() {
           ? `Pedido ${p.numero_ecommerce} embalado (forçado)`
           : `Pedido ${p.numero_ecommerce} marcado como embalado`,
       );
-      await qc.invalidateQueries({ queryKey: ["separacao"] });
+      // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
+      // o estado "embalando" (que desabilita os botões) por vários segundos
+      // enquanto a lista de 5000 linhas recarregava.
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       const err = e as Error & { status?: number; body?: unknown };
       if (err.status === 409) {
