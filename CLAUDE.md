@@ -156,17 +156,32 @@ PROCESSED + rastreio → `pregerar` salva a etiqueta.
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
   pelo `imprimir` (que gera na hora se não achar no cache — lento).
-- **Fix v41 (22/jul/2026):** o `pregerar` só grava depois que a Shopee cria +
-  libera o documento (READY) e o download do ZPL dá certo — o que **exige envio
-  confirmado (rastreio válido)**. Antes ele pegava os **40 pedidos mais recentes
-  sem cache**, quase todos **não confirmados** → falhavam com
-  `tracking_number_invalid` e cacheava **zero**; os que já dava pra imprimir
-  (mais antigos, com rastreio) nunca entravam na janela → cache vivia vazio e a
-  impressão baixava tudo na hora. Agora o `pregerar` **filtra por
-  `pedidos_tiny.codigo_rastreamento IS NOT NULL`** (só tenta os que a Shopee
-  consegue gerar). Pool de candidatos 200 → 500.
+- O `pregerar` só grava depois que a Shopee cria + libera o documento (READY) e o
+  download do ZPL dá certo. Isso **não é previsível pelo status nem pelo
+  rastreio**: mesmo pedido arranjado (PROCESSED, com pacote) volta
+  `tracking_number_invalid`/`package_can_not_print` até a transportadora validar.
+  A única verdade é tentar o `create_shipping_document`.
+- **Evolução v41→v42 (jul/2026):** a v41 filtrou por
+  `pedidos_tiny.codigo_rastreamento IS NOT NULL` e **superfiltrou** — pedidos
+  arranjados cujo rastreio não chegou no nosso mirror (ex.: quando a situação no
+  Tiny **regride** Faturado→Aprovado e o rastreio se perde) eram excluídos para
+  sempre e nunca cacheavam. **v42 (24/jul):** candidatos = **PROCESSED** +
+  READY_TO_SHIP (sem exigir rastreio), prioriza PROCESSED, e usa **backoff** via
+  tabela `etiqueta_pregerar_estado` (tenta cada pedido no máx. 1×/20 min; apaga o
+  registro ao cachear). Assim continua tentando os arranjados até a etiqueta
+  ficar pronta, sem entupir o orçamento a cada 3 min.
 - Depurar por SKU/loja: `imprimir?loja=svl&order_sn=X&dry=1` gera 1 pedido, salva
   no cache e **não imprime** (o `dry` só pula o PrintNode; o save é antes).
+
+**Por que o "app confirma o envio" NÃO avança (testado 23/jul):** o `ship_order`
+pelo app falha com **`logistics.lack_of_invoice_data`** — a Shopee exige a NF-e
+**enviada a ela** (upload da nota) antes de arranjar o envio. Esse upload é o real
+gargalo/lag (Tiny: emite NF → sobe nota na Shopee → confirma envio). O app não
+pula isso: a Shopee bloqueia sem a nota, e **não temos a chave da NF no banco**
+(`pedidos_tiny.chave_nfe` = 0/595 preenchidos) para subir a nota nós mesmos.
+Entre "bloqueado por falta de NF" e "o Tiny já arranjou" (guard pula), não sobra
+janela útil para o app confirmar. Foco correto: acelerar o upload da NF (lado
+Tiny) e manter o cache cheio (v42).
 
 **`shopee-ship` (app confirma o envio — COEXISTE com o Tiny):**
 - `?modulo=ship-param&loja=X&order_sn=Y` — leitura pura (`get_shipping_parameter`).
@@ -186,7 +201,7 @@ PROCESSED + rastreio → `pregerar` salva a etiqueta.
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v41 | Etiquetas (pregerar/imprimir), catálogo, ADS |
+| `shopee-sync-ads` | v42 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
 | `shopee-sync` | v20 | Pedidos Shopee |
@@ -274,6 +289,14 @@ página da tabela, filtros e rolagem).
   envios no banco (e, idealmente, inbound API de cada marketplace). Hoje só monta
   rascunho + copia TSV. Pipeline de backend já está pronto e agendado
   (`fulfillment-sync` cron: Amazon 2h, Shopee 2h, ML 30min).
+
+**Feito em 24/jul/2026 — separação (`separacao.tsx`):** "marcar como embalado"
+travava a UI por vários segundos. Causa: os handlers de embalar/imprimir faziam
+`await qc.invalidateQueries(["separacao"])`, e o `await` segurava o estado
+"embalando" (que desabilita os botões) enquanto a `view_separacao_priorizada`
+(`limit 5000`) recarregava. Agora a invalidação roda em **segundo plano**
+(`void`); o botão libera logo após a gravação no Tiny. O botão manual "Atualizar
+fila" mantém o `await` (esperar é o esperado ali).
 
 **Pendências conhecidas:**
 
