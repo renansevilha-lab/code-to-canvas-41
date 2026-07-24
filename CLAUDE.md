@@ -61,6 +61,7 @@ agendamentos via `pg_cron`.
 | `view_reposicao_full` | Motor de reposição por SKU interno: estoque_full, em_transito, cobertura_atual_dias, cobertura_alvo_dias, necessidade, **sugestao_envio**, estoque_empresa. Fonte da aba **Fulfillment › Reposição** |
 | `view_reposicao_skus_alvo` | Lista de SKUs-alvo da reposição |
 | `produtos.foto_capa` | Imagem do produto por **SKU interno**. Usada p/ miniaturas (Fulfillment, etc.). Atenção: 1.668 linhas — nunca puxar tudo (corte de 1.000 do PostgREST); buscar só os SKUs visíveis com `.in()` |
+| `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (só leitura, cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL`. Campos de marcação manual: `precisa_devolucao`, `devolucao_emitida`. Tem GRANT select/update p/ anon+authenticated |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
 | `classificar_roas(numeric)` | excelente / bom / ok / ruim / sem_dado. **Fonte única da regra** |
 | `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, acos_alvo 20 |
@@ -302,6 +303,15 @@ página da tabela, filtros e rolagem).
   envios no banco (e, idealmente, inbound API de cada marketplace). Hoje só monta
   rascunho + copia TSV. Pipeline de backend já está pronto e agendado
   (`fulfillment-sync` cron: Amazon 2h, Shopee 2h, ML 30min).
+
+**Feito em 24/jul/2026 — aba Devoluções (`/devolucoes`, Fase 1):** lê
+`notas_cancelados` (lista de trabalho = `finalidade_nf='1' AND id_nota_fiscal
+NOT NULL`) e deixa **marcar `precisa_devolucao`** por linha (checkbox, update
+otimista). Mostra `devolucao_emitida` como selo. Multi-marketplace (não filtra
+por canal); busca/filtro/paginação na URL. **Só leitura + marcação** — nada de
+cálculo, emissão de NF ou chamar a `nf-devolucao` (roda por cron). Fases 2/3
+(link p/ nota no Tiny, emissão) ficam para depois. Item no menu (módulo
+`financeiro`).
 
 **Feito em 24/jul/2026 — separação (`separacao.tsx`):** "marcar como embalado"
 travava a UI por vários segundos. Causa: os handlers de embalar/imprimir faziam
