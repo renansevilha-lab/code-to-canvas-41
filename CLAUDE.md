@@ -170,6 +170,19 @@ PROCESSED + rastreio → `pregerar` salva a etiqueta.
   tabela `etiqueta_pregerar_estado` (tenta cada pedido no máx. 1×/20 min; apaga o
   registro ao cachear). Assim continua tentando os arranjados até a etiqueta
   ficar pronta, sem entupir o orçamento a cada 3 min.
+- **v43 (24/jul) — CAUSA RAIZ do cache vazio:** a Shopee **exige o
+  `tracking_number` no corpo do `create_shipping_document`** para pedidos que já
+  têm rastreio (canais BR). Sem ele, o `create` volta `tracking_number_invalid`
+  e a etiqueta **nunca gera** — mesmo o pedido estando pronto no painel. Validado
+  ao vivo: `create` sem tracking = falha; `create` COM tracking (via
+  `get_tracking_number`) = sucesso. `gerarEtiquetasShopee` agora é **two-pass**:
+  `create` sem tracking → para os que falham por `tracking_number_invalid`, busca
+  `get_tracking_number` e refaz o `create` COM tracking. Depois do fix, os erros
+  passam de `tracking_number_invalid` para `sem_codigo`/`should_print_first` (o
+  documento foi criado, só falta ficar READY para o download — o `imprimir`, com
+  40s, baixa na hora; o `pregerar` baixa na rodada seguinte).
+  **Ferramenta de depuração:** `shopee-ship?modulo=doc-param|doc-create&loja=X&
+  order_sn=Y` mostra tipos de doc, rastreio e testa o create com/sem tracking.
 - Depurar por SKU/loja: `imprimir?loja=svl&order_sn=X&dry=1` gera 1 pedido, salva
   no cache e **não imprime** (o `dry` só pula o PrintNode; o save é antes).
 
@@ -201,7 +214,7 @@ Tiny) e manter o cache cheio (v42).
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v42 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v43 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
 | `shopee-sync` | v20 | Pedidos Shopee |
