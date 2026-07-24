@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   FileBarChart,
   Warehouse,
+  RotateCcw,
 } from "lucide-react";
 
 import {
@@ -64,6 +65,7 @@ const modulos: NavItem[] = [
   { title: "Tendências", url: "/tendencias", icon: TrendingUp, modulo: "dashboard" },
   { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
   { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet, modulo: "financeiro" },
+  { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "financeiro" },
 ];
 
 export function AppSidebar() {
