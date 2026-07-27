@@ -61,7 +61,7 @@ agendamentos via `pg_cron`.
 | `view_reposicao_full` | Motor de reposição por SKU interno: estoque_full, em_transito, cobertura_atual_dias, cobertura_alvo_dias, necessidade, **sugestao_envio**, estoque_empresa. Fonte da aba **Fulfillment › Reposição** |
 | `view_reposicao_skus_alvo` | Lista de SKUs-alvo da reposição |
 | `produtos.foto_capa` | Imagem do produto por **SKU interno**. Usada p/ miniaturas (Fulfillment, etc.). Atenção: 1.668 linhas — nunca puxar tudo (corte de 1.000 do PostgREST); buscar só os SKUs visíveis com `.in()` |
-| `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (só leitura, cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL`. Campos de marcação manual: `precisa_devolucao`, `devolucao_emitida`. Tem GRANT select/update p/ anon+authenticated |
+| `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (varredura por cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL` (**situação 3 = NF cancelada, não precisa devolução**; 6/7 = viva). Campos: `precisa_devolucao` (marcação), `devolucao_emitida`+`id_nota_devolucao` (preenchidos pelo módulo `emitir`). GRANT select/update p/ anon+authenticated |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
 | `classificar_roas(numeric)` | excelente / bom / ok / ruim / sem_dado. **Fonte única da regra** |
 | `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, acos_alvo 20 |
@@ -211,6 +211,41 @@ Tiny) e manter o cache cheio (v42).
 
 ---
 
+## 5.2 NF de devolução (Tiny) — o que a API permite e o que não permite
+
+**Desenho fiscal validado ao vivo (27/jul/2026, NF 001124 autorizada, protocolo
+SEFAZ 135263016600187):** devolução = nota de **entrada** (`tipo E`, `tpNF 0`),
+natureza **"Devolução de Mercadorias"** (`idNaturezaOperacao 794940395`), série
+**13**, `finalidade 4`, CFOP **1202**, `NFref/refNFe` = chave da NF de venda. Ao
+criar pela UI informando a chave referenciada, o Tiny preenche cliente, itens e
+impostos sozinho; a chave referenciada aparece nas `observacoes` da nota (regex
+44 dígitos) — é assim que casamos com `notas_cancelados`.
+
+**Limites da API v3 (testados):**
+- **Não cria nota por JSON.** Só por XML pronto (`POST /notas/xml`) — inviável.
+- `POST /pedidos/{id}/gerar-nota-fiscal` só aceita `{modelo}` e **falha com 409**
+  se o pedido já tem NF (1 pedido = 1 nota) → **não serve para devolução**.
+- Não há endpoint de naturezas de operação (o ID 794940395 veio de um GET numa
+  devolução manual).
+- **Emitir funciona**: `POST /notas/{id}/emitir` (exige escopo
+  `notas-fiscais-escrita` no aplicativo API v3 — habilitado em 27/jul; mexer nos
+  escopos **revoga o token ativo**, rodar `tiny-refresh-token` depois).
+
+**Fluxo em fases:** Fase 2.5 (ATUAL): operador **cria** as devoluções na UI do
+Tiny; o app **emite** e **registra** via aba Devoluções → card "Pendentes de
+emissão" (`nf-devolucao?modulo=pendentes` lista tipo E Pendentes + match por
+chave; `modulo=emitir&id_nota=X&confirmar=1` emite UMA nota, guardas tipo E +
+situação 1). **Estoque NÃO é lançado pelo app** (decisão: manual/regra no Tiny).
+Fase 3 (pendente): criar a nota via **API v2** (`nota.fiscal.incluir.php`, JSON,
+aceita tipo/finalidade/refNFe) — exige gerar token v2 no Tiny; emitir continua
+pela v3.
+
+**Duas populações de devolução:** (a) cancelados com NF (rastreados em
+`notas_cancelados`); (b) **entregues que o cliente devolveu** — fora da varredura;
+o `emitir` funciona igual, só não tem onde registrar (match retorna null).
+
+---
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -223,6 +258,7 @@ Tiny) e manter o cache cheio (v42).
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
 | `amazon-sync-pedidos` | v8 | Pedidos Amazon |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
+| `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso
