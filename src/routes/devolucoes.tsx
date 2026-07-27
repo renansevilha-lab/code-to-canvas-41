@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, Search, CheckCircle2, ExternalLink } from "lucide-react";
+import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
@@ -38,6 +38,22 @@ const COLS =
 const PAGE_SIZE = 50;
 
 type Filtro = "todos" | "marcados" | "devolvidos";
+
+interface PendenteEmissao {
+  id_nota: number;
+  numero: string | null;
+  serie: string | null;
+  valor: number | null;
+  data_emissao: string | null;
+  cliente: string | null;
+  chave_referenciada: string | null;
+  pedido_cancelado: {
+    numero_pedido: string | null;
+    numero_ecommerce: string | null;
+    marca_canal: string | null;
+    precisa_devolucao: boolean | null;
+  } | null;
+}
 
 // cor por marketplace (só visual — a lista tem vários canais)
 function corCanal(canal: string | null | undefined): string {
@@ -196,6 +212,8 @@ function DevolucoesPage() {
         </Card>
       )}
 
+      <PendentesEmissaoCard onEmitiu={() => queryClient.invalidateQueries({ queryKey: ["devolucoes"] })} />
+
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b">
           <h3 className="text-sm font-semibold">
@@ -340,6 +358,160 @@ function DevolucoesPage() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Subcomponentes
+
+// Devoluções criadas manualmente no Tiny (tipo E, Pendentes) aguardando emissão.
+// Busca sob demanda (a varredura no Tiny leva ~15s) e emissão 1 a 1 com
+// confirmação dupla — emitir é NF-e real na SEFAZ, irreversível.
+function PendentesEmissaoCard({ onEmitiu }: { onEmitiu: () => void }) {
+  const [pendentes, setPendentes] = useState<PendenteEmissao[] | null>(null);
+  const [buscando, setBuscando] = useState(false);
+  const [armado, setArmado] = useState<number | null>(null);
+  const [emitindo, setEmitindo] = useState<number | null>(null);
+
+  async function buscar() {
+    setBuscando(true);
+    setArmado(null);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+        body: { modulo: "pendentes", dias: 30 },
+      });
+      if (error) throw new Error(error.message);
+      setPendentes((data?.pendentes ?? []) as PendenteEmissao[]);
+    } catch (e) {
+      toast.error("Falha ao buscar pendentes no Tiny", { description: (e as Error).message });
+    } finally {
+      setBuscando(false);
+    }
+  }
+
+  async function emitir(p: PendenteEmissao) {
+    setEmitindo(p.id_nota);
+    setArmado(null);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+        body: { modulo: "emitir", id_nota: p.id_nota, confirmar: "1" },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.autorizada) {
+        toast.success(`Devolução ${data.numero}/${data.serie} autorizada na SEFAZ`, {
+          description: data.registrado_no_app
+            ? "Pedido marcado como devolvido no app."
+            : "Nota emitida (pedido fora da lista de cancelados — ex.: devolução de entrega).",
+        });
+        setPendentes((prev) => (prev ?? []).filter((x) => x.id_nota !== p.id_nota));
+        onEmitiu();
+      } else {
+        toast.warning(`Nota ${p.numero}: situação ${data?.situacao ?? "desconhecida"}`, {
+          description: "A SEFAZ não autorizou de imediato — confira no Tiny.",
+        });
+      }
+    } catch (e) {
+      toast.error(`Erro ao emitir a nota ${p.numero}`, { description: (e as Error).message });
+    } finally {
+      setEmitindo(null);
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Send className="h-4 w-4" /> Pendentes de emissão
+            {pendentes && <Badge variant="secondary">{pendentes.length}</Badge>}
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Devoluções criadas no Tiny aguardando autorização na SEFAZ. A emissão é definitiva.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="h-8 gap-2" onClick={buscar} disabled={buscando}>
+          {buscando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          {pendentes ? "Atualizar" : "Buscar no Tiny"}
+        </Button>
+      </div>
+
+      {buscando && !pendentes && (
+        <p className="text-xs text-muted-foreground">Varrendo notas no Tiny (~15s)...</p>
+      )}
+
+      {pendentes && pendentes.length === 0 && (
+        <p className="text-sm text-muted-foreground">Nenhuma devolução pendente de emissão. 🎉</p>
+      )}
+
+      {pendentes && pendentes.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-muted-foreground">
+              <tr>
+                <th className="text-left font-medium py-1.5 px-2">NF</th>
+                <th className="text-left font-medium px-2">Cliente</th>
+                <th className="text-right font-medium px-2">Valor</th>
+                <th className="text-left font-medium px-2">Pedido de origem</th>
+                <th className="text-right font-medium px-2 w-44">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendentes.map((p) => {
+                const busy = emitindo === p.id_nota;
+                const estaArmado = armado === p.id_nota;
+                return (
+                  <tr key={p.id_nota} className="border-t border-border/50">
+                    <td className="py-1.5 px-2 font-mono text-xs whitespace-nowrap">
+                      {p.numero}/{p.serie}
+                    </td>
+                    <td className="px-2 text-xs max-w-[220px] truncate">{p.cliente ?? "—"}</td>
+                    <td className="px-2 text-right tabular-nums">
+                      {p.valor != null ? formatBRL(p.valor) : "—"}
+                    </td>
+                    <td className="px-2 text-xs">
+                      {p.pedido_cancelado ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            aria-hidden
+                            className="inline-block h-2 w-2 rounded-full"
+                            style={{ backgroundColor: corCanal(p.pedido_cancelado.marca_canal) }}
+                          />
+                          <span className="font-mono">{p.pedido_cancelado.numero_pedido}</span>
+                          <Badge variant="outline" className="h-4 px-1 text-[10px]">cancelado</Badge>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">devolução de entrega</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      {estaArmado ? (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-7 text-xs gap-1.5"
+                          disabled={busy || emitindo !== null}
+                          onClick={() => emitir(p)}
+                        >
+                          {busy && <Loader2 className="h-3 w-3 animate-spin" />}
+                          Confirmar (SEFAZ)
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1.5"
+                          disabled={emitindo !== null}
+                          onClick={() => setArmado(p.id_nota)}
+                        >
+                          <Send className="h-3 w-3" /> Emitir
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function FiltroSegment({ value, onChange }: { value: Filtro; onChange: (v: Filtro) => void }) {
   const opts: { id: Filtro; label: string }[] = [
