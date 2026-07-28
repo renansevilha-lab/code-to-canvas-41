@@ -231,14 +231,30 @@ impostos sozinho; a chave referenciada aparece nas `observacoes` da nota (regex
   `notas-fiscais-escrita` no aplicativo API v3 — habilitado em 27/jul; mexer nos
   escopos **revoga o token ativo**, rodar `tiny-refresh-token` depois).
 
-**Fluxo em fases:** Fase 2.5 (ATUAL): operador **cria** as devoluções na UI do
-Tiny; o app **emite** e **registra** via aba Devoluções → card "Pendentes de
-emissão" (`nf-devolucao?modulo=pendentes` lista tipo E Pendentes + match por
-chave; `modulo=emitir&id_nota=X&confirmar=1` emite UMA nota, guardas tipo E +
-situação 1). **Estoque NÃO é lançado pelo app** (decisão: manual/regra no Tiny).
-Fase 3 (pendente): criar a nota via **API v2** (`nota.fiscal.incluir.php`, JSON,
-aceita tipo/finalidade/refNFe) — exige gerar token v2 no Tiny; emitir continua
-pela v3.
+**Fluxo em fases:** Fase 2.5: operador **cria** as devoluções na UI do Tiny; o
+app **emite** e **registra** via aba Devoluções → card "Pendentes de emissão"
+(`nf-devolucao?modulo=pendentes` lista tipo E Pendentes + match por chave;
+`modulo=emitir&id_nota=X&confirmar=1` emite UMA nota, guardas tipo E + situação
+1). **Estoque NÃO é lançado pelo app** (decisão: manual/regra no Tiny).
+
+**Fase 3 (VALIDADA em 28/jul/2026 — NF 001125/13 autorizada, ciclo 100% via
+app):** `modulo=criar&id_nota_venda=X&confirmar=1` lê a NF de venda na v3 e
+inclui a devolução via **API v2** (`nota.fiscal.incluir.php`, secret
+`TINY_V2_TOKEN`); depois `emitir` pela v3. Aprendizados que custaram tentativas:
+- A v3 devolve texto com **UTF-8 duplamente codificado** ("BrasÃ­lia") —
+  `fixEnc()` reverte antes de mandar à v2.
+- `incluir` exige **`frete_por_conta`** ("S" = sem frete, como o gabarito).
+- **`refNFe` funciona na v2** (campo estruturado preenchido na nota), mas a nota
+  criada via API fica com `observacoes` VAZIAS → o match por regex não pega;
+  por isso o `criar` grava `id_nota_devolucao` no ato e o `emitir` casa por
+  chave OU por id.
+- **Série: sempre enviar `serie: "13"`** (das devoluções). Sem o campo, o Tiny
+  usou a série 12, cujo nº 000001 estava **INUTILIZADO na SEFAZ** → emissão
+  rejeitada (cód. 32). A nota rejeitada 000001/12 (id 820172089) ficou para
+  excluir na UI.
+- Há **duas naturezas homônimas** "Devolução de Mercadorias" (794940395 manual ×
+  718775306 usada pela v2 no match por nome) — CFOP saiu certo (2202
+  interestadual automático), mas a contabilidade deve validar qual manter.
 
 **Duas populações de devolução:** (a) cancelados com NF (rastreados em
 `notas_cancelados`); (b) **entregues que o cliente devolveu** — fora da varredura;
