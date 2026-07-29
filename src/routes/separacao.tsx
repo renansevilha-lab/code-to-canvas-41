@@ -212,8 +212,27 @@ function usePriorizadaRows() {
 }
 
 /**
+ * Identidade de uma LINHA da fila. A linha é sku · envio · QUANTIDADE por
+ * pedido (é o tag_sugerida das views, e é por ele que o tag-lote do servidor
+ * seleciona). Agrupar só por sku|tipo_envio MISTURA linhas com quantidades
+ * diferentes — bug real: pedido de 1un tratado dentro do grupo de 2un
+ * (drill-down, selo de tag, imprimir e embalar da linha errados).
+ */
+function linhaKeyDe(r: {
+  tag_sugerida?: string | null;
+  sku?: string | null;
+  sku_unico?: string | null;
+  tipo_envio?: string | null;
+}): string {
+  return (
+    r.tag_sugerida ??
+    `${r.sku ?? r.sku_unico ?? ""}|${r.tipo_envio ?? ""}`
+  );
+}
+
+/**
  * Lê tag_lote de todos os pedidos atualmente na fila de separação
- * (view_separacao_pedidos) e agrupa por `${sku_unico}|${tipo_envio}`.
+ * (view_separacao_pedidos) e agrupa por linha (tag_sugerida).
  *
  * Fonte da verdade para decidir se a linha mostra selo de TAG ou botão
  * "Aplicar TAG". Nunca use lotesHoje (tags_lote) pra isso — aquilo é
@@ -232,13 +251,13 @@ function useTagsPorLinha() {
     queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("view_separacao_pedidos")
-        .select("sku_unico, tipo_envio, tag_lote")
+        .select("sku_unico, tipo_envio, tag_lote, tag_sugerida")
         .limit(20000);
       if (error) throw error;
       const map = new Map<string, TagsPorLinha>();
       const buckets = new Map<string, { tags: Set<string>; sem: number; com: number }>();
-      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null }[]) {
-        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null; tag_sugerida: string | null }[]) {
+        const key = linhaKeyDe(p);
         const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0 };
         if (p.tag_lote) { b.tags.add(p.tag_lote); b.com++; }
         else { b.sem++; }
@@ -288,13 +307,14 @@ function useImpressaoEstados() {
     queryFn: async () => {
       const { data: peds, error: e1 } = await supabaseExternal
         .from("view_separacao_pedidos")
-        .select("separacao_id, sku_unico, tipo_envio")
+        .select("separacao_id, sku_unico, tipo_envio, tag_sugerida")
         .limit(20000);
       if (e1) throw e1;
       const sepList = (peds ?? []) as {
         separacao_id: number | null;
         sku_unico: string | null;
         tipo_envio: string | null;
+        tag_sugerida: string | null;
       }[];
       const sepIds = sepList.map((p) => p.separacao_id).filter((n): n is number => n != null);
 
@@ -317,7 +337,7 @@ function useImpressaoEstados() {
 
       const porLinha = new Map<string, AggImpressao>();
       for (const p of sepList) {
-        const key = `${p.sku_unico ?? ""}|${p.tipo_envio ?? ""}`;
+        const key = linhaKeyDe(p);
         const agg =
           porLinha.get(key) ??
           ({ done: 0, forcado: 0, sent: 0, error: 0, ausente: 0, total: 0, seps: [] } as AggImpressao);
@@ -782,6 +802,7 @@ async function imprimirPedidoApi(
 interface PedidosDoSkuProps {
   sku: string | null;
   tipoEnvio: string | null;
+  tagSugerida: string | null;
   imprimindoKey: string | null;
   embalandoKey: string | null;
   onImprimir: (p: PedidoSepRow) => void;
@@ -792,6 +813,7 @@ interface PedidosDoSkuProps {
 function PedidosDoSku({
   sku,
   tipoEnvio,
+  tagSugerida,
   imprimindoKey,
   embalandoKey,
   onImprimir,
@@ -800,12 +822,19 @@ function PedidosDoSku({
 }: PedidosDoSkuProps) {
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { data, isLoading, error } = useQuery({
-    queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio],
+    queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio, tagSugerida],
     enabled: !!sku,
     queryFn: async () => {
       let q = supabaseExternal.from("view_separacao_pedidos").select("*");
-      if (sku) q = q.eq("sku_unico", sku);
-      if (tipoEnvio) q = q.eq("tipo_envio", tipoEnvio);
+      // a linha é sku·envio·qtd (tag_sugerida). Filtrar só por sku+envio
+      // mistura pedidos de quantidades diferentes no drill-down (pedido de
+      // 1un aparecendo dentro do grupo de 2un).
+      if (tagSugerida) {
+        q = q.eq("tag_sugerida", tagSugerida);
+      } else {
+        if (sku) q = q.eq("sku_unico", sku);
+        if (tipoEnvio) q = q.eq("tipo_envio", tipoEnvio);
+      }
       const { data: d, error: e } = await q.limit(1000);
       if (e) throw e;
       return (d ?? []) as PedidoSepRow[];
@@ -1381,11 +1410,14 @@ function FilaPriorizada() {
     }
     setImprimindoKey(key);
     try {
-      const { data, error: e1 } = await supabaseExternal
+      let qImp = supabaseExternal
         .from("view_separacao_pedidos")
-        .select("tag_lote, marca_canal, numero_ecommerce")
-        .eq("sku_unico", item.sku ?? "")
-        .eq("tipo_envio", item.tipo_envio ?? "");
+        .select("tag_lote, marca_canal, numero_ecommerce");
+      // a linha é sku·envio·qtd (tag_sugerida) — filtrar só por sku+envio
+      // imprimiria também os lotes das outras quantidades
+      if (item.tag_sugerida) qImp = qImp.eq("tag_sugerida", item.tag_sugerida);
+      else qImp = qImp.eq("sku_unico", item.sku ?? "").eq("tipo_envio", item.tipo_envio ?? "");
+      const { data, error: e1 } = await qImp;
       if (e1) throw e1;
       const groups = new Map<string, { loja: "ottz" | "svl"; tag: string }>();
       let skTiktok = 0, skNoLote = 0;
@@ -1423,7 +1455,7 @@ function FilaPriorizada() {
   ) {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (embalandoKey) return;
-    const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+    const linhaKey = linhaKeyDe(item);
     const agg = impressaoEstados?.porLinha.get(linhaKey);
     const seps = agg?.seps ?? [];
     // Sem "forcar", só embala as separações cujo estado é done/forcado.
@@ -1899,7 +1931,7 @@ function FilaPriorizada() {
                         // Fonte da verdade: tag_lote dos pedidos ATUAIS da linha
                         // (view_separacao_pedidos), não lotesHoje. Isso evita mostrar
                         // tag velha quando pedidos novos entraram sem tag.
-                        const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                        const linhaKey = linhaKeyDe(item);
                         const info = tagsPorLinha?.get(linhaKey);
                         const estado = info?.estado ?? "sem_tag";
                         const tagAtual = info?.tag;
@@ -1987,7 +2019,7 @@ function FilaPriorizada() {
                           )}
                         </Button>
                         {(() => {
-                          const linhaKey = `${item.sku ?? ""}|${item.tipo_envio ?? ""}`;
+                          const linhaKey = linhaKeyDe(item);
                           const agg = impressaoEstados?.porLinha.get(linhaKey);
                           const estBtn = estadoBotaoLinha(agg);
                           const liberados = (agg?.done ?? 0) + (agg?.forcado ?? 0);
@@ -2092,6 +2124,7 @@ function FilaPriorizada() {
                     <PedidosDoSku
                       sku={item.sku}
                       tipoEnvio={item.tipo_envio}
+                      tagSugerida={item.tag_sugerida}
                       imprimindoKey={imprimindoKey}
                       embalandoKey={embalandoKey}
                       onImprimir={imprimirPedido}
@@ -2169,7 +2202,7 @@ function FilaPriorizada() {
         titulo={`Forçar embalado — ${forcarSku?.sku ?? ""} · ${forcarSku?.tipo_envio ?? ""}`}
         descricao={
           (() => {
-            const linhaKey = `${forcarSku?.sku ?? ""}|${forcarSku?.tipo_envio ?? ""}`;
+            const linhaKey = forcarSku ? linhaKeyDe(forcarSku) : "";
             const agg = impressaoEstados?.porLinha.get(linhaKey);
             const bloq = (agg?.error ?? 0) + (agg?.ausente ?? 0);
             const aguard = agg?.sent ?? 0;
