@@ -105,17 +105,21 @@ function formatMes(m: string): string {
   return `${nomes[Number(mm) - 1] ?? mm}/${y.slice(2)}`;
 }
 
-// Mapeia label da linha → chave de categoria na view view_dre_despesas_detalhe
+// Mapeia label da linha → categoria EXATA emitida por categoria_despesa_dre()
+// no banco. As strings precisam bater ao caractere, senão o drill-down volta
+// vazio ("Sem itens detalhados"). Já custou isso: o front pedia "Outras",
+// "A revisar" e "Frete / Logística", mas a função emite "Outras / a
+// classificar", "Pessoal/Creative (revisar)" e "Frete/Logística" (sem espaços).
 const DESPESA_CATEGORIAS: Record<string, string | null> = {
-  "Marketing / ADS": null, // ADS não vem da view de detalhe
+  "Marketing / ADS": null, // ADS não vem da view de detalhe (vem de shopee_ads_diario)
   Pessoal: "Pessoal",
   Aluguel: "Aluguel",
   Administrativas: "Administrativas",
   Embalagem: "Embalagem",
-  "Frete / Logística": "Frete / Logística",
+  "Frete / Logística": "Frete/Logística",
   Financeiras: "Financeiras",
-  Outras: "Outras",
-  "A revisar": "A revisar",
+  Outras: "Outras / a classificar",
+  "A revisar": "Pessoal/Creative (revisar)",
 };
 
 function DREPage() {
@@ -189,6 +193,20 @@ function DREPage() {
       })),
     [dre],
   );
+
+  // ACZ/SVL do mês selecionado — alimenta o drill-down por empresa de
+  // Receita Líquida e CMV (soma bate com o consolidado: ambos vêm da mesma view).
+  const porEmpresaMes = useMemo(() => {
+    let acz: DreOperacionalRow | undefined;
+    let svl: DreOperacionalRow | undefined;
+    for (const r of operacional) {
+      if (r.mes !== mesSel) continue;
+      const e = (r.empresa ?? "").toLowerCase();
+      if (e.includes("acz")) acz = r;
+      else if (e.includes("svl")) svl = r;
+    }
+    return { acz, svl };
+  }, [operacional, mesSel]);
 
   const porEmpresaAgrupado = useMemo(() => {
     const map = new Map<string, { acz?: DreOperacionalRow; svl?: DreOperacionalRow }>();
@@ -285,6 +303,7 @@ function DREPage() {
       ) : empresaSel === "consolidado" ? (
         <Cascata
           row={mesAtual}
+          porEmpresa={porEmpresaMes}
           expanded={expanded}
           detalhes={detalhes}
           loadingDet={loadingDet}
@@ -395,6 +414,7 @@ function DREPage() {
 
 function Cascata({
   row,
+  porEmpresa,
   expanded,
   detalhes,
   loadingDet,
@@ -402,6 +422,7 @@ function Cascata({
   mesSel,
 }: {
   row: DreRow;
+  porEmpresa: { acz?: DreOperacionalRow; svl?: DreOperacionalRow };
   expanded: Set<string>;
   detalhes: Record<string, DespesaDetalheRow[]>;
   loadingDet: Set<string>;
@@ -411,12 +432,9 @@ function Cascata({
   const receita = row.receita_liquida ?? 0;
   const lucroPos = (row.lucro_liquido ?? 0) >= 0;
 
-  const linhasTop: Array<{ label: string; valor: number | null; negativo?: boolean }> = [
-    { label: "RECEITA LÍQUIDA", valor: row.receita_liquida },
-    { label: "(−) CMV", valor: row.cmv, negativo: true },
-    { label: "(−) Comissões + Frete", valor: row.comissoes_frete, negativo: true },
-    { label: "(−) Impostos", valor: row.impostos, negativo: true },
-  ];
+  // Custo fixo = soma de tudo abaixo da MC (inclui ADS, que neste DRE é uma
+  // linha de despesa operacional). Reconcilia: MC − custo fixo = lucro líquido.
+  const custoFixo = row.total_despesas ?? 0;
 
   const despesas: Array<{ label: string; valor: number | null }> = [
     { label: "Marketing / ADS", valor: row.ads },
@@ -436,9 +454,25 @@ function Cascata({
         <CardTitle className="text-base">{formatMes(row.mes)} — Consolidado</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1">
-        {linhasTop.map((l) => (
-          <Linha key={l.label} label={l.label} valor={l.valor} receita={receita} bold={l.label.startsWith("RECEITA")} />
-        ))}
+        <LinhaTopo
+          label="RECEITA LÍQUIDA"
+          valor={row.receita_liquida}
+          receita={receita}
+          bold
+          breakdown={{ acz: porEmpresa.acz?.receita_liquida, svl: porEmpresa.svl?.receita_liquida }}
+          isOpen={expanded.has(`${mesSel}::RECEITA LÍQUIDA`)}
+          onToggle={() => onToggle("RECEITA LÍQUIDA")}
+        />
+        <LinhaTopo
+          label="(−) CMV"
+          valor={row.cmv}
+          receita={receita}
+          breakdown={{ acz: porEmpresa.acz?.cmv, svl: porEmpresa.svl?.cmv }}
+          isOpen={expanded.has(`${mesSel}::(−) CMV`)}
+          onToggle={() => onToggle("(−) CMV")}
+        />
+        <Linha label="(−) Comissões + Frete" valor={row.comissoes_frete} receita={receita} />
+        <Linha label="(−) Impostos" valor={row.impostos} receita={receita} />
 
         <div className="border-t my-2" />
 
@@ -518,6 +552,18 @@ function Cascata({
             </div>
           );
         })}
+
+        <div className="rounded-md bg-muted/50 px-3 py-2 border border-border mt-1">
+          <div className="flex items-center justify-between gap-4">
+            <span className="font-semibold">= CUSTO FIXO TOTAL</span>
+            <div className="flex items-center gap-6">
+              <span className="tabular-nums font-semibold">{brlFull(custoFixo)}</span>
+              <span className="text-xs w-16 text-right tabular-nums text-muted-foreground">
+                {pct(custoFixo, receita)}
+              </span>
+            </div>
+          </div>
+        </div>
 
         <div className="border-t my-2" />
 
@@ -644,6 +690,76 @@ function Linha({
         <span className={cn("text-xs w-16 text-right tabular-nums text-muted-foreground", bold && "font-medium")}>
           {pct(valor, receita)}
         </span>
+      </div>
+    </div>
+  );
+}
+
+// Linha do topo (Receita/CMV) com drill-down por empresa. Se não houver quebra
+// por empresa para o mês, cai no <Linha> simples. Os %s usam a mesma base
+// (receita consolidada) das outras linhas — os subtotais somam ao % da linha-pai.
+function LinhaTopo({
+  label,
+  valor,
+  receita,
+  bold,
+  breakdown,
+  isOpen,
+  onToggle,
+}: {
+  label: string;
+  valor: number | null | undefined;
+  receita: number;
+  bold?: boolean;
+  breakdown: { acz: number | null | undefined; svl: number | null | undefined };
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const temQuebra = breakdown.acz != null || breakdown.svl != null;
+  if (!temQuebra) {
+    return <Linha label={label} valor={valor} receita={receita} bold={bold} />;
+  }
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-4 py-1 text-left rounded px-1 -mx-1 hover:bg-accent/50 transition-colors"
+      >
+        <span className={cn("flex items-center gap-1", bold && "font-semibold")}>
+          {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          {label}
+        </span>
+        <div className="flex items-center gap-6">
+          <span className={cn("tabular-nums", bold && "font-semibold")}>{brlFull(valor)}</span>
+          <span className="text-xs w-16 text-right tabular-nums text-muted-foreground">{pct(valor, receita)}</span>
+        </div>
+      </button>
+      {isOpen && (
+        <div className="ml-6 border-l border-border pl-3 py-1 space-y-0.5">
+          <SubEmpresa nome="ACZ Pet" valor={breakdown.acz} receita={receita} />
+          <SubEmpresa nome="SVL Store" valor={breakdown.svl} receita={receita} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubEmpresa({
+  nome,
+  valor,
+  receita,
+}: {
+  nome: string;
+  valor: number | null | undefined;
+  receita: number;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-0.5 text-xs">
+      <span className="text-muted-foreground">{nome}</span>
+      <div className="flex items-center gap-6">
+        <span className="tabular-nums text-foreground/80">{brlFull(valor)}</span>
+        <span className="w-16 text-right tabular-nums text-muted-foreground">{pct(valor, receita)}</span>
       </div>
     </div>
   );
