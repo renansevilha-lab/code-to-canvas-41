@@ -262,6 +262,34 @@ o `emitir` funciona igual, só não tem onde registrar (match retorna null).
 
 ---
 
+## 5.3 DRE — categorização de despesas e camada de override
+
+**Fonte das despesas:** `contas_pagar` é **espelho do Tiny**, re-sincronizado
+pelo cron `tiny-sync-contas-pagar` **a cada 15 min** (upsert por `tiny_id`).
+Editar/excluir direto ali **é desfeito no próximo sync** — nunca escreva no
+espelho para ajustar o DRE.
+
+**Categorização:** a função `categoria_despesa_dre(fornecedor_nome)` (regex no
+nome) devolve strings **exatas** que o front precisa casar ao caractere. As
+grafias já causaram bug ("Sem itens detalhados"): `Frete/Logística` (sem
+espaços), `Outras / a classificar`, `Pessoal/Creative (revisar)`, além de
+`Pessoal`, `Aluguel`, `Administrativas`, `Embalagem`, `Financeiras` e as que
+saem do DRE (`Mercadoria (ref)`, `Cartão/Financeiro (fora DRE)`, `Impostos`).
+
+**Override manual (28/jul/2026):** tabela `dre_conta_override` (PK `tiny_id`,
+campos `excluir`, `categoria_override`, `motivo`, `editado_por`, `editado_em`;
+GRANT anon+authenticated, sem RLS). Sobrevive ao sync porque a chave é o
+`tiny_id` estável. As views `view_dre_despesas` e `view_dre_despesas_detalhe`
+fazem LEFT JOIN nela: categoria efetiva = `coalesce(categoria_override,
+categoria_despesa_dre(...))`; o agregado tira `excluir=true` da soma; o detalhe
+**mostra** a excluída (flag `excluida`) para dar "restaurar". Regra de ouro ao
+mexer nessas views: **capture baseline antes/depois** (override vazio tem de dar
+idêntico ao centavo — validado). O front (`/dre`) grava por lançamento no
+drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
+`view_dre_operacional`.
+
+---
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
