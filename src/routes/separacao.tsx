@@ -118,10 +118,11 @@ interface Impressora {
   nome: string;
   computador: string;
   estado: "online" | "offline" | string;
-  descricao: string;
+  // marcada pela edge fn quando é a do config_impressora (default do sistema)
+  configurada?: boolean;
 }
 
-const DEFAULT_PRINTER_ID = 75638226;
+const STORAGE_PRINTER = "separacao.printerId";
 
 function useImpressoras() {
   return useQuery({
@@ -135,9 +136,10 @@ function useImpressoras() {
         impressoras?: Impressora[];
       };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      // Somente ZD220 (etiqueta Shopee ZPL)
+      // Somente ZD220 (etiqueta Shopee ZPL). O filtro é pelo NOME — a API não
+      // devolve `descricao` (filtrar por ela deixava a lista sempre vazia).
       return (data.impressoras ?? []).filter((p) =>
-        (p.descricao ?? "").toLowerCase().includes("zdesigner zd220"),
+        (p.nome ?? "").toLowerCase().includes("zd220"),
       );
     },
     refetchInterval: 60_000,
@@ -1155,17 +1157,26 @@ function LotesDoDia({
         <Printer className="h-4 w-4 text-muted-foreground" />
         <span className="text-muted-foreground">Impressora:</span>
         <Select
-          value={String(printerId)}
+          value={printerId ? String(printerId) : undefined}
           onValueChange={(v) => setPrinterId(Number(v))}
           disabled={loadingImpressoras}
         >
-          <SelectTrigger className="h-8 w-[320px] text-xs">
-            <SelectValue placeholder={loadingImpressoras ? "Carregando..." : "Selecione"} />
+          <SelectTrigger className="h-8 w-[380px] text-xs">
+            <SelectValue placeholder={loadingImpressoras ? "Carregando..." : "Selecione a impressora"} />
           </SelectTrigger>
           <SelectContent>
             {(impressoras ?? []).map((p) => (
               <SelectItem key={p.printer_id} value={String(p.printer_id)}>
-                {p.nome} — {p.computador} ({p.estado})
+                <span className="flex items-center gap-1.5">
+                  {p.configurada && (
+                    <span title="Configurada no sistema (padrão)" className="text-emerald-600">★</span>
+                  )}
+                  <span>{p.nome} — {p.computador}</span>
+                  <span className={p.estado === "online" ? "text-emerald-600" : "text-amber-600"}>
+                    ({p.estado})
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground">ID {p.printer_id}</span>
+                </span>
               </SelectItem>
             ))}
             {!loadingImpressoras && (impressoras ?? []).length === 0 && (
@@ -1175,6 +1186,22 @@ function LotesDoDia({
             )}
           </SelectContent>
         </Select>
+        {impressoraSelecionada && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="font-mono px-1.5 py-0.5 rounded bg-muted text-foreground">
+              PrintNode ID {impressoraSelecionada.printer_id}
+            </span>
+            {impressoraSelecionada.configurada ? (
+              <span className="text-emerald-600" title="É a impressora configurada como padrão no sistema">
+                ★ configurada
+              </span>
+            ) : (
+              <span className="text-muted-foreground" title="Impressão sai nesta, mas o padrão do sistema é outra (★)">
+                ≠ padrão do sistema
+              </span>
+            )}
+          </span>
+        )}
         {impressoraSelecionada?.estado === "offline" && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
             <AlertTriangle className="h-3 w-3" />
@@ -1379,7 +1406,26 @@ function FilaPriorizada() {
   const { data: impressaoEstados } = useImpressaoEstados();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
-  const [printerId, setPrinterId] = useState<number>(DEFAULT_PRINTER_ID);
+  // escolha do operador persiste entre reloads (não é troca de usuário)
+  const [printerId, setPrinterId] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const v = Number(window.localStorage.getItem(STORAGE_PRINTER));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined" && printerId > 0) {
+      window.localStorage.setItem(STORAGE_PRINTER, String(printerId));
+    }
+  }, [printerId]);
+  // se a seleção salva não existe mais na lista (ex.: default antigo inválido),
+  // cai na impressora CONFIGURADA no sistema; senão, na primeira online.
+  useEffect(() => {
+    if (!impressoras.length) return;
+    if (impressoras.some((p) => p.printer_id === printerId)) return;
+    const conf = impressoras.find((p) => p.configurada);
+    const online = impressoras.find((p) => p.estado === "online");
+    setPrinterId((conf ?? online ?? impressoras[0]).printer_id);
+  }, [impressoras, printerId]);
   const impressoraSelecionada = useMemo(
     () => impressoras.find((p) => p.printer_id === printerId),
     [impressoras, printerId],
