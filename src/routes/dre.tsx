@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Info, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Info, Loader2, Trash2, RotateCcw } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
@@ -30,7 +30,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { usePerfil } from "@/hooks/usePerfil";
 import { cn } from "@/lib/utils";
+
+// Categorias válidas do bloco de despesas do DRE (para reclassificar 1 conta).
+// Precisam bater com o que categoria_despesa_dre() e as views usam.
+const DRE_CATEGORIAS_EDIT = [
+  "Pessoal",
+  "Aluguel",
+  "Administrativas",
+  "Embalagem",
+  "Frete/Logística",
+  "Financeiras",
+  "Outras / a classificar",
+  "Pessoal/Creative (revisar)",
+];
 
 export const Route = createFileRoute("/dre")({
   head: () => ({
@@ -83,6 +97,8 @@ interface DespesaDetalheRow {
   data_vencimento: string | null;
   data_pagamento: string | null;
   status: string | null;
+  tiny_id: number | null;
+  excluida: boolean | null;
 }
 
 type EmpresaFiltro = "consolidado" | "ACZ Pet" | "SVL Store";
@@ -131,43 +147,91 @@ function DREPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [detalhes, setDetalhes] = useState<Record<string, DespesaDetalheRow[]>>({});
   const [loadingDet, setLoadingDet] = useState<Set<string>>(new Set());
+  const { perfil } = usePerfil();
+
+  // Carrega (ou recarrega) os agregados do DRE. `silent` não mexe no skeleton —
+  // usado após um override, pra atualizar os totais sem piscar a tela toda.
+  const carregar = useCallback(async (silent?: boolean) => {
+    if (!silent) setLoading(true);
+    try {
+      const [r1, r2] = await Promise.all([
+        supabaseExternal.from("view_dre_mensal").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
+        supabaseExternal.from("view_dre_operacional").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
+      ]);
+      if (r1.error) throw r1.error;
+      if (r2.error) throw r2.error;
+      const rows = (r1.data ?? []) as DreRow[];
+      setDre(rows);
+      setOperacional((r2.data ?? []) as DreOperacionalRow[]);
+      setMesSel((prev) => prev ?? (rows.length ? rows[rows.length - 1].mes : undefined));
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao carregar DRE", { description: (e as Error).message });
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      setLoading(true);
+    void carregar();
+  }, [carregar]);
+
+  // Busca os itens de uma categoria (drill-down). Extraído de toggleDespesa
+  // para poder re-buscar após um override.
+  const fetchDetalhe = useCallback(
+    async (label: string) => {
+      const categoria = DESPESA_CATEGORIAS[label];
+      if (!categoria || !mesSel) return;
+      const key = `${mesSel}::${label}`;
+      setLoadingDet((prev) => new Set(prev).add(key));
       try {
-        const [r1, r2] = await Promise.all([
-          supabaseExternal
-            .from("view_dre_mensal")
-            .select("*")
-            .gte("mes", "2026-05")
-            .order("mes", { ascending: true }),
-          supabaseExternal
-            .from("view_dre_operacional")
-            .select("*")
-            .gte("mes", "2026-05")
-            .order("mes", { ascending: true }),
-        ]);
-        if (cancel) return;
-        if (r1.error) throw r1.error;
-        if (r2.error) throw r2.error;
-        const rows = (r1.data ?? []) as DreRow[];
-        setDre(rows);
-        setOperacional((r2.data ?? []) as DreOperacionalRow[]);
-        if (rows.length && !mesSel) setMesSel(rows[rows.length - 1].mes);
+        const { data, error } = await supabaseExternal
+          .from("view_dre_despesas_detalhe")
+          .select("*")
+          .eq("mes", mesSel)
+          .eq("categoria", categoria)
+          .order("valor_total", { ascending: false });
+        if (error) throw error;
+        setDetalhes((prev) => ({ ...prev, [key]: (data ?? []) as DespesaDetalheRow[] }));
       } catch (e) {
         console.error(e);
-        toast.error("Erro ao carregar DRE", { description: (e as Error).message });
+        toast.error("Erro ao carregar detalhamento", { description: (e as Error).message });
       } finally {
-        if (!cancel) setLoading(false);
+        setLoadingDet((prev) => {
+          const n = new Set(prev);
+          n.delete(key);
+          return n;
+        });
       }
-    })();
-    return () => {
-      cancel = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    },
+    [mesSel],
+  );
+
+  // Grava um override (reclassificar/excluir/restaurar) e recarrega totais +
+  // os drill-downs abertos. Chave = tiny_id (sobrevive ao re-sync do Tiny).
+  const aplicarOverride = useCallback(
+    async (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => {
+      try {
+        const { error } = await supabaseExternal.from("dre_conta_override").upsert(
+          { tiny_id: tinyId, ...patch, editado_por: perfil?.nome ?? null, editado_em: new Date().toISOString() },
+          { onConflict: "tiny_id" },
+        );
+        if (error) throw error;
+        await carregar(true);
+        const abertos = [...expanded].filter((k) => k.startsWith(`${mesSel}::`));
+        setDetalhes({});
+        for (const k of abertos) {
+          const label = k.slice(`${mesSel}::`.length);
+          if (DESPESA_CATEGORIAS[label]) await fetchDetalhe(label);
+        }
+        toast.success("DRE atualizado");
+      } catch (e) {
+        console.error(e);
+        toast.error("Falha ao atualizar conta", { description: (e as Error).message });
+      }
+    },
+    [perfil, carregar, expanded, mesSel, fetchDetalhe],
+  );
 
   // Ao mudar mês, reseta expansões
   useEffect(() => {
@@ -220,9 +284,8 @@ function DREPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [operacional]);
 
-  const toggleDespesa = async (label: string) => {
+  const toggleDespesa = (label: string) => {
     if (!mesSel) return;
-    const categoria = DESPESA_CATEGORIAS[label];
     const key = `${mesSel}::${label}`;
     const next = new Set(expanded);
     if (next.has(key)) {
@@ -232,30 +295,9 @@ function DREPage() {
     }
     next.add(key);
     setExpanded(next);
-    if (!categoria) return; // ADS/Impostos sem drill
+    if (!DESPESA_CATEGORIAS[label]) return; // ADS/Receita/CMV sem drill via view de despesa
     if (detalhes[key]) return;
-    const ld = new Set(loadingDet);
-    ld.add(key);
-    setLoadingDet(ld);
-    try {
-      const { data, error } = await supabaseExternal
-        .from("view_dre_despesas_detalhe")
-        .select("*")
-        .eq("mes", mesSel)
-        .eq("categoria", categoria)
-        .order("valor_total", { ascending: false });
-      if (error) throw error;
-      setDetalhes((prev) => ({ ...prev, [key]: (data ?? []) as DespesaDetalheRow[] }));
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao carregar detalhamento", { description: (e as Error).message });
-    } finally {
-      setLoadingDet((prev) => {
-        const n = new Set(prev);
-        n.delete(key);
-        return n;
-      });
-    }
+    void fetchDetalhe(label);
   };
 
   return (
@@ -308,6 +350,7 @@ function DREPage() {
           detalhes={detalhes}
           loadingDet={loadingDet}
           onToggle={toggleDespesa}
+          onOverride={aplicarOverride}
           mesSel={mesSel!}
         />
       ) : (
@@ -419,6 +462,7 @@ function Cascata({
   detalhes,
   loadingDet,
   onToggle,
+  onOverride,
   mesSel,
 }: {
   row: DreRow;
@@ -427,6 +471,7 @@ function Cascata({
   detalhes: Record<string, DespesaDetalheRow[]>;
   loadingDet: Set<string>;
   onToggle: (label: string) => void;
+  onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
   mesSel: string;
 }) {
   const receita = row.receita_liquida ?? 0;
@@ -531,20 +576,7 @@ function Cascata({
                     <p className="text-xs text-muted-foreground py-2">Sem itens detalhados.</p>
                   ) : (
                     items.map((it, i) => (
-                      <div
-                        key={`${it.fornecedor_nome ?? "—"}-${i}`}
-                        className="flex items-start justify-between gap-4 py-0.5 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <span className="text-foreground">{it.fornecedor_nome ?? "—"}</span>
-                          {it.descricao && (
-                            <span className="text-muted-foreground"> — {it.descricao}</span>
-                          )}
-                        </div>
-                        <span className="tabular-nums text-foreground/80 shrink-0">
-                          {brlFull(it.valor_total)}
-                        </span>
-                      </div>
+                      <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} />
                     ))
                   )}
                 </div>
@@ -691,6 +723,75 @@ function Linha({
           {pct(valor, receita)}
         </span>
       </div>
+    </div>
+  );
+}
+
+// Item de despesa no drill-down, com reclassificar (Select) e excluir/restaurar.
+// A escrita vai para dre_conta_override (chave tiny_id), que sobrevive ao
+// re-sync do Tiny em contas_pagar. Excluída aparece riscada com opção de voltar.
+function ItemDespesa({
+  it,
+  onOverride,
+}: {
+  it: DespesaDetalheRow;
+  onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
+}) {
+  const excl = !!it.excluida;
+  const tid = it.tiny_id;
+  return (
+    <div className={cn("flex items-center justify-between gap-2 py-0.5 text-xs", excl && "opacity-60")}>
+      <div className="min-w-0 flex-1">
+        <span className={cn("text-foreground", excl && "line-through")}>{it.fornecedor_nome ?? "—"}</span>
+        {it.descricao && <span className="text-muted-foreground"> — {it.descricao}</span>}
+      </div>
+      <span className={cn("tabular-nums text-foreground/80 shrink-0", excl && "line-through")}>
+        {brlFull(it.valor_total)}
+      </span>
+      {tid != null && (
+        <div className="flex items-center gap-1 shrink-0">
+          <Select
+            value={it.categoria ?? undefined}
+            onValueChange={(v) => onOverride(tid, { categoria_override: v === "__auto__" ? null : v })}
+            disabled={excl}
+          >
+            <SelectTrigger className="h-6 w-[132px] text-[11px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__auto__" className="text-xs italic">
+                — automático
+              </SelectItem>
+              {DRE_CATEGORIAS_EDIT.map((c) => (
+                <SelectItem key={c} value={c} className="text-xs">
+                  {c}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {excl ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              title="Restaurar no DRE"
+              onClick={() => onOverride(tid, { excluir: false })}
+            >
+              <RotateCcw className="h-3 w-3" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+              title="Excluir do DRE"
+              onClick={() => onOverride(tid, { excluir: true })}
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
