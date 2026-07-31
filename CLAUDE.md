@@ -302,6 +302,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
 | `amazon-sync-pedidos` | v8 | Pedidos Amazon |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
+| `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
@@ -370,6 +371,27 @@ página da tabela, filtros e rolagem).
   classificação de ROAS, não "ACOS > 20% nos últimos 7 dias".
 - Removido `limit(20000)` das duas queries de `view_canais_diario` (medido: 101
   linhas/30d, 204/90d — já agregada no servidor).
+
+**Feito em 30/jul/2026 — Fulfillment › Envios (packing por PDF):**
+- Nenhum marketplace (ML/Amazon/Shopee) expõe o **inbound pendente** por API para
+  vendedor doméstico — testado: ML só dá estoque + operações (por SKU, pós-
+  recebimento); Amazon `/fba/inbound` deu 403 (falta a role de Inbound no app
+  SP-API). Contorno: o operador **sobe o PDF de "instruções de preparação"** do
+  marketplace e o app vira um checklist de separação.
+- Edge fn **`fulfillment-inbound`** (`modulo=parse-pdf`, body `{pdf_base64}`):
+  lê o PDF com **unpdf** por **posição** (NÃO usar `extractText` antes de
+  `getTextContent` — consome o documento e zera as coordenadas). Quantidade vem
+  da coluna cujo header é **exatamente** "UNIDADES" (`/UNIDADES/i` casaria "Total
+  de unidades:"). Aplica `fixEnc` (UTF-8 duplo) e casa SKU→`produtos` (título +
+  foto). Validado com o PDF real #72900192 (15102×12 + 15984×125 = 137).
+- Tabelas `fulfillment_envios` / `fulfillment_envio_itens` (RLS off, grant
+  anon/authenticated). Sub-aba **Envios** em `/fulfillment`: novo envio (form +
+  upload PDF → revisão editável → salvar) e **packing** visual (cards com foto,
+  contador separado/planejado, progresso, "marcar enviado"; update otimista).
+  Isso resolve o follow-up do "Montar envio" que não persistia.
+- **Pendente:** reconciliar "recebido" (Amazon via role de Inbound; ML via
+  operações por inventory_id). Parser hoje calibrado no layout do **ML**; validar
+  com PDFs de Amazon/Shopee quando surgirem.
 
 **Feito em 21/jul/2026 — aba Fulfillment nova (`/fulfillment`):**
 - Duas sub-abas: **Inventário** (`estoque_fulfillment` por marketplace/CD) e
