@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw, FilePlus2 } from "lucide-react";
+import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw, FilePlus2, FileCheck2, Clock } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
@@ -29,16 +29,17 @@ interface NotaCancelada {
   serie_nf: string | null;
   data_emissao_nf: string | null;
   id_nota_fiscal: number | null;
+  id_nota_devolucao: number | null;
   precisa_devolucao: boolean | null;
   devolucao_emitida: boolean | null;
 }
 
 const COLS =
-  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,id_nota_fiscal,precisa_devolucao,devolucao_emitida";
+  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,id_nota_fiscal,id_nota_devolucao,precisa_devolucao,devolucao_emitida";
 
 const PAGE_SIZE = 50;
 
-type Filtro = "todos" | "marcados" | "devolvidos";
+type Filtro = "todos" | "marcados" | "geradas" | "devolvidos";
 
 interface PendenteEmissao {
   id_nota: number;
@@ -75,7 +76,7 @@ export const Route = createFileRoute("/devolucoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
     pagina: Number.isFinite(Number(s.pagina)) ? Math.max(1, Math.floor(Number(s.pagina))) : 1,
     q: typeof s.q === "string" ? s.q : "",
-    filtro: (["todos", "marcados", "devolvidos"].includes(s.filtro as string)
+    filtro: (["todos", "marcados", "geradas", "devolvidos"].includes(s.filtro as string)
       ? (s.filtro as Filtro)
       : "todos"),
   }),
@@ -116,12 +117,16 @@ function DevolucoesPage() {
     queryFn: async () => {
       const start = (page - 1) * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
-      let q = supabaseExternal
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabaseExternal
         .from("notas_cancelados")
         .select(COLS, { count: "exact" })
         .eq("finalidade_nf", "1")
         .not("id_nota_fiscal", "is", null);
-      if (filtro === "marcados") q = q.eq("precisa_devolucao", true);
+      if (filtro === "marcados")
+        q = q.eq("precisa_devolucao", true).is("id_nota_devolucao", null).not("devolucao_emitida", "is", true);
+      else if (filtro === "geradas")
+        q = q.not("id_nota_devolucao", "is", null).not("devolucao_emitida", "is", true);
       else if (filtro === "devolvidos") q = q.eq("devolucao_emitida", true);
       if (searchText) {
         const esc = searchText.replace(/[,%()]/g, " ").trim();
@@ -187,8 +192,8 @@ function DevolucoesPage() {
     }
     if (
       !window.confirm(
-        `Criar a devolução (Pendente) do pedido ${row.numero_pedido ?? ""} no Tiny?\n\n` +
-          `Copia cliente e itens da NF ${row.numero_nf ?? ""} e deixa a nota pronta para emitir. Não emite ainda.`,
+        `Gerar a nota de devolução do pedido ${row.numero_pedido ?? ""} no Tiny?\n\n` +
+          `Copia cliente e itens da NF ${row.numero_nf ?? ""} e cria a nota como Pendente (aguardando emissão). NÃO autoriza na SEFAZ ainda.`,
       )
     )
       return;
@@ -214,8 +219,8 @@ function DevolucoesPage() {
       }
       const reg = d.registro;
       toast.success(
-        `Devolução ${reg?.numero ?? ""}/${reg?.serie ?? ""} criada como Pendente`,
-        { description: 'Abra "Pendentes de emissão" e clique em Emitir quando quiser autorizar na SEFAZ.' },
+        `Nota de devolução ${reg?.numero ?? ""}/${reg?.serie ?? ""} gerada (Pendente)`,
+        { description: 'Agora abra "Pendentes de emissão" e clique em Emitir para autorizar na SEFAZ.' },
       );
       queryClient.invalidateQueries({ queryKey: ["devolucoes"] });
     } catch (e) {
@@ -239,9 +244,20 @@ function DevolucoesPage() {
           <RotateCcw className="h-6 w-6" /> Devolução de Pedidos
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Pedidos cancelados que tiveram NF de venda emitida. Marque quais precisam de nota de
-          devolução.
+          Fluxo: <strong>marque</strong> o pedido → <strong>gere a nota</strong> de devolução →{" "}
+          <strong>emita</strong> a NF na SEFAZ (card "Pendentes de emissão").
         </p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <FilePlus2 className="h-3 w-3" /> Gerar nota = cria no Tiny (Pendente)
+          </span>
+          <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400">
+            <Clock className="h-3 w-3" /> Nota gerada = aguardando emissão
+          </span>
+          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3 w-3" /> NF autorizada = concluída na SEFAZ
+          </span>
+        </div>
       </header>
 
       {/* Filtros */}
@@ -286,7 +302,7 @@ function DevolucoesPage() {
                 <th className="text-right font-medium px-3 py-2">Valor NF</th>
                 <th className="text-left font-medium px-3 py-2">NF</th>
                 <th className="text-left font-medium px-3 py-2">Emissão</th>
-                <th className="text-center font-medium px-3 py-2">Status</th>
+                <th className="text-center font-medium px-3 py-2 w-52">Devolução</th>
               </tr>
             </thead>
             <tbody>
@@ -307,12 +323,14 @@ function DevolucoesPage() {
               ) : (
                 rows.map((r) => {
                   const devolvido = r.devolucao_emitida === true;
+                  const notaGerada = !devolvido && r.id_nota_devolucao != null;
                   return (
                     <tr
                       key={r.tiny_pedido_id}
                       className={cn(
                         "border-t hover:bg-accent/40 transition",
-                        r.precisa_devolucao && "bg-amber-500/5",
+                        r.precisa_devolucao && !notaGerada && !devolvido && "bg-amber-500/5",
+                        notaGerada && "bg-blue-500/5",
                         devolvido && "opacity-60",
                       )}
                     >
@@ -355,8 +373,17 @@ function DevolucoesPage() {
                           <Badge
                             variant="outline"
                             className="text-[10px] h-5 px-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 gap-1"
+                            title="NF de devolução autorizada na SEFAZ"
                           >
-                            <CheckCircle2 className="h-3 w-3" /> devolvida
+                            <CheckCircle2 className="h-3 w-3" /> NF autorizada
+                          </Badge>
+                        ) : notaGerada ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] h-5 px-1.5 border-blue-500/40 text-blue-700 dark:text-blue-300 gap-1"
+                            title="Nota de devolução gerada no Tiny (Pendente). Emita em 'Pendentes de emissão' acima."
+                          >
+                            <Clock className="h-3 w-3" /> Nota gerada · emitir
                           </Badge>
                         ) : r.precisa_devolucao ? (
                           <Button
@@ -364,7 +391,7 @@ function DevolucoesPage() {
                             size="sm"
                             className="h-7 gap-1.5 text-xs"
                             disabled={criandoId === r.tiny_pedido_id || r.id_nota_fiscal == null}
-                            title="Cria a devolução (Pendente) no Tiny a partir da NF de venda"
+                            title="Gera a nota de devolução (Pendente) no Tiny a partir da NF de venda"
                             onClick={() => void criarDevolucao(r)}
                           >
                             {criandoId === r.tiny_pedido_id ? (
@@ -372,7 +399,7 @@ function DevolucoesPage() {
                             ) : (
                               <FilePlus2 className="h-3.5 w-3.5" />
                             )}
-                            Criar devolução
+                            Gerar nota de devolução
                           </Button>
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
@@ -577,8 +604,9 @@ function PendentesEmissaoCard({ onEmitiu }: { onEmitiu: () => void }) {
 function FiltroSegment({ value, onChange }: { value: Filtro; onChange: (v: Filtro) => void }) {
   const opts: { id: Filtro; label: string }[] = [
     { id: "todos", label: "Todos" },
-    { id: "marcados", label: "A devolver" },
-    { id: "devolvidos", label: "Devolvidos" },
+    { id: "marcados", label: "A gerar" },
+    { id: "geradas", label: "Nota gerada" },
+    { id: "devolvidos", label: "NF autorizada" },
   ];
   return (
     <div className="inline-flex rounded-md border bg-card p-0.5">
