@@ -118,9 +118,11 @@ function DevolucoesPage() {
     queryFn: async () => {
       const start = (page - 1) * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
+      // Lê da VIEW (reflete o status atual do pedido): exclui pedidos que
+      // deixaram de estar cancelados (falso-positivo por flicker de status).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q: any = supabaseExternal
-        .from("notas_cancelados")
+        .from("view_devolucoes_lista")
         .select(COLS, { count: "exact" })
         .eq("finalidade_nf", "1")
         .not("id_nota_fiscal", "is", null);
