@@ -260,6 +260,19 @@ inclui a devolução via **API v2** (`nota.fiscal.incluir.php`, secret
 `notas_cancelados`); (b) **entregues que o cliente devolveu** — fora da varredura;
 o `emitir` funciona igual, só não tem onde registrar (match retorna null).
 
+**Falso-positivo de cancelamento (31/jul/2026 — custou 2 NF-e erradas):** um
+pedido pode **"piscar" `cancelada`** no espelho `pedidos_tiny` (flicker de status
+da Shopee / mapeamento do sync) e voltar a ativo. A varredura fotografa esse
+instante e **nunca remove**; aí o pedido (na verdade ENVIADO, situação Tiny 7)
+aparece como cancelado e alguém gera+emite devolução para uma venda válida —
+**erro fiscal** (foi o caso de 287879 e 287245). Defesas: (1) o front lê
+`view_devolucoes_lista` (= `notas_cancelados` JOIN `pedidos_tiny` WHERE
+`situacao='cancelada'`), escondendo os que voltaram a ativo; (2) `criar` tem
+**guard ao vivo**: consulta `/pedidos/{id}` no Tiny e recusa se `situacao != 2`
+(Cancelada) — nunca confie só no espelho; (3) a varredura remove falsos-positivos
+que ainda não geraram devolução. Rate-limit da **API v2**: 60 req/min nesta conta
+(header `x-limit-api`); NÃO faça retry na v2 quando código 6 (reinicia o cooldown).
+
 ---
 
 ## 5.3 DRE — categorização de despesas e camada de override
