@@ -967,6 +967,23 @@ function contarCopiasZpl(zpl: string | null | undefined): number {
   return total || (String(zpl).match(/\^XA/g) || []).length;
 }
 
+// Cada etiqueta do ML é um bloco ^XA…^XZ com "SKU: <x>" dentro. Fatia por SKU
+// para permitir imprimir produto a produto.
+function dividirZplPorSku(zpl: string | null | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!zpl) return map;
+  for (const m of String(zpl).matchAll(/\^XA[\s\S]*?\^XZ/g)) {
+    const bloco = m[0];
+    const sku = (bloco.match(/SKU:\s*([A-Za-z0-9._\-]+)/) || [])[1];
+    if (sku) map.set(sku, bloco);
+  }
+  return map;
+}
+// Troca a quantidade de cópias (^PQ<n>) de um bloco de etiqueta.
+function comQuantidadeZpl(bloco: string, qty: number): string {
+  return bloco.replace(/\^PQ\d+/, `^PQ${Math.max(1, qty)}`);
+}
+
 function Barra({ valor, total }: { valor: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((valor / total) * 100)) : 0;
   const cheio = total > 0 && valor >= total;
@@ -1399,6 +1416,38 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const sep = itens.reduce((s, i) => s + i.qtd_separada, 0);
   const tudoSeparado = plan > 0 && sep >= plan;
 
+  const zplPorSku = useMemo(() => dividirZplPorSku(envioQ.data?.etiquetas_zpl), [envioQ.data?.etiquetas_zpl]);
+  const [imprimindoSku, setImprimindoSku] = useState<string | null>(null);
+
+  async function imprimirSku(sku: string | null, qty: number) {
+    if (!sku) return;
+    const bloco = zplPorSku.get(sku);
+    if (!bloco) {
+      toast.warning("Não há etiqueta deste SKU no arquivo anexado.");
+      return;
+    }
+    if (!printerId) {
+      toast.warning("Escolha a impressora.");
+      return;
+    }
+    if (qty <= 0) return;
+    const imp = impressoras.find((p) => p.printer_id === printerId);
+    if (!window.confirm(`Imprimir ${qty} etiqueta(s) do SKU ${sku} na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    setImprimindoSku(sku);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+        body: { modulo: "imprimir", zpl: comQuantidadeZpl(bloco, qty), printer_id: printerId, title: `Etiqueta ${sku}` },
+      });
+      if (error) throw new Error(error.message);
+      if (!(data as { ok?: boolean })?.ok) throw new Error(JSON.stringify((data as { resposta?: unknown })?.resposta ?? data));
+      toast.success(`Enviado à impressora · ${qty} etiqueta(s) do SKU ${sku}`);
+    } catch (e) {
+      toast.error("Falha ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoSku(null);
+    }
+  }
+
   async function setSeparada(item: EnvioItem, novo: number) {
     const clamped = Math.max(0, Math.min(novo, item.qtd_planejada));
     const conferido = clamped >= item.qtd_planejada;
@@ -1575,6 +1624,9 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               it={it}
               url={it.sku ? fotos?.[it.sku] : undefined}
               onSet={(novo) => void setSeparada(it, novo)}
+              temEtiqueta={!!it.sku && zplPorSku.has(it.sku)}
+              imprimindo={imprimindoSku === it.sku}
+              onImprimir={(qty) => void imprimirSku(it.sku, qty)}
             />
           ))}
         </div>
@@ -1590,15 +1642,25 @@ function CardItemPacking({
   it,
   url,
   onSet,
+  temEtiqueta,
+  imprimindo,
+  onImprimir,
 }: {
   it: EnvioItem;
   url?: string;
   onSet: (novo: number) => void;
+  temEtiqueta: boolean;
+  imprimindo: boolean;
+  onImprimir: (qty: number) => void;
 }) {
   const [txt, setTxt] = useState(String(it.qtd_separada));
   useEffect(() => {
     setTxt(String(it.qtd_separada));
   }, [it.qtd_separada]);
+  const [qtdImp, setQtdImp] = useState(String(it.qtd_planejada));
+  useEffect(() => {
+    setQtdImp(String(it.qtd_planejada));
+  }, [it.qtd_planejada]);
 
   const completo = it.qtd_planejada > 0 && it.qtd_separada >= it.qtd_planejada;
   const commit = () => {
@@ -1656,6 +1718,29 @@ function CardItemPacking({
               completar
             </Button>
           )}
+        </div>
+
+        {/* Impressão de etiqueta deste produto, com quantidade escolhível */}
+        <div className="flex items-center gap-1.5 pt-2 mt-1 border-t border-border/50">
+          <span className="text-[11px] text-muted-foreground">Etiquetas:</span>
+          <Input
+            value={qtdImp}
+            onChange={(e) => setQtdImp(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            disabled={!temEtiqueta}
+            className="h-7 w-14 text-center tabular-nums px-1"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            disabled={!temEtiqueta || imprimindo}
+            title={temEtiqueta ? "Imprimir etiquetas deste produto" : "Anexe o arquivo de etiquetas do envio"}
+            onClick={() => onImprimir(Math.max(1, parseInt(qtdImp, 10) || 0))}
+          >
+            {imprimindo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+            Imprimir
+          </Button>
         </div>
       </div>
     </Card>
