@@ -62,6 +62,16 @@ function rangePeriodo(p: Periodo): { ini?: string; fim?: string } {
   return {};
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface BulkItem {
+  id_nota_fiscal: number | null;
+  id_nota_devolucao: number | null;
+  numero_pedido: string | null;
+  valor_nf: number | string | null;
+}
+const somaValor = (itens: BulkItem[]) => itens.reduce((s, i) => s + (Number(i.valor_nf) || 0), 0);
+
 interface PendenteEmissao {
   id_nota: number;
   numero: string | null;
@@ -124,6 +134,7 @@ function DevolucoesPage() {
   const [salvandoId, setSalvandoId] = useState<number | null>(null);
   const [criandoId, setCriandoId] = useState<number | null>(null);
   const [emitindoId, setEmitindoId] = useState<number | null>(null);
+  const [bulk, setBulk] = useState<{ tipo: "gerar" | "emitir"; total: number; feito: number; ok: number; falha: number } | null>(null);
 
   const updateSearch = (next: Partial<SearchParams>) =>
     navigate({ search: { ...search, ...next }, replace: true });
@@ -177,6 +188,110 @@ function DevolucoesPage() {
   const rows = listQuery.data?.rows ?? [];
   const total = listQuery.data?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // Conjuntos para ações em massa (todo o período, não só a página).
+  const bulkQuery = useQuery({
+    queryKey: ["devolucoes", "bulk", periodo],
+    queryFn: async (): Promise<{ aGerar: BulkItem[]; geradas: BulkItem[] }> => {
+      const { ini, fim } = rangePeriodo(periodo);
+      const base = () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let q: any = supabaseExternal
+          .from("view_devolucoes_lista")
+          .select("id_nota_fiscal,id_nota_devolucao,numero_pedido,valor_nf")
+          .eq("finalidade_nf", "1")
+          .not("id_nota_fiscal", "is", null);
+        if (ini) q = q.gte("data_pedido", ini);
+        if (fim) q = q.lt("data_pedido", fim);
+        return q;
+      };
+      const [g, e] = await Promise.all([
+        base().eq("precisa_devolucao", true).is("id_nota_devolucao", null).not("devolucao_emitida", "is", true),
+        base().not("id_nota_devolucao", "is", null).not("devolucao_emitida", "is", true),
+      ]);
+      return {
+        aGerar: (g.data ?? []) as BulkItem[],
+        geradas: (e.data ?? []) as BulkItem[],
+      };
+    },
+  });
+  const aGerar = bulkQuery.data?.aGerar ?? [];
+  const geradas = bulkQuery.data?.geradas ?? [];
+
+  // GERAR EM MASSA (baixo risco: só cria Pendentes). Sequencial + throttle ~1,5s
+  // para respeitar o limite da API v2 (60/min). Pausa se a v2 bloquear seguidas.
+  async function gerarEmMassa() {
+    if (!aGerar.length) return;
+    if (
+      !window.confirm(
+        `Gerar ${aGerar.length} nota(s) de devolução (Pendentes) no Tiny?\n\n` +
+          `Valor total: ${formatBRL(somaValor(aGerar))}\n` +
+          `NÃO autoriza na SEFAZ — só cria as notas. Leva ~${Math.ceil((aGerar.length * 1.8) / 60)} min.`,
+      )
+    )
+      return;
+    setBulk({ tipo: "gerar", total: aGerar.length, feito: 0, ok: 0, falha: 0 });
+    let ok = 0, falha = 0, blocosSeguidos = 0;
+    for (let i = 0; i < aGerar.length; i++) {
+      const it = aGerar[i];
+      try {
+        const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+          body: { modulo: "criar", id_nota_venda: it.id_nota_fiscal, confirmar: "1" },
+        });
+        if (error) throw new Error(error.message);
+        const d = data as { ok?: boolean; bloqueada?: boolean };
+        if (d?.ok) { ok++; blocosSeguidos = 0; }
+        else if (d?.bloqueada) {
+          blocosSeguidos++;
+          if (blocosSeguidos >= 2) {
+            toast.warning("API v2 do Tiny bloqueada — lote pausado.", {
+              description: "Aguarde alguns minutos e clique novamente para continuar de onde parou.",
+            });
+            break;
+          }
+          await sleep(10000);
+          i--; // repete o mesmo item
+          continue;
+        } else { falha++; blocosSeguidos = 0; }
+      } catch { falha++; }
+      setBulk({ tipo: "gerar", total: aGerar.length, feito: i + 1, ok, falha });
+      await sleep(1500);
+    }
+    setBulk(null);
+    toast.success(`Geração em massa: ${ok} criada(s), ${falha} falha(s)`);
+    queryClient.invalidateQueries({ queryKey: ["devolucoes"] });
+  }
+
+  // EMITIR EM MASSA (SEFAZ, irreversível) — confirmação forte (qtd + valor).
+  async function emitirEmMassa() {
+    if (!geradas.length) return;
+    if (
+      !window.confirm(
+        `EMITIR ${geradas.length} NF-e de devolução na SEFAZ?\n\n` +
+          `Valor total: ${formatBRL(somaValor(geradas))}\n\n` +
+          `⚠️ É DEFINITIVO e irreversível — cada uma vira uma NF-e real autorizada.`,
+      )
+    )
+      return;
+    setBulk({ tipo: "emitir", total: geradas.length, feito: 0, ok: 0, falha: 0 });
+    let ok = 0, falha = 0;
+    for (let i = 0; i < geradas.length; i++) {
+      const it = geradas[i];
+      try {
+        const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+          body: { modulo: "emitir", id_nota: it.id_nota_devolucao, confirmar: "1" },
+        });
+        if (error) throw new Error(error.message);
+        if ((data as { autorizada?: boolean })?.autorizada) ok++;
+        else falha++;
+      } catch { falha++; }
+      setBulk({ tipo: "emitir", total: geradas.length, feito: i + 1, ok, falha });
+      await sleep(800);
+    }
+    setBulk(null);
+    toast.success(`Emissão em massa: ${ok} autorizada(s), ${falha} falha(s)`);
+    queryClient.invalidateQueries({ queryKey: ["devolucoes"] });
+  }
 
   // Marcar/desmarcar precisa_devolucao — grava no banco, com atualização otimista.
   async function toggleDevolucao(row: NotaCancelada, valor: boolean) {
@@ -367,12 +482,55 @@ function DevolucoesPage() {
       <PendentesEmissaoCard onEmitiu={() => queryClient.invalidateQueries({ queryKey: ["devolucoes"] })} />
 
       <Card className="overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b">
           <h3 className="text-sm font-semibold">
             Pedidos cancelados com NF{" "}
             <span className="text-muted-foreground font-normal">({total})</span>
           </h3>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={bulk !== null || aGerar.length === 0}
+              title="Gera as notas de devolução (Pendentes) de todos os marcados do período"
+              onClick={() => void gerarEmMassa()}
+            >
+              {bulk?.tipo === "gerar" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FilePlus2 className="h-3.5 w-3.5" />}
+              Gerar em massa ({aGerar.length})
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+              disabled={bulk !== null || geradas.length === 0}
+              title="Autoriza na SEFAZ todas as notas já geradas do período (definitivo)"
+              onClick={() => void emitirEmMassa()}
+            >
+              {bulk?.tipo === "emitir" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              Emitir em massa ({geradas.length})
+            </Button>
+          </div>
         </div>
+
+        {bulk && (
+          <div className="px-4 py-2 border-b bg-muted/40 text-xs">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-medium">
+                {bulk.tipo === "gerar" ? "Gerando notas…" : "Emitindo NF-e…"} {bulk.feito}/{bulk.total}
+              </span>
+              <span className="text-muted-foreground tabular-nums">
+                {bulk.ok} ok{bulk.falha > 0 ? ` · ${bulk.falha} falha(s)` : ""}
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${bulk.total > 0 ? Math.round((bulk.feito / bulk.total) * 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -466,7 +624,7 @@ function DevolucoesPage() {
                             variant="outline"
                             size="sm"
                             className="h-7 gap-1.5 text-xs border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
-                            disabled={emitindoId !== null}
+                            disabled={emitindoId !== null || bulk !== null}
                             title="Nota já gerada (Pendente). Clique para autorizar a NF na SEFAZ — definitivo."
                             onClick={() => void emitirDireto(r)}
                           >
@@ -482,7 +640,7 @@ function DevolucoesPage() {
                             variant="outline"
                             size="sm"
                             className="h-7 gap-1.5 text-xs"
-                            disabled={criandoId !== null || r.id_nota_fiscal == null}
+                            disabled={criandoId !== null || bulk !== null || r.id_nota_fiscal == null}
                             title="Gera a nota de devolução (Pendente) no Tiny a partir da NF de venda. (uma por vez, para respeitar o limite da API v2)"
                             onClick={() => void criarDevolucao(r)}
                           >
