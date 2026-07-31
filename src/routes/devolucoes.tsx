@@ -11,6 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -40,6 +47,20 @@ const COLS =
 const PAGE_SIZE = 50;
 
 type Filtro = "todos" | "marcados" | "geradas" | "devolvidos";
+type Periodo = "mes_atual" | "mes_anterior" | "90dias" | "todos";
+
+// Intervalo de data_pedido para cada período. O varredor cobre 90 dias.
+function rangePeriodo(p: Periodo): { ini?: string; fim?: string } {
+  const now = new Date();
+  if (p === "mes_atual") return { ini: new Date(now.getFullYear(), now.getMonth(), 1).toISOString() };
+  if (p === "mes_anterior")
+    return {
+      ini: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString(),
+      fim: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+    };
+  if (p === "90dias") return { ini: new Date(Date.now() - 90 * 86400000).toISOString() };
+  return {};
+}
 
 interface PendenteEmissao {
   id_nota: number;
@@ -70,7 +91,7 @@ function corCanal(canal: string | null | undefined): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
-type SearchParams = { pagina: number; q: string; filtro: Filtro };
+type SearchParams = { pagina: number; q: string; filtro: Filtro; periodo: Periodo };
 
 export const Route = createFileRoute("/devolucoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
@@ -79,6 +100,9 @@ export const Route = createFileRoute("/devolucoes")({
     filtro: (["todos", "marcados", "geradas", "devolvidos"].includes(s.filtro as string)
       ? (s.filtro as Filtro)
       : "todos"),
+    periodo: (["mes_atual", "mes_anterior", "90dias", "todos"].includes(s.periodo as string)
+      ? (s.periodo as Periodo)
+      : "mes_atual"),
   }),
   component: DevolucoesPage,
 });
@@ -94,6 +118,7 @@ function DevolucoesPage() {
   const page = search.pagina as number;
   const filtro = search.filtro as Filtro;
   const searchText = search.q as string;
+  const periodo = search.periodo as Periodo;
 
   const [searchDraft, setSearchDraft] = useState(searchText);
   const [salvandoId, setSalvandoId] = useState<number | null>(null);
@@ -111,13 +136,14 @@ function DevolucoesPage() {
     return () => clearTimeout(t);
   }, [searchDraft, searchText]);
 
-  const listKey = ["devolucoes", "lista", page, filtro, searchText] as const;
+  const listKey = ["devolucoes", "lista", page, filtro, searchText, periodo] as const;
 
   const listQuery = useQuery({
     queryKey: listKey,
     queryFn: async () => {
       const start = (page - 1) * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
+      const { ini, fim } = rangePeriodo(periodo);
       // Lê da VIEW (reflete o status atual do pedido): exclui pedidos que
       // deixaram de estar cancelados (falso-positivo por flicker de status).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,6 +152,8 @@ function DevolucoesPage() {
         .select(COLS, { count: "exact" })
         .eq("finalidade_nf", "1")
         .not("id_nota_fiscal", "is", null);
+      if (ini) q = q.gte("data_pedido", ini);
+      if (fim) q = q.lt("data_pedido", fim);
       if (filtro === "marcados")
         q = q.eq("precisa_devolucao", true).is("id_nota_devolucao", null).not("devolucao_emitida", "is", true);
       else if (filtro === "geradas")
@@ -308,6 +336,17 @@ function DevolucoesPage() {
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2">
         <FiltroSegment value={filtro} onChange={(f) => updateSearch({ filtro: f, pagina: 1 })} />
+        <Select value={periodo} onValueChange={(v) => updateSearch({ periodo: v as Periodo, pagina: 1 })}>
+          <SelectTrigger className="h-9 w-[160px] bg-card">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="mes_atual">Mês atual</SelectItem>
+            <SelectItem value="mes_anterior">Mês anterior</SelectItem>
+            <SelectItem value="90dias">Últimos 90 dias</SelectItem>
+            <SelectItem value="todos">Todos</SelectItem>
+          </SelectContent>
+        </Select>
         <div className="relative ml-auto w-full max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
