@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Warehouse,
@@ -17,6 +17,8 @@ import {
   Loader2,
   Trash2,
   Send,
+  Printer,
+  FileText,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
@@ -49,7 +51,11 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/format";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  supabaseExternal,
+  EXTERNAL_URL,
+  EXTERNAL_PUBLISHABLE_KEY,
+} from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -882,6 +888,7 @@ interface Envio {
   status: string;
   total_unidades: number | null;
   observacao: string | null;
+  etiquetas_zpl: string | null;
   criado_por: string | null;
   criado_em: string;
   atualizado_em: string;
@@ -923,6 +930,41 @@ function fileToBase64(file: File): Promise<string> {
     r.onerror = () => reject(new Error("falha ao ler arquivo"));
     r.readAsDataURL(file);
   });
+}
+
+// Impressoras ZD220 (mesmo PrintNode das etiquetas Shopee). A escolha compartilha
+// o localStorage com a tela de Separação, então a impressora selecionada lá vale aqui.
+const STORAGE_PRINTER = "separacao.printerId";
+interface ImpressoraFF {
+  printer_id: number;
+  nome: string;
+  computador: string;
+  estado: string;
+  configurada?: boolean;
+}
+function useImpressorasFF(enabled: boolean) {
+  return useQuery({
+    queryKey: ["fulfillment", "impressoras"],
+    enabled,
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<ImpressoraFF[]> => {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras&loja=ottz`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const data = (await resp.json().catch(() => ({}))) as { impressoras?: ImpressoraFF[] };
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return (data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220"));
+    },
+  });
+}
+
+// Soma de cópias no ZPL (^PQ<n>) — quantas etiquetas físicas sairão.
+function contarCopiasZpl(zpl: string | null | undefined): number {
+  if (!zpl) return 0;
+  let total = 0;
+  for (const m of String(zpl).matchAll(/\^PQ(\d+)/g)) total += parseInt(m[1], 10) || 0;
+  return total || (String(zpl).match(/\^XA/g) || []).length;
 }
 
 function Barra({ valor, total }: { valor: number; total: number }) {
@@ -1071,9 +1113,11 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
   const [centro, setCentro] = useState("");
   const [itens, setItens] = useState<ParsedItem[]>([]);
   const [totalPdf, setTotalPdf] = useState<number | null>(null);
+  const [etiquetasZpl, setEtiquetasZpl] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const zplRef = useRef<HTMLInputElement>(null);
 
   const { data: fotos } = useFotos(itens.map((i) => i.sku));
   const somaQtd = itens.reduce((s, i) => s + (Number(i.qtd) || 0), 0);
@@ -1126,6 +1170,7 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
           centro: centro || null,
           status: "separando",
           total_unidades: somaQtd,
+          etiquetas_zpl: etiquetasZpl,
           criado_por: perfil?.nome ?? null,
         })
         .select("id")
@@ -1206,10 +1251,39 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
             e.currentTarget.value = "";
           }}
         />
-        <Button variant="outline" className="gap-2" onClick={() => fileRef.current?.click()} disabled={parsing}>
-          {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {itens.length ? "Trocar PDF" : "Subir PDF de preparação"}
-        </Button>
+        <input
+          ref={zplRef}
+          type="file"
+          accept=".txt,.zpl,text/plain"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.currentTarget.value = "";
+            if (!f) return;
+            try {
+              const txt = await f.text();
+              setEtiquetasZpl(txt);
+              toast.success(`Etiquetas anexadas · ${contarCopiasZpl(txt)} etiquetas`);
+            } catch {
+              toast.error("Falha ao ler o arquivo de etiquetas");
+            }
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => fileRef.current?.click()} disabled={parsing}>
+            {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {itens.length ? "Trocar PDF" : "Subir PDF de preparação"}
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={() => zplRef.current?.click()}>
+            <Printer className="h-4 w-4" />
+            {etiquetasZpl ? "Trocar etiquetas" : "Subir etiquetas (ZPL, opcional)"}
+          </Button>
+          {etiquetasZpl && (
+            <span className="text-xs text-emerald-600 inline-flex items-center gap-1">
+              <FileText className="h-3.5 w-3.5" /> {contarCopiasZpl(etiquetasZpl)} etiquetas prontas
+            </span>
+          )}
+        </div>
       </Card>
 
       {itens.length > 0 && (
@@ -1279,6 +1353,27 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
 function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => void }) {
   const qc = useQueryClient();
   const [enviando, setEnviando] = useState(false);
+  const [imprimindo, setImprimindo] = useState(false);
+  const zplRef = useRef<HTMLInputElement>(null);
+
+  const { data: impressoras = [] } = useImpressorasFF(true);
+  const [printerId, setPrinterId] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const v = Number(window.localStorage.getItem(STORAGE_PRINTER));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined" && printerId > 0) {
+      window.localStorage.setItem(STORAGE_PRINTER, String(printerId));
+    }
+  }, [printerId]);
+  useEffect(() => {
+    if (!impressoras.length) return;
+    if (impressoras.some((p) => p.printer_id === printerId)) return;
+    const conf = impressoras.find((p) => p.configurada);
+    const online = impressoras.find((p) => p.estado === "online");
+    setPrinterId((conf ?? online ?? impressoras[0]).printer_id);
+  }, [impressoras, printerId]);
 
   const envioQ = useQuery({
     queryKey: ["fulfillment", "envio", envioId],
@@ -1337,7 +1432,53 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     }
   }
 
+  async function anexarEtiquetas(file: File) {
+    try {
+      const txt = await file.text();
+      const { error } = await supabaseExternal
+        .from("fulfillment_envios")
+        .update({ etiquetas_zpl: txt, atualizado_em: new Date().toISOString() })
+        .eq("id", envioId);
+      if (error) throw error;
+      toast.success(`Etiquetas anexadas · ${contarCopiasZpl(txt)} etiquetas`);
+      envioQ.refetch();
+    } catch (e) {
+      toast.error("Falha ao anexar etiquetas", { description: (e as Error).message });
+    }
+  }
+
+  async function imprimirEtiquetas() {
+    const zpl = envioQ.data?.etiquetas_zpl;
+    if (!zpl) {
+      toast.warning("Este envio não tem etiquetas anexadas.");
+      return;
+    }
+    if (!printerId) {
+      toast.warning("Escolha a impressora.");
+      return;
+    }
+    const copias = contarCopiasZpl(zpl);
+    const imp = impressoras.find((p) => p.printer_id === printerId);
+    if (!window.confirm(`Imprimir ${copias} etiquetas na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    setImprimindo(true);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+        body: { modulo: "imprimir", zpl, printer_id: printerId, title: `Etiquetas ${envioQ.data?.numero ?? envioId}` },
+      });
+      if (error) throw new Error(error.message);
+      if (!(data as { ok?: boolean })?.ok) {
+        throw new Error(JSON.stringify((data as { resposta?: unknown })?.resposta ?? data));
+      }
+      toast.success(`Enviado à impressora · ${copias} etiquetas`);
+    } catch (e) {
+      toast.error("Falha ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindo(false);
+    }
+  }
+
   const envio = envioQ.data;
+  const temEtiquetas = !!envio?.etiquetas_zpl;
   const st = envio ? STATUS_ENVIO[envio.status] ?? STATUS_ENVIO.separando : null;
 
   return (
@@ -1360,21 +1501,66 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       </div>
 
       <Card className="p-4 space-y-2 sticky top-2 z-10">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm">
             <span className="text-muted-foreground">Separado: </span>
             <span className="font-semibold tabular-nums">{formatNumber(sep)} / {formatNumber(plan)} un</span>
           </div>
-          <Button
-            size="sm"
-            className="gap-2"
-            variant={tudoSeparado ? "default" : "outline"}
-            disabled={enviando || envio?.status === "enviado"}
-            onClick={() => void marcarEnviado()}
-          >
-            {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {envio?.status === "enviado" ? "Enviado" : "Marcar enviado"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={zplRef}
+              type="file"
+              accept=".txt,.zpl,text/plain"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = "";
+                if (f) void anexarEtiquetas(f);
+              }}
+            />
+            {temEtiquetas ? (
+              <>
+                <Select value={printerId ? String(printerId) : undefined} onValueChange={(v) => setPrinterId(Number(v))}>
+                  <SelectTrigger className="h-9 w-[240px] text-xs">
+                    <SelectValue placeholder="Impressora" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {impressoras.map((p) => (
+                      <SelectItem key={p.printer_id} value={String(p.printer_id)}>
+                        <span className="flex items-center gap-1.5">
+                          {p.configurada && <span className="text-emerald-600">★</span>}
+                          <span>{p.nome} — {p.computador}</span>
+                          <span className={p.estado === "online" ? "text-emerald-600" : "text-amber-600"}>({p.estado})</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">ID {p.printer_id}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {impressoras.length === 0 && (
+                      <SelectItem value="_" disabled>Nenhuma ZD220</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" className="gap-2 h-9" onClick={() => void imprimirEtiquetas()} disabled={imprimindo}>
+                  {imprimindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                  Imprimir etiquetas ({contarCopiasZpl(envio?.etiquetas_zpl)})
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" size="sm" className="gap-2 h-9" onClick={() => zplRef.current?.click()}>
+                <Printer className="h-4 w-4" /> Subir etiquetas (ZPL)
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className="gap-2 h-9"
+              variant={tudoSeparado ? "default" : "outline"}
+              disabled={enviando || envio?.status === "enviado"}
+              onClick={() => void marcarEnviado()}
+            >
+              {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {envio?.status === "enviado" ? "Enviado" : "Marcar enviado"}
+            </Button>
+          </div>
         </div>
         <Barra valor={sep} total={plan} />
       </Card>
@@ -1383,59 +1569,95 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         <Skeleton className="h-64 w-full" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {itens.map((it) => {
-            const completo = it.qtd_planejada > 0 && it.qtd_separada >= it.qtd_planejada;
-            const url = it.sku ? fotos?.[it.sku] : undefined;
-            return (
-              <Card
-                key={it.id}
-                className={cn("p-3 flex gap-3 transition-colors", completo && "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20")}
-              >
-                <div className="shrink-0">
-                  {url ? (
-                    <img
-                      src={url}
-                      alt={it.titulo ?? ""}
-                      loading="lazy"
-                      className="h-16 w-16 rounded object-cover bg-muted"
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = "hidden")}
-                    />
-                  ) : (
-                    <div className="h-16 w-16 rounded bg-muted flex items-center justify-center">
-                      <PackageIcon className="h-6 w-6 text-muted-foreground" />
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1 flex flex-col">
-                  <div className="text-sm font-medium leading-tight line-clamp-2">{it.titulo ?? "—"}</div>
-                  <div className="text-xs text-muted-foreground font-mono mt-0.5">SKU {it.sku}</div>
-                  <div className="mt-auto flex items-center gap-1.5 pt-2">
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => void setSeparada(it, it.qtd_separada - 1)} disabled={it.qtd_separada <= 0}>
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <div className="text-center tabular-nums font-semibold min-w-[64px]">
-                      {it.qtd_separada}
-                      <span className="text-muted-foreground font-normal"> / {it.qtd_planejada}</span>
-                    </div>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => void setSeparada(it, it.qtd_separada + 1)} disabled={completo}>
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                    {completo ? (
-                      <span className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                        <Check className="h-4 w-4" /> OK
-                      </span>
-                    ) : (
-                      <Button variant="ghost" size="sm" className="ml-auto h-8 text-xs" onClick={() => void setSeparada(it, it.qtd_planejada)}>
-                        completar
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
+          {itens.map((it) => (
+            <CardItemPacking
+              key={it.id}
+              it={it}
+              url={it.sku ? fotos?.[it.sku] : undefined}
+              onSet={(novo) => void setSeparada(it, novo)}
+            />
+          ))}
         </div>
       )}
     </div>
+  );
+}
+
+// Card de item no packing: contador com +/− E campo digitável (o operador pode
+// bater a quantidade separada direto). Estado local do texto sincroniza com o
+// valor persistido; commit no blur/Enter (clamp entre 0 e o planejado).
+function CardItemPacking({
+  it,
+  url,
+  onSet,
+}: {
+  it: EnvioItem;
+  url?: string;
+  onSet: (novo: number) => void;
+}) {
+  const [txt, setTxt] = useState(String(it.qtd_separada));
+  useEffect(() => {
+    setTxt(String(it.qtd_separada));
+  }, [it.qtd_separada]);
+
+  const completo = it.qtd_planejada > 0 && it.qtd_separada >= it.qtd_planejada;
+  const commit = () => {
+    const n = Math.max(0, Math.min(parseInt(txt, 10) || 0, it.qtd_planejada));
+    setTxt(String(n));
+    if (n !== it.qtd_separada) onSet(n);
+  };
+
+  return (
+    <Card className={cn("p-3 flex gap-3 transition-colors", completo && "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20")}>
+      <div className="shrink-0">
+        {url ? (
+          <img
+            src={url}
+            alt={it.titulo ?? ""}
+            loading="lazy"
+            className="h-16 w-16 rounded object-cover bg-muted"
+            onError={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = "hidden")}
+          />
+        ) : (
+          <div className="h-16 w-16 rounded bg-muted flex items-center justify-center">
+            <PackageIcon className="h-6 w-6 text-muted-foreground" />
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 flex flex-col">
+        <div className="text-sm font-medium leading-tight line-clamp-2">{it.titulo ?? "—"}</div>
+        <div className="text-xs text-muted-foreground font-mono mt-0.5">SKU {it.sku}</div>
+        <div className="mt-auto flex items-center gap-1.5 pt-2">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onSet(it.qtd_separada - 1)} disabled={it.qtd_separada <= 0}>
+            <Minus className="h-4 w-4" />
+          </Button>
+          <div className="flex items-center gap-1 tabular-nums font-semibold">
+            <Input
+              value={txt}
+              onChange={(e) => setTxt(e.target.value.replace(/[^\d]/g, ""))}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+              }}
+              inputMode="numeric"
+              className="h-8 w-14 text-center tabular-nums px-1"
+            />
+            <span className="text-muted-foreground font-normal">/ {it.qtd_planejada}</span>
+          </div>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onSet(it.qtd_separada + 1)} disabled={completo}>
+            <Plus className="h-4 w-4" />
+          </Button>
+          {completo ? (
+            <span className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+              <Check className="h-4 w-4" /> OK
+            </span>
+          ) : (
+            <Button variant="ghost" size="sm" className="ml-auto h-8 text-xs" onClick={() => onSet(it.qtd_planejada)}>
+              completar
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
