@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw } from "lucide-react";
+import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw, FilePlus2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
@@ -28,12 +28,13 @@ interface NotaCancelada {
   numero_nf: string | null;
   serie_nf: string | null;
   data_emissao_nf: string | null;
+  id_nota_fiscal: number | null;
   precisa_devolucao: boolean | null;
   devolucao_emitida: boolean | null;
 }
 
 const COLS =
-  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,precisa_devolucao,devolucao_emitida";
+  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,id_nota_fiscal,precisa_devolucao,devolucao_emitida";
 
 const PAGE_SIZE = 50;
 
@@ -95,6 +96,7 @@ function DevolucoesPage() {
 
   const [searchDraft, setSearchDraft] = useState(searchText);
   const [salvandoId, setSalvandoId] = useState<number | null>(null);
+  const [criandoId, setCriandoId] = useState<number | null>(null);
 
   const updateSearch = (next: Partial<SearchParams>) =>
     navigate({ search: { ...search, ...next }, replace: true });
@@ -172,6 +174,50 @@ function DevolucoesPage() {
           : old,
       );
       toast.error("Não foi possível salvar", { description: error.message });
+    }
+  }
+
+  // Fase 3: cria a devolução PELO APP (API v2) a partir da NF de venda. Nasce
+  // Pendente no Tiny — NÃO vai à SEFAZ aqui; a emissão continua sendo o passo
+  // explícito do card "Pendentes de emissão" (dupla confirmação).
+  async function criarDevolucao(row: NotaCancelada) {
+    if (row.id_nota_fiscal == null) {
+      toast.warning("Este pedido não tem NF de venda vinculada.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Criar a devolução (Pendente) do pedido ${row.numero_pedido ?? ""} no Tiny?\n\n` +
+          `Copia cliente e itens da NF ${row.numero_nf ?? ""} e deixa a nota pronta para emitir. Não emite ainda.`,
+      )
+    )
+      return;
+    setCriandoId(row.tiny_pedido_id);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+        body: { modulo: "criar", id_nota_venda: row.id_nota_fiscal, confirmar: "1" },
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { ok?: boolean; registro?: { numero?: string; serie?: string }; erros?: unknown };
+      if (!d?.ok) {
+        throw new Error(
+          Array.isArray(d?.erros) && d.erros.length
+            ? JSON.stringify(d.erros)
+            : "o Tiny não confirmou a criação",
+        );
+      }
+      const reg = d.registro;
+      toast.success(
+        `Devolução ${reg?.numero ?? ""}/${reg?.serie ?? ""} criada como Pendente`,
+        { description: 'Abra "Pendentes de emissão" e clique em Emitir quando quiser autorizar na SEFAZ.' },
+      );
+      queryClient.invalidateQueries({ queryKey: ["devolucoes"] });
+    } catch (e) {
+      toast.error(`Falha ao criar a devolução do pedido ${row.numero_pedido ?? ""}`, {
+        description: (e as Error).message,
+      });
+    } finally {
+      setCriandoId(null);
     }
   }
 
@@ -307,12 +353,21 @@ function DevolucoesPage() {
                             <CheckCircle2 className="h-3 w-3" /> devolvida
                           </Badge>
                         ) : r.precisa_devolucao ? (
-                          <Badge
+                          <Button
                             variant="outline"
-                            className="text-[10px] h-5 px-1.5 border-amber-500/40 text-amber-700 dark:text-amber-300"
+                            size="sm"
+                            className="h-7 gap-1.5 text-xs"
+                            disabled={criandoId === r.tiny_pedido_id || r.id_nota_fiscal == null}
+                            title="Cria a devolução (Pendente) no Tiny a partir da NF de venda"
+                            onClick={() => void criarDevolucao(r)}
                           >
-                            a devolver
-                          </Badge>
+                            {criandoId === r.tiny_pedido_id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <FilePlus2 className="h-3.5 w-3.5" />
+                            )}
+                            Criar devolução
+                          </Button>
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
