@@ -425,7 +425,7 @@ function DevolucoesPage() {
                             variant="outline"
                             size="sm"
                             className="h-7 gap-1.5 text-xs border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
-                            disabled={emitindoId === r.tiny_pedido_id}
+                            disabled={emitindoId !== null}
                             title="Nota já gerada (Pendente). Clique para autorizar a NF na SEFAZ — definitivo."
                             onClick={() => void emitirDireto(r)}
                           >
@@ -441,8 +441,8 @@ function DevolucoesPage() {
                             variant="outline"
                             size="sm"
                             className="h-7 gap-1.5 text-xs"
-                            disabled={criandoId === r.tiny_pedido_id || r.id_nota_fiscal == null}
-                            title="Gera a nota de devolução (Pendente) no Tiny a partir da NF de venda"
+                            disabled={criandoId !== null || r.id_nota_fiscal == null}
+                            title="Gera a nota de devolução (Pendente) no Tiny a partir da NF de venda. (uma por vez, para respeitar o limite da API v2)"
                             onClick={() => void criarDevolucao(r)}
                           >
                             {criandoId === r.tiny_pedido_id ? (
