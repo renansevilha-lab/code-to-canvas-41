@@ -198,12 +198,18 @@ function DevolucoesPage() {
         body: { modulo: "criar", id_nota_venda: row.id_nota_fiscal, confirmar: "1" },
       });
       if (error) throw new Error(error.message);
-      const d = data as { ok?: boolean; registro?: { numero?: string; serie?: string }; erros?: unknown };
+      const d = data as {
+        ok?: boolean;
+        registro?: { numero?: string; serie?: string };
+        erros?: unknown;
+        erro?: string;
+      };
       if (!d?.ok) {
         throw new Error(
-          Array.isArray(d?.erros) && d.erros.length
-            ? JSON.stringify(d.erros)
-            : "o Tiny não confirmou a criação",
+          d?.erro ||
+            (Array.isArray(d?.erros) && d.erros.length
+              ? JSON.stringify(d.erros)
+              : "o Tiny não confirmou a criação"),
         );
       }
       const reg = d.registro;
