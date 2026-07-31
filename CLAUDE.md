@@ -260,18 +260,21 @@ inclui a devolução via **API v2** (`nota.fiscal.incluir.php`, secret
 `notas_cancelados`); (b) **entregues que o cliente devolveu** — fora da varredura;
 o `emitir` funciona igual, só não tem onde registrar (match retorna null).
 
-**Falso-positivo de cancelamento (31/jul/2026 — custou 2 NF-e erradas):** um
-pedido pode **"piscar" `cancelada`** no espelho `pedidos_tiny` (flicker de status
-da Shopee / mapeamento do sync) e voltar a ativo. A varredura fotografa esse
-instante e **nunca remove**; aí o pedido (na verdade ENVIADO, situação Tiny 7)
-aparece como cancelado e alguém gera+emite devolução para uma venda válida —
-**erro fiscal** (foi o caso de 287879 e 287245). Defesas: (1) o front lê
-`view_devolucoes_lista` (= `notas_cancelados` JOIN `pedidos_tiny` WHERE
-`situacao='cancelada'`), escondendo os que voltaram a ativo; (2) `criar` tem
-**guard ao vivo**: consulta `/pedidos/{id}` no Tiny e recusa se `situacao != 2`
-(Cancelada) — nunca confie só no espelho; (3) a varredura remove falsos-positivos
-que ainda não geraram devolução. Rate-limit da **API v2**: 60 req/min nesta conta
-(header `x-limit-api`); NÃO faça retry na v2 quando código 6 (reinicia o cooldown).
+**Falso-positivo de cancelamento (31/jul/2026 — custou 2 NF-e erradas):** o
+mapeamento `mapSituacaoPedido` do `tiny-sync` está **CORRETO** (validado contra o
+enum oficial v3 `ObterPedidoModelResponse`: 2=Cancelada, 7=Pronto Envio, etc.). A
+causa é **flicker REAL upstream (Shopee→Tiny)**: o Tiny reporta `situacao=2`
+(Cancelada) por um instante e depois volta para ativo (ex.: 287879/287245, na
+verdade ENVIADOS=7). A varredura fotografava esse instante e **nunca removia**; aí
+o pedido aparecia como cancelado e alguém gerou+emitiu devolução para venda válida
+— **erro fiscal**. Defesas em camadas: (1) front lê `view_devolucoes_lista` (=
+`notas_cancelados` JOIN `pedidos_tiny` WHERE `situacao='cancelada'`) — esconde os
+que voltaram a ativo; (2) `criar` (v3.7) tem **guard ao vivo**: consulta
+`/pedidos/{id}` no Tiny e recusa se `situacao != 2` — **nunca confie só no
+espelho**; (3) `varrer-cancelados` (v3.8) só insere se o Tiny **confirmar ao vivo**
+`situacao==2` (ignora flicker já revertido na origem) + remove falsos-positivos
+sem devolução. Rate-limit da **API v2**: 60 req/min nesta conta (header
+`x-limit-api`); NÃO faça retry na v2 no código 6 (reinicia o cooldown).
 
 ---
 
