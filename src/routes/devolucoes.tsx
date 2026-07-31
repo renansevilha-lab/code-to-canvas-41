@@ -98,6 +98,7 @@ function DevolucoesPage() {
   const [searchDraft, setSearchDraft] = useState(searchText);
   const [salvandoId, setSalvandoId] = useState<number | null>(null);
   const [criandoId, setCriandoId] = useState<number | null>(null);
+  const [emitindoId, setEmitindoId] = useState<number | null>(null);
 
   const updateSearch = (next: Partial<SearchParams>) =>
     navigate({ search: { ...search, ...next }, replace: true });
@@ -229,6 +230,48 @@ function DevolucoesPage() {
       });
     } finally {
       setCriandoId(null);
+    }
+  }
+
+  // Emite (autoriza na SEFAZ) a nota de devolução JÁ gerada, direto da linha.
+  // Usa o id_nota_devolucao (não precisa passar pelo card "Pendentes"). SEFAZ =
+  // irreversível, por isso confirmação dupla.
+  async function emitirDireto(row: NotaCancelada) {
+    if (row.id_nota_devolucao == null) return;
+    if (
+      !window.confirm(
+        `Emitir (autorizar na SEFAZ) a nota de devolução do pedido ${row.numero_pedido ?? ""}?\n\n` +
+          `É DEFINITIVO — gera uma NF-e real na SEFAZ.`,
+      )
+    )
+      return;
+    setEmitindoId(row.tiny_pedido_id);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+        body: { modulo: "emitir", id_nota: row.id_nota_devolucao, confirmar: "1" },
+      });
+      if (error) throw new Error(error.message);
+      const d = data as {
+        autorizada?: boolean;
+        situacao?: string;
+        motivo?: string;
+        numero?: string;
+        serie?: string;
+      };
+      if (d?.autorizada) {
+        toast.success(`NF de devolução ${d.numero ?? ""}/${d.serie ?? ""} autorizada na SEFAZ`);
+        queryClient.invalidateQueries({ queryKey: ["devolucoes"] });
+      } else {
+        toast.warning(`Ainda não autorizou (situação ${d?.situacao ?? "?"})`, {
+          description: d?.motivo || "Tente novamente em instantes.",
+        });
+      }
+    } catch (e) {
+      toast.error(`Falha ao emitir o pedido ${row.numero_pedido ?? ""}`, {
+        description: (e as Error).message,
+      });
+    } finally {
+      setEmitindoId(null);
     }
   }
 
@@ -378,13 +421,21 @@ function DevolucoesPage() {
                             <CheckCircle2 className="h-3 w-3" /> NF autorizada
                           </Badge>
                         ) : notaGerada ? (
-                          <Badge
+                          <Button
                             variant="outline"
-                            className="text-[10px] h-5 px-1.5 border-blue-500/40 text-blue-700 dark:text-blue-300 gap-1"
-                            title="Nota de devolução gerada no Tiny (Pendente). Emita em 'Pendentes de emissão' acima."
+                            size="sm"
+                            className="h-7 gap-1.5 text-xs border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                            disabled={emitindoId === r.tiny_pedido_id}
+                            title="Nota já gerada (Pendente). Clique para autorizar a NF na SEFAZ — definitivo."
+                            onClick={() => void emitirDireto(r)}
                           >
-                            <Clock className="h-3 w-3" /> Nota gerada · emitir
-                          </Badge>
+                            {emitindoId === r.tiny_pedido_id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Send className="h-3.5 w-3.5" />
+                            )}
+                            Emitir NF
+                          </Button>
                         ) : r.precisa_devolucao ? (
                           <Button
                             variant="outline"
