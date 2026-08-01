@@ -935,6 +935,24 @@ function stageDe(status: string) {
   return STAGE_MAP[status] ?? { ...STAGES[0], idx: 0 };
 }
 
+const DOC_TIPOS: Array<{ id: string; label: string }> = [
+  { id: "danfe", label: "DANFE" },
+  { id: "folha_envio", label: "Folha de envio" },
+  { id: "etiquetas", label: "Etiquetas" },
+  { id: "preparacao", label: "Prep. (SKUs)" },
+  { id: "outro", label: "Outro" },
+];
+const DOC_TIPO_LABEL: Record<string, string> = Object.fromEntries(DOC_TIPOS.map((t) => [t.id, t.label]));
+
+interface EnvioDoc {
+  id: string;
+  tipo: string;
+  nome: string | null;
+  mime: string | null;
+  tamanho: number | null;
+  criado_em: string;
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1493,6 +1511,63 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
   }
 
+  // Documentos anexados (DANFE, folha de envio, etiquetas...). PDFs pequenos em base64.
+  const docsQ = useQuery({
+    queryKey: ["fulfillment", "envio-docs", envioId],
+    queryFn: async (): Promise<EnvioDoc[]> => {
+      const { data, error } = await supabaseExternal
+        .from("fulfillment_envio_docs")
+        .select("id, tipo, nome, mime, tamanho, criado_em")
+        .eq("envio_id", envioId)
+        .order("criado_em", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as EnvioDoc[];
+    },
+  });
+  const [tipoDoc, setTipoDoc] = useState("danfe");
+  const [subindoDoc, setSubindoDoc] = useState(false);
+  const docRef = useRef<HTMLInputElement>(null);
+
+  async function subirDoc(file: File) {
+    setSubindoDoc(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
+        envio_id: envioId, tipo: tipoDoc, nome: file.name, mime: file.type || "application/pdf",
+        tamanho: file.size, conteudo_base64: b64,
+      });
+      if (error) throw error;
+      toast.success(`"${file.name}" anexado`);
+      docsQ.refetch();
+    } catch (e) {
+      toast.error("Falha ao anexar", { description: (e as Error).message });
+    } finally {
+      setSubindoDoc(false);
+    }
+  }
+  async function abrirDoc(d: EnvioDoc) {
+    try {
+      const { data, error } = await supabaseExternal
+        .from("fulfillment_envio_docs").select("conteudo_base64, mime").eq("id", d.id).single();
+      if (error || !data) throw error ?? new Error("não encontrado");
+      const bin = atob(data.conteudo_base64 as string);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: (data.mime as string) || d.mime || "application/pdf" });
+      const urlObj = URL.createObjectURL(blob);
+      window.open(urlObj, "_blank");
+      setTimeout(() => URL.revokeObjectURL(urlObj), 60_000);
+    } catch (e) {
+      toast.error("Falha ao abrir", { description: (e as Error).message });
+    }
+  }
+  async function excluirDoc(d: EnvioDoc) {
+    if (!window.confirm(`Excluir "${d.nome ?? "documento"}"?`)) return;
+    const { error } = await supabaseExternal.from("fulfillment_envio_docs").delete().eq("id", d.id);
+    if (error) { toast.error("Falha ao excluir", { description: error.message }); return; }
+    docsQ.refetch();
+  }
+
   const itens = itensQ.data ?? [];
   const { data: fotos } = useFotos(itens.map((i) => i.sku));
   const plan = itens.reduce((s, i) => s + i.qtd_planejada, 0);
@@ -1667,6 +1742,45 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
           </div>
         </Card>
       )}
+
+      <Card className="p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <FileText className="h-4 w-4" /> Documentos
+            {docsQ.data && docsQ.data.length > 0 && <span className="text-muted-foreground font-normal">({docsQ.data.length})</span>}
+          </h3>
+          <div className="flex items-center gap-2">
+            <select className="h-8 rounded-md border bg-card px-2 text-xs" value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)}>
+              {DOC_TIPOS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+            <input
+              ref={docRef}
+              type="file"
+              accept="application/pdf,.pdf,image/*"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void subirDoc(f); }}
+            />
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={subindoDoc} onClick={() => docRef.current?.click()}>
+              {subindoDoc ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Anexar PDF
+            </Button>
+          </div>
+        </div>
+        {docsQ.data && docsQ.data.length > 0 ? (
+          <div className="divide-y">
+            {docsQ.data.map((d) => (
+              <div key={d.id} className="flex items-center gap-2 py-1.5 text-sm">
+                <Badge variant="outline" className="text-[10px] h-5 px-1.5 shrink-0">{DOC_TIPO_LABEL[d.tipo] ?? d.tipo}</Badge>
+                <span className="truncate flex-1">{d.nome ?? "documento"}</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{d.tamanho ? `${Math.round(d.tamanho / 1024)} KB` : ""}</span>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void abrirDoc(d)}>Abrir</Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void excluirDoc(d)}><Trash2 className="h-3.5 w-3.5" /></Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Nenhum documento. Anexe a DANFE, a folha de envio, as etiquetas...</p>
+        )}
+      </Card>
 
       <Card className="p-4 space-y-2 sticky top-2 z-10">
         <div className="flex flex-wrap items-center justify-between gap-3">
