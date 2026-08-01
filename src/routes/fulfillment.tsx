@@ -14,6 +14,8 @@ import {
   Minus,
   Check,
   ChevronLeft,
+  ChevronRight,
+  CalendarClock,
   Loader2,
   Trash2,
   Send,
@@ -888,6 +890,7 @@ interface Envio {
   status: string;
   total_unidades: number | null;
   observacao: string | null;
+  data_envio_agendada: string | null;
   etiquetas_zpl: string | null;
   criado_por: string | null;
   criado_em: string;
@@ -916,12 +919,21 @@ interface ParsedItem {
   ordem: number;
 }
 
-const STATUS_ENVIO: Record<string, { label: string; cls: string }> = {
-  separando: { label: "Separando", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
-  enviado: { label: "Enviado", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300" },
-  recebido: { label: "Recebido", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
-  cancelado: { label: "Cancelado", cls: "bg-muted text-muted-foreground" },
-};
+// Etapas do Kanban de envios (espelha o Trello). A ordem define o avanço ←/→.
+// 'separando' é a 1a etapa (compatível com envios já existentes).
+const STAGES: Array<{ id: string; label: string; curto: string; cls: string; col: string }> = [
+  { id: "separando", label: "Verificar Estoque / Separar", curto: "Verificar / Separar", cls: "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300", col: "#f43f5e" },
+  { id: "embalar", label: "Embalar", curto: "Embalar", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300", col: "#f59e0b" },
+  { id: "etiquetas", label: "Etiquetas de Volume / Finalização", curto: "Etiquetas / Finalização", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300", col: "#0ea5e9" },
+  { id: "pronto_envio", label: "Pronto para Envio", curto: "Pronto p/ Envio", cls: "bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300", col: "#14b8a6" },
+  { id: "enviado", label: "Enviado", curto: "Enviado", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300", col: "#3b82f6" },
+];
+const STAGE_MAP: Record<string, (typeof STAGES)[number] & { idx: number }> = Object.fromEntries(
+  STAGES.map((s, i) => [s.id, { ...s, idx: i }]),
+);
+function stageDe(status: string) {
+  return STAGE_MAP[status] ?? { ...STAGES[0], idx: 0 };
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -1064,12 +1076,30 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     );
   }
 
+  async function moverEtapa(e: Envio, dir: -1 | 1) {
+    const novo = STAGES[stageDe(e.status).idx + dir];
+    if (!novo) return;
+    qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) =>
+      (old ?? []).map((x) => (x.id === e.id ? { ...x, status: novo.id } : x)),
+    );
+    const { error } = await supabaseExternal
+      .from("fulfillment_envios")
+      .update({ status: novo.id, atualizado_em: new Date().toISOString() })
+      .eq("id", e.id);
+    if (error) {
+      toast.error("Falha ao mover", { description: error.message });
+      recarregar();
+    }
+  }
+
   const envios = enviosQ.data ?? [];
+  const hoje = new Date().toISOString().slice(0, 10);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-xl">
-          Envios criados para os CDs. Suba o PDF de preparação do marketplace e separe pelos cards.
+          Quadro de envios aos CDs. Mova os cards entre etapas com <strong>← →</strong>; clique para separar/embalar,
+          agendar a data e anotar observações.
         </p>
         <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
           <Plus className="h-4 w-4" /> Novo envio
@@ -1077,43 +1107,77 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
       </div>
 
       {enviosQ.isLoading ? (
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
       ) : envios.length === 0 ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">
           Nenhum envio ainda. Clique em <strong>Novo envio</strong> e suba o PDF de preparação.
         </Card>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {envios.map((e) => {
-            const p = progressoQ.data?.get(e.id);
-            const st = STATUS_ENVIO[e.status] ?? STATUS_ENVIO.separando;
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {STAGES.map((stage) => {
+            const doStage = envios.filter((e) => stageDe(e.status).id === stage.id);
             return (
-              <button key={e.id} type="button" onClick={() => setPackingId(e.id)} className="text-left">
-                <Card className="p-4 space-y-3 hover:border-primary/40 transition-colors h-full">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span aria-hidden className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: MKT_COLOR[e.marketplace] ?? "#888" }} />
-                      <div className="min-w-0">
-                        <div className="font-semibold text-sm truncate">{e.numero ? `#${e.numero}` : "(sem número)"}</div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {MKT_LABEL[e.marketplace] ?? e.marketplace}
-                          {e.empresa ? ` · ${e.empresa}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                    <Badge variant="secondary" className={cn("shrink-0", st.cls)}>{st.label}</Badge>
-                  </div>
-                  {e.centro && <div className="text-xs text-muted-foreground truncate">📦 {e.centro}</div>}
-                  <div className="space-y-1">
-                    <Barra valor={p?.sep ?? 0} total={p?.plan ?? 0} />
-                    <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                      <span>{formatNumber(p?.sep ?? 0)} / {formatNumber(p?.plan ?? e.total_unidades ?? 0)} un</span>
-                      <span>{p?.itens ?? 0} itens</span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">{format(parseISO(e.criado_em), "dd/MM/yyyy HH:mm")}</div>
-                </Card>
-              </button>
+              <div key={stage.id} className="flex-shrink-0 w-[280px] flex flex-col">
+                <div className="flex items-center justify-between px-1 py-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.col }} />
+                    {stage.curto}
+                  </span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{doStage.length}</span>
+                </div>
+                <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-2 min-h-[80px]">
+                  {doStage.length === 0 ? (
+                    <div className="text-[11px] text-muted-foreground text-center py-4">—</div>
+                  ) : (
+                    doStage.map((e) => {
+                      const p = progressoQ.data?.get(e.id);
+                      const idx = stageDe(e.status).idx;
+                      const atrasado = !!e.data_envio_agendada && e.status !== "enviado" && e.data_envio_agendada < hoje;
+                      return (
+                        <Card key={e.id} className="p-2.5 space-y-2 bg-card">
+                          <button type="button" onClick={() => setPackingId(e.id)} className="text-left w-full space-y-2">
+                            <div className="flex items-start gap-1.5">
+                              <span aria-hidden className="h-2 w-2 rounded-full shrink-0 mt-1" style={{ backgroundColor: MKT_COLOR[e.marketplace] ?? "#888" }} />
+                              <div className="min-w-0">
+                                <div className="font-semibold text-xs truncate">{e.numero ? `#${e.numero}` : "(sem número)"}</div>
+                                <div className="text-[11px] text-muted-foreground truncate">
+                                  {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Barra valor={p?.sep ?? 0} total={p?.plan ?? 0} />
+                              <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
+                                <span>{formatNumber(p?.sep ?? 0)}/{formatNumber(p?.plan ?? e.total_unidades ?? 0)} un</span>
+                                <span>{p?.itens ?? 0} itens</span>
+                              </div>
+                            </div>
+                            {(e.data_envio_agendada || e.observacao) && (
+                              <div className="flex items-center gap-2 text-[11px]">
+                                {e.data_envio_agendada && (
+                                  <span className={cn("inline-flex items-center gap-1", atrasado ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground")}>
+                                    <CalendarClock className="h-3 w-3" /> {format(parseISO(e.data_envio_agendada), "dd/MM")}
+                                  </span>
+                                )}
+                                {e.observacao && <span className="text-muted-foreground truncate" title={e.observacao}>📝 {e.observacao}</span>}
+                              </div>
+                            )}
+                          </button>
+                          <div className="flex items-center justify-between border-t pt-1.5">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0} onClick={() => void moverEtapa(e, -1)} title="Voltar etapa">
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </Button>
+                            <span className="text-[10px] text-muted-foreground">{format(parseISO(e.criado_em), "dd/MM")}</span>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === STAGES.length - 1} onClick={() => void moverEtapa(e, 1)} title="Avançar etapa">
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -1410,6 +1474,25 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     },
   });
 
+  // Campos editáveis "dentro do envio": data agendada + observações + etapa.
+  const [dataAg, setDataAg] = useState("");
+  const [obs, setObs] = useState("");
+  useEffect(() => {
+    const e = envioQ.data;
+    if (e) { setDataAg(e.data_envio_agendada ?? ""); setObs(e.observacao ?? ""); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envioQ.data?.id]);
+
+  async function salvarMeta(patch: Partial<Envio>) {
+    const { error } = await supabaseExternal
+      .from("fulfillment_envios")
+      .update({ ...patch, atualizado_em: new Date().toISOString() })
+      .eq("id", envioId);
+    if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
+    qc.setQueryData<Envio | null>(["fulfillment", "envio", envioId], (o) => (o ? ({ ...o, ...patch } as Envio) : o));
+    qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+  }
+
   const itens = itensQ.data ?? [];
   const { data: fotos } = useFotos(itens.map((i) => i.sku));
   const plan = itens.reduce((s, i) => s + i.qtd_planejada, 0);
@@ -1528,7 +1611,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
 
   const envio = envioQ.data;
   const temEtiquetas = !!envio?.etiquetas_zpl;
-  const st = envio ? STATUS_ENVIO[envio.status] ?? STATUS_ENVIO.separando : null;
+  const st = envio ? stageDe(envio.status) : null;
 
   return (
     <div className="space-y-4">
@@ -1540,7 +1623,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
           <div className="flex items-center gap-2 min-w-0">
             <span aria-hidden className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: MKT_COLOR[envio.marketplace] ?? "#888" }} />
             <h2 className="text-lg font-semibold truncate">{envio.numero ? `#${envio.numero}` : "Envio"}</h2>
-            {st && <Badge variant="secondary" className={st.cls}>{st.label}</Badge>}
+            {st && <Badge variant="secondary" className={st.cls}>{st.curto}</Badge>}
             <span className="text-sm text-muted-foreground truncate">
               {MKT_LABEL[envio.marketplace] ?? envio.marketplace}
               {envio.centro ? ` · ${envio.centro}` : ""}
@@ -1548,6 +1631,42 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
           </div>
         )}
       </div>
+
+      {envio && (
+        <Card className="p-3 grid gap-3 sm:grid-cols-[190px_180px_1fr] items-start">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Etapa</label>
+            <select
+              className="h-9 w-full rounded-md border bg-card px-2 text-sm"
+              value={stageDe(envio.status).id}
+              onChange={(ev) => void salvarMeta({ status: ev.target.value })}
+            >
+              {STAGES.map((s) => <option key={s.id} value={s.id}>{s.curto}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground flex items-center gap-1"><CalendarClock className="h-3 w-3" /> Data de envio agendada</label>
+            <Input
+              type="date"
+              value={dataAg}
+              onChange={(ev) => setDataAg(ev.target.value)}
+              onBlur={() => { if ((envio.data_envio_agendada ?? "") !== dataAg) void salvarMeta({ data_envio_agendada: dataAg || null }); }}
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Observações</label>
+            <textarea
+              rows={2}
+              value={obs}
+              onChange={(ev) => setObs(ev.target.value)}
+              onBlur={() => { if ((envio.observacao ?? "") !== obs) void salvarMeta({ observacao: obs || null }); }}
+              placeholder="Transportadora, nº de volumes, pendências, etc."
+              className="w-full rounded-md border bg-card px-2 py-1.5 text-sm resize-y min-h-[38px]"
+            />
+          </div>
+        </Card>
+      )}
 
       <Card className="p-4 space-y-2 sticky top-2 z-10">
         <div className="flex flex-wrap items-center justify-between gap-3">
