@@ -1045,11 +1045,15 @@ function SvlDevolucoes() {
         body: { modulo: "emitir", conta: "svl", id_nota: r.id_nota, confirmar: "1" },
       });
       if (error) throw new Error(error.message);
-      const d = data as { autorizada?: boolean; situacao?: string; motivo?: string; chave_devolucao?: string; numero?: string; serie?: string };
+      const d = data as { autorizada?: boolean; situacao?: string; motivo?: string; consumo_indevido?: boolean; chave_devolucao?: string; numero?: string; serie?: string };
       if (d?.autorizada) {
         await persistirAutorizada(r.id_nota, d.chave_devolucao ?? null, d.situacao ?? "6");
         toast.success(`Devolução ${d.numero}/${d.serie} autorizada na SEFAZ (SVL)`);
         qc.invalidateQueries({ queryKey: ["devolucoes", "svl"] });
+      } else if (d?.consumo_indevido) {
+        toast.error("SEFAZ bloqueou (Rejeição 656 · Consumo Indevido)", {
+          description: "Excesso de requisições. Aguarde ~1h e emita mais devagar / em lotes menores.",
+        });
       } else {
         toast.warning(`Ainda não autorizou (situação ${d?.situacao ?? "?"})`, { description: d?.motivo || "Tente novamente em instantes." });
       }
@@ -1094,7 +1098,7 @@ function SvlDevolucoes() {
     )
       return;
     setBulk({ total: alvo.length, feito: 0, ok: 0, falha: 0 });
-    let ok = 0, falha = 0;
+    let ok = 0, falha = 0, parou656 = false;
     for (let i = 0; i < alvo.length; i++) {
       const r = alvo[i];
       try {
@@ -1102,20 +1106,32 @@ function SvlDevolucoes() {
           body: { modulo: "emitir", conta: "svl", id_nota: r.id_nota, confirmar: "1" },
         });
         if (error) throw new Error(error.message);
-        const d = data as { autorizada?: boolean; situacao?: string; chave_devolucao?: string };
+        const d = data as { autorizada?: boolean; situacao?: string; consumo_indevido?: boolean; chave_devolucao?: string };
         if (d?.autorizada) {
           ok++;
           await persistirAutorizada(r.id_nota, d.chave_devolucao ?? null, d.situacao ?? "6");
+        } else if (d?.consumo_indevido) {
+          // SEFAZ 656: bloqueio anti-abuso. PARA o lote — insistir prolonga o cooldown (~1h).
+          parou656 = true;
+          setBulk({ total: alvo.length, feito: i, ok, falha });
+          break;
         } else falha++;
       } catch {
         falha++;
       }
       setBulk({ total: alvo.length, feito: i + 1, ok, falha });
-      await sleep(800);
+      // Notas de ENTRADA na SEFAZ: emitir devagar p/ não disparar a rejeição 656.
+      await sleep(4000);
     }
     setBulk(null);
     setSel(new Set());
-    toast.success(`Emissão SVL: ${ok} autorizada(s), ${falha} falha(s)`);
+    if (parou656) {
+      toast.error("SEFAZ bloqueou (Rejeição 656 · Consumo Indevido) — lote pausado", {
+        description: `${ok} autorizada(s) antes de parar. Aguarde ~1h e continue com lotes menores.`,
+      });
+    } else {
+      toast.success(`Emissão SVL: ${ok} autorizada(s), ${falha} falha(s)`);
+    }
     qc.invalidateQueries({ queryKey: ["devolucoes", "svl"] });
   }
 
