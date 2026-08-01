@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
+import { Route as PromocoesRouteImport } from './routes/promocoes'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
@@ -38,6 +39,11 @@ const TendenciasRoute = TendenciasRouteImport.update({
 const SeparacaoRoute = SeparacaoRouteImport.update({
   id: '/separacao',
   path: '/separacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PromocoesRoute = PromocoesRouteImport.update({
+  id: '/promocoes',
+  path: '/promocoes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProdutosMargemRoute = ProdutosMargemRouteImport.update({
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
+  '/promocoes': typeof PromocoesRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -171,6 +178,7 @@ export interface FileRoutesByTo {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
+  '/promocoes': typeof PromocoesRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -194,6 +202,7 @@ export interface FileRoutesById {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
+  '/promocoes': typeof PromocoesRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
@@ -218,6 +227,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
+    | '/promocoes'
     | '/separacao'
     | '/tendencias'
     | '/api/public/shopee/callback'
@@ -240,6 +250,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
+    | '/promocoes'
     | '/separacao'
     | '/tendencias'
     | '/api/public/shopee/callback'
@@ -262,6 +273,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/produtos'
     | '/produtos-margem'
+    | '/promocoes'
     | '/separacao'
     | '/tendencias'
     | '/api/public/shopee/callback'
@@ -285,6 +297,7 @@ export interface RootRouteChildren {
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
+  PromocoesRoute: typeof PromocoesRoute
   SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
   ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
@@ -304,6 +317,13 @@ declare module '@tanstack/react-router' {
       path: '/separacao'
       fullPath: '/separacao'
       preLoaderRoute: typeof SeparacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/promocoes': {
+      id: '/promocoes'
+      path: '/promocoes'
+      fullPath: '/promocoes'
+      preLoaderRoute: typeof PromocoesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/produtos-margem': {
@@ -453,6 +473,7 @@ const rootRouteChildren: RootRouteChildren = {
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,
+  PromocoesRoute: PromocoesRoute,
   SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,
   ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
