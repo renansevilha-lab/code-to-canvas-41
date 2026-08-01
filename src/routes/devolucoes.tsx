@@ -48,6 +48,8 @@ const PAGE_SIZE = 50;
 
 type Filtro = "todos" | "marcados" | "geradas" | "devolvidos";
 type Periodo = "mes_atual" | "mes_anterior" | "90dias" | "todos";
+type Empresa = "ottz" | "svl";
+type SvlSit = "pendentes" | "autorizadas" | "todas";
 
 // Intervalo de data_pedido para cada período. O varredor cobre 90 dias.
 function rangePeriodo(p: Periodo): { ini?: string; fim?: string } {
@@ -101,7 +103,14 @@ function corCanal(canal: string | null | undefined): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
-type SearchParams = { pagina: number; q: string; filtro: Filtro; periodo: Periodo };
+type SearchParams = {
+  pagina: number;
+  q: string;
+  filtro: Filtro;
+  periodo: Periodo;
+  empresa: Empresa;
+  svlsit: SvlSit;
+};
 
 export const Route = createFileRoute("/devolucoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
@@ -113,6 +122,10 @@ export const Route = createFileRoute("/devolucoes")({
     periodo: (["mes_atual", "mes_anterior", "90dias", "todos"].includes(s.periodo as string)
       ? (s.periodo as Periodo)
       : "mes_atual"),
+    empresa: (["ottz", "svl"].includes(s.empresa as string) ? (s.empresa as Empresa) : "ottz"),
+    svlsit: (["pendentes", "autorizadas", "todas"].includes(s.svlsit as string)
+      ? (s.svlsit as SvlSit)
+      : "pendentes"),
   }),
   component: DevolucoesPage,
 });
@@ -121,6 +134,39 @@ export const Route = createFileRoute("/devolucoes")({
 // Page
 
 function DevolucoesPage() {
+  const { empresa } = Route.useSearch();
+  return empresa === "svl" ? <SvlDevolucoes /> : <OttzDevolucoes />;
+}
+
+// Segmento Ottz / SVL — troca a empresa na URL (sobrevive a remontagem).
+function EmpresaToggle() {
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const opts: { id: Empresa; label: string }[] = [
+    { id: "ottz", label: "Ottz / ACZ" },
+    { id: "svl", label: "SVL Store" },
+  ];
+  return (
+    <div className="inline-flex rounded-md border bg-card p-0.5">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          onClick={() => navigate({ search: { ...search, empresa: o.id, pagina: 1 }, replace: true })}
+          className={cn(
+            "px-3 py-1 text-xs font-medium rounded-sm transition",
+            search.empresa === o.id
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function OttzDevolucoes() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const queryClient = useQueryClient();
@@ -428,9 +474,12 @@ function DevolucoesPage() {
   return (
     <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <RotateCcw className="h-6 w-6" /> Devolução de Pedidos
-        </h1>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <RotateCcw className="h-6 w-6" /> Devolução de Pedidos
+          </h1>
+          <EmpresaToggle />
+        </div>
         <p className="text-sm text-muted-foreground mt-1">
           Fluxo: <strong>marque</strong> o pedido → <strong>gere a nota</strong> de devolução →{" "}
           <strong>emita</strong> a NF na SEFAZ (card "Pendentes de emissão").
@@ -872,6 +921,429 @@ function FiltroSegment({ value, onChange }: { value: Filtro; onChange: (v: Filtr
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aba SVL — devoluções do Tiny de faturamento da SVL (série 12). Lê o espelho
+// `devolucoes_svl` (sync leve) e emite via nf-devolucao (conta=svl). Emitir é
+// NF-e real na SEFAZ (irreversível): individual com confirmação, ou em massa
+// pelas selecionadas com confirmação forte (qtd + valor).
+
+interface DevSvl {
+  id_nota: number;
+  numero: string | null;
+  serie: string | null;
+  valor: number | null;
+  cliente_nome: string | null;
+  data_emissao: string | null;
+  situacao: string | null;
+  autorizada: boolean | null;
+  chave_devolucao: string | null;
+}
+const SVL_COLS = "id_nota,numero,serie,valor,cliente_nome,data_emissao,situacao,autorizada,chave_devolucao";
+
+function SvlDevolucoes() {
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const qc = useQueryClient();
+
+  const page = search.pagina as number;
+  const svlsit = search.svlsit as SvlSit;
+  const searchText = search.q as string;
+
+  const [searchDraft, setSearchDraft] = useState(searchText);
+  const [emitindoId, setEmitindoId] = useState<number | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [bulk, setBulk] = useState<{ total: number; feito: number; ok: number; falha: number } | null>(null);
+
+  const updateSearch = (next: Partial<SearchParams>) =>
+    navigate({ search: { ...search, ...next }, replace: true });
+
+  useEffect(() => setSearchDraft(searchText), [searchText]);
+  useEffect(() => {
+    const next = searchDraft.trim();
+    if (next === searchText) return;
+    const t = setTimeout(() => updateSearch({ q: next, pagina: 1 }), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDraft, searchText]);
+
+  const listKey = ["devolucoes", "svl", "lista", page, svlsit, searchText] as const;
+  const listQuery = useQuery({
+    queryKey: listKey,
+    queryFn: async () => {
+      const start = (page - 1) * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabaseExternal.from("devolucoes_svl").select(SVL_COLS, { count: "exact" });
+      if (svlsit === "pendentes") q = q.eq("situacao", "1");
+      else if (svlsit === "autorizadas") q = q.eq("autorizada", true);
+      if (searchText) {
+        const esc = searchText.replace(/[,%()]/g, " ").trim();
+        if (esc) q = q.or(`numero.ilike.%${esc}%,cliente_nome.ilike.%${esc}%`);
+      }
+      q = q
+        .order("data_emissao", { ascending: false, nullsFirst: false })
+        .order("numero", { ascending: false })
+        .range(start, end);
+      const { data, error, count } = await q;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as DevSvl[], count: count ?? 0 };
+    },
+  });
+  const rows = listQuery.data?.rows ?? [];
+  const total = listQuery.data?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const statsQuery = useQuery({
+    queryKey: ["devolucoes", "svl", "stats"],
+    queryFn: async () => {
+      const [p, a] = await Promise.all([
+        supabaseExternal.from("devolucoes_svl").select("id_nota", { count: "exact", head: true }).eq("situacao", "1"),
+        supabaseExternal.from("devolucoes_svl").select("id_nota", { count: "exact", head: true }).eq("autorizada", true),
+      ]);
+      return { pendentes: p.count ?? 0, autorizadas: a.count ?? 0 };
+    },
+  });
+
+  async function sincronizar() {
+    setSincronizando(true);
+    try {
+      const { error } = await supabaseExternal.functions.invoke("devolucoes-svl-sync", { body: { dias: 180 } });
+      if (error) throw new Error(error.message);
+      toast.success("Sincronizado com o Tiny da SVL");
+      qc.invalidateQueries({ queryKey: ["devolucoes", "svl"] });
+    } catch (e) {
+      toast.error("Falha ao sincronizar", { description: (e as Error).message });
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
+  async function persistirAutorizada(id_nota: number, chave: string | null, sit: string) {
+    await supabaseExternal
+      .from("devolucoes_svl")
+      .update({ situacao: sit, autorizada: true, chave_devolucao: chave, emitida_via_app: true, atualizado_em: new Date().toISOString() })
+      .eq("id_nota", id_nota);
+  }
+
+  async function emitir(r: DevSvl) {
+    if (
+      !window.confirm(
+        `Emitir (autorizar na SEFAZ) a devolução ${r.numero}/${r.serie} — SVL?\n\n` +
+          `Cliente: ${r.cliente_nome ?? "—"}\nValor: ${r.valor != null ? formatBRL(r.valor) : "—"}\n\n` +
+          `⚠️ É DEFINITIVO e irreversível — gera uma NF-e real na SEFAZ.`,
+      )
+    )
+      return;
+    setEmitindoId(r.id_nota);
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+        body: { modulo: "emitir", conta: "svl", id_nota: r.id_nota, confirmar: "1" },
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { autorizada?: boolean; situacao?: string; motivo?: string; chave_devolucao?: string; numero?: string; serie?: string };
+      if (d?.autorizada) {
+        await persistirAutorizada(r.id_nota, d.chave_devolucao ?? null, d.situacao ?? "6");
+        toast.success(`Devolução ${d.numero}/${d.serie} autorizada na SEFAZ (SVL)`);
+        qc.invalidateQueries({ queryKey: ["devolucoes", "svl"] });
+      } else {
+        toast.warning(`Ainda não autorizou (situação ${d?.situacao ?? "?"})`, { description: d?.motivo || "Tente novamente em instantes." });
+      }
+    } catch (e) {
+      toast.error(`Falha ao emitir a devolução ${r.numero ?? ""}`, { description: (e as Error).message });
+    } finally {
+      setEmitindoId(null);
+    }
+  }
+
+  const pendentesNaPagina = rows.filter((r) => r.situacao === "1");
+  const selecionadas = rows.filter((r) => sel.has(r.id_nota) && r.situacao === "1");
+  const somaSel = selecionadas.reduce((s, i) => s + (Number(i.valor) || 0), 0);
+  const todosSelecionados = pendentesNaPagina.length > 0 && pendentesNaPagina.every((r) => sel.has(r.id_nota));
+
+  function toggleTodos() {
+    setSel((prev) => {
+      const n = new Set(prev);
+      if (todosSelecionados) pendentesNaPagina.forEach((r) => n.delete(r.id_nota));
+      else pendentesNaPagina.forEach((r) => n.add(r.id_nota));
+      return n;
+    });
+  }
+  function toggleUm(id: number) {
+    setSel((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  async function emitirSelecionadas() {
+    const alvo = selecionadas;
+    if (!alvo.length) return;
+    if (
+      !window.confirm(
+        `EMITIR ${alvo.length} NF-e de devolução (SVL) na SEFAZ?\n\n` +
+          `Valor total: ${formatBRL(somaSel)}\n\n` +
+          `⚠️ É DEFINITIVO e irreversível — cada uma vira uma NF-e real autorizada.`,
+      )
+    )
+      return;
+    setBulk({ total: alvo.length, feito: 0, ok: 0, falha: 0 });
+    let ok = 0, falha = 0;
+    for (let i = 0; i < alvo.length; i++) {
+      const r = alvo[i];
+      try {
+        const { data, error } = await supabaseExternal.functions.invoke("nf-devolucao", {
+          body: { modulo: "emitir", conta: "svl", id_nota: r.id_nota, confirmar: "1" },
+        });
+        if (error) throw new Error(error.message);
+        const d = data as { autorizada?: boolean; situacao?: string; chave_devolucao?: string };
+        if (d?.autorizada) {
+          ok++;
+          await persistirAutorizada(r.id_nota, d.chave_devolucao ?? null, d.situacao ?? "6");
+        } else falha++;
+      } catch {
+        falha++;
+      }
+      setBulk({ total: alvo.length, feito: i + 1, ok, falha });
+      await sleep(800);
+    }
+    setBulk(null);
+    setSel(new Set());
+    toast.success(`Emissão SVL: ${ok} autorizada(s), ${falha} falha(s)`);
+    qc.invalidateQueries({ queryKey: ["devolucoes", "svl"] });
+  }
+
+  const goToPage = (n: number) => updateSearch({ pagina: Math.max(1, Math.min(totalPages, n)) });
+  const loading = listQuery.isLoading;
+  const error = (listQuery.error as Error | null)?.message ?? null;
+
+  return (
+    <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
+      <header>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <RotateCcw className="h-6 w-6" /> Devolução de Pedidos
+          </h1>
+          <EmpresaToggle />
+        </div>
+        <p className="text-sm text-muted-foreground mt-1">
+          <strong>SVL Store</strong> — devoluções (série 12) do Tiny de faturamento próprio. Emitir
+          autoriza a NF-e na SEFAZ (definitivo).
+        </p>
+        {statsQuery.data && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400">
+              <Clock className="h-3 w-3" /> {statsQuery.data.pendentes} pendentes de emissão
+            </span>
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" /> {statsQuery.data.autorizadas} autorizadas
+            </span>
+          </div>
+        )}
+      </header>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-md border bg-card p-0.5">
+          {([
+            { id: "pendentes", label: "Pendentes" },
+            { id: "autorizadas", label: "Autorizadas" },
+            { id: "todas", label: "Todas" },
+          ] as { id: SvlSit; label: string }[]).map((o) => (
+            <button
+              key={o.id}
+              onClick={() => updateSearch({ svlsit: o.id, pagina: 1 })}
+              className={cn(
+                "px-2.5 py-1 text-xs font-medium rounded-sm transition",
+                svlsit === o.id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <Button variant="outline" size="sm" className="h-9 gap-2" onClick={() => void sincronizar()} disabled={sincronizando}>
+          {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Sincronizar
+        </Button>
+        <div className="relative ml-auto w-full max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={searchDraft}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            placeholder="Buscar por nº da nota ou cliente..."
+            className="pl-8 h-9 bg-card"
+          />
+        </div>
+      </div>
+
+      {error && (
+        <Card className="p-4 border-red-500/40 bg-red-500/5 text-sm text-red-600 dark:text-red-300">
+          Erro ao carregar: {error}
+        </Card>
+      )}
+
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b">
+          <h3 className="text-sm font-semibold">
+            Devoluções SVL <span className="text-muted-foreground font-normal">({total})</span>
+          </h3>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+            disabled={bulk !== null || selecionadas.length === 0}
+            title="Autoriza na SEFAZ as devoluções selecionadas (definitivo)"
+            onClick={() => void emitirSelecionadas()}
+          >
+            {bulk ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Emitir selecionadas ({selecionadas.length}
+            {selecionadas.length > 0 ? ` · ${formatBRL(somaSel)}` : ""})
+          </Button>
+        </div>
+
+        {bulk && (
+          <div className="px-4 py-2 border-b bg-muted/40 text-xs">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-medium">Emitindo NF-e… {bulk.feito}/{bulk.total}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {bulk.ok} ok{bulk.falha > 0 ? ` · ${bulk.falha} falha(s)` : ""}
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${bulk.total > 0 ? Math.round((bulk.feito / bulk.total) * 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <tr>
+                <th className="text-center font-medium px-3 py-2 w-10">
+                  <Checkbox
+                    checked={todosSelecionados}
+                    disabled={pendentesNaPagina.length === 0 || bulk !== null}
+                    onCheckedChange={() => toggleTodos()}
+                    aria-label="Selecionar pendentes da página"
+                  />
+                </th>
+                <th className="text-left font-medium px-3 py-2">Nota (nº/série)</th>
+                <th className="text-left font-medium px-3 py-2">Cliente</th>
+                <th className="text-right font-medium px-3 py-2">Valor</th>
+                <th className="text-left font-medium px-3 py-2">Emissão</th>
+                <th className="text-center font-medium px-3 py-2">Situação</th>
+                <th className="text-center font-medium px-3 py-2 w-40">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} className="border-t">
+                    <td colSpan={7} className="px-3 py-3">
+                      <Skeleton className="h-6 w-full" />
+                    </td>
+                  </tr>
+                ))
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                    Nenhuma devolução nesta visão. Clique em <strong>Sincronizar</strong> para puxar do Tiny da SVL.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r) => {
+                  const autorizada = r.autorizada === true;
+                  const pendente = r.situacao === "1";
+                  return (
+                    <tr
+                      key={r.id_nota}
+                      className={cn("border-t hover:bg-accent/40 transition", autorizada && "opacity-60", pendente && sel.has(r.id_nota) && "bg-blue-500/5")}
+                    >
+                      <td className="px-3 py-2 text-center">
+                        <Checkbox
+                          checked={sel.has(r.id_nota)}
+                          disabled={!pendente || bulk !== null}
+                          onCheckedChange={() => toggleUm(r.id_nota)}
+                          aria-label="Selecionar"
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                        {r.numero ?? "—"}/{r.serie ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs max-w-[280px] truncate">{r.cliente_nome ?? "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.valor != null ? formatBRL(r.valor) : "—"}</td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                        {r.data_emissao ? format(parseISO(r.data_emissao), "dd/MM/yyyy") : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {autorizada ? (
+                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 gap-1">
+                            <CheckCircle2 className="h-3 w-3" /> Autorizada
+                          </Badge>
+                        ) : pendente ? (
+                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-blue-500/40 text-blue-700 dark:text-blue-300 gap-1">
+                            <Clock className="h-3 w-3" /> Pendente
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">sit. {r.situacao ?? "?"}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {autorizada ? (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1.5 text-xs border-blue-500/50 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                            disabled={emitindoId !== null || bulk !== null || !pendente}
+                            title="Autoriza a NF de devolução na SEFAZ — definitivo."
+                            onClick={() => void emitir(r)}
+                          >
+                            {emitindoId === r.id_nota ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                            Emitir NF
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {!loading && total > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
+            <span className="text-muted-foreground">
+              Página {page} de {totalPages} · {total} devoluções
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => goToPage(page - 1)}>
+                Anterior
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => goToPage(page + 1)}>
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+        <ExternalLink className="h-3 w-3" />
+        Emissão no ambiente/certificado da SVL. Selecione as devoluções e emita em massa (confirmação
+        única com valor total) ou uma a uma.
+      </p>
     </div>
   );
 }
