@@ -602,9 +602,9 @@ function SeparacaoTotaisCards() {
       label: "Aguardando separação",
       value: data?.aguardando_separacao ?? 0,
       icon: Hourglass,
-      bg: "bg-blue-50 dark:bg-blue-950/30",
-      text: "text-blue-700 dark:text-blue-300",
-      border: "border-blue-200 dark:border-blue-900",
+      bg: "bg-primary/[0.06] dark:bg-primary/10",
+      text: "text-primary",
+      border: "border-primary/20",
     },
     {
       key: "em_separacao",
@@ -657,9 +657,9 @@ function SeparacaoTotaisCards() {
                   {c.label}
                 </p>
                 {isLoading ? (
-                  <Skeleton className="h-8 w-16 mt-1.5" />
+                  <Skeleton className="h-9 w-16 mt-1.5" />
                 ) : (
-                  <p className={cn("text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none mt-1.5", c.text)}>
+                  <p className={cn("text-[34px] font-semibold tracking-[-0.035em] tabular-nums leading-none mt-1.5", c.text)}>
                     {formatNumber(c.value)}
                   </p>
                 )}
