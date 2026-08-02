@@ -2,7 +2,6 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   TrendingUp,
-  ShoppingCart,
   AlertTriangle,
   Package,
   Wallet,
@@ -27,7 +26,6 @@ import {
 import { ptBR } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip as UITooltip,
@@ -124,6 +122,8 @@ type VisaoGeralRow = {
   cobertura_pct: number | null;
 };
 
+type DiaSerie = { data: string; receita: number; margem: number; pedidos: number };
+
 // ============================================================
 // Period presets
 // ============================================================
@@ -171,6 +171,15 @@ const PRESET_LABEL: Record<PresetKey, string> = {
   custom: "Personalizado",
 };
 
+const PRESET_CURTO: Partial<Record<PresetKey, string>> = {
+  hoje: "Hoje",
+  ontem: "Ontem",
+  mes_atual: "Mês",
+  ult_7: "7 dias",
+  ult_30: "30 dias",
+};
+const QUICK_PRESETS: PresetKey[] = ["hoje", "ontem", "mes_atual", "ult_7", "ult_30"];
+
 // ============================================================
 // Canal colors
 // ============================================================
@@ -182,6 +191,19 @@ function colorForCanal(canal: string): string {
   if (c.includes("mercado")) return "hsl(45 93% 47%)"; // amarelo
   if (c.includes("amazon")) return "hsl(215 60% 22%)"; // azul escuro
   return "hsl(215 15% 55%)";
+}
+
+// Pontos de uma sparkline (viewBox 0 0 120 30) a partir de uma série numérica.
+function sparkPoints(vals: number[]): string {
+  const v = vals.filter((n) => Number.isFinite(n));
+  if (v.length < 2) return "";
+  const mn = Math.min(...v);
+  const mx = Math.max(...v);
+  const r = mx - mn || 1;
+  const stepX = 120 / (v.length - 1);
+  return v
+    .map((n, i) => `${(i * stepX).toFixed(1)},${(28 - ((n - mn) / r) * 26).toFixed(1)}`)
+    .join(" ");
 }
 
 // ============================================================
@@ -197,6 +219,7 @@ function Dashboard() {
 
   const [canaisFiltro, setCanaisFiltro] = useState<string[] | null>(null); // null = todos
   const [kpisCanal, setKpisCanal] = useState<KpiCanal[]>([]);
+  const [serieDiaria, setSerieDiaria] = useState<DiaSerie[]>([]);
   const [metas, setMetas] = useState<MetaRealizado[]>([]);
   const [topProdutos, setTopProdutos] = useState<ProdutoRow[]>([]);
   const [alertaAcos, setAlertaAcos] = useState(0);
@@ -286,11 +309,6 @@ function Dashboard() {
           setVisaoGeral(null);
         }
 
-        console.log("view_canais_diario →", {
-          rows: canaisR.data?.length ?? 0,
-          error: canaisR.error,
-          range,
-        });
         if (canaisR.error) setErro(`view_canais_diario: ${canaisR.error.message}`);
 
         type CanalRow = {
@@ -305,6 +323,17 @@ function Dashboard() {
 
         const rows = (canaisR.data ?? []) as CanalRow[];
         const rowsPrev = (canaisPrevR.data ?? []) as CanalPrevRow[];
+
+        // Série diária (soma de todos os canais por dia) — base das sparklines
+        const porDia = new Map<string, DiaSerie>();
+        for (const r of rows) {
+          const cur = porDia.get(r.data) ?? { data: r.data, receita: 0, margem: 0, pedidos: 0 };
+          cur.receita += Number(r.receita ?? 0);
+          cur.margem += Number(r.margem ?? 0);
+          cur.pedidos += Number(r.pedidos ?? 0);
+          porDia.set(r.data, cur);
+        }
+        setSerieDiaria(Array.from(porDia.values()).sort((a, b) => (a.data < b.data ? -1 : 1)));
 
         // Agrega período atual por canal
         const agg = new Map<string, KpiCanal>();
@@ -376,7 +405,7 @@ function Dashboard() {
           setTopProdutos(
             confiaveis
               .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
-              .slice(0, 8),
+              .slice(0, 6),
           );
           setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
         }
@@ -433,53 +462,128 @@ function Dashboard() {
     return kpisCanal.filter((r) => s.has(r.canal));
   }, [kpisCanal, canaisFiltro]);
 
+  // Deltas globais (todos os canais): soma dos absolutos atual vs anterior.
+  const deltas = useMemo(() => {
+    let r = 0, m = 0, p = 0, ra = 0, ma = 0, pa = 0;
+    for (const k of kpisCanal) {
+      r += k.receita; m += k.margem; p += k.pedidos;
+      ra += k.receita_ant ?? 0; ma += k.margem_ant ?? 0; pa += k.pedidos_ant ?? 0;
+    }
+    const rel = (c: number, pv: number) => (pv ? ((c - pv) / Math.abs(pv)) * 100 : null);
+    const mcCur = r > 0 ? (m / r) * 100 : null;
+    const mcAnt = ra > 0 ? (ma / ra) * 100 : null;
+    return {
+      receita: rel(r, ra),
+      margem: rel(m, ma),
+      pedidos: rel(p, pa),
+      mcPp: mcCur != null && mcAnt != null ? mcCur - mcAnt : null,
+      temHistorico: ra > 0 || ma > 0 || pa > 0,
+    };
+  }, [kpisCanal]);
+
   const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
 
   // Metas
   const metaTodos = metas.find((m) => m.marketplace === "todos") ?? null;
 
+  // Hero KPIs — valor da RPC (fonte única) + delta/sparkline da série diária.
+  const vendas = Number(visaoGeral?.vendas ?? 0);
+  const margemContrib = Number(visaoGeral?.margem_contrib ?? 0);
+  const mcPct = visaoGeral?.margem_pct != null ? Number(visaoGeral.margem_pct) : null;
+  const pedidosTot = Number(visaoGeral?.pedidos ?? 0);
+  const ticket = Number(visaoGeral?.ticket_medio ?? 0);
+  const cobertura = visaoGeral?.cobertura_pct != null ? Number(visaoGeral.cobertura_pct) : null;
+  const projecao = visaoGeral?.projecao_vendas != null ? Number(visaoGeral.projecao_vendas) : null;
+
+  const heroKpis: HeroKpiData[] = [
+    {
+      label: "Receita líquida",
+      value: formatBRL(vendas, { compact: true }),
+      delta: deltas.receita, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      color: "var(--color-primary)",
+      sub: preset === "mes_atual" && projecao != null
+        ? `Projeção ${formatBRL(projecao, { compact: true })}`
+        : `Ticket ${formatBRL(ticket, { compact: true })}`,
+      spark: sparkPoints(serieDiaria.map((s) => s.receita)),
+    },
+    {
+      label: "Margem de contribuição",
+      value: formatBRL(margemContrib, { compact: true }),
+      delta: deltas.margem, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      color: "var(--color-success)",
+      sub: mcPct != null ? `MC ${formatPercent(mcPct)}` : "Após CMV, taxas e frete",
+      spark: sparkPoints(serieDiaria.map((s) => s.margem)),
+    },
+    {
+      label: "MC% média",
+      value: mcPct != null ? formatPercent(mcPct) : "—",
+      delta: deltas.mcPp, deltaKind: "pp", temHistorico: deltas.temHistorico,
+      color: "var(--color-warning)",
+      sub: cobertura != null ? `Cobertura ${cobertura.toFixed(0)}%` : "Sobre a base coberta",
+      subAlerta: cobertura != null && cobertura < 90,
+      spark: sparkPoints(serieDiaria.map((s) => (s.receita > 0 ? (s.margem / s.receita) * 100 : 0))),
+    },
+    {
+      label: "Pedidos",
+      value: formatNumber(pedidosTot),
+      delta: deltas.pedidos, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      color: "var(--color-chart-4)",
+      sub: `Ticket ${formatBRL(ticket, { compact: true })}`,
+      spark: sparkPoints(serieDiaria.map((s) => s.pedidos)),
+    },
+  ];
+
+  // Anomalias (para o painel) — derivadas dos alertas existentes.
+  const anomalias: AnomaliaData[] = [];
+  if (anomSemCusto.count > 0)
+    anomalias.push({ cor: "destructive", to: "/anomalias", titulo: `${anomSemCusto.count} SKUs sem custo cadastrado`, detalhe: `${formatBRL(anomSemCusto.receita, { compact: true })} de receita sem CMV apurado` });
+  if (anomCmvMaior.count > 0)
+    anomalias.push({ cor: "destructive", to: "/anomalias", titulo: `${anomCmvMaior.count} pedidos com custo maior que a venda`, detalhe: "Margem negativa — revisar cadastro ou preço" });
+  if (alertaPrejuizo > 0)
+    anomalias.push({ cor: "destructive", to: "/produtos-margem", titulo: `${alertaPrejuizo} produtos ficam negativos com o ADS`, detalhe: "O gasto de anúncio come toda a margem" });
+  if (anomSemRecebido.count > 0)
+    anomalias.push({ cor: "warning", to: "/anomalias", titulo: `${anomSemRecebido.count} pedidos sem repasse informado`, detalhe: "Aguardando conciliação do marketplace" });
+  if (alertaAcos > 0)
+    anomalias.push({ cor: "warning", to: "/ads-shopee", titulo: `${alertaAcos} anúncios com ROAS ruim`, detalhe: "Classificados como abaixo do alvo (30 dias)" });
+  if (alertaAmazon > 0)
+    anomalias.push({ cor: "amber", to: "/mapeamento-skus", titulo: `${alertaAmazon} SKUs da Amazon sem mapeamento`, detalhe: "Sem custo até vincular ao SKU interno" });
+
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8 bg-background">
-      {/* Header + filtros */}
-      <header className="space-y-4">
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-          <div className="space-y-1">
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
-              {format(parseISO(range.from), "dd MMM", { locale: ptBR })} –
-              {" "}{format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
-              {" · "}{diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <CanalFilter
-              canais={canaisDisponiveis}
-              selecionados={canaisFiltro}
-              onChange={setCanaisFiltro}
-            />
-            <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              Atualizar
-            </Button>
-            {atualizadoEm && (
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {format(atualizadoEm, "HH:mm:ss")}
-              </span>
-            )}
-          </div>
+    <div className="px-6 md:px-8 py-6 flex flex-col gap-[18px] max-w-[1600px]">
+      {/* Barra de filtros */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-[13px] text-muted-foreground font-medium tabular-nums">
+          {format(parseISO(range.from), "dd MMM", { locale: ptBR })} – {format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
+          <span className="opacity-60"> · {diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}</span>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex-1" />
+        {/* Segmentado de período (atalhos) */}
+        <div className="flex items-center gap-1 bg-card border border-border rounded-[10px] p-[3px]">
+          {QUICK_PRESETS.map((p) => (
+            <button
+              key={p}
+              onClick={() => { setPreset(p); setCustomRange(null); }}
+              className={cn(
+                "text-[12.5px] font-medium px-3 py-1.5 rounded-[7px] transition-colors",
+                preset === p ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {PRESET_CURTO[p]}
+            </button>
+          ))}
           <PeriodoPicker
             preset={preset}
-            onPreset={(p) => {
-              setPreset(p);
-              if (p !== "custom") setCustomRange(null);
-            }}
+            onPreset={(p) => { setPreset(p); if (p !== "custom") setCustomRange(null); }}
             customRange={customRange}
             onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
           />
         </div>
-      </header>
+        <CanalFilter canais={canaisDisponiveis} selecionados={canaisFiltro} onChange={setCanaisFiltro} />
+        <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
+          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+          Atualizar
+        </Button>
+      </div>
 
       {erro && (
         <Card className="p-4 border-destructive/30 bg-destructive/5">
@@ -488,72 +592,41 @@ function Dashboard() {
         </Card>
       )}
 
-      {/* 2.1 — Vendas × Margem × Meta */}
-      <section>
+      {/* Hero KPIs */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-[14px]">
+        {heroKpis.map((k) => (
+          <HeroKpi key={k.label} data={k} loading={loading && !visaoGeral} />
+        ))}
+      </div>
+
+      {/* Gráfico + Contribuição por canal */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1.75fr_1fr] gap-4 items-start">
         <VendasMargemChart range={range} isMesAtual={preset === "mes_atual"} />
-      </section>
+        <ContribuicaoCanalPanel canais={kpisVisiveis} loading={loading && kpisVisiveis.length === 0} />
+      </div>
 
+      {/* Top SKUs · Anomalias · Metas */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <TopSkusPanel produtos={topProdutos} />
+        <AnomaliasPanel anomalias={anomalias} />
+        <MetasPanel data={metaTodos} competencia={compAtual} />
+      </div>
 
-      {/* 2.2 — Visão geral (fonte única: RPC dashboard_visao_geral) */}
-      <section>
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4 gap-2">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Visão geral</p>
-            {visaoGeral?.cobertura_pct != null && Number(visaoGeral.cobertura_pct) < 90 && (
-              <TooltipProvider>
-                <UITooltip>
-                  <TooltipTrigger asChild>
-                    <Badge variant="outline" className="text-warning border-warning/30 bg-warning/5 gap-1 text-[11px]">
-                      <Info className="h-3 w-3" />
-                      Margem parcial · {Number(visaoGeral.cobertura_pct).toFixed(0)}% coberto
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-xs">
-                    Margem calculada sobre {Number(visaoGeral.cobertura_pct).toFixed(0)}% da receita — o restante ainda não tem custo apurado.
-                  </TooltipContent>
-                </UITooltip>
-              </TooltipProvider>
-            )}
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <VisaoSimples label="Vendas" value={formatBRL(Number(visaoGeral?.vendas ?? 0), { compact: true })} />
-            <VisaoSimples label="Custo total" value={formatBRL(Number(visaoGeral?.custo_total ?? 0), { compact: true })} />
-            <VisaoSimples label="Margem contribuição" value={formatBRL(Number(visaoGeral?.margem_contrib ?? 0), { compact: true })} />
-            <VisaoSimples
-              label="Margem contribuição %"
-              value={visaoGeral?.margem_pct != null ? formatPercent(Number(visaoGeral.margem_pct)) : "—"}
-            />
-            <VisaoSimples
-              label="Projeção de vendas"
-              value={
-                preset === "mes_atual" && visaoGeral?.projecao_vendas != null
-                  ? formatBRL(Number(visaoGeral.projecao_vendas), { compact: true })
-                  : "—"
-              }
-              hint={preset !== "mes_atual" ? "Só no mês atual" : undefined}
-            />
-            <VisaoSimples label="Pedidos" value={formatNumber(Number(visaoGeral?.pedidos ?? 0))} />
-            <VisaoSimples label="Produtos" value={formatNumber(Number(visaoGeral?.produtos ?? 0))} />
-            <VisaoSimples label="Ticket médio" value={formatBRL(Number(visaoGeral?.ticket_medio ?? 0))} />
-          </div>
-        </Card>
-      </section>
-
-      {/* 2.3 — Cards por canal */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Desempenho por canal</h2>
+      {/* Desempenho por canal (detalhado) */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">Desempenho por canal</h2>
         </div>
         {loading && kpisVisiveis.length === 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-64 rounded-lg bg-muted/40 animate-pulse" />
+              <div key={i} className="h-56 rounded-[14px] bg-muted/40 animate-pulse" />
             ))}
           </div>
         ) : kpisVisiveis.length === 0 ? (
           <Card className="p-6 text-sm text-muted-foreground">Nenhum canal no período selecionado.</Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {[...kpisVisiveis]
               .sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0))
               .map((c) => (
@@ -562,118 +635,337 @@ function Dashboard() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
 
-      {/* 2.4 — Metas */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Metas · {format(parseISO(compAtual), "MMMM", { locale: ptBR })}
-          </h2>
-          <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-            Configurar <ArrowRight className="h-3 w-3" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <MetaReceitaCard data={metaTodos} />
-          <MetaMargemCard data={metaTodos} />
-          <MetaAcosCard data={metaTodos} />
-        </div>
-      </section>
+// ============================================================
+// Hero KPI
+// ============================================================
+type HeroKpiData = {
+  label: string;
+  value: string;
+  delta: number | null;
+  deltaKind: "rel" | "pp";
+  temHistorico: boolean;
+  color: string;
+  sub: string;
+  subAlerta?: boolean;
+  spark: string;
+};
 
-      {/* Alertas + Top produtos */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="p-6 lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">Top produtos por margem líquida</h2>
-            <Link to="/produtos-margem" className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
-              Ver todos <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {topProdutos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sem dados.</p>
-          ) : (
-            <ul className="space-y-2">
-              {topProdutos.map((p, i) => (
-                <li key={`${p.marketplace}-${p.sku}-${i}`} className="flex items-center gap-3 py-1.5 border-b last:border-0">
-                  <div className="h-9 w-9 rounded bg-muted overflow-hidden flex items-center justify-center shrink-0">
-                    {p.foto ? (
-                      <img src={p.foto} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <Package className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate font-medium" title={p.produto ?? p.sku}>
-                      {p.produto ?? p.sku}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground font-mono">{p.sku} · {p.marketplace}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium tabular-nums">{formatBRL(Number(p.margem_liquida ?? 0), { compact: true })}</div>
-                    <div className="text-[11px] text-muted-foreground tabular-nums">{formatPercent(Number(p.margem_liquida_pct ?? 0))}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+function HeroKpi({ data, loading }: { data: HeroKpiData; loading: boolean }) {
+  const { label, value, delta, deltaKind, temHistorico, color, sub, subAlerta, spark } = data;
+  const positivo = delta != null && delta >= 0.05;
+  const negativo = delta != null && delta <= -0.05;
+  const deltaCls = positivo ? "text-success" : negativo ? "text-destructive" : "text-muted-foreground";
+  const deltaTxt =
+    !temHistorico || delta == null
+      ? "—"
+      : `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(1).replace(".", ",")}${deltaKind === "pp" ? " pp" : "%"}`;
+
+  return (
+    <Card className="relative overflow-hidden p-0">
+      <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />
+      <div className="p-5 pl-6 flex flex-col gap-3">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
+          <span className={cn("text-[11.5px] font-semibold font-mono", deltaCls)}>{deltaTxt}</span>
+        </div>
+        {loading ? (
+          <div className="h-8 w-28 rounded bg-muted/50 animate-pulse" />
+        ) : (
+          <div className="text-[30px] font-semibold tracking-[-0.035em] tabular-nums leading-none">{value}</div>
+        )}
+        <div className="flex items-end justify-between gap-3">
+          <span className={cn("text-[11.5px] font-medium", subAlerta ? "text-warning" : "text-muted-foreground")}>{sub}</span>
+          {spark && (
+            <svg viewBox="0 0 120 30" preserveAspectRatio="none" className="w-[110px] h-[30px] overflow-visible shrink-0">
+              <polyline
+                points={spark}
+                fill="none"
+                stroke={color}
+                strokeWidth={1.8}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
           )}
-        </Card>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
-        <Card className="p-6">
-          <h2 className="font-semibold mb-4 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-warning" />
-            Alertas
-          </h2>
-          <ul className="space-y-2">
-            {anomSemCusto.count > 0 && (
-              <AlertaItem
-                dot="red"
-                to="/anomalias"
-                text={`${anomSemCusto.count} SKUs sem custo · ${formatBRL(anomSemCusto.receita, { compact: true })}`}
-              />
-            )}
-            {anomCmvMaior.count > 0 && (
-              <AlertaItem
-                dot="red"
-                to="/anomalias"
-                text={`${anomCmvMaior.count} pedidos com custo > venda`}
-              />
-            )}
-            {anomSemRecebido.count > 0 && (
-              <AlertaItem
-                dot="orange"
-                to="/anomalias"
-                text={`${anomSemRecebido.count} pedidos sem repasse informado`}
-              />
-            )}
-            {alertaPrejuizo > 0 && (
-              <AlertaItem
-                dot="red"
-                to="/produtos-margem"
-                text={`${alertaPrejuizo} produtos ficam negativos por causa do ADS`}
-              />
-            )}
-            {alertaAcos > 0 && (
-              <AlertaItem
-                dot="orange"
-                to="/ads-shopee"
-                text={`${alertaAcos} anúncios com ACOS > 20% (7 dias)`}
-              />
-            )}
-            {alertaAmazon > 0 && (
-              <AlertaItem
-                dot="yellow"
-                to="/mapeamento-skus"
-                text={`${alertaAmazon} SKUs da Amazon sem mapeamento`}
-              />
-            )}
-            {anomSemCusto.count + anomCmvMaior.count + anomSemRecebido.count + alertaPrejuizo + alertaAcos + alertaAmazon === 0 && (
-              <li className="flex items-center gap-2 text-sm text-success">
-                <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
-              </li>
-            )}
-          </ul>
-        </Card>
-      </section>
+// ============================================================
+// Contribuição por canal
+// ============================================================
+function ContribuicaoCanalPanel({ canais, loading }: { canais: KpiCanal[]; loading: boolean }) {
+  const ordenados = useMemo(
+    () => [...canais].sort((a, b) => Number(b.margem ?? 0) - Number(a.margem ?? 0)),
+    [canais],
+  );
+  const totalMargemPos = ordenados.reduce((s, c) => s + Math.max(0, Number(c.margem ?? 0)), 0);
+
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Contribuição por canal</div>
+        <div className="text-[12px] text-muted-foreground">Participação na margem do período</div>
+      </div>
+
+      {loading ? (
+        <div className="h-40 rounded bg-muted/40 animate-pulse" />
+      ) : ordenados.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Sem canais no período.</p>
+      ) : (
+        <>
+          <div className="flex h-2.5 rounded-md overflow-hidden gap-0.5">
+            {ordenados.map((c) => {
+              const w = totalMargemPos > 0 ? (Math.max(0, Number(c.margem ?? 0)) / totalMargemPos) * 100 : 0;
+              if (w <= 0) return null;
+              return <div key={c.canal} style={{ width: `${w}%`, background: colorForCanal(c.canal) }} />;
+            })}
+          </div>
+          <div className="flex flex-col">
+            {ordenados.map((c) => {
+              const mc = Number(c.mc_pct ?? 0);
+              const mcCls = mc >= 16 ? "text-success" : mc >= 12 ? "text-warning" : "text-destructive";
+              return (
+                <div
+                  key={c.canal}
+                  className="grid grid-cols-[10px_1fr_auto_52px] items-center gap-2.5 py-[11px] border-b border-border last:border-0"
+                >
+                  <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: colorForCanal(c.canal) }} />
+                  <span className="text-[13px] font-medium truncate" title={c.canal}>{c.canal}</span>
+                  <span className="text-[12.5px] text-muted-foreground font-mono tabular-nums">
+                    {formatBRL(Number(c.receita ?? 0), { compact: true })}
+                  </span>
+                  <span className={cn("text-[12.5px] font-semibold font-mono tabular-nums text-right", mcCls)}>
+                    {formatPercent(mc)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// Top SKUs por margem
+// ============================================================
+function TopSkusPanel({ produtos }: { produtos: ProdutoRow[] }) {
+  const maxMargem = produtos.reduce((m, p) => Math.max(m, Number(p.margem_liquida ?? 0)), 0) || 1;
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Top SKUs por margem</div>
+          <div className="text-[12px] text-muted-foreground">Lucro líquido no período</div>
+        </div>
+        <Link to="/produtos-margem" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0">
+          Ver todos <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+      {produtos.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Sem dados.</p>
+      ) : (
+        <div className="flex flex-col gap-3.5">
+          {produtos.map((p, i) => {
+            const margem = Number(p.margem_liquida ?? 0);
+            const w = Math.max(2, (margem / maxMargem) * 100);
+            return (
+              <div key={`${p.marketplace}-${p.sku}-${i}`} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[12.5px] font-medium truncate" title={p.produto ?? p.sku}>{p.produto ?? p.sku}</span>
+                  <span className="text-[12.5px] font-semibold font-mono tabular-nums shrink-0">
+                    {formatBRL(margem, { compact: true })}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <div className="flex-1 h-1.5 rounded bg-muted overflow-hidden">
+                    <div className="h-full rounded bg-primary" style={{ width: `${w}%` }} />
+                  </div>
+                  <span className="text-[11px] text-muted-foreground font-mono w-11 text-right tabular-nums">
+                    {formatPercent(Number(p.margem_liquida_pct ?? 0))}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// Anomalias detectadas
+// ============================================================
+type AnomaliaData = { cor: "destructive" | "warning" | "amber"; to: string; titulo: string; detalhe: string };
+
+function AnomaliasPanel({ anomalias }: { anomalias: AnomaliaData[] }) {
+  const dotCls = { destructive: "bg-destructive", warning: "bg-warning", amber: "bg-yellow-500" };
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Anomalias detectadas</div>
+          <div className="text-[12px] text-muted-foreground">Pendências que afetam a margem</div>
+        </div>
+        {anomalias.length > 0 && (
+          <span className="bg-destructive/10 text-destructive text-[11px] font-semibold px-2.5 py-1 rounded-full tabular-nums">
+            {anomalias.length}
+          </span>
+        )}
+      </div>
+      {anomalias.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-success py-2">
+          <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {anomalias.map((a, i) => (
+            <Link
+              key={i}
+              to={a.to}
+              className="flex gap-3 py-[11px] border-b border-border last:border-0 group"
+            >
+              <span className={cn("h-[7px] w-[7px] rounded-full mt-[5px] shrink-0", dotCls[a.cor])} />
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[12.5px] font-medium leading-snug group-hover:text-primary transition-colors">{a.titulo}</span>
+                <span className="text-[11.5px] text-muted-foreground leading-snug">{a.detalhe}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// Metas do mês
+// ============================================================
+function MetasPanel({ data, competencia }: { data: MetaRealizado | null; competencia: string }) {
+  const linhas: MetaLinhaData[] = [];
+
+  const recReal = Number(data?.receita_realizada ?? 0);
+  const recMeta = data?.meta_receita != null ? Number(data.meta_receita) : null;
+  if (recMeta && recMeta > 0) {
+    const pct = Number(data?.receita_pct_meta ?? (recReal / recMeta) * 100);
+    const noRitmo =
+      data?.meta_receita_diaria != null && data?.receita_media_diaria != null
+        ? Number(data.receita_media_diaria) >= Number(data.meta_receita_diaria)
+        : null;
+    linhas.push({
+      nome: "Receita",
+      atual: formatBRL(recReal, { compact: true }),
+      alvo: formatBRL(recMeta, { compact: true }),
+      pct,
+      ritmo: noRitmo == null ? "" : noRitmo ? "No ritmo" : "Atrás do plano",
+      ritmoBom: noRitmo,
+      color: "var(--color-primary)",
+    });
+  }
+
+  const mgReal = Number(data?.margem_realizada ?? 0);
+  const mgMeta = data?.meta_margem != null ? Number(data.meta_margem) : null;
+  if (mgMeta && mgMeta > 0) {
+    const pct = Number(data?.margem_pct_meta ?? (mgReal / mgMeta) * 100);
+    linhas.push({
+      nome: "Margem de contribuição",
+      atual: formatBRL(mgReal, { compact: true }),
+      alvo: formatBRL(mgMeta, { compact: true }),
+      pct,
+      ritmo: pct >= 100 ? "Acima do plano" : "",
+      ritmoBom: pct >= 100 ? true : null,
+      color: "var(--color-success)",
+    });
+  }
+
+  const acos = Number(data?.acos_realizado ?? 0);
+  const teto = data?.meta_acos != null ? Number(data.meta_acos) : null;
+  if (teto && teto > 0) {
+    const pct = (acos / teto) * 100;
+    const estourou = data?.acos_estourou === true || acos > teto;
+    linhas.push({
+      nome: "ACOS (teto)",
+      atual: formatPercent(acos),
+      alvo: formatPercent(teto),
+      pct,
+      ritmo: estourou ? "Estourou" : "Dentro do teto",
+      ritmoBom: !estourou,
+      color: estourou ? "var(--color-destructive)" : "var(--color-warning)",
+      invertido: true,
+    });
+  }
+
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">
+            Metas · {format(parseISO(competencia), "MMMM", { locale: ptBR })}
+          </div>
+          <div className="text-[12px] text-muted-foreground">Progresso vs. objetivo</div>
+        </div>
+        <Link to="/metas" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0">
+          Configurar <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {linhas.length === 0 ? (
+        <Link to="/metas" className="text-sm text-primary hover:underline inline-flex items-center gap-1.5">
+          <Target className="h-4 w-4" /> Definir metas do mês
+        </Link>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {linhas.map((l) => (
+            <MetaLinha key={l.nome} data={l} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+type MetaLinhaData = {
+  nome: string;
+  atual: string;
+  alvo: string;
+  pct: number;
+  ritmo: string;
+  ritmoBom: boolean | null;
+  color: string;
+  invertido?: boolean;
+};
+
+function MetaLinha({ data }: { data: MetaLinhaData }) {
+  const { nome, atual, alvo, pct, ritmo, ritmoBom, color, invertido } = data;
+  const w = Math.min(100, Math.max(0, pct));
+  const ritmoCls = ritmoBom == null ? "text-muted-foreground" : ritmoBom ? "text-success" : "text-destructive";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-2.5">
+        <span className="text-[12.5px] font-medium">{nome}</span>
+        <span className="text-[12px] text-muted-foreground font-mono tabular-nums">
+          {atual} / {alvo}
+        </span>
+      </div>
+      <div className="h-2 rounded-md bg-muted overflow-hidden">
+        <div className="h-full rounded-md" style={{ width: `${w}%`, background: color }} />
+      </div>
+      <div className="flex justify-between text-[11px] text-muted-foreground">
+        <span>
+          {pct.toFixed(0).replace(".", ",")}% {invertido ? "do teto" : "atingido"}
+        </span>
+        {ritmo && <span className={cn("font-medium", ritmoCls)}>{ritmo}</span>}
+      </div>
     </div>
   );
 }
@@ -692,20 +984,25 @@ function PeriodoPicker({
   customRange: { from: string; to: string } | null;
   onCustom: (r: { from: string; to: string }) => void;
 }) {
-  const [customOpen, setCustomOpen] = useState(false);
   const [from, setFrom] = useState(customRange?.from ?? "");
   const [to, setTo] = useState(customRange?.to ?? "");
+  const especial = preset === "mes_anterior" || preset === "custom";
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
-          {PRESET_LABEL[preset]}
-        </Button>
+        <button
+          className={cn(
+            "text-[12.5px] font-medium px-3 py-1.5 rounded-[7px] transition-colors",
+            especial ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {especial ? PRESET_LABEL[preset] : "Mais"}
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="text-xs">Período</DropdownMenuLabel>
-        {(["hoje", "ontem", "mes_atual", "ult_7", "ult_30", "mes_anterior"] as PresetKey[]).map((p) => (
+        {(["mes_anterior"] as PresetKey[]).map((p) => (
           <DropdownMenuCheckboxItem
             key={p}
             checked={preset === p}
@@ -718,25 +1015,10 @@ function PeriodoPicker({
         <div className="p-2 space-y-2">
           <p className="text-xs text-muted-foreground">Personalizado</p>
           <div className="flex gap-1">
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="text-xs border rounded px-2 py-1 flex-1 min-w-0"
-            />
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="text-xs border rounded px-2 py-1 flex-1 min-w-0"
-            />
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 min-w-0" />
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 min-w-0" />
           </div>
-          <Button
-            size="sm"
-            className="w-full"
-            disabled={!from || !to || from > to}
-            onClick={() => { onCustom({ from, to }); setCustomOpen(false); }}
-          >
+          <Button size="sm" className="w-full" disabled={!from || !to || from > to} onClick={() => onCustom({ from, to })}>
             Aplicar
           </Button>
         </div>
@@ -764,10 +1046,7 @@ function CanalFilter({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuCheckboxItem
-          checked={todos}
-          onSelect={(e) => { e.preventDefault(); onChange(null); }}
-        >
+        <DropdownMenuCheckboxItem checked={todos} onSelect={(e) => { e.preventDefault(); onChange(null); }}>
           Todos os canais
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
@@ -795,7 +1074,7 @@ function CanalFilter({
 }
 
 // ============================================================
-// Canal card
+// Canal card (detalhado)
 // ============================================================
 function CanalCard({ data }: { data: KpiCanal }) {
   const cor = colorForCanal(data.canal);
@@ -811,7 +1090,6 @@ function CanalCard({ data }: { data: KpiCanal }) {
 
   const margemAposAds = ads == null ? margem : margem - ads;
   const margemAposAdsPct = receita > 0 ? (margemAposAds / receita) * 100 : 0;
-
 
   return (
     <Card className="p-5 space-y-4">
@@ -847,18 +1125,9 @@ function CanalCard({ data }: { data: KpiCanal }) {
         </div>
       </div>
 
-
       <div className="space-y-1.5 text-sm">
-        <Linha
-          label="Margem contrib."
-          valor={formatBRL(margem, { compact: true })}
-          extra={formatPercent(mcPct)}
-        />
-        <Linha
-          label="ADS"
-          valor={ads == null ? "—" : formatBRL(ads, { compact: true })}
-          extra={acos == null ? "—" : `ACOS ${formatPercent(acos)}`}
-        />
+        <Linha label="Margem contrib." valor={formatBRL(margem, { compact: true })} extra={formatPercent(mcPct)} />
+        <Linha label="ADS" valor={ads == null ? "—" : formatBRL(ads, { compact: true })} extra={acos == null ? "—" : `ACOS ${formatPercent(acos)}`} />
         <div className="border-t pt-2 mt-2">
           <Linha
             label="Margem após ADS"
@@ -871,12 +1140,7 @@ function CanalCard({ data }: { data: KpiCanal }) {
         <div className="pt-1 space-y-1">
           <Linha label="Ticket médio" valor={formatBRL(ticket)} muted />
           {cobertura != null && (
-            <Linha
-              label="Cobertura"
-              valor={`${cobertura.toFixed(0)}%`}
-              muted
-              corValor={cobertura < 95 ? "text-warning" : undefined}
-            />
+            <Linha label="Cobertura" valor={`${cobertura.toFixed(0)}%`} muted corValor={cobertura < 95 ? "text-warning" : undefined} />
           )}
         </div>
       </div>
@@ -901,19 +1165,17 @@ function Linha({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-2">
-      <span className={cn("text-xs", muted ? "text-muted-foreground" : "text-muted-foreground", destaque && "font-medium text-foreground")}>
-        {label}
-      </span>
+      <span className={cn("text-xs text-muted-foreground", destaque && "font-medium text-foreground")}>{label}</span>
       <span className={cn("tabular-nums", destaque ? "font-semibold text-base" : "text-sm", corValor)}>
         {valor}
-        {extra && <span className={cn("ml-2 text-xs", destaque ? "text-muted-foreground font-normal" : "text-muted-foreground")}>{extra}</span>}
+        {extra && <span className={cn("ml-2 text-xs text-muted-foreground", destaque && "font-normal")}>{extra}</span>}
       </span>
     </div>
   );
 }
 
 // ============================================================
-// Variações
+// Variação inline
 // ============================================================
 function VariacaoInline({
   valor,
@@ -941,208 +1203,5 @@ function VariacaoInline({
       {Icon && <Icon className={small ? "h-2.5 w-2.5" : "h-3 w-3"} />}
       {`${v > 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")}%`}
     </span>
-  );
-}
-
-function VariacaoBadge({
-  atual,
-  anterior,
-  altaBoa,
-}: {
-  atual: number;
-  anterior: number | null;
-  altaBoa: boolean;
-}) {
-  if (anterior == null || anterior === 0) {
-    return <Badge variant="outline" className="text-xs text-muted-foreground">Sem comparativo</Badge>;
-  }
-  const delta = ((atual - anterior) / Math.abs(anterior)) * 100;
-  const subiu = delta > 0.05;
-  const desceu = delta < -0.05;
-  const bom = altaBoa ? subiu : desceu;
-  const cls = bom
-    ? "bg-success/10 text-success border-success/20"
-    : (altaBoa ? desceu : subiu)
-    ? "bg-destructive/10 text-destructive border-destructive/20"
-    : "bg-muted text-muted-foreground";
-  const Icon = subiu ? ArrowUp : desceu ? ArrowDown : null;
-  return (
-    <Badge variant="outline" className={cn("gap-1 text-xs", cls)}>
-      {Icon && <Icon className="h-3 w-3" />}
-      {`${delta > 0 ? "+" : ""}${delta.toFixed(1).replace(".", ",")}%`}
-      <span className="text-muted-foreground font-normal">vs anterior</span>
-    </Badge>
-  );
-}
-
-function VisaoSimples({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-xl font-semibold tabular-nums mt-1">{value}</p>
-      {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
-    </div>
-  );
-}
-
-
-// ============================================================
-// Metas
-// ============================================================
-function MetaReceitaCard({ data }: { data: MetaRealizado | null }) {
-  const realizado = Number(data?.receita_realizada ?? 0);
-  const meta = data?.meta_receita != null ? Number(data.meta_receita) : null;
-  const temMeta = meta != null && meta > 0;
-  const pct = temMeta ? Number(data?.receita_pct_meta ?? (realizado / meta! * 100)) : 0;
-  const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
-
-  const metaDiaria = data?.meta_receita_diaria != null ? Number(data.meta_receita_diaria) : null;
-  const ritmo = data?.receita_media_diaria != null ? Number(data.receita_media_diaria) : null;
-  const projecao = data?.projecao_receita != null ? Number(data.projecao_receita) : null;
-  const projPct = data?.projecao_pct_meta != null ? Number(data.projecao_pct_meta) : null;
-  const noRitmo = metaDiaria != null && ritmo != null && ritmo >= metaDiaria;
-
-  return (
-    <Card className="p-6 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-          {temMeta ? "Meta de receita" : "Receita realizada"}
-        </p>
-        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-      </div>
-      <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
-      {temMeta ? (
-        <>
-          <Progress
-            value={Math.min(100, pct)}
-            className={cn(
-              cor === "destructive" && "[&>div]:bg-destructive",
-              cor === "warning" && "[&>div]:bg-warning",
-              cor === "success" && "[&>div]:bg-success",
-            )}
-          />
-          <p className="text-xs text-muted-foreground">
-            {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
-          </p>
-          {metaDiaria != null && ritmo != null && (
-            <p className={cn("text-xs font-medium inline-flex items-center gap-1", noRitmo ? "text-success" : "text-destructive")}>
-              {noRitmo ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
-              Ritmo: {formatBRL(ritmo, { compact: true })}/dia · Meta: {formatBRL(metaDiaria, { compact: true })}/dia
-            </p>
-          )}
-          {projecao != null && (
-            <p className="text-xs text-muted-foreground">
-              Projeção do mês: {formatBRL(projecao, { compact: true })}
-              {projPct != null && ` (${formatPercent(projPct)} da meta)`}
-            </p>
-          )}
-        </>
-      ) : (
-        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          <Target className="h-3 w-3" /> Definir meta
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-function MetaMargemCard({ data }: { data: MetaRealizado | null }) {
-  const realizado = Number(data?.margem_realizada ?? 0);
-  const meta = data?.meta_margem != null ? Number(data.meta_margem) : null;
-  const temMeta = meta != null && meta > 0;
-  const pct = temMeta ? Number(data?.margem_pct_meta ?? (realizado / meta! * 100)) : 0;
-  const cor = temMeta ? (pct >= 100 ? "success" : pct >= 70 ? "warning" : "destructive") : "muted";
-  return (
-    <Card className="p-6 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-          {temMeta ? "Meta de margem" : "Margem realizada"}
-        </p>
-        <Wallet className="h-4 w-4 text-muted-foreground" />
-      </div>
-      <p className="text-2xl font-semibold tabular-nums">{formatBRL(realizado, { compact: true })}</p>
-      {temMeta ? (
-        <>
-          <Progress
-            value={Math.min(100, pct)}
-            className={cn(
-              cor === "destructive" && "[&>div]:bg-destructive",
-              cor === "warning" && "[&>div]:bg-warning",
-              cor === "success" && "[&>div]:bg-success",
-            )}
-          />
-          <p className="text-xs text-muted-foreground">
-            {formatPercent(pct)} da meta · {formatBRL(meta!, { compact: true })}
-          </p>
-        </>
-      ) : (
-        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          <Target className="h-3 w-3" /> Definir meta
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-function MetaAcosCard({ data }: { data: MetaRealizado | null }) {
-  const acos = Number(data?.acos_realizado ?? 0);
-  const teto = data?.meta_acos != null ? Number(data.meta_acos) : null;
-  const temTeto = teto != null && teto > 0;
-  const estourou = data?.acos_estourou === true || (temTeto && acos > teto!);
-  const cor: "success" | "warning" | "destructive" | "muted" = !temTeto
-    ? "muted"
-    : estourou
-    ? "destructive"
-    : acos / teto! >= 0.85
-    ? "warning"
-    : "success";
-  const textCls = {
-    success: "text-success",
-    warning: "text-warning",
-    destructive: "text-destructive",
-    muted: "",
-  }[cor];
-  return (
-    <Card className="p-6 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">{temTeto ? "Teto de ACOS" : "ACOS realizado"}</p>
-        <Megaphone className="h-4 w-4 text-muted-foreground" />
-      </div>
-      <p className={cn("text-2xl font-semibold tabular-nums", textCls)}>{formatPercent(acos)}</p>
-      {temTeto ? (
-        <p className="text-xs text-muted-foreground">
-          Teto {formatPercent(teto!)}
-          {estourou && ` · estourou em ${formatPercent(acos - teto!)}`}
-        </p>
-      ) : (
-        <Link to="/metas" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          <Target className="h-3 w-3" /> Definir teto
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Alerta item
-// ============================================================
-function AlertaItem({
-  dot,
-  to,
-  text,
-}: {
-  dot: "red" | "orange" | "yellow";
-  to: string;
-  text: string;
-}) {
-  const cls = { red: "bg-destructive", orange: "bg-warning", yellow: "bg-yellow-500" }[dot];
-  return (
-    <li>
-      <Link to={to} className="flex items-start gap-2 text-sm hover:underline">
-        <span className={cn("inline-block h-2 w-2 rounded-full mt-1.5 shrink-0", cls)} />
-        <span className="flex-1">{text}</span>
-        <ArrowRight className="h-3 w-3 text-muted-foreground mt-1" />
-      </Link>
-    </li>
   );
 }

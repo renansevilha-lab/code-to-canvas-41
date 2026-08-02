@@ -37,10 +37,10 @@ type Visibility = {
   meta: boolean;
 };
 
-const COR_MARGEM = "hsl(24 95% 53%)"; // âmbar/laranja
-const COR_VENDA = "hsl(215 80% 55%)"; // azul
-const COR_MARGEM_PCT = "hsl(45 93% 47%)"; // amarelo
-const COR_META = "hsl(215 15% 55%)"; // cinza
+const COR_MARGEM = "var(--color-success)"; // verde — porção de margem da barra
+const COR_VENDA = "var(--color-primary)"; // roxo — restante da receita
+const COR_MARGEM_PCT = "var(--color-warning)"; // âmbar — linha MC%
+const COR_META = "var(--color-muted-foreground)"; // cinza — meta (tracejada)
 
 function brCompact(v: number) {
   return new Intl.NumberFormat("pt-BR", {
@@ -147,13 +147,11 @@ export function VendasMargemChart({
   const toggle = (k: keyof Visibility) => setVis((v) => ({ ...v, [k]: !v[k] }));
 
   return (
-    <Card className="lg:col-span-2 p-6 space-y-4">
+    <Card className="p-5 space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-            Vendas × Margem × Meta
-          </p>
+          <p className="text-[14.5px] font-semibold tracking-[-0.015em]">Vendas × Margem × Meta</p>
           <p className="text-3xl font-semibold tabular-nums mt-1">
             {formatBRL(resumo.realizado, { compact: true })}
           </p>
@@ -201,11 +199,11 @@ export function VendasMargemChart({
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
               <XAxis
                 dataKey="data"
                 tickFormatter={(v) => format(parseISO(v), "dd/MM")}
-                stroke="hsl(var(--muted-foreground))"
+                stroke="var(--color-muted-foreground)"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -213,7 +211,7 @@ export function VendasMargemChart({
               <YAxis
                 yAxisId="left"
                 tickFormatter={(v) => brCompact(Number(v))}
-                stroke="hsl(var(--muted-foreground))"
+                stroke="var(--color-muted-foreground)"
                 fontSize={10}
                 tickLine={false}
                 axisLine={false}
@@ -223,7 +221,7 @@ export function VendasMargemChart({
                 yAxisId="right"
                 orientation="right"
                 tickFormatter={(v) => `${Number(v).toFixed(0)}%`}
-                stroke="hsl(var(--muted-foreground))"
+                stroke="var(--color-muted-foreground)"
                 fontSize={10}
                 tickLine={false}
                 axisLine={false}
@@ -231,9 +229,9 @@ export function VendasMargemChart({
               />
               <Tooltip
                 contentStyle={{
-                  background: "hsl(var(--popover))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: 8,
+                  background: "var(--color-popover)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 10,
                   fontSize: 12,
                 }}
                 labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
