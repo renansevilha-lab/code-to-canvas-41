@@ -28,6 +28,7 @@ import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as AnomaliasRouteImport } from './routes/anomalias'
 import { Route as AmazonRouteImport } from './routes/amazon'
 import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
+import { Route as AdsMlRouteImport } from './routes/ads-ml'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
@@ -126,6 +127,11 @@ const AdsShopeeRoute = AdsShopeeRouteImport.update({
   path: '/ads-shopee',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdsMlRoute = AdsMlRouteImport.update({
+  id: '/ads-ml',
+  path: '/ads-ml',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -139,6 +145,7 @@ const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ads-ml': typeof AdsMlRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
@@ -162,6 +169,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ads-ml': typeof AdsMlRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
@@ -186,6 +194,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ads-ml': typeof AdsMlRoute
   '/ads-shopee': typeof AdsShopeeRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
@@ -211,6 +220,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/ads-ml'
     | '/ads-shopee'
     | '/amazon'
     | '/anomalias'
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/ads-ml'
     | '/ads-shopee'
     | '/amazon'
     | '/anomalias'
@@ -257,6 +268,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/ads-ml'
     | '/ads-shopee'
     | '/amazon'
     | '/anomalias'
@@ -281,6 +293,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdsMlRoute: typeof AdsMlRoute
   AdsShopeeRoute: typeof AdsShopeeRoute
   AmazonRoute: typeof AmazonRoute
   AnomaliasRoute: typeof AnomaliasRoute
@@ -438,6 +451,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdsShopeeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ads-ml': {
+      id: '/ads-ml'
+      path: '/ads-ml'
+      fullPath: '/ads-ml'
+      preLoaderRoute: typeof AdsMlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -457,6 +477,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdsMlRoute: AdsMlRoute,
   AdsShopeeRoute: AdsShopeeRoute,
   AmazonRoute: AmazonRoute,
   AnomaliasRoute: AnomaliasRoute,

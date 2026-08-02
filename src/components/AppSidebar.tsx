@@ -63,6 +63,7 @@ const modulos: NavItem[] = [
   { title: "Amazon", url: "/amazon", icon: ShoppingCart, modulo: "produtos" },
   { title: "Mapeamento SKUs", url: "/mapeamento-skus", icon: Link2, modulo: "produtos" },
   { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone, modulo: "ads" },
+  { title: "ADS Mercado Livre", url: "/ads-ml", icon: Megaphone, modulo: "ads" },
   { title: "Promoções", url: "/promocoes", icon: Zap, modulo: "ads" },
   { title: "Tendências", url: "/tendencias", icon: TrendingUp, modulo: "dashboard" },
   { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
