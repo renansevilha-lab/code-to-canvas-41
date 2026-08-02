@@ -549,7 +549,7 @@ function Dashboard() {
     anomalias.push({ cor: "amber", to: "/mapeamento-skus", titulo: `${alertaAmazon} SKUs da Amazon sem mapeamento`, detalhe: "Sem custo até vincular ao SKU interno" });
 
   return (
-    <div className="px-6 md:px-8 py-6 flex flex-col gap-[18px] max-w-[1600px]">
+    <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
       {/* Barra de filtros */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-[13px] text-muted-foreground font-medium tabular-nums">
