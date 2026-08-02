@@ -1,11 +1,10 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 
 import { LogOut } from "lucide-react";
 import appCss from "../styles.css?url";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
 import { useAuth } from "@/hooks/useAuth";
@@ -122,36 +121,38 @@ function RootComponent() {
 
 function AppShell() {
   const { user, signOut } = useAuth();
+  const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const { grupo, titulo } = crumbDaRota(pathname);
   return (
-    <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-background">
-        <AppSidebar />
-        <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-14 flex items-center gap-3 border-b border-border bg-card px-4 sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-card/85">
-            <SidebarTrigger />
-            <div className="text-sm text-muted-foreground flex-1">
-              Plataforma de análise de vendedores Shopee
+    <div className="min-h-screen flex w-full bg-background">
+      <AppSidebar />
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-border px-8 py-3.5 bg-background/85 backdrop-blur">
+          <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+            <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground font-medium">
+              <span>{grupo}</span>
+              <span className="opacity-50">/</span>
+              <span className="text-foreground">{titulo}</span>
             </div>
-            {user && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground hidden sm:inline">
-                  {user.email}
-                </span>
-                <Button variant="ghost" size="sm" onClick={() => signOut()}>
-                  <LogOut className="h-4 w-4" />
-                  <span className="ml-1.5 hidden sm:inline">Sair</span>
-                </Button>
-              </div>
-            )}
-          </header>
-          <main className="flex-1 min-w-0">
-            <PerfilGate>
-              <Outlet />
-            </PerfilGate>
-          </main>
-        </div>
-        <Toaster position="top-right" richColors />
+            <h1 className="text-[21px] font-semibold tracking-tight text-foreground leading-none">{titulo}</h1>
+          </div>
+          <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground font-medium">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            <span className="hidden sm:inline">Sincronizado</span>
+          </div>
+          {user && (
+            <Button variant="ghost" size="sm" onClick={() => signOut()}>
+              <LogOut className="h-4 w-4" />
+              <span className="ml-1.5 hidden sm:inline">Sair</span>
+            </Button>
+          )}
+        </header>
+        <main className="flex-1 min-w-0">
+          <PerfilGate>
+            <Outlet />
+          </PerfilGate>
+        </main>
       </div>
-    </SidebarProvider>
+    </div>
   );
 }
