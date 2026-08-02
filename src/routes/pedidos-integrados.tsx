@@ -47,12 +47,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -275,7 +269,7 @@ function PedidosIntegradosPage() {
   const [searchDraft, setSearchDraft] = useState(searchText);
 
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<PedidoIntegrado | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const updateSearch = (next: Partial<SearchParams>) => {
     navigate({ search: { ...search, ...next }, replace: true });
@@ -489,15 +483,7 @@ function PedidosIntegradosPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col gap-6 p-6 max-w-[1600px] mx-auto">
-        {/* Header */}
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">Pedidos Integrados</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Margem de contribuição por pedido em marketplaces conectados
-          </p>
-        </header>
-
+      <div className="w-full flex flex-col gap-[18px] px-6 md:px-8 py-6">
         <SyncStatusFooter area="pedidos_integrados" />
 
         {/* Filtros sticky */}
@@ -576,7 +562,7 @@ function PedidosIntegradosPage() {
         )}
 
         {/* KPIs */}
-        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-[14px]">
           <KpiCard
             label="Receita Total"
             value={formatBRL(kpis.receita)}
@@ -652,11 +638,11 @@ function PedidosIntegradosPage() {
                       contentStyle={{ fontSize: 12 }}
                       formatter={(v: unknown) => formatBRL(Number(v) || 0)}
                     />
-                    <Bar dataKey="receita" fill="hsl(var(--primary))" opacity={0.6} name="Receita" />
+                    <Bar dataKey="receita" fill="var(--color-primary)" opacity={0.6} name="Receita" />
                     <Line
                       type="monotone"
                       dataKey="margem"
-                      stroke="hsl(142 76% 36%)"
+                      stroke="var(--color-success)"
                       strokeWidth={2}
                       dot={false}
                       name="Margem"
@@ -718,55 +704,56 @@ function PedidosIntegradosPage() {
 
 
         {/* Tabela */}
-        <Card className="overflow-hidden">
-          <div className="flex items-center justify-between p-4 border-b">
-            <h3 className="text-sm font-semibold">
+        <Card className="overflow-hidden p-0">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <h3 className="text-[14.5px] font-semibold tracking-[-0.015em]">
               Pedidos{" "}
-              <span className="text-muted-foreground font-normal">
-                ({formatNumber(totalRows)})
-              </span>
+              <span className="text-muted-foreground font-normal">({formatNumber(totalRows)})</span>
             </h3>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <thead className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="text-left font-medium px-3 py-2 w-12"></th>
-                  <th className="text-left font-medium px-3 py-2">Pedido</th>
+                  <th className="w-10 px-3 py-3" />
+                  <th className="text-left font-semibold px-3 py-3">Produto</th>
+                  <th className="text-left font-semibold px-3 py-3">Pedido</th>
                   <Th label="Data" k="data_pedido" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  <th className="text-left font-medium px-3 py-2">Status</th>
-                  <th className="text-left font-medium px-3 py-2">Empresa</th>
-                  <th className="text-left font-medium px-3 py-2">Canal</th>
-                  <th className="text-left font-medium px-3 py-2">Produto</th>
-                  <th className="text-left font-medium px-3 py-2">UF</th>
-                  <Th label="Venda" k="venda" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
+                  <th className="text-left font-semibold px-3 py-3">Empresa</th>
+                  <th className="text-left font-semibold px-3 py-3">Canal</th>
+                  <Th label="Receita" k="venda" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="CMV" k="custo_prod" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="Comissão" k="comissao_total" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="Imposto" k="imposto" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="Margem" k="margem" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <Th label="MC%" k="mc_pct" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <th className="text-center font-medium px-3 py-2 w-12">Cob.</th>
+                  <th className="text-left font-semibold px-3 py-3">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="border-t">
-                      <td colSpan={15} className="px-3 py-3">
+                    <tr key={i} className="border-t border-border">
+                      <td colSpan={11} className="px-3 py-3">
                         <Skeleton className="h-6 w-full" />
                       </td>
                     </tr>
                   ))
                 ) : paged.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">
                       Nenhum pedido encontrado com os filtros selecionados
                     </td>
                   </tr>
                 ) : (
                   paged.map((p) => (
-                    <PedidoRow key={p.order_sn} p={p} onClick={() => setSelected(p)} />
+                    <PedidoRow
+                      key={p.order_sn}
+                      p={p}
+                      expanded={expandedId === p.order_sn}
+                      onToggle={() =>
+                        setExpandedId((id) => (id === p.order_sn ? null : p.order_sn))
+                      }
+                    />
                   ))
                 )}
               </tbody>
@@ -774,33 +761,21 @@ function PedidosIntegradosPage() {
           </div>
 
           {!loading && totalRows > PAGE_SIZE && (
-            <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
+            <div className="flex items-center justify-between px-5 py-3 border-t border-border text-sm">
               <span className="text-muted-foreground">
                 Página {page} de {totalPages} · {formatNumber(totalRows)} pedidos
               </span>
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => goToPage(page - 1)}
-                >
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => goToPage(page - 1)}>
                   Anterior
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => goToPage(page + 1)}
-                >
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => goToPage(page + 1)}>
                   Próxima
                 </Button>
               </div>
             </div>
           )}
         </Card>
-
-        <PedidoDetailSheet pedido={selected} onClose={() => setSelected(null)} />
       </div>
     </TooltipProvider>
   );
@@ -1000,42 +975,41 @@ function KpiCard({
   const isGood = invertColor ? negative : positive;
   const isBad = invertColor ? positive : negative;
   return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground font-medium">{label}</div>
+    <Card className="p-4 flex flex-col gap-1.5">
+      <span className="text-[11.5px] font-semibold text-muted-foreground">{label}</span>
       {loading ? (
-        <Skeleton className="h-7 w-24 mt-2" />
+        <Skeleton className="h-6 w-24" />
       ) : (
-        <div className={cn("text-xl font-semibold mt-1 tabular-nums", valueClassName)}>{value}</div>
+        <span className={cn("text-[21px] font-semibold tracking-[-0.03em] tabular-nums leading-none", valueClassName)}>
+          {value}
+        </span>
       )}
-      <div className="flex items-center gap-1.5 mt-2">
-        {delta != null && Number.isFinite(delta) && (
+      <div className="flex items-center gap-2 min-h-[16px]">
+        {delta != null && Number.isFinite(delta) ? (
           <span
             className={cn(
-              "inline-flex items-center gap-0.5 text-[11px] font-medium",
+              "text-[11px] font-medium font-mono",
               isGood && "text-emerald-600 dark:text-emerald-400",
               isBad && "text-red-600 dark:text-red-400",
               !isGood && !isBad && "text-muted-foreground",
             )}
           >
-            {positive ? <ArrowUp className="h-3 w-3" /> : negative ? <ArrowDown className="h-3 w-3" /> : null}
-            {Math.abs(delta).toFixed(1).replace(".", ",")}%
+            {positive ? "↑" : negative ? "↓" : ""} {Math.abs(delta).toFixed(1).replace(".", ",")}%
           </span>
-        )}
+        ) : !badge ? (
+          <span className="text-[11px] text-muted-foreground">vs. anterior</span>
+        ) : null}
         {badge && (
-          <Badge
-            variant="outline"
+          <span
             className={cn(
-              "text-[10px] h-4 px-1.5",
-              badge.tone === "ok" && "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
-              badge.tone === "warn" && "border-amber-500/40 text-amber-700 dark:text-amber-300",
-              badge.tone === "bad" && "border-red-500/40 text-red-700 dark:text-red-300",
+              "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+              badge.tone === "ok" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+              badge.tone === "warn" && "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+              badge.tone === "bad" && "bg-red-500/15 text-red-700 dark:text-red-300",
             )}
           >
             {badge.label}
-          </Badge>
-        )}
-        {(delta == null || !Number.isFinite(delta)) && !badge && (
-          <span className="text-[11px] text-muted-foreground">vs período anterior</span>
+          </span>
         )}
       </div>
     </Card>
@@ -1059,11 +1033,12 @@ function Th({
 }) {
   const active = sortKey === k;
   return (
-    <th className={cn("font-medium px-3 py-2", align === "right" ? "text-right" : "text-left")}>
+    <th className={cn("font-semibold px-3 py-3", align === "right" ? "text-right" : "text-left")}>
       <button
         onClick={() => onClick(k)}
         className={cn(
           "inline-flex items-center gap-1 hover:text-foreground transition",
+          align === "right" && "flex-row-reverse",
           active && "text-foreground",
         )}
       >
@@ -1078,113 +1053,205 @@ function Th({
   );
 }
 
-function PedidoRow({ p, onClick }: { p: PedidoIntegrado; onClick: () => void }) {
+function PedidoRow({
+  p,
+  expanded,
+  onToggle,
+}: {
+  p: PedidoIntegrado;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const cmvMissing = p.cobertura_cmv !== "completo";
   const semCusto = p.cobertura_cmv === "sem_dado";
   return (
-    <tr
-      onClick={onClick}
-      className={cn(
-        "border-t hover:bg-accent/40 cursor-pointer transition",
-        semCusto && "opacity-60",
-      )}
-    >
-      <td className="px-3 py-2">
-        <ProductThumb url={p.primeiro_produto_foto} />
-      </td>
-      <td className="px-3 py-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="font-mono text-xs">{p.order_sn.slice(0, 10)}…</span>
-          </TooltipTrigger>
-          <TooltipContent>{p.order_sn}</TooltipContent>
-        </Tooltip>
-      </td>
-      <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
-        {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
-      </td>
-      <td className="px-3 py-2">
-        <div className="flex items-center gap-1 flex-wrap">
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-[10px] h-5 px-1.5 font-medium border",
-              STATUS_COLORS[p.status_pedido ?? ""] ?? "",
-            )}
-          >
-            {STATUS_LABELS[p.status_pedido ?? ""] ?? p.status_pedido ?? "—"}
-          </Badge>
-          {p.status_pedido === "PARTIALLY_REFUNDED" && (
-            <Badge
-              variant="outline"
-              className="text-[10px] h-5 px-1.5 font-medium border border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+    <>
+      <tr
+        onClick={onToggle}
+        className={cn(
+          "border-t border-border hover:bg-muted/40 cursor-pointer transition-colors",
+          expanded && "bg-primary/[0.04]",
+          semCusto && "opacity-60",
+        )}
+      >
+        <td className="px-3 py-2.5">
+          <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")} />
+        </td>
+        <td className="px-3 py-2.5 max-w-[280px]">
+          <div className="flex items-center gap-2.5">
+            <ProductThumb url={p.primeiro_produto_foto} />
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-medium">
+                {p.primeiro_produto_nome ?? "—"}
+                {(p.qtd_itens ?? 1) > 1 && (
+                  <span className="text-muted-foreground font-normal"> + {(p.qtd_itens ?? 1) - 1}</span>
+                )}
+              </div>
+              <div className="truncate text-[11px] text-muted-foreground font-mono">{p.skus ?? "—"}</div>
+            </div>
+          </div>
+        </td>
+        <td className="px-3 py-2.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="font-mono text-[12px] text-muted-foreground">{p.order_sn.slice(0, 10)}…</span>
+            </TooltipTrigger>
+            <TooltipContent>{p.order_sn}</TooltipContent>
+          </Tooltip>
+        </td>
+        <td className="px-3 py-2.5 text-[12px] whitespace-nowrap text-muted-foreground">
+          {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
+        </td>
+        <td className="px-3 py-2.5 text-[12.5px] whitespace-nowrap">{p.empresa ?? "—"}</td>
+        <td className="px-3 py-2.5 text-[12.5px]">
+          <span className="inline-flex items-center gap-1.5">
+            <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
+            <span className="whitespace-nowrap">{p.canal ?? p.marketplace}</span>
+          </span>
+        </td>
+        <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px]">{formatBRL(p.venda ?? 0)}</td>
+        <td
+          className={cn(
+            "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground",
+            cmvMissing && "italic",
+          )}
+        >
+          {p.custo_prod != null ? formatBRL(p.custo_prod) : "—"}
+        </td>
+        <td
+          className={cn(
+            "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] font-semibold",
+            p.margem == null
+              ? "text-muted-foreground"
+              : p.margem >= 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-red-600 dark:text-red-400",
+          )}
+        >
+          {p.margem != null ? formatBRL(p.margem) : "—"}
+        </td>
+        <td className="px-3 py-2.5 text-right">
+          {p.mc_pct != null ? <McPill mc={p.mc_pct} /> : <span className="text-muted-foreground">—</span>}
+        </td>
+        <td className="px-3 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap border",
+                STATUS_COLORS[p.status_pedido ?? ""] ?? "border-border text-muted-foreground",
+              )}
             >
-              Devolução parcial
-            </Badge>
-          )}
-          {semCusto && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className="text-[10px] h-5 px-1.5 font-medium border border-muted-foreground/30 bg-muted text-muted-foreground"
-                >
-                  sem custo
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>
-                Não entra nos totalizadores — custo não cadastrado
-              </TooltipContent>
-            </Tooltip>
-          )}
+              {STATUS_LABELS[p.status_pedido ?? ""] ?? p.status_pedido ?? "—"}
+            </span>
+            <CoberturaIcon cobertura={p.cobertura_cmv} />
+          </div>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-muted/25 border-t border-border">
+          <td colSpan={11} className="px-6 py-5">
+            <PedidoExpandido p={p} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+const COMP_CORES: Record<string, string> = {
+  Margem: "#0E8A5F",
+  CMV: "#64748B",
+  Comissão: "var(--color-primary)",
+  Imposto: "#E0A72E",
+  Outros: "#94A3B8",
+};
+
+function PedidoExpandido({ p }: { p: PedidoIntegrado }) {
+  const venda = Number(p.venda ?? 0);
+  const partes = [
+    { label: "Margem", val: Number(p.margem ?? 0) },
+    { label: "CMV", val: Number(p.custo_prod ?? 0) },
+    { label: "Comissão", val: Number(p.comissao_total ?? 0) },
+    { label: "Imposto", val: Number(p.imposto ?? 0) },
+  ];
+  const somaPos = partes.reduce((a, b) => a + Math.max(0, b.val), 0);
+  const outros = venda - somaPos;
+  if (outros > 0.01) partes.push({ label: "Outros", val: outros });
+  const base = Math.max(somaPos + Math.max(0, outros), venda, 1);
+
+  const qtd = p.qtd_itens ?? 1;
+  const shopee = marketplaceFromCanal(p.canal) === "shopee";
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-8">
+      {/* Composição da receita */}
+      <div className="flex flex-col gap-3">
+        <div className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Composição da receita
         </div>
-      </td>
-      <td className="px-3 py-2 text-xs whitespace-nowrap">{p.empresa ?? "—"}</td>
-      <td className="px-3 py-2 text-xs">
-        <span className="inline-flex items-center gap-1.5">
-          <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
-          <span>{p.canal ?? p.marketplace}</span>
-        </span>
-      </td>
-      <td className="px-3 py-2 max-w-[260px]">
-        <div className="truncate text-xs">
-          {p.primeiro_produto_nome ?? "—"}
-          {(p.qtd_itens ?? 1) > 1 && (
-            <span className="text-muted-foreground"> + {(p.qtd_itens ?? 1) - 1}</span>
-          )}
+        <div className="flex h-8 rounded-lg overflow-hidden gap-0.5">
+          {partes.map((part) => {
+            const w = (Math.max(0, part.val) / base) * 100;
+            if (w <= 0) return null;
+            return (
+              <div
+                key={part.label}
+                className="flex items-center justify-center text-white text-[10.5px] font-semibold font-mono"
+                style={{ width: `${w}%`, background: COMP_CORES[part.label] }}
+                title={`${part.label}: ${formatBRL(part.val)}`}
+              >
+                {w >= 9 ? `${w.toFixed(0)}%` : ""}
+              </div>
+            );
+          })}
         </div>
-      </td>
-      <td className="px-3 py-2 text-xs">{p.uf ?? "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.venda ?? 0)}</td>
-      <td
-        className={cn(
-          "px-3 py-2 text-right tabular-nums",
-          cmvMissing && "italic text-muted-foreground",
+        <div className="flex flex-wrap gap-x-5 gap-y-2">
+          {partes.map((part) => (
+            <div key={part.label} className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-sm" style={{ background: COMP_CORES[part.label] }} />
+              <span className="text-[12px] text-muted-foreground">{part.label}</span>
+              <span className="text-[12px] font-semibold font-mono tabular-nums">{formatBRL(part.val)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Detalhes do pedido */}
+      <div className="flex flex-col gap-3">
+        <div className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Detalhes do pedido
+        </div>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-3">
+          <Meta label="Data do pedido" value={p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM/yyyy HH:mm") : "—"} />
+          <Meta label="Quantidade" value={`${qtd} ${qtd === 1 ? "item" : "itens"}`} />
+          <Meta label="Ticket unitário" value={qtd > 0 ? formatBRL(venda / qtd) : "—"} />
+          <Meta label="Destino" value={`${p.cidade ?? "—"}/${p.uf ?? "—"}`} />
+          <Meta label="Recebido estimado" value={p.recebido_estimado != null ? formatBRL(p.recebido_estimado) : "—"} />
+          <Meta
+            label="Cobertura CMV"
+            value={
+              p.cobertura_cmv === "completo"
+                ? "Completa"
+                : `${p.cobertura_cmv ?? "—"}${p.itens_sem_cmv ? ` · ${p.itens_sem_cmv} sem custo` : ""}`
+            }
+          />
+        </div>
+
+        {p.cobertura_cmv !== "completo" && <PuxarCustoTiny pedido={p} />}
+
+        {shopee && (
+          <a
+            href={`https://seller.shopee.com.br/portal/sale/order/${p.order_sn}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12px] text-primary hover:underline mt-1"
+          >
+            Ver no Shopee Seller Center
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
         )}
-      >
-        {p.custo_prod != null ? formatBRL(p.custo_prod) : "—"}
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.comissao_total ?? 0)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.imposto ?? 0)}</td>
-      <td
-        className={cn(
-          "px-3 py-2 text-right tabular-nums font-medium",
-          p.margem == null
-            ? "text-muted-foreground"
-            : p.margem >= 0
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-red-600 dark:text-red-400",
-        )}
-      >
-        {p.margem != null ? formatBRL(p.margem) : "—"}
-      </td>
-      <td className="px-3 py-2 text-right">
-        {p.mc_pct != null ? <McPill mc={p.mc_pct} /> : <span className="text-muted-foreground">—</span>}
-      </td>
-      <td className="px-3 py-2 text-center">
-        <CoberturaIcon cobertura={p.cobertura_cmv} />
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 }
 
@@ -1320,121 +1387,11 @@ function PuxarCustoTiny({ pedido }: { pedido: PedidoIntegrado }) {
   );
 }
 
-function PedidoDetailSheet({
-  pedido,
-  onClose,
-}: {
-  pedido: PedidoIntegrado | null;
-  onClose: () => void;
-}) {
-  return (
-    <Sheet open={!!pedido} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full sm:max-w-md overflow-y-auto">
-        {pedido && (
-          <>
-            <SheetHeader>
-              <div className="flex items-start gap-3">
-                <ProductThumb url={pedido.primeiro_produto_foto} />
-                <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-sm font-semibold leading-tight">
-                    {pedido.primeiro_produto_nome ?? "Pedido"}
-                  </SheetTitle>
-                  <p className="text-xs text-muted-foreground font-mono mt-1">{pedido.order_sn}</p>
-                </div>
-              </div>
-            </SheetHeader>
-
-            <div className="mt-6 space-y-1 text-sm font-mono">
-              <Row label="Venda" value={pedido.venda} bold />
-              <Row label="− Comissão" value={-(pedido.taxa_comissao ?? 0)} muted />
-              <Row label="+ Ajuste comercial" value={pedido.ajuste_acao_comercial} muted />
-              <Row label="− Taxa de serviço" value={-(pedido.taxa_servico ?? 0)} muted />
-              <Row label="− Afiliados" value={-(pedido.comissao_afiliados ?? 0)} muted />
-              <div className="border-t my-1" />
-              <Row label="= Recebido" value={pedido.recebido_estimado} bold />
-              <Row label="− CMV" value={pedido.custo_prod != null ? -pedido.custo_prod : null} muted />
-              <Row label="− Imposto" value={-(pedido.imposto ?? 0)} muted />
-              <div className="border-t my-1" />
-              <Row
-                label="= Margem"
-                value={pedido.margem}
-                bold
-                className={
-                  pedido.margem == null
-                    ? ""
-                    : pedido.margem >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-red-600 dark:text-red-400"
-                }
-              />
-              {pedido.mc_pct != null && (
-                <Row label="MC%" valueText={formatPercent(pedido.mc_pct * 100, 2)} />
-              )}
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3 text-xs">
-              <Meta label="Data" value={pedido.data_pedido ? format(parseISO(pedido.data_pedido), "dd/MM/yyyy HH:mm") : "—"} />
-              <Meta label="Status" value={pedido.status_pedido ?? "—"} />
-              <Meta label="Localização" value={`${pedido.cidade ?? "—"}/${pedido.uf ?? "—"}`} />
-              <Meta label="Itens" value={`${pedido.qtd_itens ?? 0}`} />
-              <Meta label="SKUs" value={pedido.skus ?? "—"} className="col-span-2" />
-              {pedido.cobertura_cmv !== "completo" && (
-                <div className="col-span-2 rounded-md bg-amber-500/10 border border-amber-500/30 p-2 text-amber-700 dark:text-amber-300">
-                  Cobertura CMV: <strong>{pedido.cobertura_cmv}</strong>
-                  {pedido.itens_sem_cmv ? ` · ${pedido.itens_sem_cmv} item(ns) sem custo` : ""}
-                </div>
-              )}
-            </div>
-
-            {pedido.cobertura_cmv !== "completo" && <PuxarCustoTiny pedido={pedido} />}
-
-            <Button asChild variant="outline" className="w-full mt-6 gap-2">
-              <a
-                href={`https://seller.shopee.com.br/portal/sale/order/${pedido.order_sn}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Ver no Shopee Seller Center
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </Button>
-          </>
-        )}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function Row({
-  label,
-  value,
-  valueText,
-  bold,
-  muted,
-  className,
-}: {
-  label: string;
-  value?: number | null;
-  valueText?: string;
-  bold?: boolean;
-  muted?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={cn("flex justify-between py-0.5", bold && "font-semibold", muted && "text-muted-foreground", className)}>
-      <span>{label}</span>
-      <span className="tabular-nums">
-        {valueText ?? (value == null ? "—" : formatBRL(value))}
-      </span>
-    </div>
-  );
-}
-
 function Meta({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <div className={className}>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="font-medium break-words">{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[12.5px] font-medium break-words">{value}</div>
     </div>
   );
 }
@@ -1486,7 +1443,7 @@ function EmpresaSubResumo({ groups, loading }: { groups: EmpresaResumo[]; loadin
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 
-const DONUT_COLORS = ["hsl(var(--primary))", "hsl(25 95% 55%)", "hsl(280 70% 60%)", "hsl(160 70% 45%)"];
+const DONUT_COLORS = ["var(--color-primary)", "hsl(25 95% 55%)", "hsl(280 70% 60%)", "hsl(160 70% 45%)"];
 
 function aggregateKpiDia(rows: KpiDiaRow[]) {
   let receita = 0, custo = 0, margem = 0, pedidos = 0, itens = 0, semCmv = 0;
