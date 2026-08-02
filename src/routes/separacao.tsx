@@ -688,6 +688,50 @@ const ENVIO_HEADER: Record<
   ML: { bg: "#FFE600", text: "#111827", label: "MERCADO LIVRE (ML)" },
 };
 
+// Chip de envio: filtro + contagem. Ativo assume a cor da transportadora.
+function ChipEnvio({
+  label,
+  count,
+  color,
+  textColor,
+  active,
+  isER,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  color?: string;
+  textColor?: string;
+  active: boolean;
+  isER?: boolean;
+  onClick: () => void;
+}) {
+  const bg = color ?? "#0E1114";
+  const fg = textColor ?? "#FFFFFF";
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 rounded-[9px] border pl-3.5 pr-2 py-[7px] text-[12.5px] font-semibold transition-[filter]",
+        active ? "border-transparent hover:brightness-[.97]" : "bg-card text-secondary-foreground border-border hover:border-[#C9CFD8]",
+      )}
+      style={active ? { background: bg, color: fg } : undefined}
+    >
+      {isER && <Zap className="h-3 w-3" />}
+      <span>{label}</span>
+      <span
+        className={cn(
+          "rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold font-mono tabular-nums",
+          !active && "bg-muted text-muted-foreground",
+        )}
+        style={active ? { background: "rgba(255,255,255,.22)" } : undefined}
+      >
+        {formatNumber(count)}
+      </span>
+    </button>
+  );
+}
+
 function ProdutoFoto({ src, alt }: { src: string | null; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
@@ -1787,103 +1831,61 @@ function FilaPriorizada() {
       />
 
 
-      {/* Resumo */}
-      <Card className="p-4 space-y-3">
-        <div className="text-sm">
-          <span className="font-semibold">Total:</span>{" "}
-          {formatNumber(totais.tags)} TAGs ·{" "}
-          {formatNumber(totais.pedidos)} pedidos ·{" "}
-          {formatNumber(totais.unidades)} unidades
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {grupos.map((g) => {
-            const cfg = ENVIO_HEADER[g.tipo_envio];
-            const pedidos = g.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0);
-            return (
-              <span
-                key={g.tipo_envio}
-                className="text-xs font-medium px-2.5 py-1 rounded-full"
-                style={{
-                  backgroundColor: cfg?.bg ?? "#E5E7EB",
-                  color: cfg?.text ?? "#111827",
-                }}
-              >
-                {g.tipo_envio}: {formatNumber(pedidos)}
-              </span>
-            );
-          })}
-          {multis.length > 0 && (
-            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300">
-              MULTI: {formatNumber(multis.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0))}
+      {/* Chips de envio (filtro + contagem) + busca — os chips SÃO o filtro */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ChipEnvio
+          label="Todos"
+          count={totais.pedidos}
+          active={selectedEnvios === null || selectedEnvios.length === enviosDisponiveis.length}
+          onClick={() => setSelectedEnvios(null)}
+        />
+        {enviosDisponiveis.map((env) => {
+          const cfg = ENVIO_HEADER[env];
+          const grupo = grupos.find((g) => g.tipo_envio === env);
+          const pedidos = grupo ? grupo.items.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0) : 0;
+          return (
+            <ChipEnvio
+              key={env}
+              label={env}
+              count={pedidos}
+              color={cfg?.bg}
+              textColor={cfg?.text}
+              active={enviosAtivosSet.has(env)}
+              isER={env === "ER"}
+              onClick={() => toggleEnvio(env)}
+            />
+          );
+        })}
+        {multis.length > 0 && (
+          <span className="flex items-center gap-2 rounded-[9px] border border-border bg-card pl-3.5 pr-2 py-[7px] text-[12.5px] font-semibold text-secondary-foreground">
+            MULTI
+            <span className="rounded-md bg-muted text-muted-foreground px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums">
+              {formatNumber(multis.reduce((s, r) => s + (r.qtd_pedidos ?? 0), 0))}
             </span>
-          )}
-          {fullCount != null && fullCount > 0 && (
-            <>
-              <span className="text-muted-foreground text-xs mx-1">|</span>
-              <span
-                className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-dashed"
-                title="Full é separado pelo marketplace, não no galpão"
-              >
-                Full (não separado aqui): {formatNumber(fullCount)} pedidos
-              </span>
-            </>
-          )}
-        </div>
-      </Card>
-
-      {/* Filtros */}
-      <Card className="p-3 space-y-3">
-        <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-xs text-muted-foreground mr-1">Envio:</span>
-          <Button
-            size="sm"
-            variant={
-              selectedEnvios === null ||
-              selectedEnvios.length === enviosDisponiveis.length
-                ? "default"
-                : "outline"
-            }
-            onClick={() => setSelectedEnvios(null)}
+          </span>
+        )}
+        {fullCount != null && fullCount > 0 && (
+          <span
+            className="rounded-[9px] border border-dashed border-border bg-muted/40 px-3 py-[7px] text-[11.5px] text-muted-foreground"
+            title="Full é separado pelo marketplace, não no galpão"
           >
-            Todos
-          </Button>
-          {enviosDisponiveis.map((env) => {
-            const active = enviosAtivosSet.has(env);
-            const isER = env === "ER";
-            return (
-              <Button
-                key={env}
-                size="sm"
-                variant={active ? (isER ? "destructive" : "default") : "outline"}
-                onClick={() => toggleEnvio(env)}
-              >
-                {isER && <Zap className="h-3 w-3 mr-1" />}
-                {env}
-              </Button>
-            );
-          })}
-          <div className="ml-auto flex items-center gap-2">
-            <div className="relative w-full max-w-xs">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                value={buscaSku}
-                onChange={(e) => setBuscaSku(e.target.value)}
-                placeholder="Buscar por SKU ou nome…"
-                className="pl-8 h-8 text-sm"
-              />
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="em breve"
-              className="opacity-60"
-            >
-              Peso
-            </Button>
-          </div>
+            Full (fora do galpão): {formatNumber(fullCount)}
+          </span>
+        )}
+        <div className="flex-1" />
+        <span className="text-[12px] text-muted-foreground tabular-nums hidden md:inline">
+          {formatNumber(totais.tags)} TAGs · {formatNumber(totais.pedidos)} pedidos · {formatNumber(totais.unidades)} un.
+        </span>
+        <div className="relative w-full sm:w-auto sm:min-w-[240px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={buscaSku}
+            onChange={(e) => setBuscaSku(e.target.value)}
+            placeholder="Buscar por SKU ou nome…"
+            className="pl-8 h-9 text-sm bg-card"
+          />
         </div>
-      </Card>
+      </div>
 
       {/* Blocos unitários por envio */}
       {grupos.map((g) => {
@@ -1900,16 +1902,21 @@ function FilaPriorizada() {
         return (
           <div key={g.tipo_envio} className="space-y-2">
             <div
-              className="rounded-md px-4 py-3 flex items-center justify-between gap-4"
-              style={{ backgroundColor: bg, color }}
+              className="rounded-[12px] px-4 py-3 flex items-center justify-between gap-4 border"
+              style={{ backgroundColor: `${bg}14`, borderColor: `${bg}33` }}
             >
-              <div className="flex items-center gap-2 font-semibold text-sm md:text-base">
-                {cfg?.icon && <Zap className="h-4 w-4" />}
-                {label}
+              <div className="flex items-center gap-3 min-w-0">
+                <span
+                  className="inline-flex items-center gap-1 font-mono font-bold text-[11.5px] tracking-[0.04em] px-2 py-1 rounded-md shrink-0"
+                  style={{ backgroundColor: bg, color }}
+                >
+                  {cfg?.icon && <Zap className="h-3 w-3" />}
+                  {g.tipo_envio}
+                </span>
+                <span className="text-[14px] font-semibold text-foreground truncate">{label}</span>
               </div>
-              <div className="text-xs md:text-sm opacity-90">
-                {formatNumber(tags)} TAGs · {formatNumber(pedidos)} pedidos ·{" "}
-                {formatNumber(unidades)} unidades
+              <div className="text-[12px] text-muted-foreground font-mono tabular-nums shrink-0">
+                {formatNumber(tags)} TAGs · {formatNumber(pedidos)} pedidos · {formatNumber(unidades)} unidades
               </div>
             </div>
 
