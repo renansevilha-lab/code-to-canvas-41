@@ -645,7 +645,7 @@ function SeparacaoTotaisCards() {
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-[14px]">
         {cards.map((c) => (
           <Card
             key={c.key}
@@ -653,13 +653,13 @@ function SeparacaoTotaisCards() {
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className={cn("text-xs font-medium truncate", c.text)}>
+                <p className={cn("text-[12px] font-semibold truncate", c.text)}>
                   {c.label}
                 </p>
                 {isLoading ? (
-                  <Skeleton className="h-8 w-16 mt-1" />
+                  <Skeleton className="h-8 w-16 mt-1.5" />
                 ) : (
-                  <p className={cn("text-2xl font-semibold tabular-nums mt-1", c.text)}>
+                  <p className={cn("text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none mt-1.5", c.text)}>
                     {formatNumber(c.value)}
                   </p>
                 )}
@@ -2455,17 +2455,11 @@ function SeparacaoPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <PackageCheck className="h-6 w-6 text-primary" />
-            Separação
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Fila de pedidos aguardando separação no galpão (Full excluído).
-          </p>
-        </div>
+    <div className="w-full px-6 md:px-8 py-6 space-y-[18px]">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          Fila de pedidos aguardando separação no galpão (Full excluído).
+        </p>
         <div className="flex items-center gap-2 flex-wrap">
           <AtualizarDoTinyButton />
           <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
@@ -2487,54 +2481,48 @@ function SeparacaoPage() {
 
         <TabsContent value="detalhado" className="space-y-6 mt-2">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-[14px]">
 
-        <Card className="p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">
-            Total a separar
-          </div>
+        <Card className="p-4 flex flex-col gap-1.5">
+          <div className="text-[12px] font-semibold text-muted-foreground">Total a separar</div>
           {isLoading ? (
-            <Skeleton className="h-8 w-24 mt-2" />
+            <Skeleton className="h-7 w-24" />
           ) : (
             <>
-              <div className="text-2xl font-semibold mt-1">
+              <div className="text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none">
                 {formatNumber(totalPedidos)} <span className="text-sm font-normal text-muted-foreground">pedidos</span>
               </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {formatNumber(totalUnidades)} unidades
-              </div>
+              <div className="text-[11.5px] text-muted-foreground">{formatNumber(totalUnidades)} unidades</div>
             </>
           )}
         </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">
-            Unitários
-          </div>
+        <Card className="p-4 flex flex-col gap-1.5">
+          <div className="text-[12px] font-semibold text-muted-foreground">Unitários</div>
           {isLoading ? (
-            <Skeleton className="h-8 w-16 mt-2" />
+            <Skeleton className="h-7 w-16" />
           ) : (
-            <div className="text-2xl font-semibold mt-1">{formatNumber(totalUnitarios)}</div>
+            <div className="text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none">{formatNumber(totalUnitarios)}</div>
           )}
         </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-            <BoxesIcon className="h-3 w-3" /> Multi SKU
+        <Card className="p-4 flex flex-col gap-1.5">
+          <div className="text-[12px] font-semibold text-muted-foreground flex items-center gap-1.5">
+            <BoxesIcon className="h-3.5 w-3.5" /> Multi SKU
           </div>
           {isLoading ? (
-            <Skeleton className="h-8 w-16 mt-2" />
+            <Skeleton className="h-7 w-16" />
           ) : (
-            <div className="text-2xl font-semibold mt-1">{formatNumber(totalMulti)}</div>
+            <div className="text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none">{formatNumber(totalMulti)}</div>
           )}
         </Card>
-        <Card className="p-4 border-destructive/40 bg-destructive/5">
-          <div className="text-xs uppercase tracking-wide flex items-center gap-1 text-destructive font-medium">
-            <Zap className="h-3 w-3" /> Entrega Rápida (ER)
+        <Card className="p-4 flex flex-col gap-1.5 border-destructive/40 bg-destructive/5">
+          <div className="text-[12px] font-semibold flex items-center gap-1.5 text-destructive">
+            <Zap className="h-3.5 w-3.5" /> Entrega Rápida (ER)
           </div>
           {isLoading ? (
-            <Skeleton className="h-8 w-16 mt-2" />
+            <Skeleton className="h-7 w-16" />
           ) : (
-            <div className="text-2xl font-semibold mt-1 text-destructive">
-              {formatNumber(totalER)} <span className="text-sm font-normal">pedidos ⚡</span>
+            <div className="text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none text-destructive">
+              {formatNumber(totalER)} <span className="text-sm font-normal">⚡</span>
             </div>
           )}
         </Card>
