@@ -1,21 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Info, Loader2, Trash2, RotateCcw } from "lucide-react";
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  ResponsiveContainer,
-  Tooltip as RTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { toast } from "sonner";
 
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -50,7 +39,7 @@ export const Route = createFileRoute("/dre")({
   head: () => ({
     meta: [
       { title: "DRE — Demonstração de Resultado" },
-      { name: "description", content: "DRE mensal em cascata: receita, CMV, comissões, impostos, despesas e lucro líquido." },
+      { name: "description", content: "DRE gerencial: receita, margem de contribuição e lucro líquido, com composição da receita e detalhamento." },
     ],
   }),
   component: DREPage,
@@ -103,16 +92,44 @@ interface DespesaDetalheRow {
 
 type EmpresaFiltro = "consolidado" | "ACZ Pet" | "SVL Store";
 
-const brl = (v: number | null | undefined) =>
-  (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+const brlS = (v: number | null | undefined) => {
+  const n = v ?? 0;
+  const a = Math.abs(n);
+  const s = n < 0 ? "−" : "";
+  if (a >= 1_000_000) return `${s}R$ ${(a / 1_000_000).toFixed(2).replace(".", ",")} mi`;
+  if (a >= 1_000) return `${s}R$ ${(a / 1_000).toFixed(1).replace(".", ",")} mil`;
+  return `${s}R$ ${a.toFixed(0)}`;
+};
 const brlFull = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const pct = (part: number | null | undefined, total: number | null | undefined) => {
+const pctStr = (part: number | null | undefined, total: number | null | undefined) => {
   const p = part ?? 0;
   const t = total ?? 0;
   if (!t) return "—";
   return `${((p / t) * 100).toFixed(1).replace(".", ",")}%`;
 };
+
+function pctVar(cur: number, prev: number | null | undefined): number | null {
+  const p = prev ?? 0;
+  if (!p || !Number.isFinite(p)) return null;
+  return ((cur - p) / Math.abs(p)) * 100;
+}
+
+function sig(d: number | null): string {
+  if (d == null || !Number.isFinite(d)) return "—";
+  return `${d >= 0 ? "↑" : "↓"} ${Math.abs(d).toFixed(1).replace(".", ",")}%`;
+}
+
+// Pontos de sparkline (viewBox 0 0 120 30) a partir de uma série numérica.
+function spark(vals: number[]): string {
+  const v = vals.filter((n) => Number.isFinite(n));
+  if (v.length < 2) return "";
+  const mn = Math.min(...v);
+  const mx = Math.max(...v);
+  const r = mx - mn || 1;
+  const sx = 120 / (v.length - 1);
+  return v.map((n, i) => `${(i * sx).toFixed(1)},${(28 - ((n - mn) / r) * 26).toFixed(1)}`).join(" ");
+}
 
 function formatMes(m: string): string {
   const [y, mm] = m.split("-");
@@ -239,6 +256,11 @@ function DREPage() {
   }, [mesSel, empresaSel]);
 
   const mesAtual = useMemo(() => dre.find((r) => r.mes === mesSel), [dre, mesSel]);
+  const mesAnterior = useMemo(() => {
+    const idx = dre.findIndex((r) => r.mes === mesSel);
+    return idx > 0 ? dre[idx - 1] : undefined;
+  }, [dre, mesSel]);
+
   const opAtual = useMemo(
     () =>
       empresaSel !== "consolidado"
@@ -247,19 +269,18 @@ function DREPage() {
     [operacional, mesSel, empresaSel],
   );
 
-  const evolucao = useMemo(
-    () =>
-      dre.map((r) => ({
-        mes: formatMes(r.mes),
-        receita: r.receita_liquida ?? 0,
-        lucro: r.lucro_liquido ?? 0,
-        margem: r.margem_liquida_pct ?? 0,
-      })),
+  // Séries mensais para as sparklines dos cards âncora.
+  const series = useMemo(
+    () => ({
+      receita: dre.map((r) => r.receita_liquida ?? 0),
+      mc: dre.map((r) => r.margem_contribuicao ?? 0),
+      lucro: dre.map((r) => r.lucro_liquido ?? 0),
+    }),
     [dre],
   );
 
   // ACZ/SVL do mês selecionado — alimenta o drill-down por empresa de
-  // Receita Líquida e CMV (soma bate com o consolidado: ambos vêm da mesma view).
+  // Receita Líquida e CMV (soma bate com o consolidado: mesma view).
   const porEmpresaMes = useMemo(() => {
     let acz: DreOperacionalRow | undefined;
     let svl: DreOperacionalRow | undefined;
@@ -271,18 +292,6 @@ function DREPage() {
     }
     return { acz, svl };
   }, [operacional, mesSel]);
-
-  const porEmpresaAgrupado = useMemo(() => {
-    const map = new Map<string, { acz?: DreOperacionalRow; svl?: DreOperacionalRow }>();
-    for (const r of operacional) {
-      const g = map.get(r.mes) ?? {};
-      const e = (r.empresa ?? "").toLowerCase();
-      if (e.includes("acz")) g.acz = r;
-      else if (e.includes("svl")) g.svl = r;
-      map.set(r.mes, g);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [operacional]);
 
   const toggleDespesa = (label: string) => {
     if (!mesSel) return;
@@ -301,12 +310,11 @@ function DREPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-6xl mx-auto">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">DRE — Demonstração de Resultado</h1>
-          <p className="text-sm text-muted-foreground">Cascata mensal: receita → margem de contribuição → lucro líquido.</p>
-        </div>
+    <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          Consolidado ACZ Pet + SVL Store · comparação com o mês anterior
+        </p>
         <div className="flex items-center gap-2 flex-wrap">
           <AvisosPopover />
           <Select value={empresaSel} onValueChange={(v) => setEmpresaSel(v as EmpresaFiltro)}>
@@ -335,128 +343,195 @@ function DREPage() {
       </div>
 
       {loading ? (
-        <Skeleton className="h-[500px] w-full" />
+        <Skeleton className="h-[500px] w-full rounded-[14px]" />
       ) : !mesAtual ? (
-        <Card>
-          <CardContent className="py-12 text-center text-muted-foreground text-sm">
-            Nenhum mês disponível.
-          </CardContent>
-        </Card>
+        <Card className="p-12 text-center text-muted-foreground text-sm">Nenhum mês disponível.</Card>
       ) : empresaSel === "consolidado" ? (
-        <Cascata
-          row={mesAtual}
-          porEmpresa={porEmpresaMes}
-          expanded={expanded}
-          detalhes={detalhes}
-          loadingDet={loadingDet}
-          onToggle={toggleDespesa}
-          onOverride={aplicarOverride}
-          mesSel={mesSel!}
-        />
+        <>
+          <DreHero row={mesAtual} prev={mesAnterior} series={series} />
+          <DestinoDaReceita row={mesAtual} />
+          <DreDetalhado
+            row={mesAtual}
+            prev={mesAnterior}
+            porEmpresa={porEmpresaMes}
+            expanded={expanded}
+            detalhes={detalhes}
+            loadingDet={loadingDet}
+            onToggle={toggleDespesa}
+            onOverride={aplicarOverride}
+            mesSel={mesSel!}
+          />
+        </>
       ) : (
         <CascataEmpresa mes={mesSel!} empresa={empresaSel} row={opAtual} />
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Evolução mensal (consolidado)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <Skeleton className="h-[320px] w-full" />
-          ) : evolucao.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">Sem dados</p>
-          ) : (
-            <div className="h-[320px] w-full">
-              <ResponsiveContainer>
-                <ComposedChart data={evolucao}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="mes" tick={{ fontSize: 12 }} />
-                  <YAxis
-                    yAxisId="left"
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(v) => (v / 1000).toFixed(0) + "k"}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(v) => `${v.toFixed(0)}%`}
-                  />
-                  <RTooltip
-                    formatter={(v: unknown, name: unknown) => {
-                      const n = Number(v);
-                      if (name === "Margem %") return `${n.toFixed(1).replace(".", ",")}%`;
-                      return brlFull(n);
-                    }}
-                  />
-                  <Legend />
-                  <Bar yAxisId="left" dataKey="receita" name="Receita" fill="hsl(var(--primary))" />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="lucro"
-                    name="Lucro líquido"
-                    stroke="#16a34a"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="margem"
-                    name="Margem %"
-                    stroke="#f59e0b"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {porEmpresaAgrupado.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Margem de contribuição por empresa</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Despesas fixas ainda não são separadas por empresa — a quebra vai até a margem de contribuição.
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-xs text-muted-foreground">
-                  <th className="text-left py-2 px-2">Mês</th>
-                  <th className="text-right py-2 px-2">ACZ — Receita</th>
-                  <th className="text-right py-2 px-2">ACZ — MC</th>
-                  <th className="text-right py-2 px-2">SVL — Receita</th>
-                  <th className="text-right py-2 px-2">SVL — MC</th>
-                </tr>
-              </thead>
-              <tbody>
-                {porEmpresaAgrupado.map(([mes, g]) => (
-                  <tr key={mes} className="border-b last:border-0">
-                    <td className="py-2 px-2 font-medium">{formatMes(mes)}</td>
-                    <td className="text-right py-2 px-2 tabular-nums">{brl(g.acz?.receita_liquida)}</td>
-                    <td className="text-right py-2 px-2 tabular-nums">{brl(g.acz?.margem_contribuicao)}</td>
-                    <td className="text-right py-2 px-2 tabular-nums">{brl(g.svl?.receita_liquida)}</td>
-                    <td className="text-right py-2 px-2 tabular-nums">{brl(g.svl?.margem_contribuicao)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
       )}
     </div>
   );
 }
 
-function Cascata({
+// ─────────────────────────────────────────────────────────────────────────────
+// Camada 1 — cards âncora (Receita líquida · Margem de contribuição · Lucro líquido)
+
+function DreHero({
   row,
+  prev,
+  series,
+}: {
+  row: DreRow;
+  prev: DreRow | undefined;
+  series: { receita: number[]; mc: number[]; lucro: number[] };
+}) {
+  const receita = row.receita_liquida ?? 0;
+  const mc = row.margem_contribuicao ?? 0;
+  const lucro = row.lucro_liquido ?? 0;
+
+  const cards = [
+    {
+      label: "Receita líquida",
+      value: brlS(receita),
+      pct: "100,0% da receita",
+      delta: pctVar(receita, prev?.receita_liquida),
+      color: "var(--color-primary)",
+      spark: spark(series.receita),
+      valueCls: "",
+    },
+    {
+      label: "Margem de contribuição",
+      value: brlS(mc),
+      pct: `${pctStr(mc, receita)} da receita`,
+      delta: pctVar(mc, prev?.margem_contribuicao),
+      color: "#0E8A5F",
+      spark: spark(series.mc),
+      valueCls: "",
+    },
+    {
+      label: "Lucro líquido",
+      value: brlS(lucro),
+      pct: `${pctStr(lucro, receita)} da receita`,
+      delta: pctVar(lucro, prev?.lucro_liquido),
+      color: lucro >= 0 ? "#0E8A5F" : "#C9432F",
+      spark: spark(series.lucro),
+      valueCls: lucro < 0 ? "text-destructive" : "",
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-[14px]">
+      {cards.map((c) => {
+        const bom = c.delta != null && c.delta >= 0;
+        return (
+          <Card key={c.label} className="relative overflow-hidden p-0">
+            <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: c.color }} />
+            <div className="p-5 pl-6 flex flex-col gap-3">
+              <div className="flex items-baseline justify-between gap-2.5">
+                <span className="text-[12.5px] font-semibold text-muted-foreground">{c.label}</span>
+                <span
+                  className={cn("text-[11.5px] font-semibold font-mono", bom ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}
+                >
+                  {sig(c.delta)}
+                </span>
+              </div>
+              <div className={cn("text-[32px] font-semibold tracking-[-0.035em] tabular-nums leading-none", c.valueCls)}>
+                {c.value}
+              </div>
+              <div className="flex items-end justify-between gap-3">
+                <span className="text-[11.5px] text-muted-foreground font-medium">{c.pct}</span>
+                {c.spark && (
+                  <svg viewBox="0 0 120 30" preserveAspectRatio="none" className="w-[110px] h-[30px] overflow-visible shrink-0">
+                    <polyline points={c.spark} fill="none" stroke={c.color} strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                  </svg>
+                )}
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Camada 2 — "Para onde vai cada R$ 1,00 de receita"
+
+function DestinoDaReceita({ row }: { row: DreRow }) {
+  const receita = row.receita_liquida ?? 0;
+  const lucro = row.lucro_liquido ?? 0;
+
+  const segmentos = [
+    { label: "CMV", val: row.cmv ?? 0, color: "#7B8494" },
+    { label: "Comissões + frete", val: row.comissoes_frete ?? 0, color: "var(--color-primary)" },
+    { label: "Impostos", val: row.impostos ?? 0, color: "#E0A72E" },
+    { label: "ADS / Marketing", val: row.ads ?? 0, color: "#C9432F" },
+    { label: "Pessoal", val: (row.pessoal ?? 0) + (row.creative_revisar ?? 0), color: "#2E9E8F" },
+    {
+      label: "Outras fixas",
+      val: (row.aluguel ?? 0) + (row.administrativas ?? 0) + (row.embalagem ?? 0) + (row.frete_logistica ?? 0) + (row.financeiras ?? 0) + (row.outras ?? 0),
+      color: "#4A7BD9",
+    },
+    { label: "Lucro líquido", val: lucro, color: "#0E8A5F" },
+  ];
+
+  const somaCustos = segmentos.slice(0, 6).reduce((a, s) => a + Math.max(0, s.val), 0);
+  const base = Math.max(receita, somaCustos + Math.max(0, lucro), 1);
+
+  const centavos = (val: number) => {
+    const share = receita ? val / receita : 0;
+    return `${share < 0 ? "−" : ""}R$ ${Math.abs(share).toFixed(2).replace(".", ",")}`;
+  };
+
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Para onde vai cada R$ 1,00 de receita</div>
+        <div className="text-[12px] text-muted-foreground">Composição da receita líquida do período</div>
+      </div>
+
+      <div className="flex h-[66px] rounded-[10px] overflow-hidden gap-0.5">
+        {segmentos.map((s) => {
+          const w = (Math.max(0, s.val) / base) * 100;
+          if (w <= 0) return null;
+          const wide = w > 9;
+          return (
+            <div
+              key={s.label}
+              className="flex flex-col items-center justify-center gap-0.5 text-white overflow-hidden"
+              style={{ width: `${w}%`, background: s.color }}
+              title={`${s.label}: ${brlFull(s.val)}`}
+            >
+              {wide && <span className="text-[16px] font-semibold font-mono tracking-[-0.02em]">{w.toFixed(0)}%</span>}
+              {wide && <span className="text-[11px] font-medium opacity-90 whitespace-nowrap">{s.label}</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3.5">
+        {segmentos.map((s) => (
+          <div key={s.label} className="flex flex-col gap-1.5 pt-2.5" style={{ borderTop: `2px solid ${s.color}` }}>
+            <span className="text-[11.5px] font-medium text-muted-foreground">{s.label}</span>
+            <span className="text-[14px] font-semibold font-mono tabular-nums">{centavos(s.val)}</span>
+            <span className="text-[11px] text-muted-foreground font-mono">{brlS(s.val)}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Camada 3 — DRE detalhado
+
+type LinhaDre = {
+  label: string;
+  val: number;
+  prevVal: number | null | undefined;
+  kind: "h" | "s";
+  drill: "empresa" | "categoria" | null;
+};
+
+function DreDetalhado({
+  row,
+  prev,
   porEmpresa,
   expanded,
   detalhes,
@@ -466,6 +541,7 @@ function Cascata({
   mesSel,
 }: {
   row: DreRow;
+  prev: DreRow | undefined;
   porEmpresa: { acz?: DreOperacionalRow; svl?: DreOperacionalRow };
   expanded: Set<string>;
   detalhes: Record<string, DespesaDetalheRow[]>;
@@ -475,253 +551,181 @@ function Cascata({
   mesSel: string;
 }) {
   const receita = row.receita_liquida ?? 0;
-  const lucroPos = (row.lucro_liquido ?? 0) >= 0;
 
-  // Custo fixo = soma de tudo abaixo da MC (inclui ADS, que neste DRE é uma
-  // linha de despesa operacional). Reconcilia: MC − custo fixo = lucro líquido.
-  const custoFixo = row.total_despesas ?? 0;
+  const opex: { label: string; val: number | null; prev: number | null | undefined }[] = [
+    { label: "Marketing / ADS", val: row.ads, prev: prev?.ads },
+    { label: "Pessoal", val: row.pessoal, prev: prev?.pessoal },
+    { label: "Aluguel", val: row.aluguel, prev: prev?.aluguel },
+    { label: "Administrativas", val: row.administrativas, prev: prev?.administrativas },
+    { label: "Embalagem", val: row.embalagem, prev: prev?.embalagem },
+    { label: "Frete / Logística", val: row.frete_logistica, prev: prev?.frete_logistica },
+    { label: "Financeiras", val: row.financeiras, prev: prev?.financeiras },
+    { label: "Outras", val: row.outras, prev: prev?.outras },
+    { label: "A revisar", val: row.creative_revisar, prev: prev?.creative_revisar },
+  ];
 
-  const despesas: Array<{ label: string; valor: number | null }> = [
-    { label: "Marketing / ADS", valor: row.ads },
-    { label: "Pessoal", valor: row.pessoal },
-    { label: "Aluguel", valor: row.aluguel },
-    { label: "Administrativas", valor: row.administrativas },
-    { label: "Embalagem", valor: row.embalagem },
-    { label: "Frete / Logística", valor: row.frete_logistica },
-    { label: "Financeiras", valor: row.financeiras },
-    { label: "Outras", valor: row.outras },
-    { label: "A revisar", valor: row.creative_revisar },
-  ].filter((d) => (d.valor ?? 0) !== 0);
+  const linhas: LinhaDre[] = [
+    { label: "RECEITA LÍQUIDA", val: receita, prevVal: prev?.receita_liquida, kind: "h", drill: "empresa" },
+    { label: "(−) CMV", val: row.cmv ?? 0, prevVal: prev?.cmv, kind: "s", drill: "empresa" },
+    { label: "(−) Comissões + Frete", val: row.comissoes_frete ?? 0, prevVal: prev?.comissoes_frete, kind: "s", drill: null },
+    { label: "(−) Impostos", val: row.impostos ?? 0, prevVal: prev?.impostos, kind: "s", drill: null },
+    { label: "Margem de contribuição", val: row.margem_contribuicao ?? 0, prevVal: prev?.margem_contribuicao, kind: "h", drill: null },
+    ...opex
+      .filter((d) => (d.val ?? 0) !== 0)
+      .map((d): LinhaDre => ({ label: d.label, val: d.val ?? 0, prevVal: d.prev, kind: "s", drill: "categoria" })),
+    { label: "Custo fixo total", val: row.total_despesas ?? 0, prevVal: prev?.total_despesas, kind: "h", drill: null },
+    { label: "Lucro líquido", val: row.lucro_liquido ?? 0, prevVal: prev?.lucro_liquido, kind: "h", drill: null },
+  ];
+
+  const maxAbs = Math.max(...linhas.map((l) => Math.abs(l.val)), 1);
+  const GRID = "grid-cols-[minmax(200px,1.2fr)_130px_64px_minmax(120px,1fr)_84px]";
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{formatMes(row.mes)} — Consolidado</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        <LinhaTopo
-          label="RECEITA LÍQUIDA"
-          valor={row.receita_liquida}
-          receita={receita}
-          bold
-          breakdown={{ acz: porEmpresa.acz?.receita_liquida, svl: porEmpresa.svl?.receita_liquida }}
-          isOpen={expanded.has(`${mesSel}::RECEITA LÍQUIDA`)}
-          onToggle={() => onToggle("RECEITA LÍQUIDA")}
-        />
-        <LinhaTopo
-          label="(−) CMV"
-          valor={row.cmv}
-          receita={receita}
-          breakdown={{ acz: porEmpresa.acz?.cmv, svl: porEmpresa.svl?.cmv }}
-          isOpen={expanded.has(`${mesSel}::(−) CMV`)}
-          onToggle={() => onToggle("(−) CMV")}
-        />
-        <Linha label="(−) Comissões + Frete" valor={row.comissoes_frete} receita={receita} />
-        <Linha label="(−) Impostos" valor={row.impostos} receita={receita} />
+    <Card className="p-0 overflow-hidden">
+      <div className="flex flex-col gap-0.5 px-6 pt-5 pb-4">
+        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">DRE detalhado</div>
+        <div className="text-[12px] text-muted-foreground">Consolidado ACZ Pet + SVL Store · comparação com o mês anterior</div>
+      </div>
 
-        <div className="border-t my-2" />
+      <div className="overflow-x-auto">
+        <div className="min-w-[720px]">
+          {/* Cabeçalho */}
+          <div className={cn("grid items-center gap-4 px-6 pb-2.5 border-b border-border", GRID)}>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Linha</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground text-right">Valor</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground text-right">% rec.</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Peso relativo</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground text-right">vs. ant.</span>
+          </div>
 
-        <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 px-3 py-2 border border-blue-200 dark:border-blue-900">
-          <Linha
-            label="= MARGEM DE CONTRIBUIÇÃO"
-            valor={row.margem_contribuicao}
-            receita={receita}
-            bold
-            larger
-          />
-        </div>
+          {linhas.map((l) => {
+            const isH = l.kind === "h";
+            const drillKey = `${mesSel}::${l.label}`;
+            const isOpen = expanded.has(drillKey);
+            const hasDrill = l.drill != null && (l.drill === "empresa" || DESPESA_CATEGORIAS[l.label] != null);
+            const delta = pctVar(l.val, l.prevVal);
+            const bom = isH ? (delta ?? 0) >= 0 : (delta ?? 0) <= 0;
+            const barW = (Math.abs(l.val) / maxAbs) * 100;
+            const isMcOuLucro = l.label === "Margem de contribuição" || l.label === "Lucro líquido";
+            const barColor = isH ? (isMcOuLucro ? "#0E8A5F" : "var(--color-primary)") : "#D9DDE4";
 
-        {despesas.map((d) => {
-          const key = `${mesSel}::${d.label}`;
-          const isOpen = expanded.has(key);
-          const hasDrill = DESPESA_CATEGORIAS[d.label] != null;
-          const items = detalhes[key];
-          const isLoading = loadingDet.has(key);
-          return (
-            <div key={d.label}>
-              <button
-                type="button"
-                onClick={() => onToggle(d.label)}
-                className={cn(
-                  "w-full flex items-center justify-between gap-4 py-1 text-left rounded px-1 -mx-1",
-                  "text-muted-foreground hover:bg-accent/50 transition-colors",
-                  !hasDrill && "cursor-default hover:bg-transparent",
-                )}
-                disabled={!hasDrill}
-              >
-                <span className="flex items-center gap-1">
-                  {hasDrill ? (
-                    isOpen ? (
-                      <ChevronDown className="h-3.5 w-3.5" />
+            return (
+              <div key={l.label} className={cn(isH && "bg-muted/40 border-t border-border")}>
+                <button
+                  type="button"
+                  onClick={() => hasDrill && onToggle(l.label)}
+                  disabled={!hasDrill}
+                  className={cn(
+                    "w-full grid items-center gap-4 px-6 text-left",
+                    isH ? "py-3.5" : "py-2.5",
+                    hasDrill ? "hover:bg-muted/60 cursor-pointer" : "cursor-default",
+                    GRID,
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex items-center gap-1 min-w-0",
+                      isH ? "text-[13.5px] font-semibold text-foreground" : "text-[13px] text-secondary-foreground",
+                    )}
+                    style={{ paddingLeft: isH ? 0 : 14 }}
+                  >
+                    {hasDrill ? (
+                      isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    )
-                  ) : (
-                    <span className="w-3.5" />
-                  )}
-                  (−) {d.label}
-                </span>
-                <div className="flex items-center gap-6">
-                  <span className="tabular-nums">{brlFull(d.valor)}</span>
-                  <span className="text-xs w-16 text-right tabular-nums">{pct(d.valor, receita)}</span>
-                </div>
-              </button>
-              {isOpen && hasDrill && (
-                <div className="ml-6 border-l border-border pl-3 py-1 space-y-0.5">
-                  {isLoading ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                      <Loader2 className="h-3 w-3 animate-spin" /> Carregando…
+                      <span className="w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{l.label}</span>
+                  </span>
+                  <span
+                    className={cn(
+                      "text-right tabular-nums font-mono",
+                      isH ? "text-[13.5px] font-semibold text-foreground" : "text-[13px] text-muted-foreground",
+                    )}
+                  >
+                    {(l.val < 0 ? "−" : "") + brlS(Math.abs(l.val)).replace("−", "")}
+                  </span>
+                  <span className="text-[12px] text-muted-foreground text-right tabular-nums font-mono">
+                    {pctStr(Math.abs(l.val), receita)}
+                  </span>
+                  <div className="h-2 rounded-md bg-muted overflow-hidden">
+                    <div className="h-full rounded-md" style={{ width: `${barW}%`, background: barColor }} />
+                  </div>
+                  <span
+                    className={cn(
+                      "text-[12px] font-semibold text-right tabular-nums font-mono",
+                      delta == null ? "text-muted-foreground" : bom ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {sig(delta)}
+                  </span>
+                </button>
+
+                {isOpen && hasDrill && (
+                  <div className="px-6 pb-3 pt-1 bg-muted/25">
+                    <div className="ml-6 border-l border-border pl-4 py-1 space-y-0.5">
+                      {l.drill === "empresa" ? (
+                        <>
+                          <SubEmpresa nome="ACZ Pet" valor={l.label === "(−) CMV" ? porEmpresa.acz?.cmv : porEmpresa.acz?.receita_liquida} receita={receita} />
+                          <SubEmpresa nome="SVL Store" valor={l.label === "(−) CMV" ? porEmpresa.svl?.cmv : porEmpresa.svl?.receita_liquida} receita={receita} />
+                        </>
+                      ) : (
+                        <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} />
+                      )}
                     </div>
-                  ) : !items || items.length === 0 ? (
-                    <p className="text-xs text-muted-foreground py-2">Sem itens detalhados.</p>
-                  ) : (
-                    items.map((it, i) => (
-                      <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} />
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="rounded-md bg-muted/50 px-3 py-2 border border-border mt-1">
-          <div className="flex items-center justify-between gap-4">
-            <span className="font-semibold">= CUSTO FIXO TOTAL</span>
-            <div className="flex items-center gap-6">
-              <span className="tabular-nums font-semibold">{brlFull(custoFixo)}</span>
-              <span className="text-xs w-16 text-right tabular-nums text-muted-foreground">
-                {pct(custoFixo, receita)}
-              </span>
-            </div>
-          </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-
-        <div className="border-t my-2" />
-
-        <div
-          className={cn(
-            "rounded-md px-3 py-3 border",
-            lucroPos
-              ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900"
-              : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
-          )}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <span className={cn("font-bold text-lg", lucroPos ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400")}>
-              = LUCRO LÍQUIDO
-            </span>
-            <div className="flex items-center gap-6">
-              <span className={cn("font-bold text-xl tabular-nums", lucroPos ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400")}>
-                {brlFull(row.lucro_liquido)}
-              </span>
-              <span className={cn("font-semibold text-sm w-16 text-right tabular-nums", lucroPos ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400")}>
-                {row.margem_liquida_pct != null
-                  ? `${row.margem_liquida_pct.toFixed(1).replace(".", ",")}%`
-                  : pct(row.lucro_liquido, receita)}
-              </span>
-            </div>
-          </div>
-        </div>
-      </CardContent>
+      </div>
     </Card>
   );
 }
 
-function CascataEmpresa({
-  mes,
-  empresa,
-  row,
+function DrillCategoria({
+  itens,
+  loading,
+  onOverride,
 }: {
-  mes: string;
-  empresa: string;
-  row: DreOperacionalRow | undefined;
+  itens: DespesaDetalheRow[] | undefined;
+  loading: boolean;
+  onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
 }) {
-  if (!row) {
+  if (loading) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {formatMes(mes)} — {empresa}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="py-8 text-center text-sm text-muted-foreground">
-          Sem dados para {empresa} em {formatMes(mes)}.
-        </CardContent>
-      </Card>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+        <Loader2 className="h-3 w-3 animate-spin" /> Carregando…
+      </div>
     );
   }
-
-  const receita = row.receita_liquida ?? 0;
-  const mc = row.margem_contribuicao ?? 0;
-  const mcPos = mc >= 0;
-
+  if (!itens || itens.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">Sem itens detalhados.</p>;
+  }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">
-          {formatMes(mes)} — {empresa}
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          {row.pedidos ?? 0} pedidos no mês.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        <Linha label="RECEITA LÍQUIDA" valor={row.receita_liquida} receita={receita} bold />
-        <Linha label="(−) CMV" valor={row.cmv} receita={receita} />
-        <Linha label="(−) Comissões + Frete" valor={row.comissoes_frete} receita={receita} />
-        <Linha label="(−) Impostos" valor={row.impostos} receita={receita} />
-
-        <div className="border-t my-2" />
-
-        <div
-          className={cn(
-            "rounded-md px-3 py-2 border",
-            mcPos
-              ? "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900"
-              : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
-          )}
-        >
-          <Linha label="= MARGEM DE CONTRIBUIÇÃO" valor={mc} receita={receita} bold larger />
-        </div>
-
-        <div className="mt-4 rounded-md border border-dashed p-3 text-xs text-muted-foreground flex gap-2 items-start">
-          <Info className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>
-            Despesas fixas (ADS, Pessoal, Aluguel, etc.) não são separadas por empresa —
-            veja o Lucro Líquido no modo <strong>Consolidado</strong>.
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+    <>
+      {itens.map((it, i) => (
+        <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} />
+      ))}
+    </>
   );
 }
 
-function Linha({
-  label,
+function SubEmpresa({
+  nome,
   valor,
   receita,
-  bold,
-  larger,
-  muted,
 }: {
-  label: string;
+  nome: string;
   valor: number | null | undefined;
   receita: number;
-  bold?: boolean;
-  larger?: boolean;
-  muted?: boolean;
 }) {
   return (
-    <div className={cn("flex items-center justify-between gap-4 py-1", muted && "text-muted-foreground")}>
-      <span className={cn(bold && "font-semibold", larger && "text-base")}>{label}</span>
+    <div className="flex items-center justify-between gap-4 py-0.5 text-xs">
+      <span className="text-muted-foreground">{nome}</span>
       <div className="flex items-center gap-6">
-        <span className={cn("tabular-nums", bold && "font-semibold", larger && "text-base")}>
-          {brlFull(valor)}
-        </span>
-        <span className={cn("text-xs w-16 text-right tabular-nums text-muted-foreground", bold && "font-medium")}>
-          {pct(valor, receita)}
-        </span>
+        <span className="tabular-nums font-mono text-foreground/80">{brlFull(valor)}</span>
+        <span className="w-16 text-right tabular-nums font-mono text-muted-foreground">{pctStr(valor, receita)}</span>
       </div>
     </div>
   );
@@ -745,7 +749,7 @@ function ItemDespesa({
         <span className={cn("text-foreground", excl && "line-through")}>{it.fornecedor_nome ?? "—"}</span>
         {it.descricao && <span className="text-muted-foreground"> — {it.descricao}</span>}
       </div>
-      <span className={cn("tabular-nums text-foreground/80 shrink-0", excl && "line-through")}>
+      <span className={cn("tabular-nums font-mono text-foreground/80 shrink-0", excl && "line-through")}>
         {brlFull(it.valor_total)}
       </span>
       {tid != null && (
@@ -796,73 +800,72 @@ function ItemDespesa({
   );
 }
 
-// Linha do topo (Receita/CMV) com drill-down por empresa. Se não houver quebra
-// por empresa para o mês, cai no <Linha> simples. Os %s usam a mesma base
-// (receita consolidada) das outras linhas — os subtotais somam ao % da linha-pai.
-function LinhaTopo({
-  label,
-  valor,
-  receita,
-  bold,
-  breakdown,
-  isOpen,
-  onToggle,
-}: {
-  label: string;
-  valor: number | null | undefined;
-  receita: number;
-  bold?: boolean;
-  breakdown: { acz: number | null | undefined; svl: number | null | undefined };
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const temQuebra = breakdown.acz != null || breakdown.svl != null;
-  if (!temQuebra) {
-    return <Linha label={label} valor={valor} receita={receita} bold={bold} />;
-  }
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center justify-between gap-4 py-1 text-left rounded px-1 -mx-1 hover:bg-accent/50 transition-colors"
-      >
-        <span className={cn("flex items-center gap-1", bold && "font-semibold")}>
-          {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          {label}
-        </span>
-        <div className="flex items-center gap-6">
-          <span className={cn("tabular-nums", bold && "font-semibold")}>{brlFull(valor)}</span>
-          <span className="text-xs w-16 text-right tabular-nums text-muted-foreground">{pct(valor, receita)}</span>
-        </div>
-      </button>
-      {isOpen && (
-        <div className="ml-6 border-l border-border pl-3 py-1 space-y-0.5">
-          <SubEmpresa nome="ACZ Pet" valor={breakdown.acz} receita={receita} />
-          <SubEmpresa nome="SVL Store" valor={breakdown.svl} receita={receita} />
-        </div>
-      )}
-    </div>
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Modo empresa (ACZ/SVL) — só vai até a margem de contribuição
 
-function SubEmpresa({
-  nome,
-  valor,
-  receita,
+function CascataEmpresa({
+  mes,
+  empresa,
+  row,
 }: {
-  nome: string;
-  valor: number | null | undefined;
-  receita: number;
+  mes: string;
+  empresa: string;
+  row: DreOperacionalRow | undefined;
 }) {
+  if (!row) {
+    return (
+      <Card className="p-8 text-center text-sm text-muted-foreground">
+        Sem dados para {empresa} em {formatMes(mes)}.
+      </Card>
+    );
+  }
+
+  const receita = row.receita_liquida ?? 0;
+  const mc = row.margem_contribuicao ?? 0;
+
+  const linhas = [
+    { label: "Receita líquida", val: receita, h: true },
+    { label: "(−) CMV", val: row.cmv ?? 0, h: false },
+    { label: "(−) Comissões + Frete", val: row.comissoes_frete ?? 0, h: false },
+    { label: "(−) Impostos", val: row.impostos ?? 0, h: false },
+  ];
+
   return (
-    <div className="flex items-center justify-between gap-4 py-0.5 text-xs">
-      <span className="text-muted-foreground">{nome}</span>
-      <div className="flex items-center gap-6">
-        <span className="tabular-nums text-foreground/80">{brlFull(valor)}</span>
-        <span className="w-16 text-right tabular-nums text-muted-foreground">{pct(valor, receita)}</span>
+    <Card className="p-6 flex flex-col gap-1">
+      <div className="flex flex-col gap-0.5 mb-3">
+        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">
+          {formatMes(mes)} — {empresa}
+        </div>
+        <div className="text-[12px] text-muted-foreground">{row.pedidos ?? 0} pedidos no mês</div>
       </div>
-    </div>
+
+      {linhas.map((l) => (
+        <div key={l.label} className="flex items-center justify-between gap-4 py-1.5 border-b border-border/60 last:border-0">
+          <span className={cn(l.h ? "text-[13.5px] font-semibold" : "text-[13px] text-muted-foreground")}>{l.label}</span>
+          <div className="flex items-center gap-6">
+            <span className={cn("tabular-nums font-mono", l.h && "font-semibold")}>{brlFull(l.val)}</span>
+            <span className="text-xs w-16 text-right tabular-nums font-mono text-muted-foreground">{pctStr(Math.abs(l.val), receita)}</span>
+          </div>
+        </div>
+      ))}
+
+      <div className="mt-2 rounded-[10px] bg-[#F0F8F4] dark:bg-emerald-950/30 border border-[#D3EBE0] dark:border-emerald-900 px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[15px] font-semibold text-[#0E7A54] dark:text-emerald-400">= Margem de contribuição</span>
+          <div className="flex items-center gap-6">
+            <span className="text-[17px] font-semibold tabular-nums font-mono text-[#0E7A54] dark:text-emerald-400">{brlFull(mc)}</span>
+            <span className="text-sm w-16 text-right tabular-nums font-mono text-[#0E7A54] dark:text-emerald-400">{pctStr(mc, receita)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-[10px] border border-dashed border-border p-3 text-xs text-muted-foreground flex gap-2 items-start">
+        <Info className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>
+          Despesas fixas (ADS, Pessoal, Aluguel, etc.) não são separadas por empresa — veja o Lucro Líquido no modo <strong>Consolidado</strong>.
+        </span>
+      </div>
+    </Card>
   );
 }
 
