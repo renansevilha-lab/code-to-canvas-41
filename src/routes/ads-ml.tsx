@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Megaphone, RefreshCw, Loader2, TrendingUp, TrendingDown } from "lucide-react";
@@ -11,12 +11,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
+import { resolveRange, type PeriodPreset, type PeriodRange } from "@/lib/dashboard/period";
 
 interface Campanha {
   campaign_id: number;
   nome: string | null;
   status: string | null;
-  strategy: string | null;
   acos_target: number | null;
   roas_target: number | null;
   budget: number | null;
@@ -24,33 +25,41 @@ interface Campanha {
   impressoes: number | null;
   gasto: number | null;
   cpc: number | null;
-  vendas_diretas: number | null;
-  vendas_indiretas: number | null;
   vendas_total: number | null;
-  unidades: number | null;
   acos: number | null;
   roas: number | null;
-  janela_de: string | null;
-  janela_ate: string | null;
-  atualizado_em: string | null;
 }
 
 const num = (v: number | null | undefined) => (v ?? 0).toLocaleString("pt-BR");
+const VALID_PRESETS: PeriodPreset[] = ["today", "yesterday", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
 
-export const Route = createFileRoute("/ads-ml")({ component: AdsMlPage });
+type SearchParams = { period: PeriodPreset; from?: string; to?: string };
+
+export const Route = createFileRoute("/ads-ml")({
+  validateSearch: (s: Record<string, unknown>): SearchParams => ({
+    period: VALID_PRESETS.includes(s.period as PeriodPreset) ? (s.period as PeriodPreset) : "last30",
+    from: typeof s.from === "string" ? s.from : undefined,
+    to: typeof s.to === "string" ? s.to : undefined,
+  }),
+  component: AdsMlPage,
+});
 
 function AdsMlPage() {
-  const [sincronizando, setSincronizando] = useState(false);
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const range = resolveRange(search.period, search.from, search.to);
+  const setRange = (r: PeriodRange) => navigate({ search: { period: r.preset, from: r.from, to: r.to }, replace: true });
 
   const q = useQuery({
-    queryKey: ["ads-ml", "campanhas"],
+    queryKey: ["ads-ml", "campanhas", range.from, range.to],
     queryFn: async (): Promise<Campanha[]> => {
-      const { data, error } = await supabaseExternal
-        .from("ml_ads_campanha")
-        .select("*")
-        .order("gasto", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Campanha[];
+      const { data, error } = await supabaseExternal.functions.invoke("ml-sync-ads", {
+        body: { date_from: range.from, date_to: range.to, persist: false },
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { erro?: string; lista?: Campanha[] };
+      if (d?.erro) throw new Error(d.erro);
+      return (d?.lista ?? []).sort((a, b) => (b.gasto ?? 0) - (a.gasto ?? 0));
     },
   });
   const rows = q.data ?? [];
@@ -58,33 +67,9 @@ function AdsMlPage() {
   const tot = useMemo(() => {
     const gasto = rows.reduce((s, r) => s + (r.gasto ?? 0), 0);
     const vendas = rows.reduce((s, r) => s + (r.vendas_total ?? 0), 0);
-    const cliques = rows.reduce((s, r) => s + (r.cliques ?? 0), 0);
-    const impressoes = rows.reduce((s, r) => s + (r.impressoes ?? 0), 0);
-    return {
-      gasto, vendas, cliques, impressoes,
-      roas: gasto > 0 ? vendas / gasto : 0,
-      acos: vendas > 0 ? (gasto / vendas) * 100 : 0,
-    };
+    return { gasto, vendas, roas: gasto > 0 ? vendas / gasto : 0, acos: vendas > 0 ? (gasto / vendas) * 100 : 0 };
   }, [rows]);
 
-  const janela = rows[0] ? `${rows[0].janela_de ?? ""} → ${rows[0].janela_ate ?? ""}` : null;
-
-  async function sincronizar() {
-    setSincronizando(true);
-    try {
-      const { data, error } = await supabaseExternal.functions.invoke("ml-sync-ads", { body: {} });
-      if (error) throw new Error(error.message);
-      const d = data as { campanhas?: number; erros?: unknown[] };
-      toast.success(`Sincronizado · ${d?.campanhas ?? 0} campanha(s)`);
-      q.refetch();
-    } catch (e) {
-      toast.error("Falha ao sincronizar", { description: (e as Error).message });
-    } finally {
-      setSincronizando(false);
-    }
-  }
-
-  // cor do ROAS vs meta: >= meta verde, >=1 âmbar, <1 vermelho (perde dinheiro)
   function corRoas(r: Campanha) {
     const roas = r.roas ?? 0;
     if ((r.gasto ?? 0) <= 0) return "text-muted-foreground";
@@ -100,26 +85,36 @@ function AdsMlPage() {
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
             <Megaphone className="h-6 w-6" /> ADS Mercado Livre
           </h1>
-          <Button variant="outline" size="sm" className="h-9 gap-2" onClick={() => void sincronizar()} disabled={sincronizando}>
-            {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Sincronizar
-          </Button>
+          <div className="flex items-center gap-2">
+            <DashboardPeriodFilter value={range} onChange={setRange} />
+            <Button variant="outline" size="sm" className="h-9 gap-2" onClick={() => q.refetch()} disabled={q.isFetching}>
+              {q.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Atualizar
+            </Button>
+          </div>
         </div>
         <p className="text-sm text-muted-foreground mt-1">
-          Campanhas do Mercado Ads (Product Ads){janela ? ` · janela ${janela}` : ""}. Atualiza sozinho a cada 6h.
+          Campanhas do Mercado Ads (Product Ads) · janela {range.from} → {range.to}.
         </p>
       </header>
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        <KpiCard titulo="Investimento" valor={formatBRL(tot.gasto)} />
-        <KpiCard titulo="Vendas atribuídas" valor={formatBRL(tot.vendas)} />
+        <KpiCard titulo="Investimento" valor={formatBRL(tot.gasto)} carregando={q.isLoading} />
+        <KpiCard titulo="Vendas atribuídas" valor={formatBRL(tot.vendas)} carregando={q.isLoading} />
         <KpiCard
           titulo="ROAS geral"
           valor={tot.roas.toFixed(2)}
+          carregando={q.isLoading}
           icone={tot.roas >= 1 ? <TrendingUp className="h-4 w-4 text-emerald-600" /> : <TrendingDown className="h-4 w-4 text-red-600" />}
         />
-        <KpiCard titulo="ACOS geral" valor={`${tot.acos.toFixed(1)}%`} />
+        <KpiCard titulo="ACOS geral" valor={`${tot.acos.toFixed(1)}%`} carregando={q.isLoading} />
       </div>
+
+      {q.error && (
+        <Card className="p-4 border-red-500/40 bg-red-500/5 text-sm text-red-600 dark:text-red-300">
+          Erro ao carregar: {(q.error as Error).message}
+        </Card>
+      )}
 
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 p-4 border-b">
@@ -149,7 +144,7 @@ function AdsMlPage() {
                 ))
               ) : rows.length === 0 ? (
                 <tr><td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">
-                  Nenhuma campanha sincronizada. Clique em <strong>Sincronizar</strong>.
+                  Nenhuma campanha nesta janela.
                 </td></tr>
               ) : (
                 rows.map((r) => (
@@ -178,18 +173,19 @@ function AdsMlPage() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Vendas atribuídas = diretas + indiretas (janela do Mercado Ads). ROAS em <span className="text-red-600 dark:text-red-400">vermelho</span> = abaixo de 1 (gasta mais do que vende);
+        Vendas atribuídas = diretas + indiretas. ROAS <span className="text-red-600 dark:text-red-400">vermelho</span> = abaixo de 1 (gasta mais do que vende);
         <span className="text-amber-600 dark:text-amber-400"> âmbar</span> = abaixo da meta; <span className="text-emerald-600 dark:text-emerald-400">verde</span> = na meta ou acima.
+        A tabela `ml_ads_campanha` é atualizada por cron (30 dias) para outros usos; esta tela consulta ao vivo o período escolhido.
       </p>
     </div>
   );
 }
 
-function KpiCard({ titulo, valor, icone }: { titulo: string; valor: string; icone?: ReactNode }) {
+function KpiCard({ titulo, valor, icone, carregando }: { titulo: string; valor: string; icone?: ReactNode; carregando?: boolean }) {
   return (
     <Card className="p-4">
       <div className="text-xs text-muted-foreground flex items-center gap-1.5">{titulo}{icone}</div>
-      <div className="text-2xl font-semibold tabular-nums mt-1">{valor}</div>
+      {carregando ? <Skeleton className="h-8 w-24 mt-1" /> : <div className="text-2xl font-semibold tabular-nums mt-1">{valor}</div>}
     </Card>
   );
 }
