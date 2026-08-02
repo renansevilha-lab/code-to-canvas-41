@@ -12,7 +12,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   BACKWARD_PRESETS,
@@ -51,6 +57,16 @@ export function DashboardPeriodFilter({ value, onChange, presets }: Props) {
     onChange({ preset, ...r });
   };
 
+  // Abre o Dialog de período personalizado, semeando o rascunho com o valor atual.
+  const abrirCustom = () => {
+    setDraft(
+      value.preset === "custom"
+        ? { from: parseISO(value.from), to: parseISO(value.to) }
+        : undefined,
+    );
+    setCustomOpen(true);
+  };
+
   const applyCustom = () => {
     if (draft?.from && draft?.to) {
       onChange({
@@ -86,50 +102,43 @@ export function DashboardPeriodFilter({ value, onChange, presets }: Props) {
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <Popover open={customOpen} onOpenChange={setCustomOpen}>
-            <PopoverTrigger asChild>
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setCustomOpen(true);
-                }}
-                className={cn(
-                  "cursor-pointer",
-                  value.preset === "custom" && "bg-accent text-accent-foreground",
-                )}
-              >
-                {PERIOD_LABELS.custom}…
-              </DropdownMenuItem>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto p-0" side="left">
-              <Calendar
-                mode="range"
-                numberOfMonths={2}
-                selected={draft}
-                onSelect={setDraft}
-                locale={ptBR}
-                className={cn("p-3 pointer-events-auto")}
-              />
-              <div className="flex items-center justify-end gap-2 border-t p-3">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setCustomOpen(false)}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={applyCustom}
-                  disabled={!draft?.from || !draft?.to}
-                >
-                  Aplicar
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
+          {/* O menu fecha (comportamento padrão) e abrimos o Dialog — sem
+              aninhar o calendário no dropdown (era isso que fechava antes de clicar). */}
+          <DropdownMenuItem
+            onSelect={() => abrirCustom()}
+            className={cn(
+              "cursor-pointer",
+              value.preset === "custom" && "bg-accent text-accent-foreground",
+            )}
+          >
+            {PERIOD_LABELS.custom}…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Dialog open={customOpen} onOpenChange={setCustomOpen}>
+        <DialogContent className="w-auto max-w-fit p-4">
+          <DialogHeader>
+            <DialogTitle>Período personalizado</DialogTitle>
+          </DialogHeader>
+          <Calendar
+            mode="range"
+            numberOfMonths={2}
+            selected={draft}
+            onSelect={setDraft}
+            locale={ptBR}
+            className={cn("p-0 pointer-events-auto")}
+          />
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setCustomOpen(false)}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={applyCustom} disabled={!draft?.from || !draft?.to}>
+              Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

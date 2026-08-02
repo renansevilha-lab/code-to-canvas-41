@@ -136,7 +136,7 @@ const LIST_COLUMNS =
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
-const VALID_PRESETS: PeriodPreset[] = ["today", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
+const VALID_PRESETS: PeriodPreset[] = ["today", "yesterday", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
 
 type SearchParams = {
   period: PeriodPreset;

@@ -9,6 +9,7 @@ import {
 
 export type PeriodPreset =
   | "today"
+  | "yesterday"
   | "last7"
   | "last30"
   | "mtd"
@@ -30,6 +31,7 @@ export type PeriodRange = {
 
 export const PERIOD_LABELS: Record<PeriodPreset, string> = {
   today: "Hoje",
+  yesterday: "Ontem",
   last7: "Últimos 7 dias",
   last30: "Últimos 30 dias",
   mtd: "Mês atual",
@@ -45,6 +47,7 @@ export const PERIOD_LABELS: Record<PeriodPreset, string> = {
 
 export const PERIOD_SUFFIX: Record<PeriodPreset, string> = {
   today: "hoje",
+  yesterday: "ontem",
   last7: "últ. 7 dias",
   last30: "últ. 30 dias",
   mtd: "no mês",
@@ -60,6 +63,7 @@ export const PERIOD_SUFFIX: Record<PeriodPreset, string> = {
 
 export const BACKWARD_PRESETS: PeriodPreset[] = [
   "today",
+  "yesterday",
   "last7",
   "last30",
   "mtd",
@@ -94,6 +98,10 @@ export function computeRange(
   switch (preset) {
     case "today":
       return { from: fmt(today), to: fmt(today) };
+    case "yesterday": {
+      const y = subDays(today, 1);
+      return { from: fmt(y), to: fmt(y) };
+    }
     case "last7":
       return { from: fmt(subDays(today, 6)), to: fmt(today) };
     case "last30":
