@@ -19,6 +19,7 @@ import {
   Warehouse,
   RotateCcw,
   Zap,
+  Users,
   ChevronDown,
   type LucideIcon,
 } from "lucide-react";
@@ -55,8 +56,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { title: "Pedidos", url: "/pedidos", icon: ClipboardList, modulo: "separacao" },
       { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, modulo: "separacao" },
-      { title: "Separação", url: "/separacao", icon: PackageCheck, modulo: "separacao" },
-      { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "separacao" },
+      { title: "Separação", url: "/separacao", icon: PackageCheck, modulo: "galpao" },
+      { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "galpao" },
       { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "financeiro" },
     ],
   },
@@ -85,6 +86,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
       { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
       { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet, modulo: "financeiro" },
+    ],
+  },
+  {
+    label: "Administração",
+    items: [
+      { title: "Usuários e acessos", url: "/usuarios", icon: Users, modulo: "todos" },
     ],
   },
 ];

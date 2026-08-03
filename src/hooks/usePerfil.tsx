@@ -69,6 +69,18 @@ export function usePerfil() {
   return useContext(Ctx);
 }
 
+// Módulos de acesso (perfis_usuario.modulos). Fonte única — usada também na
+// tela de administração de acessos.
+export const MODULOS: Array<{ slug: string; label: string; desc: string }> = [
+  { slug: "dashboard", label: "Visão & indicadores", desc: "Dashboard, Metas, Tendências, Anomalias" },
+  { slug: "galpao", label: "Galpão", desc: "Separação e Fulfillment (operação do galpão)" },
+  { slug: "separacao", label: "Pedidos", desc: "Pedidos e Pedidos Integrados (com margem/custo)" },
+  { slug: "produtos", label: "Produtos", desc: "Catálogo, Produtos, Mapeamento SKUs, Amazon" },
+  { slug: "ads", label: "Mídia & Canais", desc: "ADS Shopee, ADS Mercado Livre, Promoções" },
+  { slug: "financeiro", label: "Financeiro", desc: "DRE, Fluxo de Caixa, Contas a Pagar, Carteira, Devoluções" },
+  { slug: "todos", label: "Administrador", desc: "Acesso total + gestão de usuários" },
+];
+
 // Mapa rota -> módulo. Prefix match (mais longo vence).
 const ROTA_MODULO: Array<[string, string]> = [
   ["/metas", "dashboard"],
@@ -76,8 +88,9 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/tendencias", "dashboard"],
   ["/pedidos-integrados", "separacao"],
   ["/pedidos", "separacao"],
-  ["/separacao", "separacao"],
-  ["/fulfillment", "separacao"],
+  ["/separacao", "galpao"],
+  ["/fulfillment", "galpao"],
+  ["/usuarios", "todos"],
   ["/contas-pagar", "financeiro"],
   ["/fluxo-caixa", "financeiro"],
   ["/carteira-saldos", "financeiro"],
@@ -102,7 +115,8 @@ export function moduloDaRota(pathname: string): string {
 export function primeiraRotaPermitida(modulos: string[]): string {
   const preferencia: Array<[string, string]> = [
     ["dashboard", "/"],
-    ["separacao", "/separacao"],
+    ["galpao", "/separacao"],
+    ["separacao", "/pedidos-integrados"],
     ["financeiro", "/dre"],
     ["produtos", "/produtos-margem"],
     ["ads", "/ads-shopee"],
