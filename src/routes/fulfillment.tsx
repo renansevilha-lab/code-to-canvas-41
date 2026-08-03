@@ -1110,6 +1110,24 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     }
   }
 
+  async function excluirEnvio(e: Envio) {
+    const rotulo = e.numero ? `#${e.numero}` : "(sem número)";
+    if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
+    // Remoção otimista do quadro
+    qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) => (old ?? []).filter((x) => x.id !== e.id));
+    try {
+      await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", e.id);
+      await supabaseExternal.from("fulfillment_envio_itens").delete().eq("envio_id", e.id);
+      const { error } = await supabaseExternal.from("fulfillment_envios").delete().eq("id", e.id);
+      if (error) throw error;
+      toast.success(`Envio ${rotulo} excluído`);
+    } catch (err) {
+      toast.error("Falha ao excluir", { description: (err as Error).message });
+    } finally {
+      recarregar();
+    }
+  }
+
   const envios = enviosQ.data ?? [];
   const hoje = new Date().toISOString().slice(0, 10);
   return (
@@ -1182,12 +1200,23 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
                             )}
                           </button>
                           <div className="flex items-center justify-between border-t pt-1.5">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0} onClick={() => void moverEtapa(e, -1)} title="Voltar etapa">
-                              <ChevronLeft className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center gap-0.5">
+                              <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0} onClick={() => void moverEtapa(e, -1)} title="Voltar etapa">
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === STAGES.length - 1} onClick={() => void moverEtapa(e, 1)} title="Avançar etapa">
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                             <span className="text-[10px] text-muted-foreground">{format(parseISO(e.criado_em), "dd/MM")}</span>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === STAGES.length - 1} onClick={() => void moverEtapa(e, 1)} title="Avançar etapa">
-                              <ChevronRight className="h-3.5 w-3.5" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                              onClick={() => void excluirEnvio(e)}
+                              title="Excluir envio"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </Card>
@@ -1688,6 +1717,23 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const temEtiquetas = !!envio?.etiquetas_zpl;
   const st = envio ? stageDe(envio.status) : null;
 
+  async function excluirEnvio() {
+    const rotulo = envio?.numero ? `#${envio.numero}` : "";
+    if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
+    try {
+      await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", envioId);
+      await supabaseExternal.from("fulfillment_envio_itens").delete().eq("envio_id", envioId);
+      const { error } = await supabaseExternal.from("fulfillment_envios").delete().eq("id", envioId);
+      if (error) throw error;
+      toast.success("Envio excluído");
+      qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+      qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
+      onVoltar();
+    } catch (e) {
+      toast.error("Falha ao excluir", { description: (e as Error).message });
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -1705,6 +1751,14 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
             </span>
           </div>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 ml-auto text-muted-foreground hover:text-destructive"
+          onClick={() => void excluirEnvio()}
+        >
+          <Trash2 className="h-4 w-4" /> Excluir envio
+        </Button>
       </div>
 
       {envio && (
