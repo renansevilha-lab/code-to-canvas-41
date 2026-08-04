@@ -15,13 +15,18 @@ import {
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip as RTooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from "recharts";
 
 import { Card } from "@/components/ui/card";
@@ -464,6 +469,34 @@ function AdsShopeePage() {
     return m;
   }, [resumo]);
 
+  // Scatter ROAS×anúncio — todos os anúncios com gasto (223 no total, cabe no
+  // corte do PostgREST). Só as colunas do gráfico; respeita o filtro de loja.
+  const [scatterPts, setScatterPts] = useState<
+    { investimento: number; roas: number; vendas: number; classif: Classificacao }[]
+  >([]);
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      let q = supabaseExternal
+        .from("view_ads_anuncios")
+        .select("investimento, vendas, roas, classificacao_roas, empresa")
+        .eq("teve_gasto", true)
+        .limit(500);
+      if (sp.empresa !== "all") q = q.eq("empresa", sp.empresa);
+      const { data } = await q;
+      if (cancel) return;
+      setScatterPts(
+        (data ?? []).map((r: Record<string, unknown>) => ({
+          investimento: num(r.investimento),
+          vendas: num(r.vendas),
+          roas: num(r.roas),
+          classif: ((r.classificacao_roas as string) ?? "sem_dado") as Classificacao,
+        })),
+      );
+    })();
+    return () => { cancel = true; };
+  }, [sp.empresa]);
+
   // KPIs globais (somando resumo)
   const totais = useMemo(() => {
     let inv = 0, vendas = 0, anunciosCount = 0;
@@ -709,9 +742,10 @@ function AdsShopeePage() {
           <div className="p-3 border border-red-200 bg-red-50 text-red-800 rounded text-sm">{errAds}</div>
         )}
 
-        {/* Gráfico */}
+        {/* Gráficos */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1.55fr_1fr] gap-4 items-start">
         <Card className="p-4">
-          <div className="text-sm font-medium mb-2">Investimento e ROAS por dia</div>
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em] mb-2">Investimento e ROAS por dia</div>
           <div className="w-full h-[280px]">
             {loadingDaily ? (
               <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
@@ -743,6 +777,60 @@ function AdsShopeePage() {
             )}
           </div>
         </Card>
+
+        <Card className="p-4">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">ROAS por anúncio</div>
+          <div className="text-[12px] text-muted-foreground mb-2">Cada bolha é um anúncio · tamanho = venda atribuída</div>
+          <div className="w-full h-[280px]">
+            {scatterPts.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">Sem anúncios com gasto.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                  <XAxis
+                    type="number"
+                    dataKey="investimento"
+                    name="Investimento"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => formatBRL(Number(v), { compact: true })}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="roas"
+                    name="ROAS"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => `${Number(v).toFixed(0)}x`}
+                  />
+                  <ZAxis type="number" dataKey="vendas" range={[24, 360]} name="Vendas" />
+                  {faixas && (
+                    <ReferenceLine
+                      y={faixas.roas_ok}
+                      stroke="#C9432F"
+                      strokeDasharray="5 4"
+                      ifOverflow="extendDomain"
+                      label={{ value: `meta ${faixas.roas_ok}x`, position: "insideTopRight", fontSize: 10, fill: "#C9432F" }}
+                    />
+                  )}
+                  <RTooltip
+                    cursor={{ strokeDasharray: "3 3" }}
+                    formatter={(value, name) => {
+                      const v = Number(value) || 0;
+                      if (name === "ROAS") return [fmtRoas(v), name];
+                      return [formatBRL(v), name];
+                    }}
+                  />
+                  <Scatter data={scatterPts}>
+                    {scatterPts.map((p, i) => (
+                      <Cell key={i} fill={BUCKET_COLOR[p.classif]} fillOpacity={0.5} />
+                    ))}
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Card>
+        </div>
 
         {/* Alerta ACOS alto usa acos_alvo */}
         {altoAcos > 0 && (
