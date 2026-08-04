@@ -110,6 +110,20 @@ const MKT_COLOR: Record<string, string> = {
 };
 const MKT_ORDER = ["amazon", "mercadolivre", "shopee"];
 
+// Cores do design (paleta Claude Design) por marketplace — para barras/badges.
+function MKT_COR(mkt: string): string {
+  if (mkt === "shopee") return "#6E56CF";
+  if (mkt === "mercadolivre") return "#E0A72E";
+  if (mkt === "amazon") return "#2E9E8F";
+  return "#8A93A3";
+}
+function MKT_SOFT(mkt: string): string {
+  if (mkt === "shopee") return "#F1EEFC";
+  if (mkt === "mercadolivre") return "#FDF6E6";
+  if (mkt === "amazon") return "#EAF6F4";
+  return "#F2F3F6";
+}
+
 type MktFiltro = "todos" | "amazon" | "mercadolivre" | "shopee";
 type SubTab = "inventario" | "reposicao" | "envios";
 
@@ -663,6 +677,16 @@ function InventarioTab({
     return { sellable, reserved, inTransit, unsellable };
   }, [filtradas]);
 
+  // Estoque sellable por marketplace — para a barra de participação.
+  const mktShare = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of filtradas) map.set(r.marketplace, (map.get(r.marketplace) ?? 0) + num(r.sellable));
+    const total = totais.sellable || 1;
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([mkt, val]) => ({ mkt, val, pct: (val / total) * 100, color: MKT_COR(mkt) }));
+  }, [filtradas, totais.sellable]);
+
   if (error) {
     return (
       <Card className="p-4 border-red-500/40 bg-red-500/5 text-sm text-red-600 dark:text-red-300">
@@ -672,7 +696,7 @@ function InventarioTab({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-4">
       <section className="grid grid-cols-2 md:grid-cols-4 gap-[14px]">
         <InvKpi label="Disponível" value={totais.sellable} loading={loading} color="var(--color-success)" />
         <InvKpi label="Reservado" value={totais.reserved} loading={loading} muted color="var(--color-warning)" />
@@ -680,25 +704,49 @@ function InventarioTab({
         <InvKpi label="Inutilizável" value={totais.unsellable} loading={loading} muted color="var(--color-destructive)" />
       </section>
 
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="text-sm font-semibold">
+      {mktShare.length > 0 && (
+        <Card className="p-5 flex flex-col gap-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[14.5px] font-semibold tracking-[-0.015em]">Estoque sellable por marketplace</span>
+            <span className="text-[12px] text-muted-foreground">Participação das unidades disponíveis nos CDs do canal</span>
+          </div>
+          <div className="flex h-2.5 rounded-md overflow-hidden gap-0.5">
+            {mktShare.map((m) => (
+              <div key={m.mkt} style={{ width: `${m.pct}%`, background: m.color }} />
+            ))}
+          </div>
+          <div className="flex items-center gap-x-6 gap-y-2 flex-wrap">
+            {mktShare.map((m) => (
+              <div key={m.mkt} className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: m.color }} />
+                <span className="text-[12.5px] font-medium">{MKT_LABEL[m.mkt] ?? m.mkt}</span>
+                <span className="text-[12.5px] text-muted-foreground font-mono tabular-nums">{formatNumber(m.val)} un</span>
+                <span className="text-[12px] font-semibold font-mono tabular-nums" style={{ color: m.color }}>{m.pct.toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card className="overflow-hidden p-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="text-[14.5px] font-semibold tracking-[-0.015em]">
             Estoque nos CDs{" "}
             <span className="text-muted-foreground font-normal">({formatNumber(filtradas.length)})</span>
           </h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-xs text-muted-foreground">
+            <thead className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="text-left font-medium px-3 py-2">Produto</th>
-                <th className="text-left font-medium px-3 py-2">Canal</th>
-                <th className="text-left font-medium px-3 py-2">CD</th>
-                <th className="text-right font-medium px-3 py-2">Disponível</th>
-                <th className="text-right font-medium px-3 py-2">Reservado</th>
-                <th className="text-right font-medium px-3 py-2">Em trânsito</th>
-                <th className="text-right font-medium px-3 py-2">Inutilizável</th>
-                <th className="text-left font-medium px-3 py-2">Atualizado</th>
+                <th className="text-left font-semibold px-3 py-3">Produto</th>
+                <th className="text-left font-semibold px-3 py-3">Canal</th>
+                <th className="text-left font-semibold px-3 py-3">CD</th>
+                <th className="text-right font-semibold px-3 py-3">Sellable</th>
+                <th className="text-right font-semibold px-3 py-3">Reservado</th>
+                <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
+                <th className="text-right font-semibold px-3 py-3">Inutilizável</th>
+                <th className="text-left font-semibold px-3 py-3">Atualizado</th>
               </tr>
             </thead>
             <tbody>
@@ -752,18 +800,23 @@ function InventarioTab({
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2">
-                        <MktDot marketplace={r.marketplace} />
+                      <td className="px-3 py-2.5">
+                        <span
+                          className="text-[11px] font-semibold px-2 py-0.5 rounded-[5px] whitespace-nowrap"
+                          style={{ background: MKT_SOFT(r.marketplace), color: MKT_COR(r.marketplace) }}
+                        >
+                          {MKT_LABEL[r.marketplace] ?? r.marketplace}
+                        </span>
                       </td>
-                      <td className="px-3 py-2 text-xs">{r.warehouse}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">{formatNumber(num(r.sellable))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      <td className="px-3 py-2.5 text-[12.5px] whitespace-nowrap text-secondary-foreground">{r.warehouse}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.sellable))}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-secondary-foreground">
                         {formatNumber(num(r.reserved))}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
                         {formatNumber(num(r.in_transit))}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      <td className={cn("px-3 py-2.5 text-right tabular-nums font-mono text-[13px]", num(r.unsellable) > 0 ? "text-destructive" : "text-muted-foreground")}>
                         {formatNumber(num(r.unsellable))}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
