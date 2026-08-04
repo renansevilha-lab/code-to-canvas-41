@@ -525,19 +525,11 @@ function AdsShopeePage() {
 
   return (
     <TooltipProvider>
-      <div className="p-4 md:p-6 space-y-4">
-        {/* Cabeçalho */}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold flex items-center gap-2">
-              <TrendingUp className="h-6 w-6" /> ADS Shopee
-            </h1>
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
-              <Info className="h-3.5 w-3.5" />
-              Últimos 30 dias por anúncio · classificação, ROAS e ACOS vêm do banco.
-            </p>
-          </div>
-        </div>
+      <div className="w-full px-6 md:px-8 py-6 space-y-[18px]">
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Info className="h-3.5 w-3.5" />
+          Últimos 30 dias por anúncio · classificação, ROAS e ACOS vêm do banco.
+        </p>
 
         {/* Resumo por classificação — clicável */}
         <Card className="p-3 md:p-4">
@@ -566,18 +558,20 @@ function AdsShopeePage() {
         </Card>
 
         {/* KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Kpi label="Anúncios" value={formatNumber(totais.anuncios)} />
-          <Kpi label="Investimento" value={formatBRL(totais.inv)} />
-          <Kpi label="Vendas" value={formatBRL(totais.vendas)} />
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-[14px]">
+          <Kpi label="Anúncios" value={formatNumber(totais.anuncios)} color="var(--color-chart-4)" />
+          <Kpi label="Investimento" value={formatBRL(totais.inv)} color="var(--color-primary)" />
+          <Kpi label="Vendas" value={formatBRL(totais.vendas)} color="var(--color-success)" />
           <Kpi
             label="ROAS"
             value={totais.roas > 0 ? fmtRoas(totais.roas) : "—"}
+            color="var(--color-success)"
             highlight={faixas ? totais.roas >= faixas.roas_bom : totais.roas >= 5}
           />
           <Kpi
             label="ACOS"
             value={totais.acos > 0 ? formatPercent(totais.acos) : "—"}
+            color="var(--color-warning)"
             highlight={totais.acos > 0 && totais.acos <= acosAlvo}
           />
         </div>
@@ -698,7 +692,7 @@ function AdsShopeePage() {
                     }}
                   />
                   <Legend />
-                  <Bar yAxisId="left" dataKey="investimento" name="Investimento" fill="hsl(var(--primary))" />
+                  <Bar yAxisId="left" dataKey="investimento" name="Investimento" fill="var(--color-primary)" />
                   <Line yAxisId="right" type="monotone" dataKey="roas" name="ROAS" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -863,11 +857,16 @@ function RangeInput({
   );
 }
 
-function Kpi({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Kpi({ label, value, highlight, color }: { label: string; value: string; highlight?: boolean; color?: string }) {
   return (
-    <Card className="p-3">
-      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold mt-1 ${highlight ? "text-emerald-600" : ""}`}>{value}</div>
+    <Card className="relative overflow-hidden p-0">
+      {color && <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />}
+      <div className="p-4 pl-5 flex flex-col gap-1.5">
+        <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
+        <span className={cn("text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none", highlight && "text-emerald-600 dark:text-emerald-400")}>
+          {value}
+        </span>
+      </div>
     </Card>
   );
 }
