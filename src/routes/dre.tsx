@@ -90,6 +90,26 @@ interface DespesaDetalheRow {
   excluida: boolean | null;
 }
 
+interface DeducaoMktRow {
+  mes: string;
+  empresa: string;
+  canal: string;
+  marketplace: string;
+  comissao: number | null;
+  taxa_servico: number | null;
+  frete_vendedor: number | null;
+  afiliados: number | null;
+  ajuste_comercial: number | null;
+  outras_escrow: number | null;
+  total_deducao: number | null;
+}
+
+interface AdsMktRow {
+  mes: string;
+  canal: string;
+  gasto: number | null;
+}
+
 type EmpresaFiltro = "consolidado" | "ACZ Pet" | "SVL Store";
 
 const brlS = (v: number | null | undefined) => {
@@ -158,6 +178,8 @@ const DESPESA_CATEGORIAS: Record<string, string | null> = {
 function DREPage() {
   const [dre, setDre] = useState<DreRow[]>([]);
   const [operacional, setOperacional] = useState<DreOperacionalRow[]>([]);
+  const [deducoes, setDeducoes] = useState<DeducaoMktRow[]>([]);
+  const [adsDet, setAdsDet] = useState<AdsMktRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesSel, setMesSel] = useState<string | undefined>();
   const [empresaSel, setEmpresaSel] = useState<EmpresaFiltro>("consolidado");
@@ -171,15 +193,19 @@ function DREPage() {
   const carregar = useCallback(async (silent?: boolean) => {
     if (!silent) setLoading(true);
     try {
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3, r4] = await Promise.all([
         supabaseExternal.from("view_dre_mensal").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
         supabaseExternal.from("view_dre_operacional").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
+        supabaseExternal.from("view_dre_deducoes_marketplace").select("*").gte("mes", "2026-05"),
+        supabaseExternal.from("view_dre_ads_marketplace").select("mes,canal,gasto").gte("mes", "2026-05"),
       ]);
       if (r1.error) throw r1.error;
       if (r2.error) throw r2.error;
       const rows = (r1.data ?? []) as DreRow[];
       setDre(rows);
       setOperacional((r2.data ?? []) as DreOperacionalRow[]);
+      if (!r3.error) setDeducoes((r3.data ?? []) as DeducaoMktRow[]);
+      if (!r4.error) setAdsDet((r4.data ?? []) as AdsMktRow[]);
       setMesSel((prev) => prev ?? (rows.length ? rows[rows.length - 1].mes : undefined));
     } catch (e) {
       console.error(e);
@@ -293,6 +319,21 @@ function DREPage() {
     return { acz, svl };
   }, [operacional, mesSel]);
 
+  const deducoesMes = useMemo(
+    () =>
+      deducoes
+        .filter((r) => r.mes === mesSel)
+        .sort((a, b) => Number(b.total_deducao ?? 0) - Number(a.total_deducao ?? 0)),
+    [deducoes, mesSel],
+  );
+  const adsMes = useMemo(
+    () =>
+      adsDet
+        .filter((r) => r.mes === mesSel)
+        .sort((a, b) => Number(b.gasto ?? 0) - Number(a.gasto ?? 0)),
+    [adsDet, mesSel],
+  );
+
   const toggleDespesa = (label: string) => {
     if (!mesSel) return;
     const key = `${mesSel}::${label}`;
@@ -354,6 +395,8 @@ function DREPage() {
             row={mesAtual}
             prev={mesAnterior}
             porEmpresa={porEmpresaMes}
+            deducoesMes={deducoesMes}
+            adsMes={adsMes}
             expanded={expanded}
             detalhes={detalhes}
             loadingDet={loadingDet}
@@ -459,7 +502,7 @@ function DestinoDaReceita({ row }: { row: DreRow }) {
 
   const segmentos = [
     { label: "CMV", val: row.cmv ?? 0, color: "#7B8494" },
-    { label: "Comissões + frete", val: row.comissoes_frete ?? 0, color: "var(--color-primary)" },
+    { label: "Deduções marketplace", val: row.comissoes_frete ?? 0, color: "var(--color-primary)" },
     { label: "Impostos", val: row.impostos ?? 0, color: "#E0A72E" },
     { label: "ADS / Marketing", val: row.ads ?? 0, color: "#C9432F" },
     { label: "Pessoal", val: (row.pessoal ?? 0) + (row.creative_revisar ?? 0), color: "#2E9E8F" },
@@ -526,13 +569,15 @@ type LinhaDre = {
   val: number;
   prevVal: number | null | undefined;
   kind: "h" | "s";
-  drill: "empresa" | "categoria" | null;
+  drill: "empresa" | "categoria" | "marketplace" | "ads" | null;
 };
 
 function DreDetalhado({
   row,
   prev,
   porEmpresa,
+  deducoesMes,
+  adsMes,
   expanded,
   detalhes,
   loadingDet,
@@ -543,6 +588,8 @@ function DreDetalhado({
   row: DreRow;
   prev: DreRow | undefined;
   porEmpresa: { acz?: DreOperacionalRow; svl?: DreOperacionalRow };
+  deducoesMes: DeducaoMktRow[];
+  adsMes: AdsMktRow[];
   expanded: Set<string>;
   detalhes: Record<string, DespesaDetalheRow[]>;
   loadingDet: Set<string>;
@@ -567,12 +614,18 @@ function DreDetalhado({
   const linhas: LinhaDre[] = [
     { label: "RECEITA LÍQUIDA", val: receita, prevVal: prev?.receita_liquida, kind: "h", drill: "empresa" },
     { label: "(−) CMV", val: row.cmv ?? 0, prevVal: prev?.cmv, kind: "s", drill: "empresa" },
-    { label: "(−) Comissões + Frete", val: row.comissoes_frete ?? 0, prevVal: prev?.comissoes_frete, kind: "s", drill: null },
+    { label: "(−) Deduções Marketplace", val: row.comissoes_frete ?? 0, prevVal: prev?.comissoes_frete, kind: "s", drill: "marketplace" },
     { label: "(−) Impostos", val: row.impostos ?? 0, prevVal: prev?.impostos, kind: "s", drill: null },
     { label: "Margem de contribuição", val: row.margem_contribuicao ?? 0, prevVal: prev?.margem_contribuicao, kind: "h", drill: null },
     ...opex
       .filter((d) => (d.val ?? 0) !== 0)
-      .map((d): LinhaDre => ({ label: d.label, val: d.val ?? 0, prevVal: d.prev, kind: "s", drill: "categoria" })),
+      .map((d): LinhaDre => ({
+        label: d.label,
+        val: d.val ?? 0,
+        prevVal: d.prev,
+        kind: "s",
+        drill: d.label === "Marketing / ADS" ? "ads" : "categoria",
+      })),
     { label: "Custo fixo total", val: row.total_despesas ?? 0, prevVal: prev?.total_despesas, kind: "h", drill: null },
     { label: "Lucro líquido", val: row.lucro_liquido ?? 0, prevVal: prev?.lucro_liquido, kind: "h", drill: null },
   ];
@@ -602,7 +655,11 @@ function DreDetalhado({
             const isH = l.kind === "h";
             const drillKey = `${mesSel}::${l.label}`;
             const isOpen = expanded.has(drillKey);
-            const hasDrill = l.drill != null && (l.drill === "empresa" || DESPESA_CATEGORIAS[l.label] != null);
+            const hasDrill =
+              l.drill === "empresa" ||
+              l.drill === "marketplace" ||
+              l.drill === "ads" ||
+              (l.drill === "categoria" && DESPESA_CATEGORIAS[l.label] != null);
             const delta = pctVar(l.val, l.prevVal);
             const bom = isH ? (delta ?? 0) >= 0 : (delta ?? 0) <= 0;
             const barW = (Math.abs(l.val) / maxAbs) * 100;
@@ -668,6 +725,10 @@ function DreDetalhado({
                           <SubEmpresa nome="ACZ Pet" valor={l.label === "(−) CMV" ? porEmpresa.acz?.cmv : porEmpresa.acz?.receita_liquida} receita={receita} />
                           <SubEmpresa nome="SVL Store" valor={l.label === "(−) CMV" ? porEmpresa.svl?.cmv : porEmpresa.svl?.receita_liquida} receita={receita} />
                         </>
+                      ) : l.drill === "marketplace" ? (
+                        <DrillDeducoes itens={deducoesMes} />
+                      ) : l.drill === "ads" ? (
+                        <DrillAds itens={adsMes} total={l.val} />
                       ) : (
                         <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} />
                       )}
@@ -708,6 +769,102 @@ function DrillCategoria({
         <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} />
       ))}
     </>
+  );
+}
+
+// Componentes que somam as "Deduções Marketplace", com a explicação de cada um.
+// A soma (comissão + taxa serviço + frete + afiliados − ajuste + outras) = total_deducao,
+// que por sua vez fecha com a linha do DRE (view_dre_deducoes_marketplace).
+const DEDUCAO_LEGENDA: { key: keyof DeducaoMktRow; label: string; hint: string; credito?: boolean }[] = [
+  { key: "comissao", label: "Comissão", hint: "Comissão do marketplace sobre a venda." },
+  { key: "taxa_servico", label: "Taxa de serviço", hint: "Taxa de programa/serviço (ex.: Programa de Frete Grátis da Shopee)." },
+  { key: "frete_vendedor", label: "Frete vendedor", hint: "Frete pago pelo vendedor (ocorre no Mercado Livre; na Shopee costuma ser zero)." },
+  { key: "afiliados", label: "Afiliados", hint: "Comissão do programa de afiliados/creators." },
+  { key: "ajuste_comercial", label: "Ajuste comercial", hint: "Crédito/reembolso do marketplace — reduz a dedução (entra como −).", credito: true },
+  { key: "outras_escrow", label: "Outras (escrow)", hint: "Diferença entre o repasse real e as taxas acima: cashback em moedas, vouchers e ajustes de escrow." },
+];
+
+function DrillDeducoes({ itens }: { itens: DeducaoMktRow[] }) {
+  if (!itens || itens.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">Sem deduções no mês.</p>;
+  }
+  return (
+    <div className="py-1 space-y-3">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[560px]">
+          <thead className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="text-left font-medium py-1 pr-2">Canal</th>
+              {DEDUCAO_LEGENDA.map((c) => (
+                <th key={String(c.key)} className="text-right font-medium py-1 px-1.5 whitespace-nowrap">
+                  {c.label}
+                </th>
+              ))}
+              <th className="text-right font-medium py-1 pl-2">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {itens.map((r) => (
+              <tr key={r.canal} className="border-t border-border/50">
+                <td className="py-1 pr-2 font-medium whitespace-nowrap">{r.canal}</td>
+                {DEDUCAO_LEGENDA.map((c) => {
+                  const v = Number(r[c.key] ?? 0);
+                  return (
+                    <td
+                      key={String(c.key)}
+                      className="text-right tabular-nums font-mono py-1 px-1.5 text-muted-foreground whitespace-nowrap"
+                    >
+                      {v === 0 ? "—" : (c.credito ? "−" : "") + brlFull(v)}
+                    </td>
+                  );
+                })}
+                <td className="text-right tabular-nums font-mono py-1 pl-2 font-semibold whitespace-nowrap">
+                  {brlFull(r.total_deducao)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="space-y-0.5 text-[11px] text-muted-foreground">
+        {DEDUCAO_LEGENDA.map((c) => (
+          <li key={String(c.key)}>
+            <span className="font-medium text-foreground/80">{c.label}:</span> {c.hint}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function DrillAds({ itens, total }: { itens: AdsMktRow[]; total: number }) {
+  const soma = itens.reduce((s, r) => s + Number(r.gasto ?? 0), 0);
+  return (
+    <div className="py-1 space-y-2">
+      {itens.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Sem gasto de ADS no mês.</p>
+      ) : (
+        <div className="space-y-0.5">
+          {itens.map((r) => (
+            <div key={r.canal} className="flex items-center justify-between gap-4 py-0.5 text-xs">
+              <span className="text-muted-foreground">{r.canal}</span>
+              <span className="tabular-nums font-mono text-foreground/80">{brlFull(r.gasto)}</span>
+            </div>
+          ))}
+          {Math.abs(soma - total) > 0.5 && (
+            <div className="flex items-center justify-between gap-4 py-0.5 text-xs border-t border-border/50">
+              <span className="text-muted-foreground">Total no DRE</span>
+              <span className="tabular-nums font-mono font-semibold">{brlFull(total)}</span>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground border-t border-border/50 pt-1.5">
+        Só a Shopee tem ADS integrado (por loja, acima). O gasto de anúncio do{" "}
+        <span className="font-medium text-foreground/80">Mercado Livre</span> e demais canais ainda não
+        entra no sistema — o marketing real é maior que o mostrado aqui.
+      </p>
+    </div>
   );
 }
 
@@ -826,7 +983,7 @@ function CascataEmpresa({
   const linhas = [
     { label: "Receita líquida", val: receita, h: true },
     { label: "(−) CMV", val: row.cmv ?? 0, h: false },
-    { label: "(−) Comissões + Frete", val: row.comissoes_frete ?? 0, h: false },
+    { label: "(−) Deduções Marketplace", val: row.comissoes_frete ?? 0, h: false },
     { label: "(−) Impostos", val: row.impostos ?? 0, h: false },
   ];
 

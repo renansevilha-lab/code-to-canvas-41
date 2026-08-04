@@ -124,6 +124,20 @@ type VisaoGeralRow = {
 
 type DiaSerie = { data: string; receita: number; margem: number; pedidos: number };
 
+// Canais vendidos só via Tiny (Temu, TikTok, ML avulso): sem custo/margem/ADS.
+type CanalSemDados = { canal: string; receita: number; pedidos: number };
+
+// Agrupa marca_canal cru (do Tiny) num rótulo amigável.
+function nomeCanalTiny(marca: string): string {
+  const m = (marca ?? "").toLowerCase();
+  if (m.includes("temu")) return "Temu";
+  if (m.includes("tiktok")) return "TikTok Shop";
+  if (m.includes("shein")) return "Shein";
+  if (m.includes("mercado livre") || m.startsWith("ml_") || m.includes("[svll]"))
+    return "Mercado Livre (não integrado)";
+  return marca;
+}
+
 // ============================================================
 // Period presets
 // ============================================================
@@ -229,6 +243,7 @@ function Dashboard() {
   const [anomSemRecebido, setAnomSemRecebido] = useState<{ count: number }>({ count: 0 });
   const [alertaPrejuizo, setAlertaPrejuizo] = useState(0);
   const [visaoGeral, setVisaoGeral] = useState<VisaoGeralRow | null>(null);
+  const [canaisSemDados, setCanaisSemDados] = useState<CanalSemDados[]>([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
@@ -296,10 +311,32 @@ function Dashboard() {
           data_final: range.to,
         });
 
-        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao] = await Promise.all([
-          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ,
+        // Canais só-Tiny (sem custo/margem) — exibidos à parte, fora do total geral.
+        const canaisSemQ = supabaseExternal
+          .from("view_canais_sem_integracao")
+          .select("marca_canal,pedidos,receita")
+          .gte("data", range.from)
+          .lte("data", range.to);
+
+        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao, canaisSem] = await Promise.all([
+          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ, canaisSemQ,
         ]);
         if (cancel) return;
+
+        if (!canaisSem.error) {
+          const rows = (canaisSem.data ?? []) as { marca_canal: string; pedidos: number | null; receita: number | null }[];
+          const agg = new Map<string, CanalSemDados>();
+          for (const r of rows) {
+            const canal = nomeCanalTiny(r.marca_canal);
+            const cur = agg.get(canal) ?? { canal, receita: 0, pedidos: 0 };
+            cur.receita += Number(r.receita ?? 0);
+            cur.pedidos += Number(r.pedidos ?? 0);
+            agg.set(canal, cur);
+          }
+          setCanaisSemDados(
+            Array.from(agg.values()).sort((a, b) => b.receita - a.receita),
+          );
+        }
 
         if (!visao.error) {
           const row = Array.isArray(visao.data) ? (visao.data as VisaoGeralRow[])[0] : (visao.data as VisaoGeralRow | null);
@@ -635,6 +672,35 @@ function Dashboard() {
           </div>
         )}
       </section>
+
+      {/* Canais sem dados integrados (Temu, TikTok, ML avulso) — fora do total geral */}
+      {canaisSemDados.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Canais sem dados integrados
+            </h2>
+            <p className="text-[12px] text-muted-foreground">
+              Vendas informadas pelo Tiny, sem custo/margem/ADS no sistema — não entram no total acima.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            {canaisSemDados.map((c) => (
+              <Card key={c.canal} className="p-5 flex flex-col gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="inline-block h-3 w-3 rounded-sm shrink-0 bg-muted-foreground/40" />
+                  <p className="font-medium truncate" title={c.canal}>{c.canal}</p>
+                </div>
+                <p className="text-2xl font-semibold tabular-nums">{formatBRL(c.receita, { compact: true })}</p>
+                <p className="text-sm text-muted-foreground tabular-nums">{formatNumber(c.pedidos)} pedidos</p>
+                <Badge variant="outline" className="w-fit text-muted-foreground gap-1 mt-1">
+                  <Info className="h-3 w-3" /> Sem margem
+                </Badge>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

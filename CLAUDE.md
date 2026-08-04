@@ -316,7 +316,9 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
-| `amazon-sync-pedidos` | v8 | Pedidos Amazon |
+| `amazon-sync-pedidos` | v12 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9 |
+| `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
+| `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
@@ -375,6 +377,40 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
 
 **Resolvido:** a remontagem da árvore ao voltar para a aba do navegador (perdia
 página da tabela, filtros e rolagem).
+
+**Feito em 04/ago/2026 — coerência DRE × Pedidos Integrados × Dashboard + fix ML:**
+- **Margem canônica = `recebido_estimado − CMV − imposto`** (view_margem_pedido_v2
+  / Pedidos Integrados = escrow real). O DRE reconstruía de taxas e
+  **superestimava ~R$13,6k/mês (jul)**; `view_dre_operacional` passou a usar
+  `sum(margem)` e `comissoes_frete` virou resíduo (cascata fecha ao centavo).
+  Baseline mai–ago validado. Rótulo "Comissões + Frete" → **"Deduções
+  Marketplace"** em `dre.tsx`, com **drill-down por canal/componente** (views novas
+  `view_dre_deducoes_marketplace`, `view_dre_ads_marketplace`) e **ADS por loja**
+  (ML não integrado).
+- **Dashboard:** `dashboard_visao_geral` **deixou de somar canais só-Tiny**
+  (Temu/TikTok/ML-SVL) — topo agora bate com os cards (base pedidos_validos =
+  Shopee+ML+Amazon). Esses canais aparecem numa seção separada **"Canais sem dados
+  integrados"** (view `view_canais_sem_integracao`; só receita/pedidos, sem margem).
+  PI segue só Shopee+ML por design (fica ~R$3k abaixo do Dashboard = Amazon).
+- **`ml-sync` v21 — fix "itens sumindo":** a v20 deletava `pedido_itens` de TODO o
+  lote e só reinseria `if (linhasItens>0)`; quando `/orders/search` vinha sem
+  `order_items` (intermitente nos recentes), o pedido ficava com 0 itens até o
+  próximo run (aparecia "0 itens/Cobertura Completa/Margem —" no PI). v21 deleta/
+  repõe **só os pedidos que vieram com itens** (`idsComItens`). Sem backfill.
+
+**PENDENTE — Amazon (captura + junção com Pedidos Integrados):**
+- **Bug confirmado (doc SP-API + ao vivo):** a Amazon **não retorna `ItemPrice` em
+  pedido `Pending`**; o `amazon-sync-pedidos` pega o pedido novo em Pending → grava
+  `subtotal_produtos=0` e a **trava incremental** (`precisaItens = só se não tem
+  itens`) nunca rebusca → receita/margem ficam **0 para sempre** (~146 pedidos,
+  R$7,6k presos no `subtotal_bruto`). Efeito: `amazon-sync-financas?modulo=estimar`
+  filtra `subtotal_produtos>0` e **pula** esses pedidos.
+- **Fix a fazer:** em `amazon-sync-pedidos`, rebuscar itens/preço enquanto
+  `subtotal_produtos` for null/0 (não só quando faltam itens) + backfill dos presos.
+- **Depois:** juntar a Amazon ao Pedidos Integrados (hoje aba `/amazon` separada,
+  fonte `view_amazon_dashboard`; PI = `view_margem_pedido_v2`, Shopee+ML). Atenção:
+  economia Amazon é diferente (comissão + FBA + `origem_margem` real/estimado;
+  status `Shipped` vs Pending/Canceled).
 
 **Feito em 21/jul/2026:** limpeza do Dashboard (`src/routes/index.tsx`):
 - Removida a query morta `view_receita_diaria_canal` (`limit(20000)`) e o código
