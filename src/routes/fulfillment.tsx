@@ -239,16 +239,11 @@ function FulfillmentPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col gap-6 p-6 max-w-[1600px] mx-auto">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <Warehouse className="h-6 w-6" /> Fulfillment
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Estoque nos centros de distribuição e sugestão de reposição (envios Full)
-            </p>
-          </div>
+      <div className="w-full flex flex-col gap-[18px] px-6 md:px-8 py-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            Estoque nos centros de distribuição e sugestão de reposição (envios Full)
+          </p>
           <Button
             variant="outline"
             size="sm"
@@ -267,7 +262,7 @@ function FulfillmentPage() {
             />
             Atualizar
           </Button>
-        </header>
+        </div>
 
         <Tabs value={tab} onValueChange={(v) => update({ tab: v as SubTab })}>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -678,11 +673,11 @@ function InventarioTab({
 
   return (
     <div className="space-y-3">
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <InvKpi label="Disponível" value={totais.sellable} loading={loading} />
-        <InvKpi label="Reservado" value={totais.reserved} loading={loading} muted />
-        <InvKpi label="Em trânsito" value={totais.inTransit} loading={loading} muted />
-        <InvKpi label="Inutilizável" value={totais.unsellable} loading={loading} muted />
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-[14px]">
+        <InvKpi label="Disponível" value={totais.sellable} loading={loading} color="var(--color-success)" />
+        <InvKpi label="Reservado" value={totais.reserved} loading={loading} muted color="var(--color-warning)" />
+        <InvKpi label="Em trânsito" value={totais.inTransit} loading={loading} muted color="var(--color-chart-4)" />
+        <InvKpi label="Inutilizável" value={totais.unsellable} loading={loading} muted color="var(--color-destructive)" />
       </section>
 
       <Card className="overflow-hidden">
@@ -853,22 +848,27 @@ function InvKpi({
   value,
   loading,
   muted,
+  color,
 }: {
   label: string;
   value: number;
   loading: boolean;
   muted?: boolean;
+  color?: string;
 }) {
   return (
-    <Card className="p-4">
-      <div className="text-xs text-muted-foreground font-medium">{label}</div>
-      {loading ? (
-        <Skeleton className="h-7 w-20 mt-2" />
-      ) : (
-        <div className={cn("text-xl font-semibold mt-1 tabular-nums", muted && "text-muted-foreground")}>
-          {formatNumber(value)}
-        </div>
-      )}
+    <Card className="relative overflow-hidden p-0">
+      {color && <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />}
+      <div className="p-4 pl-5 flex flex-col gap-1.5">
+        <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
+        {loading ? (
+          <Skeleton className="h-7 w-20" />
+        ) : (
+          <span className={cn("text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none", muted && "text-muted-foreground")}>
+            {formatNumber(value)}
+          </span>
+        )}
+      </div>
     </Card>
   );
 }
