@@ -688,6 +688,34 @@ const ENVIO_HEADER: Record<
   ML: { bg: "#FFE600", text: "#111827", label: "MERCADO LIVRE (ML)" },
 };
 
+// Cor por quantidade de unidades por pedido (1un/2un/3un…) — ajuda a bancada a
+// não confundir a quantidade na hora de embalar/imprimir. Escala fixa por nº.
+function corUnidades(n: number): string {
+  switch (n) {
+    case 1: return "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200";
+    case 2: return "bg-blue-500 text-white";
+    case 3: return "bg-amber-500 text-white";
+    case 4: return "bg-fuchsia-600 text-white";
+    case 5: return "bg-emerald-600 text-white";
+    default: return "bg-red-600 text-white";
+  }
+}
+function UnBadge({ n, className }: { n: number; className?: string }) {
+  const q = Number(n) || 1;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-md px-1.5 py-0.5 font-mono font-bold tabular-nums leading-none",
+        corUnidades(q),
+        className,
+      )}
+      title={`${q} unidade${q === 1 ? "" : "s"} por pedido`}
+    >
+      {q}un
+    </span>
+  );
+}
+
 // Chip de envio: filtro + contagem. Ativo assume a cor da transportadora.
 function ChipEnvio({
   label,
@@ -1085,6 +1113,7 @@ function LotesDoDia({
   const qc = useQueryClient();
   const { data: lotes, isLoading, error } = useTagsDoDia();
   const [ajudaAberta, setAjudaAberta] = useState(false);
+  const [corpoAberto, setCorpoAberto] = useState(true);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
@@ -1174,13 +1203,19 @@ function LotesDoDia({
   return (
     <Card className="p-4 space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCorpoAberto((v) => !v)}
+          className="flex items-center gap-2 text-left"
+          title={corpoAberto ? "Recolher" : "Expandir"}
+        >
+          <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", !corpoAberto && "-rotate-90")} />
           <TagIcon className="h-4 w-4 text-primary" />
           <h2 className="font-semibold text-sm">Lotes do dia</h2>
           {lotes && lotes.length > 0 && (
             <Badge variant="secondary">{lotes.length}</Badge>
           )}
-        </div>
+        </button>
         <Button
           variant="ghost"
           size="sm"
@@ -1196,6 +1231,7 @@ function LotesDoDia({
         </Button>
       </div>
 
+      {corpoAberto && (<div className="space-y-3">
       {/* Impressora */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <Printer className="h-4 w-4 text-muted-foreground" />
@@ -1310,7 +1346,18 @@ function LotesDoDia({
                         </Button>
                       </div>
                     </td>
-                    <td className="py-2 pr-3 text-muted-foreground">{l.grupo_origem}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">
+                      {(() => {
+                        const m = /^(.*?)(\d+)un\s*$/.exec(l.grupo_origem ?? "");
+                        if (!m) return <span className="font-mono">{l.grupo_origem}</span>;
+                        return (
+                          <span className="inline-flex items-center gap-1.5 font-mono">
+                            <span>{m[1]}</span>
+                            <UnBadge n={Number(m[2])} className="text-[11px]" />
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="py-2 pr-3 text-right tabular-nums">
                       {formatNumber(l.qtd_pedidos)}
                       {l.qtd_pulados > 0 && (
@@ -1395,6 +1442,7 @@ function LotesDoDia({
           </table>
         </div>
       )}
+      </div>)}
 
       <AlertDialog
         open={confirmar !== null}
@@ -1952,8 +2000,12 @@ function FilaPriorizada() {
                     </div>
                     <ProdutoFoto src={item.foto_capa} alt={item.sku ?? "produto"} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-mono text-sm md:text-base font-semibold">
-                        {item.tag_sugerida ?? "—"}
+                      <div className="flex items-center gap-1.5 font-mono text-sm md:text-base font-semibold">
+                        <span>{item.sku ?? "—"}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span>{item.tipo_envio ?? ""}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <UnBadge n={item.qtd_unidades ?? 1} />
                       </div>
                       <div
                         className="text-sm text-muted-foreground truncate"
