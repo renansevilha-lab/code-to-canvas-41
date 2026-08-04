@@ -61,6 +61,27 @@ const CLASSIF_META: Record<Classificacao, { label: string; emoji: string; badge:
   sem_dado:  { label: "Sem dado",  emoji: "⚪", badge: "bg-slate-100 text-slate-700 border-slate-200",        dot: "bg-slate-400" },
 };
 
+// Cores do design por classificação de ROAS (buckets "para onde vai o investimento").
+const BUCKET_COLOR: Record<Classificacao, string> = {
+  excelente: "#0E8A5F",
+  bom: "#4A7BD9",
+  ok: "#E0A72E",
+  ruim: "#C9432F",
+  sem_dado: "#8A93A3",
+};
+function bucketRegra(
+  c: Classificacao,
+  f: { roas_excelente: number; roas_bom: number; roas_ok: number } | null,
+): string {
+  if (!f) return "";
+  const x = (n: number) => `${String(n).replace(".", ",")}x`;
+  if (c === "excelente") return `ROAS ≥ ${x(f.roas_excelente)}`;
+  if (c === "bom") return `ROAS ≥ ${x(f.roas_bom)}`;
+  if (c === "ok") return `ROAS ≥ ${x(f.roas_ok)}`;
+  if (c === "ruim") return `ROAS < ${x(f.roas_ok)}`;
+  return "Sem gasto no período";
+}
+
 type SortKey =
   | "investimento" | "vendas" | "roas" | "ctr" | "acos" | "cpc"
   | "orcamento_diario" | "impressoes" | "cliques";
@@ -434,6 +455,15 @@ function AdsShopeePage() {
     return m;
   }, [resumo]);
 
+  const bucketInv = useMemo(() => {
+    const m: Record<Classificacao, number> = { excelente: 0, bom: 0, ok: 0, ruim: 0, sem_dado: 0 };
+    for (const r of resumo) {
+      const k = (r.classificacao_roas ?? "sem_dado") as Classificacao;
+      if (k in m) m[k] += num(r.investimento);
+    }
+    return m;
+  }, [resumo]);
+
   // KPIs globais (somando resumo)
   const totais = useMemo(() => {
     let inv = 0, vendas = 0, anunciosCount = 0;
@@ -531,26 +561,40 @@ function AdsShopeePage() {
           Últimos 30 dias por anúncio · classificação, ROAS e ACOS vêm do banco.
         </p>
 
-        {/* Resumo por classificação — clicável */}
-        <Card className="p-3 md:p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">Anúncios</span>
+        {/* Para onde vai o investimento — buckets por ROAS, clicáveis */}
+        <Card className="p-5 flex flex-col gap-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[14.5px] font-semibold tracking-[-0.015em]">Para onde vai o investimento</span>
+            <span className="text-[12px] text-muted-foreground">Cada anúncio classificado pelo ROAS · clique para filtrar a lista</span>
+          </div>
+          <div className="flex h-2.5 rounded-md overflow-hidden gap-0.5">
+            {CLASSIF_ALL.map((c) => {
+              const w = totais.inv > 0 ? (bucketInv[c] / totais.inv) * 100 : 0;
+              if (w <= 0) return null;
+              return <div key={c} style={{ width: `${w}%`, background: BUCKET_COLOR[c] }} />;
+            })}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5">
             {CLASSIF_ALL.map((c) => {
               const meta = CLASSIF_META[c];
               const active = sp.classif.includes(c);
-              const n = countsByClassif[c];
               return (
                 <button
                   key={c}
                   type="button"
                   onClick={() => toggleClassif(c)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition",
-                    active ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted",
+                    "text-left rounded-[12px] border p-3.5 flex flex-col gap-1.5 transition-colors",
+                    active ? "border-primary bg-primary/5" : "bg-card border-border hover:border-[#C9CFD8]",
                   )}
                 >
-                  <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
-                  {meta.label} <span className="font-semibold">{formatNumber(n)}</span>
+                  <span className="flex items-center gap-1.5 text-[12.5px] font-semibold" style={{ color: BUCKET_COLOR[c] }}>
+                    <span className="h-2 w-2 rounded-[3px]" style={{ background: BUCKET_COLOR[c] }} />
+                    {meta.label}
+                  </span>
+                  <span className="text-[24px] font-semibold tracking-[-0.035em] tabular-nums leading-none">{formatNumber(countsByClassif[c])}</span>
+                  <span className="text-[11.5px] text-muted-foreground font-mono">{formatBRL(bucketInv[c], { compact: true })} investidos</span>
+                  <span className="text-[11px] text-muted-foreground">{bucketRegra(c, faixas)}</span>
                 </button>
               );
             })}
