@@ -384,6 +384,15 @@ function ReposicaoTab({
   );
   const totalUnidades = selecionadas.reduce((s, r) => s + valorAEnviar(r), 0);
 
+  const repKpis = useMemo(() => {
+    let abaixo = 0, sugeridas = 0;
+    for (const r of filtradas) {
+      if (num(r.cobertura_atual_dias) < num(r.cobertura_alvo_dias)) abaixo++;
+      sugeridas += num(r.sugestao_envio);
+    }
+    return { abaixo, sugeridas };
+  }, [filtradas]);
+
   const todasMarcadas = filtradas.length > 0 && filtradas.every((r) => sel[rowKey(r)]);
   const marcarTodas = (v: boolean) => {
     const next: Record<string, boolean> = { ...sel };
@@ -400,7 +409,12 @@ function ReposicaoTab({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-4">
+      <section className="grid grid-cols-2 xl:grid-cols-4 gap-[14px]">
+        <InvKpi label="SKUs abaixo da cobertura-alvo" value={repKpis.abaixo} loading={loading} color="var(--color-destructive)" />
+        <InvKpi label="Unidades sugeridas" value={repKpis.sugeridas} loading={loading} color="var(--color-primary)" />
+      </section>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <Checkbox
@@ -414,27 +428,27 @@ function ReposicaoTab({
         </span>
       </div>
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-xs text-muted-foreground">
+            <thead className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 w-10">
+                <th className="px-3 py-3 w-10">
                   <Checkbox
                     checked={todasMarcadas}
                     onCheckedChange={(c) => marcarTodas(c === true)}
                     aria-label="Selecionar todos"
                   />
                 </th>
-                <th className="text-left font-medium px-3 py-2">Produto</th>
-                <th className="text-left font-medium px-3 py-2">Canal</th>
-                <th className="text-right font-medium px-3 py-2">Estoque CD</th>
-                <th className="text-right font-medium px-3 py-2">Em trânsito</th>
-                <th className="text-right font-medium px-3 py-2">Cobertura</th>
-                <th className="text-right font-medium px-3 py-2">Necessidade</th>
-                <th className="text-right font-medium px-3 py-2">Sugestão</th>
-                <th className="text-right font-medium px-3 py-2">A enviar</th>
-                <th className="text-right font-medium px-3 py-2">Estoque empresa</th>
+                <th className="text-left font-semibold px-3 py-3">Produto</th>
+                <th className="text-left font-semibold px-3 py-3">Canal</th>
+                <th className="text-right font-semibold px-3 py-3">Estoque CD</th>
+                <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
+                <th className="text-right font-semibold px-3 py-3">Cobertura</th>
+                <th className="text-right font-semibold px-3 py-3">Necessidade</th>
+                <th className="text-right font-semibold px-3 py-3">Sugestão</th>
+                <th className="text-right font-semibold px-3 py-3">A enviar</th>
+                <th className="text-right font-semibold px-3 py-3">Estoque empresa</th>
               </tr>
             </thead>
             <tbody>
@@ -482,18 +496,25 @@ function ReposicaoTab({
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2">
-                        <MktDot marketplace={r.marketplace} />
+                      <td className="px-3 py-2.5">
+                        <span
+                          className="text-[11px] font-semibold px-2 py-0.5 rounded-[5px] whitespace-nowrap"
+                          style={{ background: MKT_SOFT(r.marketplace), color: MKT_COR(r.marketplace) }}
+                        >
+                          {MKT_LABEL[r.marketplace] ?? r.marketplace}
+                        </span>
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatNumber(num(r.estoque_full))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.estoque_full))}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
                         {formatNumber(num(r.em_transito))}
                       </td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-3 py-2.5 text-right">
                         <CoberturaPill dias={num(r.cobertura_atual_dias)} alvo={num(r.cobertura_alvo_dias)} />
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatNumber(num(r.necessidade))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">
+                      <td className={cn("px-3 py-2.5 text-right tabular-nums font-mono text-[13px]", num(r.necessidade) > 0 ? "text-destructive font-semibold" : "text-muted-foreground")}>
+                        {formatNumber(num(r.necessidade))}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">
                         {formatNumber(num(r.sugestao_envio))}
                       </td>
                       <td className="px-3 py-2 text-right">
