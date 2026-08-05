@@ -216,6 +216,7 @@ const EMPRESAS_FALLBACK: string[] = ["ACZ Pet", "SVL Store"];
 const MARKETPLACE_COLORS: Record<string, string> = {
   shopee: "#EE4D2D",
   mercadolivre: "#FFE600",
+  amazon: "#2E9E8F",
 };
 
 function marketplaceFromCanal(canal: string | null | undefined): "shopee" | "mercadolivre" | null {
@@ -227,7 +228,10 @@ function marketplaceFromCanal(canal: string | null | undefined): "shopee" | "mer
 }
 
 function colorForCanal(canal: string | null | undefined, mk?: string | null): string | null {
-  const m = marketplaceFromCanal(canal) ?? (mk?.toLowerCase() as "shopee" | "mercadolivre" | undefined);
+  const m =
+    marketplaceFromCanal(canal) ??
+    mk?.toLowerCase() ??
+    (canal?.toLowerCase().includes("amazon") ? "amazon" : undefined);
   return m ? MARKETPLACE_COLORS[m] ?? null : null;
 }
 
@@ -1237,7 +1241,7 @@ function PedidoExpandido({ p }: { p: PedidoIntegrado }) {
           />
         </div>
 
-        {p.cobertura_cmv !== "completo" && <PuxarCustoTiny pedido={p} />}
+        {p.cobertura_cmv !== "completo" && p.marketplace !== "amazon" && <PuxarCustoTiny pedido={p} />}
 
         {shopee && (
           <a
