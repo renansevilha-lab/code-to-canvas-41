@@ -980,7 +980,7 @@ function VendasSkuPanel({ rows, loading, range }: { rows: VendaSkuRow[]; loading
           </div>
           <Link
             to="/vendas"
-            search={{ period: "custom", from: range.from, to: range.to, view: "sku", sort: "valor" }}
+            search={{ period: "custom", from: range.from, to: range.to, view: "sku", sort: "receita" }}
             className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
           >
             Ver todos ({rows.length}) <ArrowRight className="h-3 w-3" />
@@ -1039,7 +1039,7 @@ function VendasMarcaPanel({ rows, loading, range }: { rows: VendaMarcaRow[]; loa
           </div>
           <Link
             to="/vendas"
-            search={{ period: "custom", from: range.from, to: range.to, view: "marca", sort: "valor" }}
+            search={{ period: "custom", from: range.from, to: range.to, view: "marca", sort: "receita" }}
             className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
           >
             Ver todas ({rows.length}) <ArrowRight className="h-3 w-3" />
