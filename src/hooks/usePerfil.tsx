@@ -103,6 +103,7 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/produtos", "produtos"],
   ["/ads-shopee", "ads"],
   ["/ads-ml", "ads"],
+  ["/saude-ml", "ads"],
   ["/promocoes", "ads"],
   ["/", "dashboard"],
 ];
