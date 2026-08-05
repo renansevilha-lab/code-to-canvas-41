@@ -124,6 +124,16 @@ type VisaoGeralRow = {
 
 type DiaSerie = { data: string; receita: number; margem: number; pedidos: number };
 
+// Vendas por SKU / Marca (kit destrinchado) — RPCs vendas_por_sku / vendas_por_marca.
+type VendaSkuRow = {
+  sku: string; nome: string | null; marca: string | null;
+  qtd_atual: number; qtd_anterior: number; valor_atual: number; valor_anterior: number;
+};
+type VendaMarcaRow = {
+  marca: string; qtd_atual: number; qtd_anterior: number;
+  valor_atual: number; valor_anterior: number; skus: number;
+};
+
 // Canais vendidos só via Tiny (Temu, TikTok, ML avulso): sem custo/margem/ADS.
 type CanalSemDados = { canal: string; receita: number; pedidos: number };
 
@@ -236,6 +246,8 @@ function Dashboard() {
   const [serieDiaria, setSerieDiaria] = useState<DiaSerie[]>([]);
   const [metas, setMetas] = useState<MetaRealizado[]>([]);
   const [topProdutos, setTopProdutos] = useState<ProdutoRow[]>([]);
+  const [vendasSku, setVendasSku] = useState<VendaSkuRow[]>([]);
+  const [vendasMarca, setVendasMarca] = useState<VendaMarcaRow[]>([]);
   const [alertaAcos, setAlertaAcos] = useState(0);
   const [alertaAmazon, setAlertaAmazon] = useState(0);
   const [anomSemCusto, setAnomSemCusto] = useState<{ count: number; receita: number }>({ count: 0, receita: 0 });
@@ -311,6 +323,16 @@ function Dashboard() {
           data_final: range.to,
         });
 
+        // Vendas por SKU / Marca (kit destrinchado) — cálculo no banco.
+        const vendasSkuQ = supabaseExternal.rpc("vendas_por_sku", {
+          data_inicial: range.from,
+          data_final: range.to,
+        });
+        const vendasMarcaQ = supabaseExternal.rpc("vendas_por_marca", {
+          data_inicial: range.from,
+          data_final: range.to,
+        });
+
         // Canais só-Tiny (sem custo/margem) — exibidos à parte, fora do total geral.
         const canaisSemQ = supabaseExternal
           .from("view_canais_sem_integracao")
@@ -318,10 +340,15 @@ function Dashboard() {
           .gte("data", range.from)
           .lte("data", range.to);
 
-        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao, canaisSem] = await Promise.all([
-          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ, canaisSemQ,
+        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao, canaisSem, vsku, vmarca] = await Promise.all([
+          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ, canaisSemQ, vendasSkuQ, vendasMarcaQ,
         ]);
         if (cancel) return;
+
+        if (!vsku.error) setVendasSku((vsku.data ?? []) as VendaSkuRow[]);
+        else console.warn("vendas_por_sku →", vsku.error);
+        if (!vmarca.error) setVendasMarca((vmarca.data ?? []) as VendaMarcaRow[]);
+        else console.warn("vendas_por_marca →", vmarca.error);
 
         if (!canaisSem.error) {
           const rows = (canaisSem.data ?? []) as { marca_canal: string; pedidos: number | null; receita: number | null }[];
@@ -649,6 +676,12 @@ function Dashboard() {
         <MetasPanel data={metaTodos} competencia={compAtual} />
       </div>
 
+      {/* Vendas por produto (kit destrinchado) */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 items-start">
+        <VendasSkuPanel rows={vendasSku} loading={loading && vendasSku.length === 0} />
+        <VendasMarcaPanel rows={vendasMarca} loading={loading && vendasMarca.length === 0} />
+      </div>
+
       {/* Desempenho por canal (detalhado) */}
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -858,6 +891,131 @@ function TopSkusPanel({ produtos }: { produtos: ProdutoRow[] }) {
                   </div>
                   <span className="text-[11px] text-muted-foreground font-mono w-11 text-right tabular-nums">
                     {formatPercent(Number(p.margem_liquida_pct ?? 0))}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// Vendas por SKU (kit destrinchado)
+// ============================================================
+function QtdDelta({ atual, anterior }: { atual: number; anterior: number }) {
+  const up = anterior > 0 && atual > anterior;
+  const down = anterior > 0 && atual < anterior;
+  return (
+    <span className="inline-flex items-center gap-0.5 justify-end">
+      {up && <ArrowUp className="h-3 w-3 text-success" />}
+      {down && <ArrowDown className="h-3 w-3 text-destructive" />}
+      {formatNumber(atual)}
+    </span>
+  );
+}
+
+function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boolean }) {
+  const top = rows.slice(0, 15);
+  const totalValor = rows.reduce((s, r) => s + Number(r.valor_atual ?? 0), 0);
+  const totalUnid = rows.reduce((s, r) => s + Number(r.qtd_atual ?? 0), 0);
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Vendas por SKU</div>
+          <div className="text-[12px] text-muted-foreground">Unidades reais, com kits destrinchados</div>
+        </div>
+        {!loading && rows.length > 0 && (
+          <div className="text-right shrink-0">
+            <div className="text-[13px] font-semibold font-mono tabular-nums">{formatBRL(totalValor, { compact: true })}</div>
+            <div className="text-[11px] text-muted-foreground font-mono tabular-nums">
+              {formatNumber(totalUnid)} un · {rows.length} SKUs
+            </div>
+          </div>
+        )}
+      </div>
+      {loading ? (
+        <div className="h-64 rounded bg-muted/40 animate-pulse" />
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
+      ) : (
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-sm">
+            <thead className="text-[11px] text-muted-foreground">
+              <tr className="border-b border-border">
+                <th className="text-left font-medium pb-2 px-1">Produto</th>
+                <th className="text-right font-medium pb-2 px-1 w-14">Ant.</th>
+                <th className="text-right font-medium pb-2 px-1 w-16">Atual</th>
+                <th className="text-right font-medium pb-2 px-1 w-24">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top.map((r) => (
+                <tr key={r.sku} className="border-b border-border last:border-0">
+                  <td className="py-2 px-1 min-w-0">
+                    <div className="truncate max-w-[300px] text-[12.5px] font-medium" title={r.nome ?? r.sku}>
+                      {r.nome ?? r.sku}
+                    </div>
+                    <div className="text-[10.5px] text-muted-foreground font-mono">
+                      {r.sku}{r.marca && r.marca !== "(sem marca)" ? ` · ${r.marca}` : ""}
+                    </div>
+                  </td>
+                  <td className="py-2 px-1 text-right tabular-nums text-muted-foreground font-mono">
+                    {formatNumber(Number(r.qtd_anterior ?? 0))}
+                  </td>
+                  <td className="py-2 px-1 text-right tabular-nums font-mono font-medium">
+                    <QtdDelta atual={Number(r.qtd_atual ?? 0)} anterior={Number(r.qtd_anterior ?? 0)} />
+                  </td>
+                  <td className="py-2 px-1 text-right tabular-nums font-mono font-semibold">
+                    {formatBRL(Number(r.valor_atual ?? 0), { compact: true })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// Vendas por Marca (kit destrinchado)
+// ============================================================
+function VendasMarcaPanel({ rows, loading }: { rows: VendaMarcaRow[]; loading: boolean }) {
+  const top = rows.slice(0, 10);
+  const maxValor = rows.reduce((m, r) => Math.max(m, Number(r.valor_atual ?? 0)), 0) || 1;
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Vendas por marca</div>
+        <div className="text-[12px] text-muted-foreground">Receita do período (kits destrinchados)</div>
+      </div>
+      {loading ? (
+        <div className="h-64 rounded bg-muted/40 animate-pulse" />
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {top.map((r) => {
+            const w = Math.max(2, (Number(r.valor_atual ?? 0) / maxValor) * 100);
+            return (
+              <div key={r.marca} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[12.5px] font-medium truncate" title={r.marca}>{r.marca}</span>
+                  <span className="text-[12.5px] font-semibold font-mono tabular-nums shrink-0">
+                    {formatBRL(Number(r.valor_atual ?? 0), { compact: true })}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <div className="flex-1 h-1.5 rounded bg-muted overflow-hidden">
+                    <div className="h-full rounded bg-primary" style={{ width: `${w}%` }} />
+                  </div>
+                  <span className="text-[11px] text-muted-foreground font-mono w-20 text-right tabular-nums">
+                    <QtdDelta atual={Number(r.qtd_atual ?? 0)} anterior={Number(r.qtd_anterior ?? 0)} /> un
                   </span>
                 </div>
               </div>
