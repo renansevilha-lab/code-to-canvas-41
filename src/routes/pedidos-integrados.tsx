@@ -1306,7 +1306,8 @@ function CoberturaIcon({ cobertura }: { cobertura: Cobertura | null }) {
 }
 
 function ProductThumb({ url }: { url: string | null }) {
-  if (!url) {
+  const [erro, setErro] = useState(false);
+  if (!url || erro) {
     return (
       <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
         <PackageIcon className="h-4 w-4 text-muted-foreground" />
@@ -1319,9 +1320,7 @@ function ProductThumb({ url }: { url: string | null }) {
       alt=""
       loading="lazy"
       className="h-10 w-10 rounded object-cover bg-muted"
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = "none";
-      }}
+      onError={() => setErro(true)}
     />
   );
 }

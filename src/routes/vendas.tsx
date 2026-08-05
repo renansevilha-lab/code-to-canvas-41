@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -303,6 +303,24 @@ function VendasPage() {
   );
 }
 
+// ---------------------------------------------------------------- miniatura (com fallback se a URL falhar)
+function ProdImg({ foto, label, cor }: { foto: string | null; label: string; cor: string }) {
+  const [erro, setErro] = useState(false);
+  if (!foto || erro) {
+    return (
+      <div style={{ width: "36px", height: "36px", borderRadius: "9px", background: cor + "20", display: "flex", alignItems: "center", justifyContent: "center", color: cor, fontSize: "12px", fontWeight: 700 }}>
+        {label}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={foto} alt="" loading="lazy" onError={() => setErro(true)}
+      style={{ width: "36px", height: "36px", borderRadius: "9px", objectFit: "cover", border: "1px solid #EDEFF3", display: "block" }}
+    />
+  );
+}
+
 // ---------------------------------------------------------------- tabela SKU
 const SKU_COLS = "52px minmax(230px,1.3fr) 130px 108px 128px 96px 118px 176px";
 function SkuTable({ rows, totalReceita, maxPartic, corMarca }: {
@@ -328,13 +346,7 @@ function SkuTable({ rows, totalReceita, maxPartic, corMarca }: {
         return (
           <div key={r.sku} style={{ display: "grid", gridTemplateColumns: SKU_COLS, alignItems: "center", padding: "0 20px", borderBottom: "1px solid #F2F3F6" }}>
             <div style={{ padding: "10px 8px 10px 0" }}>
-              {r.foto ? (
-                <img src={r.foto} alt="" loading="lazy" style={{ width: "36px", height: "36px", borderRadius: "9px", objectFit: "cover", border: "1px solid #EDEFF3", display: "block" }} />
-              ) : (
-                <div style={{ width: "36px", height: "36px", borderRadius: "9px", background: cor + "20", display: "flex", alignItems: "center", justifyContent: "center", color: cor, fontSize: "12px", fontWeight: 700 }}>
-                  {iniciais(r.marca ?? r.sku)}
-                </div>
-              )}
+              <ProdImg foto={r.foto} label={iniciais(r.marca ?? r.sku)} cor={cor} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "2px", padding: "10px 8px", minWidth: 0 }}>
               <span style={{ fontSize: "13px", fontWeight: 500, color: "#0F1216", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.nome ?? r.sku}>{r.nome ?? r.sku}</span>
