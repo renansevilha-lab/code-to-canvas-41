@@ -678,8 +678,8 @@ function Dashboard() {
 
       {/* Vendas por produto (kit destrinchado) */}
       <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 items-start">
-        <VendasSkuPanel rows={vendasSku} loading={loading && vendasSku.length === 0} />
-        <VendasMarcaPanel rows={vendasMarca} loading={loading && vendasMarca.length === 0} />
+        <VendasSkuPanel rows={vendasSku} loading={loading && vendasSku.length === 0} range={range} />
+        <VendasMarcaPanel rows={vendasMarca} loading={loading && vendasMarca.length === 0} range={range} />
       </div>
 
       {/* Desempenho por canal (detalhado) */}
@@ -917,10 +917,8 @@ function QtdDelta({ atual, anterior }: { atual: number; anterior: number }) {
   );
 }
 
-function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boolean }) {
-  const [aberto, setAberto] = useState(false);
-  const LIMITE = 15;
-  const visiveis = aberto ? rows : rows.slice(0, LIMITE);
+function VendasSkuPanel({ rows, loading, range }: { rows: VendaSkuRow[]; loading: boolean; range: { from: string; to: string } }) {
+  const top = rows.slice(0, 10);
   const totalValor = rows.reduce((s, r) => s + Number(r.valor_atual ?? 0), 0);
   const totalUnid = rows.reduce((s, r) => s + Number(r.qtd_atual ?? 0), 0);
   return (
@@ -945,9 +943,9 @@ function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boole
         <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
       ) : (
         <>
-          <div className={cn("overflow-x-auto -mx-1", aberto && "max-h-[520px] overflow-y-auto")}>
+          <div className="overflow-x-auto -mx-1">
             <table className="w-full text-sm">
-              <thead className={cn("text-[11px] text-muted-foreground", aberto && "sticky top-0 bg-card z-10")}>
+              <thead className="text-[11px] text-muted-foreground">
                 <tr className="border-b border-border">
                   <th className="text-left font-medium pb-2 px-1">Produto</th>
                   <th className="text-right font-medium pb-2 px-1 w-14">Ant.</th>
@@ -956,7 +954,7 @@ function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boole
                 </tr>
               </thead>
               <tbody>
-                {visiveis.map((r) => (
+                {top.map((r) => (
                   <tr key={r.sku} className="border-b border-border last:border-0">
                     <td className="py-2 px-1 min-w-0">
                       <div className="truncate max-w-[300px] text-[12.5px] font-medium" title={r.nome ?? r.sku}>
@@ -980,15 +978,13 @@ function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boole
               </tbody>
             </table>
           </div>
-          {rows.length > LIMITE && (
-            <button
-              onClick={() => setAberto((v) => !v)}
-              className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
-            >
-              {aberto ? "Ver menos" : `Ver todos (${rows.length})`}
-              {aberto ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-            </button>
-          )}
+          <Link
+            to="/vendas"
+            search={{ period: "custom", from: range.from, to: range.to, view: "sku", sort: "valor" }}
+            className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
+          >
+            Ver todos ({rows.length}) <ArrowRight className="h-3 w-3" />
+          </Link>
         </>
       )}
     </Card>
@@ -998,10 +994,8 @@ function VendasSkuPanel({ rows, loading }: { rows: VendaSkuRow[]; loading: boole
 // ============================================================
 // Vendas por Marca (kit destrinchado)
 // ============================================================
-function VendasMarcaPanel({ rows, loading }: { rows: VendaMarcaRow[]; loading: boolean }) {
-  const [aberto, setAberto] = useState(false);
-  const LIMITE = 10;
-  const visiveis = aberto ? rows : rows.slice(0, LIMITE);
+function VendasMarcaPanel({ rows, loading, range }: { rows: VendaMarcaRow[]; loading: boolean; range: { from: string; to: string } }) {
+  const top = rows.slice(0, 10);
   const maxValor = rows.reduce((m, r) => Math.max(m, Number(r.valor_atual ?? 0)), 0) || 1;
   return (
     <Card className="p-5 flex flex-col gap-4">
@@ -1020,8 +1014,8 @@ function VendasMarcaPanel({ rows, loading }: { rows: VendaMarcaRow[]; loading: b
         <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
       ) : (
         <>
-          <div className={cn("flex flex-col gap-3", aberto && "max-h-[520px] overflow-y-auto pr-1")}>
-            {visiveis.map((r) => {
+          <div className="flex flex-col gap-3">
+            {top.map((r) => {
               const w = Math.max(2, (Number(r.valor_atual ?? 0) / maxValor) * 100);
               return (
                 <div key={r.marca} className="flex flex-col gap-1.5">
@@ -1043,15 +1037,13 @@ function VendasMarcaPanel({ rows, loading }: { rows: VendaMarcaRow[]; loading: b
               );
             })}
           </div>
-          {rows.length > LIMITE && (
-            <button
-              onClick={() => setAberto((v) => !v)}
-              className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
-            >
-              {aberto ? "Ver menos" : `Ver todas (${rows.length})`}
-              {aberto ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-            </button>
-          )}
+          <Link
+            to="/vendas"
+            search={{ period: "custom", from: range.from, to: range.to, view: "marca", sort: "valor" }}
+            className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
+          >
+            Ver todas ({rows.length}) <ArrowRight className="h-3 w-3" />
+          </Link>
         </>
       )}
     </Card>

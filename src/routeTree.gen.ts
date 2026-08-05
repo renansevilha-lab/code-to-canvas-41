@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
@@ -34,6 +35,11 @@ import { Route as AdsMlRouteImport } from './routes/ads-ml'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
+const VendasRoute = VendasRouteImport.update({
+  id: '/vendas',
+  path: '/vendas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsuariosRoute = UsuariosRouteImport.update({
   id: '/usuarios',
   path: '/usuarios',
@@ -179,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
+  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesByTo {
@@ -205,6 +212,7 @@ export interface FileRoutesByTo {
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
+  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesById {
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
+  '/vendas': typeof VendasRoute
   '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRouteTypes {
@@ -260,6 +269,7 @@ export interface FileRouteTypes {
     | '/separacao'
     | '/tendencias'
     | '/usuarios'
+    | '/vendas'
     | '/api/public/shopee/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -286,6 +296,7 @@ export interface FileRouteTypes {
     | '/separacao'
     | '/tendencias'
     | '/usuarios'
+    | '/vendas'
     | '/api/public/shopee/callback'
   id:
     | '__root__'
@@ -312,6 +323,7 @@ export interface FileRouteTypes {
     | '/separacao'
     | '/tendencias'
     | '/usuarios'
+    | '/vendas'
     | '/api/public/shopee/callback'
   fileRoutesById: FileRoutesById
 }
@@ -339,11 +351,19 @@ export interface RootRouteChildren {
   SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
   UsuariosRoute: typeof UsuariosRoute
+  VendasRoute: typeof VendasRoute
   ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/vendas': {
+      id: '/vendas'
+      path: '/vendas'
+      fullPath: '/vendas'
+      preLoaderRoute: typeof VendasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/usuarios': {
       id: '/usuarios'
       path: '/usuarios'
@@ -539,6 +559,7 @@ const rootRouteChildren: RootRouteChildren = {
   SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,
   UsuariosRoute: UsuariosRoute,
+  VendasRoute: VendasRoute,
   ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
 }
 export const routeTree = rootRouteImport
