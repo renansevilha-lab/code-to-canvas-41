@@ -1105,6 +1105,8 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
   const qc = useQueryClient();
   const [view, setView] = useState<"lista" | "novo">("lista");
   const [packingId, setPackingId] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   const enviosQ = useQuery({
     queryKey: ["fulfillment", "envios"],
@@ -1168,8 +1170,6 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     );
   }
 
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
   async function moverPara(id: string, stageId: string) {
     setDragId(null);
     setDragOver(null);
