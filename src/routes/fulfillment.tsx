@@ -995,12 +995,12 @@ interface ParsedItem {
 
 // Etapas do Kanban de envios (espelha o Trello). A ordem define o avanço ←/→.
 // 'separando' é a 1a etapa (compatível com envios já existentes).
-const STAGES: Array<{ id: string; label: string; curto: string; cls: string; col: string }> = [
-  { id: "separando", label: "Verificar Estoque / Separar", curto: "Verificar / Separar", cls: "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300", col: "#f43f5e" },
-  { id: "embalar", label: "Embalar", curto: "Embalar", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300", col: "#f59e0b" },
-  { id: "etiquetas", label: "Etiquetas de Volume / Finalização", curto: "Etiquetas / Finalização", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300", col: "#0ea5e9" },
-  { id: "pronto_envio", label: "Pronto para Envio", curto: "Pronto p/ Envio", cls: "bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300", col: "#14b8a6" },
-  { id: "enviado", label: "Enviado", curto: "Enviado", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300", col: "#3b82f6" },
+const STAGES: Array<{ id: string; label: string; curto: string; cls: string; col: string; tint: string }> = [
+  { id: "separando", label: "Verificar Estoque / Separar", curto: "Separando", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300", col: "#B7791F", tint: "#FDF6EA" },
+  { id: "embalar", label: "Embalar", curto: "Embalar", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300", col: "#2F6FB0", tint: "#EEF5FC" },
+  { id: "etiquetas", label: "Etiquetas de Volume / Finalização", curto: "Etiquetas", cls: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300", col: "#7A5CC7", tint: "#F4F1FB" },
+  { id: "pronto_envio", label: "Pronto para Envio", curto: "Pronto", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300", col: "#0E8A5F", tint: "#EBF7F1" },
+  { id: "enviado", label: "Enviado", curto: "Enviado", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300", col: "#5C6470", tint: "#F2F3F5" },
 ];
 const STAGE_MAP: Record<string, (typeof STAGES)[number] & { idx: number }> = Object.fromEntries(
   STAGES.map((s, i) => [s.id, { ...s, idx: i }]),
@@ -1168,16 +1168,20 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     );
   }
 
-  async function moverEtapa(e: Envio, dir: -1 | 1) {
-    const novo = STAGES[stageDe(e.status).idx + dir];
-    if (!novo) return;
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  async function moverPara(id: string, stageId: string) {
+    setDragId(null);
+    setDragOver(null);
+    const e = (enviosQ.data ?? []).find((x) => x.id === id);
+    if (!e || e.status === stageId) return;
     qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) =>
-      (old ?? []).map((x) => (x.id === e.id ? { ...x, status: novo.id } : x)),
+      (old ?? []).map((x) => (x.id === id ? { ...x, status: stageId } : x)),
     );
     const { error } = await supabaseExternal
       .from("fulfillment_envios")
-      .update({ status: novo.id, atualizado_em: new Date().toISOString() })
-      .eq("id", e.id);
+      .update({ status: stageId, atualizado_em: new Date().toISOString() })
+      .eq("id", id);
     if (error) {
       toast.error("Falha ao mover", { description: error.message });
       recarregar();
@@ -1204,12 +1208,12 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
 
   const envios = enviosQ.data ?? [];
   const hoje = new Date().toISOString().slice(0, 10);
+  const totPlan = envios.reduce((s, e) => s + (progressoQ.data?.get(e.id)?.plan ?? e.total_unidades ?? 0), 0);
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground max-w-xl">
-          Quadro de envios aos CDs. Mova os cards entre etapas com <strong>← →</strong>; clique para separar/embalar,
-          agendar a data e anotar observações.
+        <p className="text-[12.5px] text-[#8B93A1]">
+          {envios.length} envios abertos · {formatNumber(totPlan)} unidades planejadas · arraste os cartões entre as colunas para mudar o estágio
         </p>
         <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
           <Plus className="h-4 w-4" /> Novo envio
@@ -1223,81 +1227,95 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
           Nenhum envio ainda. Clique em <strong>Novo envio</strong> e suba o PDF de preparação.
         </Card>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2">
+        <div
+          className="grid gap-3.5 overflow-x-auto pb-1.5 items-start"
+          style={{ gridTemplateColumns: "repeat(5, minmax(196px, 1fr))" }}
+        >
           {STAGES.map((stage) => {
             const doStage = envios.filter((e) => stageDe(e.status).id === stage.id);
+            const over = !!dragId && dragOver === stage.id;
             return (
-              <div key={stage.id} className="flex-shrink-0 w-[280px] flex flex-col">
-                <div className="flex items-center justify-between px-1 py-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.col }} />
-                    {stage.curto}
+              <div
+                key={stage.id}
+                onDragOver={(e) => { e.preventDefault(); if (dragOver !== stage.id) setDragOver(stage.id); }}
+                onDragLeave={() => { if (dragOver === stage.id) setDragOver(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain") || dragId;
+                  if (id) void moverPara(id, stage.id);
+                }}
+                className="flex flex-col gap-2.5 min-h-[180px] rounded-[14px] p-1.5 pb-2.5"
+                style={{
+                  background: over ? "#F7F6FD" : stage.tint,
+                  border: over ? "1.5px dashed var(--color-primary)" : `1.5px solid ${stage.tint}`,
+                  boxShadow: "0 1px 3px rgba(16,20,26,.03)",
+                }}
+              >
+                <div className="flex items-center gap-2 px-2 py-2 -mx-1.5 -mt-1.5 rounded-t-[10px]" style={{ background: stage.col }}>
+                  <span className="h-[7px] w-[7px] rounded-full bg-white shrink-0" />
+                  <span className="text-[11.5px] font-bold uppercase tracking-wide text-white">{stage.curto}</span>
+                  <div className="flex-1" />
+                  <span className="text-[11px] font-bold text-white font-mono px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,.28)" }}>
+                    {doStage.length}
                   </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">{doStage.length}</span>
                 </div>
-                <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-2 min-h-[80px]">
-                  {doStage.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground text-center py-4">—</div>
-                  ) : (
-                    doStage.map((e) => {
-                      const p = progressoQ.data?.get(e.id);
-                      const idx = stageDe(e.status).idx;
-                      const atrasado = !!e.data_envio_agendada && e.status !== "enviado" && e.data_envio_agendada < hoje;
-                      return (
-                        <Card key={e.id} className="p-2.5 space-y-2 bg-card">
-                          <button type="button" onClick={() => setPackingId(e.id)} className="text-left w-full space-y-2">
-                            <div className="flex items-start gap-1.5">
-                              <span aria-hidden className="h-2 w-2 rounded-full shrink-0 mt-1" style={{ backgroundColor: MKT_COLOR[e.marketplace] ?? "#888" }} />
-                              <div className="min-w-0">
-                                <div className="font-semibold text-xs truncate">{e.numero ? `#${e.numero}` : "(sem número)"}</div>
-                                <div className="text-[11px] text-muted-foreground truncate">
-                                  {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              <Barra valor={p?.sep ?? 0} total={p?.plan ?? 0} />
-                              <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
-                                <span>{formatNumber(p?.sep ?? 0)}/{formatNumber(p?.plan ?? e.total_unidades ?? 0)} un</span>
-                                <span>{p?.itens ?? 0} itens</span>
-                              </div>
-                            </div>
-                            {(e.data_envio_agendada || e.observacao) && (
-                              <div className="flex items-center gap-2 text-[11px]">
-                                {e.data_envio_agendada && (
-                                  <span className={cn("inline-flex items-center gap-1", atrasado ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground")}>
-                                    <CalendarClock className="h-3 w-3" /> {format(parseISO(e.data_envio_agendada), "dd/MM")}
-                                  </span>
-                                )}
-                                {e.observacao && <span className="text-muted-foreground truncate" title={e.observacao}>📝 {e.observacao}</span>}
-                              </div>
-                            )}
-                          </button>
-                          <div className="flex items-center justify-between border-t pt-1.5">
-                            <div className="flex items-center gap-0.5">
-                              <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0} onClick={() => void moverEtapa(e, -1)} title="Voltar etapa">
-                                <ChevronLeft className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === STAGES.length - 1} onClick={() => void moverEtapa(e, 1)} title="Avançar etapa">
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                            <span className="text-[10px] text-muted-foreground">{format(parseISO(e.criado_em), "dd/MM")}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                              onClick={() => void excluirEnvio(e)}
-                              title="Excluir envio"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+
+                {doStage.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[#C9CFD8] py-5 px-4 flex flex-col items-center gap-1.5 text-center" style={{ background: "rgba(255,255,255,.5)" }}>
+                    <span className="text-[#B8BEC8] text-base">◌</span>
+                    <span className="text-[12px] font-medium text-[#8B93A1]">Nenhum envio</span>
+                    <span className="text-[11px] text-[#A6ADBA]">Suba o PDF de preparação para criar</span>
+                  </div>
+                ) : (
+                  doStage.map((e) => {
+                    const p = progressoQ.data?.get(e.id);
+                    const planT = p?.plan ?? e.total_unidades ?? 0;
+                    const sepT = p?.sep ?? 0;
+                    const pctD = planT > 0 ? (sepT / planT) * 100 : 0;
+                    const atrasado = !!e.data_envio_agendada && e.status !== "enviado" && e.data_envio_agendada < hoje;
+                    return (
+                      <div
+                        key={e.id}
+                        draggable
+                        onDragStart={(ev) => { ev.dataTransfer.setData("text/plain", e.id); ev.dataTransfer.effectAllowed = "move"; setDragId(e.id); }}
+                        onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                        onClick={() => { if (!dragId) setPackingId(e.id); }}
+                        className="bg-card rounded-xl p-3 pl-2.5 flex flex-col gap-2.5 cursor-grab"
+                        style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${stage.col}`, opacity: dragId === e.id ? 0.4 : 1, boxShadow: "0 1px 2px rgba(16,20,26,.04)" }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: MKT_COLOR[e.marketplace] ?? "#888" }} />
+                          <span className="text-[12.5px] font-semibold font-mono whitespace-nowrap">{e.numero ? `#${e.numero}` : "(s/ nº)"}</span>
+                          <div className="flex-1" />
+                          <span className="text-[#C9CFD8] text-xs tracking-tighter">⠿</span>
+                        </div>
+                        <span
+                          className="self-start text-[13px] font-bold px-2.5 py-1 rounded-lg font-mono"
+                          style={{ background: atrasado ? "#FBEDEA" : "#F4F5F7", color: atrasado ? "#C9432F" : "#6C7481" }}
+                        >
+                          {e.data_envio_agendada ? (atrasado ? "atrasado · " : "coleta ") + format(parseISO(e.data_envio_agendada), "dd/MM") : "sem data"}
+                        </span>
+                        <span className="text-[11.5px] text-muted-foreground truncate">
+                          {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
+                        </span>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-[11.5px] text-[#4B5462] font-mono">{formatNumber(sepT)} / {formatNumber(planT)} un</span>
+                            <span className="text-[11px] font-semibold font-mono" style={{ color: stage.col }}>{Math.round(pctD)}%</span>
                           </div>
-                        </Card>
-                      );
-                    })
-                  )}
-                </div>
+                          <div className="h-[5px] rounded-[3px] bg-[#F1F2F5] overflow-hidden">
+                            <div className="h-full rounded-[3px]" style={{ width: `${Math.min(100, pctD)}%`, background: stage.col }} />
+                          </div>
+                        </div>
+                        {e.observacao && (
+                          <span className="text-[11px] text-muted-foreground leading-snug" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                            {e.observacao}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             );
           })}
