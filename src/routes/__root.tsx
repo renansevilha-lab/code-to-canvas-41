@@ -1,5 +1,6 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Component, type ReactNode } from "react";
 
 
 import { LogOut } from "lucide-react";
@@ -76,7 +77,39 @@ export const Route = createRootRoute({
   notFoundComponent: NotFoundComponent,
 });
 
-function RootShell({ children }: { children: React.ReactNode }) {
+// Boundary de render: impede que um erro em uma tela apague o app inteiro
+// (tela branca). Mostra uma mensagem recuperável mantendo o shell/sidebar.
+// Reseta ao trocar de rota (key={pathname} no uso).
+class RouteErrorBoundary extends Component<{ children: ReactNode }, { erro: Error | null }> {
+  state: { erro: Error | null } = { erro: null };
+  static getDerivedStateFromError(erro: Error) {
+    return { erro };
+  }
+  componentDidCatch(erro: Error) {
+    // eslint-disable-next-line no-console
+    console.error("[render] erro nesta tela:", erro);
+  }
+  render() {
+    if (this.state.erro) {
+      return (
+        <div className="w-full px-6 md:px-8 py-20 flex flex-col items-center justify-center text-center gap-3">
+          <div className="h-12 w-12 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center text-2xl font-semibold">!</div>
+          <h2 className="text-lg font-semibold text-foreground">Algo deu errado nesta tela</h2>
+          <p className="text-sm text-muted-foreground max-w-md">
+            Um erro inesperado interrompeu o carregamento. Recarregue a página; se continuar, avise o suporte.
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground/70 max-w-lg break-words">{this.state.erro.message}</p>
+          <Button size="sm" className="mt-2" onClick={() => window.location.reload()}>
+            Recarregar
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
       <head>
@@ -149,7 +182,9 @@ function AppShell() {
         </header>
         <main className="flex-1 min-w-0">
           <PerfilGate>
-            <Outlet />
+            <RouteErrorBoundary key={pathname}>
+              <Outlet />
+            </RouteErrorBoundary>
           </PerfilGate>
         </main>
       </div>
