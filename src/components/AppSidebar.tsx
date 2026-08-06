@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   BarChart3,
+  Calculator,
   Megaphone,
   Wallet,
   TrendingUp,
@@ -88,6 +89,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "DRE", url: "/dre", icon: FileBarChart, modulo: "financeiro" },
       { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
       { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
+      { title: "Reprocessar CMV", url: "/reprocessar-cmv", icon: Calculator, modulo: "financeiro" },
       { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
       { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet, modulo: "financeiro" },
     ],
