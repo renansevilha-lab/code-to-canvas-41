@@ -134,9 +134,9 @@ const num = (v: unknown): number => {
 
 const rowKey = (r: { marketplace: string; sku: string }) => `${r.marketplace}|${r.sku}`;
 
-// Busca fotos (produtos.foto_capa) apenas dos SKUs visíveis, em lotes ≤300 para
-// nunca esbarrar no corte de 1.000 linhas do PostgREST. É lookup de imagem por
-// SKU interno, não agregação — join no cliente é adequado aqui.
+// Busca a melhor foto por SKU (view_foto_produto = fallback Tiny-novo > Shopee CDN
+// > ML CDN > Tiny-antigo) apenas dos SKUs visíveis, em lotes ≤300 para nunca
+// esbarrar no corte de 1.000 linhas do PostgREST. Lookup por SKU, não agregação.
 function useFotos(skus: (string | null | undefined)[]) {
   const chave = useMemo(
     () => Array.from(new Set(skus.filter((s): s is string => !!s))).sort(),
@@ -151,12 +151,12 @@ function useFotos(skus: (string | null | undefined)[]) {
       for (let i = 0; i < chave.length; i += 300) {
         const lote = chave.slice(i, i + 300);
         const { data, error } = await supabaseExternal
-          .from("produtos")
-          .select("sku,foto_capa")
+          .from("view_foto_produto")
+          .select("sku,foto")
           .in("sku", lote);
         if (error) throw error;
-        for (const r of (data ?? []) as { sku: string; foto_capa: string | null }[]) {
-          if (r.foto_capa) map[r.sku] = r.foto_capa;
+        for (const r of (data ?? []) as { sku: string; foto: string | null }[]) {
+          if (r.foto) map[r.sku] = r.foto;
         }
       }
       return map;
