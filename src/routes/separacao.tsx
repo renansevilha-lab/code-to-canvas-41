@@ -280,6 +280,38 @@ function useTagsPorLinha() {
   });
 }
 
+/**
+ * Prazo de despacho (ship_by_date) por LINHA da fila (tag_sugerida). Guarda o
+ * prazo MAIS PRÓXIMO (mínimo) do grupo — é o que decide a urgência da linha e
+ * alimenta o filtro "prazo máximo de despacho".
+ */
+function usePrazosPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "prazos_por_linha"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("sku_unico, tipo_envio, tag_sugerida, ship_by_date")
+        .limit(20000);
+      if (error) throw error;
+      const map = new Map<string, string>();
+      for (const p of (data ?? []) as {
+        sku_unico: string | null;
+        tipo_envio: string | null;
+        tag_sugerida: string | null;
+        ship_by_date: string | null;
+      }[]) {
+        if (!p.ship_by_date) continue;
+        const key = linhaKeyDe(p);
+        const cur = map.get(key);
+        if (!cur || p.ship_by_date < cur) map.set(key, p.ship_by_date);
+      }
+      return map;
+    },
+    refetchInterval: 60_000,
+  });
+}
+
 // ============ Estado da impressão (impressao_etiquetas) ============
 
 export type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
@@ -716,6 +748,70 @@ function UnBadge({ n, className }: { n: number; className?: string }) {
   );
 }
 
+// ============ Prazo de despacho (ship_by_date) ============
+// Diferença em DIAS (por data em São Paulo) entre o prazo de despacho e hoje.
+// O ship_by_date é o fim do dia-limite (23:59 SP), então comparamos por DIA.
+function diasAtePrazo(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const diaSP = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); // yyyy-mm-dd
+  const hoje = diaSP(new Date());
+  const prazo = diaSP(new Date(iso));
+  return Math.round(
+    (new Date(prazo + "T00:00:00").getTime() - new Date(hoje + "T00:00:00").getTime()) / 86400000,
+  );
+}
+
+type PrazoNivel = "vencido" | "hoje" | "amanha" | "proximo" | "ok";
+function nivelPrazo(dias: number | null): PrazoNivel | null {
+  if (dias === null) return null;
+  if (dias < 0) return "vencido";
+  if (dias === 0) return "hoje";
+  if (dias === 1) return "amanha";
+  if (dias <= 3) return "proximo";
+  return "ok";
+}
+
+const PRAZO_ESTILO: Record<PrazoNivel, string> = {
+  vencido: "bg-red-100 text-red-800 border-red-300 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800",
+  hoje: "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800",
+  amanha: "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+  proximo: "bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-950/30 dark:text-yellow-300 dark:border-yellow-900",
+  ok: "bg-muted text-muted-foreground border-transparent",
+};
+
+function fmtPrazoData(iso: string): string {
+  return new Date(iso).toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit",
+  });
+}
+
+// Selo do prazo de despacho, com cor de urgência.
+function PrazoBadge({ iso, className }: { iso: string | null | undefined; className?: string }) {
+  const dias = diasAtePrazo(iso);
+  const nivel = nivelPrazo(dias);
+  if (!iso || nivel === null) {
+    return <span className={cn("text-[10px] text-muted-foreground", className)}>—</span>;
+  }
+  const rotulo =
+    nivel === "vencido" ? `Vencido · ${fmtPrazoData(iso)}`
+    : nivel === "hoje" ? `Hoje · ${fmtPrazoData(iso)}`
+    : nivel === "amanha" ? `Amanhã · ${fmtPrazoData(iso)}`
+    : fmtPrazoData(iso);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums whitespace-nowrap",
+        PRAZO_ESTILO[nivel],
+        className,
+      )}
+      title={`Prazo de despacho: ${new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`}
+    >
+      {(nivel === "vencido" || nivel === "hoje") && <AlertTriangle className="h-2.5 w-2.5" />}
+      {rotulo}
+    </span>
+  );
+}
+
 // Chip de envio: filtro + contagem. Ativo assume a cor da transportadora.
 function ChipEnvio({
   label,
@@ -791,6 +887,8 @@ interface PedidoSepRow {
   tipo_envio: string | null;
   sku_unico: string | null;
   venda_numero: string | null;
+  ship_by_date?: string | null;
+  days_to_ship?: number | null;
   embalado_em?: string | null;
   impresso_em?: string | null;
 }
@@ -944,6 +1042,7 @@ function PedidosDoSku({
           <tr className="border-b">
             <th className="text-left py-1 pr-2 font-medium">Pedido</th>
             <th className="text-left py-1 pr-2 font-medium">Canal</th>
+            <th className="text-left py-1 pr-2 font-medium">Prazo despacho</th>
             <th className="text-left py-1 pr-2 font-medium">Lote</th>
             <th className="text-left py-1 pr-2 font-medium">Impressão</th>
             <th className="text-right py-1 font-medium">Ação</th>
@@ -979,6 +1078,9 @@ function PedidosDoSku({
                   >
                     {p.marca_canal ?? "—"}
                   </span>
+                </td>
+                <td className="py-1 pr-2">
+                  <PrazoBadge iso={p.ship_by_date} />
                 </td>
                 <td className="py-1 pr-2 font-mono">{p.tag_lote ?? "—"}</td>
                 <td className="py-1 pr-2">
@@ -1495,6 +1597,7 @@ function FilaPriorizada() {
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
   const { data: tagsPorLinha } = useTagsPorLinha();
+  const { data: prazosPorLinha } = usePrazosPorLinha();
   const { data: impressaoEstados } = useImpressaoEstados();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
@@ -1524,6 +1627,8 @@ function FilaPriorizada() {
   );
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
+  // filtro por prazo máximo de despacho: "todos" | "vencidos" | "0"(hoje) | "1" | "2" | "3" | "5" (dias)
+  const [prazoFiltro, setPrazoFiltro] = useState<string>("todos");
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
@@ -1806,9 +1911,18 @@ function FilaPriorizada() {
           (r.nome_produto ?? "").toLowerCase().includes(q);
         if (!hit) return false;
       }
+      if (prazoFiltro !== "todos") {
+        const dias = diasAtePrazo(prazosPorLinha?.get(linhaKeyDe(r)) ?? null);
+        if (dias === null) return false; // sem prazo não entra num filtro por prazo
+        if (prazoFiltro === "vencidos") {
+          if (dias >= 0) return false;
+        } else if (dias > Number(prazoFiltro)) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -1924,6 +2038,27 @@ function FilaPriorizada() {
         <span className="text-[12px] text-muted-foreground tabular-nums hidden md:inline">
           {formatNumber(totais.tags)} TAGs · {formatNumber(totais.pedidos)} pedidos · {formatNumber(totais.unidades)} un.
         </span>
+        <Select value={prazoFiltro} onValueChange={setPrazoFiltro}>
+          <SelectTrigger
+            className={cn(
+              "h-9 w-[168px] text-sm bg-card",
+              prazoFiltro !== "todos" && "border-primary text-primary font-medium",
+            )}
+            title="Filtra os SKUs pelo prazo de despacho mais próximo do grupo"
+          >
+            <Hourglass className="h-3.5 w-3.5 mr-1 shrink-0" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Prazo: todos</SelectItem>
+            <SelectItem value="vencidos">⚠ Vencidos</SelectItem>
+            <SelectItem value="0">Vence hoje</SelectItem>
+            <SelectItem value="1">Até amanhã</SelectItem>
+            <SelectItem value="2">Até 2 dias</SelectItem>
+            <SelectItem value="3">Até 3 dias</SelectItem>
+            <SelectItem value="5">Até 5 dias</SelectItem>
+          </SelectContent>
+        </Select>
         <div className="relative w-full sm:w-auto sm:min-w-[240px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -2015,6 +2150,10 @@ function FilaPriorizada() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex flex-col items-center gap-0.5 w-24">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Prazo</span>
+                        <PrazoBadge iso={prazosPorLinha?.get(linhaKeyDe(item)) ?? null} />
+                      </div>
                       <div
                         className={cn(
                           "px-4 py-2 rounded-lg font-bold text-lg md:text-xl tabular-nums",
