@@ -1841,7 +1841,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       if (!window.confirm(msg)) return;
 
       const { data: res, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-estoque", {
-        body: { modulo: "lancar", envio_id: envioId, confirmar: 1, lancado_por: "app" },
+        body: { modulo: "lancar", envio_id: envioId, confirmar: 1, forcar: 1, lancado_por: "app" },
       });
       if (e2) throw new Error(e2.message);
       const r = res as { ok?: boolean; movimentos?: number; erros?: string[] };
@@ -2083,7 +2083,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {envio?.status === "enviado" ? "Enviado" : "Marcar enviado"}
             </Button>
-            {envio?.status === "enviado" && (
+            {sep > 0 && (
               <Button
                 size="sm"
                 variant={envio?.estoque_lancado_em ? "outline" : "default"}
@@ -2093,7 +2093,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                 title={
                   envio?.estoque_lancado_em
                     ? `Estoque lançado em ${format(parseISO(envio.estoque_lancado_em), "dd/MM/yyyy HH:mm")}`
-                    : "Lança o embalado no depósito Full do Tiny (transferência do Geral)"
+                    : "Lança o EMBALADO no depósito Full do Tiny (transferência do Geral). Pode lançar parcial; relança só o que faltar."
                 }
               >
                 {lancandoEstoque ? <Loader2 className="h-4 w-4 animate-spin" /> : <Warehouse className="h-4 w-4" />}
