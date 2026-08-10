@@ -1195,6 +1195,58 @@ function PedidosDoSku({
   );
 }
 
+// ============ Etiqueta identificadora do lote (ZPL) ============
+
+const STORAGE_IDENT = "separacao.identificadorLote";
+
+// Sanitiza texto pra ZPL: tira os caracteres de controle (^ ~) e troca o "·"
+// (que a fonte da Zebra não tem) por "-". ^CI28 cuida dos acentos.
+function zplSan(s: string): string {
+  return (s || "").replace(/[\^~]/g, " ").replace(/·/g, "-").replace(/\s+/g, " ").trim();
+}
+
+// Gera 1 etiqueta ZPL (bobina 10x15, 203dpi / 812x1218 dots) com:
+// LOTE (grande) + código de barras Code128 do tag + tag SKU/qtd + nome do
+// produto + nº de pedidos + nº de produtos + método de envio. Calibrar layout
+// na ZD220 física (tamanho/fonte/acentos) — este é o primeiro corte.
+function gerarZplIdentificador(o: {
+  tag: string;
+  grupo: string;
+  produtoNome: string;
+  pedidos: number;
+  produtos: number | null;
+  envio: string;
+}): string {
+  const tag = zplSan(o.tag);
+  const grupo = zplSan(o.grupo);
+  const nome = zplSan(o.produtoNome).slice(0, 90);
+  const envio = zplSan(o.envio || "-");
+  const prod = o.produtos == null ? "-" : String(o.produtos);
+  return [
+    "^XA",
+    "^CI28",
+    "^PW812",
+    "^LL1218",
+    "^LH0,0",
+    "^FO0,50^A0N,44,44^FB812,1,0,C,0^FDLOTE^FS",
+    `^FO0,100^A0N,150,150^FB812,1,0,C,0^FD${tag}^FS`,
+    `^FO156,270^BY4,2,120^BCN,120,N,N,N^FD${tag}^FS`,
+    `^FO0,400^A0N,34,34^FB812,1,0,C,0^FD${tag}^FS`,
+    "^FO40,470^GB732,74,3^FS",
+    `^FO40,488^A0N,50,50^FB732,1,0,C,0^FD${grupo}^FS`,
+    `^FO40,575^A0N,40,40^FB732,3,6,L,0^FD${nome}^FS`,
+    "^FO40,740^GB350,140,3^FS",
+    "^FO40,752^A0N,30,30^FB350,1,0,C,0^FDPEDIDOS^FS",
+    `^FO40,790^A0N,80,80^FB350,1,0,C,0^FD${o.pedidos}^FS`,
+    "^FO422,740^GB350,140,3^FS",
+    "^FO422,752^A0N,30,30^FB350,1,0,C,0^FDPRODUTOS^FS",
+    `^FO422,790^A0N,80,80^FB350,1,0,C,0^FD${prod}^FS`,
+    "^FO40,910^GB732,90,90^FS",
+    `^FO40,930^A0N,50,50^FB732,1,0,C,0^FR^FDENVIO: ${envio}^FS`,
+    "^XZ",
+  ].join("");
+}
+
 // ============ Lotes do dia panel ============
 
 interface LotesDoDiaProps {
@@ -1220,6 +1272,49 @@ function LotesDoDia({
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
   const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
+  const [imprimindoIdent, setImprimindoIdent] = useState<string | null>(null);
+  const [identificadorAtivo, setIdentificadorAtivo] = useState<boolean>(() => {
+    try { return localStorage.getItem(STORAGE_IDENT) === "1"; } catch { return false; }
+  });
+
+  // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
+  // -> PrintNode). No modo automático pula lote de 1 pedido (não faz sentido).
+  async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean }) {
+    if (opts?.auto && lote.qtd_pedidos < 2) return;
+    if (!printerId) { if (!opts?.auto) toast.warning("Escolha a impressora primeiro."); return; }
+    setImprimindoIdent(lote.tag);
+    try {
+      let produtoNome = "Vários itens";
+      if (lote.sku) {
+        const { data } = await supabaseExternal
+          .from("produtos").select("nome").eq("sku", lote.sku).maybeSingle();
+        produtoNome = (data as { nome?: string } | null)?.nome || `SKU ${lote.sku}`;
+      }
+      const mUn = /(\d+)\s*un\s*$/i.exec(lote.grupo_origem ?? "");
+      const unPorPedido = mUn ? Number(mUn[1]) : null;
+      const produtos = unPorPedido != null ? unPorPedido * lote.qtd_pedidos : null;
+      const zpl = gerarZplIdentificador({
+        tag: lote.tag,
+        grupo: lote.grupo_origem ?? "",
+        produtoNome,
+        pedidos: lote.qtd_pedidos,
+        produtos,
+        envio: lote.tipo_envio ?? "-",
+      });
+      const { data: res, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+        body: { modulo: "imprimir", zpl, printer_id: printerId, title: `Identificador ${lote.tag}` },
+      });
+      if (error) throw new Error(error.message);
+      if (!(res as { ok?: boolean })?.ok) {
+        throw new Error(JSON.stringify((res as { resposta?: unknown })?.resposta ?? res));
+      }
+      if (!opts?.auto) toast.success(`Identificador do lote ${lote.tag} enviado à impressora`);
+    } catch (e) {
+      toast.error(`Falha no identificador do lote ${lote.tag}`, { description: (e as Error).message });
+    } finally {
+      setImprimindoIdent(null);
+    }
+  }
 
   function lojaDoLote(lote: TagLoteRow): "ottz" | "svl" {
     if (lojaPorTag[lote.tag]) return lojaPorTag[lote.tag];
@@ -1263,6 +1358,11 @@ function LotesDoDia({
           `Lote ${data.tag} enviado para impressão (${data.etiquetas_enviadas} etiquetas)`,
           { description: impressoraSelecionada?.nome ?? "" },
         );
+      }
+      // Etiqueta identificadora ao final do lote (se ligado e 2+ pedidos). Roda
+      // em segundo plano (void) — não atrasa a fila; sai como +1 etiqueta.
+      if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
+        void imprimirIdentificador(lote, { auto: true });
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
     } catch (e) {
@@ -1392,6 +1492,23 @@ function LotesDoDia({
         )}
       </div>
 
+      {/* Etiqueta identificadora do lote */}
+      <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-primary"
+          checked={identificadorAtivo}
+          onChange={(e) => {
+            setIdentificadorAtivo(e.target.checked);
+            try { localStorage.setItem(STORAGE_IDENT, e.target.checked ? "1" : "0"); } catch { /* noop */ }
+          }}
+        />
+        <span className="text-muted-foreground">
+          Imprimir <strong className="text-foreground">etiqueta identificadora</strong> ao final do lote
+          <span className="text-muted-foreground"> (só 2+ pedidos)</span>
+        </span>
+      </label>
+
       {ajudaAberta && (
         <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
           <p><strong className="text-foreground">1.</strong> Escolha a impressora acima (só precisa uma vez).</p>
@@ -1519,6 +1636,22 @@ function LotesDoDia({
                               <>
                                 <Printer className="h-3 w-3 mr-1" />
                                 Imprimir
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={imprimindoIdent === l.tag}
+                            onClick={() => void imprimirIdentificador(l)}
+                            title="Imprimir a etiqueta identificadora deste lote"
+                          >
+                            {imprimindoIdent === l.tag ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <TagIcon className="h-3 w-3 mr-1" />
+                                Identificador
                               </>
                             )}
                           </Button>
