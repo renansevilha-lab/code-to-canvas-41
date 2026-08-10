@@ -90,6 +90,7 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/pedidos-integrados", "separacao"],
   ["/pedidos", "separacao"],
   ["/separacao", "galpao"],
+  ["/monitoramento", "galpao"],
   ["/fulfillment", "galpao"],
   ["/usuarios", "todos"],
   ["/contas-pagar", "financeiro"],

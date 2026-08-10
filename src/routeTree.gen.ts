@@ -20,6 +20,7 @@ import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
 import { Route as PedidosRouteImport } from './routes/pedidos'
+import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
 import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
 import { Route as FulfillmentRouteImport } from './routes/fulfillment'
@@ -89,6 +90,11 @@ const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
 const PedidosRoute = PedidosRouteImport.update({
   id: '/pedidos',
   path: '/pedidos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MonitoramentoRoute = MonitoramentoRouteImport.update({
+  id: '/monitoramento',
+  path: '/monitoramento',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetasRoute = MetasRouteImport.update({
@@ -182,6 +188,7 @@ export interface FileRoutesByFullPath {
   '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
+  '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -210,6 +217,7 @@ export interface FileRoutesByTo {
   '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
+  '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -239,6 +247,7 @@ export interface FileRoutesById {
   '/fulfillment': typeof FulfillmentRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
+  '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/produtos': typeof ProdutosRoute
@@ -269,6 +278,7 @@ export interface FileRouteTypes {
     | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
+    | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -297,6 +307,7 @@ export interface FileRouteTypes {
     | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
+    | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -325,6 +336,7 @@ export interface FileRouteTypes {
     | '/fulfillment'
     | '/mapeamento-skus'
     | '/metas'
+    | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
     | '/produtos'
@@ -354,6 +366,7 @@ export interface RootRouteChildren {
   FulfillmentRoute: typeof FulfillmentRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
   MetasRoute: typeof MetasRoute
+  MonitoramentoRoute: typeof MonitoramentoRoute
   PedidosRoute: typeof PedidosRoute
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   ProdutosRoute: typeof ProdutosRoute
@@ -445,6 +458,13 @@ declare module '@tanstack/react-router' {
       path: '/pedidos'
       fullPath: '/pedidos'
       preLoaderRoute: typeof PedidosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/monitoramento': {
+      id: '/monitoramento'
+      path: '/monitoramento'
+      fullPath: '/monitoramento'
+      preLoaderRoute: typeof MonitoramentoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metas': {
@@ -570,6 +590,7 @@ const rootRouteChildren: RootRouteChildren = {
   FulfillmentRoute: FulfillmentRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,
   MetasRoute: MetasRoute,
+  MonitoramentoRoute: MonitoramentoRoute,
   PedidosRoute: PedidosRoute,
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   ProdutosRoute: ProdutosRoute,
