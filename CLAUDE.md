@@ -378,6 +378,23 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
 **Resolvido:** a remontagem da árvore ao voltar para a aba do navegador (perdia
 página da tabela, filtros e rolagem).
 
+**Feito em 10/ago/2026 — Separação (impressora + identificadora) + backend do Monitoramento:**
+- **Troca de impressora destravada:** o `imprimir` da `shopee-sync-ads` ignorava o
+  `printer_id` do app quando `config_impressora.ativo=true`. Fix imediato:
+  `config_impressora.ativo=false` (o app manda). Fix definitivo preparado (inverter
+  prioridade na `resolverImpressora` — app manda, config = fallback) — deploy pendente.
+- **Etiqueta identificadora** passou a sair também no fluxo **por SKU**
+  (`imprimirPorSku`) — antes só saía no painel "Lotes do dia". Extraída para
+  `imprimirIdentificadorApi` (módulo), reusada nos dois fluxos. Vai por
+  `fulfillment-inbound?modulo=imprimir` (usa o `printer_id` do app; sem override).
+- **Tela de Monitoramento de Lotes — backend PRONTO, front PENDENTE.** Ver
+  `docs/tela-monitoramento-lotes.md` (lógica, contrato e prompt de design). Criados:
+  coluna `tags_lote.finalizada_em`; views `view_monitoramento_lotes` (cards, com foto
+  já no join) e `view_monitoramento_totais` (funil do dia); RPC
+  `monitoramento_finalizar_tag(p_tag, p_desfazer)`. Escopo: Shopee single-SKU, hoje,
+  Ottz+SVL juntas. "Finalizar TAG" é **só monitoramento** (não toca no Tiny). Falta
+  montar a rota `/monitoramento` no front, ligada a essas views + RPC (refetch ~20s).
+
 **Feito em 04/ago/2026 — coerência DRE × Pedidos Integrados × Dashboard + fix ML:**
 - **Margem canônica = `recebido_estimado − CMV − imposto`** (view_margem_pedido_v2
   / Pedidos Integrados = escrow real). O DRE reconstruía de taxas e
