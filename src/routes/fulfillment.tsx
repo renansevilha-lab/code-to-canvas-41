@@ -969,6 +969,8 @@ interface Envio {
   criado_por: string | null;
   criado_em: string;
   atualizado_em: string;
+  estoque_lancado_em: string | null;
+  estoque_lancado_por: string | null;
 }
 interface EnvioItem {
   id: string;
@@ -1616,6 +1618,11 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   // Campos editáveis "dentro do envio": data agendada + observações + etapa.
   const [dataAg, setDataAg] = useState("");
   const [obs, setObs] = useState("");
+  // Lançamento de estoque no Tiny + adição manual de item.
+  const [lancandoEstoque, setLancandoEstoque] = useState(false);
+  const [novoSku, setNovoSku] = useState("");
+  const [novoQtd, setNovoQtd] = useState("");
+  const [addingItem, setAddingItem] = useState(false);
   useEffect(() => {
     const e = envioQ.data;
     if (e) { setDataAg(e.data_envio_agendada ?? ""); setObs(e.observacao ?? ""); }
@@ -1728,7 +1735,9 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   }
 
   async function setSeparada(item: EnvioItem, novo: number) {
-    const clamped = Math.max(0, Math.min(novo, item.qtd_planejada));
+    // Sem teto no planejado: a quantidade EMBALADA pode diferir/exceder o
+    // planejado (é ela que vira estoque no Tiny).
+    const clamped = Math.max(0, novo);
     const conferido = clamped >= item.qtd_planejada;
     qc.setQueryData<EnvioItem[]>(["fulfillment", "envio-itens", envioId], (old) =>
       (old ?? []).map((r) => (r.id === item.id ? { ...r, qtd_separada: clamped, conferido } : r)),
@@ -1757,6 +1766,92 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       toast.error("Erro ao marcar enviado", { description: (e as Error).message });
     } finally {
       setEnviando(false);
+    }
+  }
+
+  // Adiciona um item manual ao envio (SKU + qtd). Busca título no cadastro; a
+  // qtd entra como planejada E separada (é um item que você decidiu embalar).
+  async function addItemManual() {
+    const sku = novoSku.trim();
+    const qtd = Math.max(0, parseInt(novoQtd, 10) || 0);
+    if (!sku) { toast.warning("Informe o SKU."); return; }
+    if (qtd <= 0) { toast.warning("Informe uma quantidade > 0."); return; }
+    setAddingItem(true);
+    try {
+      const { data: prod } = await supabaseExternal
+        .from("produtos").select("sku, nome, id_tiny").eq("sku", sku).maybeSingle();
+      const ordemMax = itens.reduce((m, i) => Math.max(m, i.ordem ?? 0), 0);
+      const { error } = await supabaseExternal.from("fulfillment_envio_itens").insert({
+        envio_id: envioId,
+        sku,
+        titulo: (prod as { nome?: string } | null)?.nome ?? null,
+        qtd_planejada: qtd,
+        qtd_separada: qtd,
+        conferido: true,
+        ordem: ordemMax + 1,
+      });
+      if (error) throw error;
+      if (!prod) toast.warning(`SKU ${sku} não está no cadastro — adicionado mesmo assim (sem id_tiny não lança estoque).`);
+      else if (!(prod as { id_tiny?: number }).id_tiny) toast.warning(`SKU ${sku} sem id_tiny — não será lançado no estoque.`);
+      else toast.success(`Item ${sku} adicionado (${qtd} un).`);
+      setNovoSku(""); setNovoQtd("");
+      itensQ.refetch();
+    } catch (e) {
+      toast.error("Falha ao adicionar item", { description: (e as Error).message });
+    } finally {
+      setAddingItem(false);
+    }
+  }
+
+  // Lança o EMBALADO (qtd_separada) no Tiny: transferência Geral → depósito Full
+  // do marketplace. Faz preview (dry) primeiro e pede confirmação com o plano.
+  async function lancarEstoque() {
+    setLancandoEstoque(true);
+    try {
+      const { data: prev, error: e1 } = await supabaseExternal.functions.invoke("fulfillment-estoque", {
+        body: { modulo: "preview", envio_id: envioId },
+      });
+      if (e1) throw new Error(e1.message);
+      const pv = prev as {
+        plano?: Array<{ sku: string; embalado: number; entrada_full: number }>;
+        avisos?: Array<{ sku: string; motivo: string }>;
+        deposito_full?: { nome: string };
+        ja_lancado_em?: string | null;
+      };
+      const plano = pv?.plano ?? [];
+      const avisos = pv?.avisos ?? [];
+      if (plano.length === 0) {
+        toast.info("Nada a lançar", {
+          description: pv?.ja_lancado_em
+            ? "Estoque deste envio já foi lançado."
+            : "Nenhum item com quantidade embalada pendente (ou sem id_tiny).",
+        });
+        return;
+      }
+      const totalUn = plano.reduce((s, it) => s + (it.entrada_full || 0), 0);
+      const linhas = plano.map((it) => `• ${it.sku} — ${it.embalado} un`).join("\n");
+      const avisoTxt = avisos.length
+        ? `\n\nIgnorados:\n${avisos.map((a) => `• ${a.sku}: ${a.motivo}`).join("\n")}`
+        : "";
+      const msg =
+        `Lançar estoque no Tiny para o envio ${envio?.numero ?? ""}?\n\n` +
+        `Transferência Geral → ${pv?.deposito_full?.nome}:\n${linhas}\n\n` +
+        `Total: ${totalUn} un em ${plano.length} SKU(s). A mesma quantidade é baixada do Geral.` +
+        `${avisoTxt}\n\nGrava no Tiny e não tem desfazer automático.`;
+      if (!window.confirm(msg)) return;
+
+      const { data: res, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-estoque", {
+        body: { modulo: "lancar", envio_id: envioId, confirmar: 1, lancado_por: "app" },
+      });
+      if (e2) throw new Error(e2.message);
+      const r = res as { ok?: boolean; movimentos?: number; erros?: string[] };
+      if (r?.ok) toast.success(`Estoque lançado · ${r.movimentos} movimento(s) no Tiny`);
+      else toast.error("Lançamento com erros", { description: (r?.erros ?? []).slice(0, 3).join(" | ") });
+      envioQ.refetch();
+    } catch (e) {
+      toast.error("Falha ao lançar estoque", { description: (e as Error).message });
+    } finally {
+      setLancandoEstoque(false);
     }
   }
 
@@ -1988,9 +2083,57 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {envio?.status === "enviado" ? "Enviado" : "Marcar enviado"}
             </Button>
+            {envio?.status === "enviado" && (
+              <Button
+                size="sm"
+                variant={envio?.estoque_lancado_em ? "outline" : "default"}
+                className="gap-2 h-9"
+                disabled={lancandoEstoque}
+                onClick={() => void lancarEstoque()}
+                title={
+                  envio?.estoque_lancado_em
+                    ? `Estoque lançado em ${format(parseISO(envio.estoque_lancado_em), "dd/MM/yyyy HH:mm")}`
+                    : "Lança o embalado no depósito Full do Tiny (transferência do Geral)"
+                }
+              >
+                {lancandoEstoque ? <Loader2 className="h-4 w-4 animate-spin" /> : <Warehouse className="h-4 w-4" />}
+                {envio?.estoque_lancado_em ? "Estoque lançado ✓" : "Lançar estoque no Tiny"}
+              </Button>
+            )}
           </div>
         </div>
         <Barra valor={sep} total={plan} />
+      </Card>
+
+      <Card className="p-3 flex flex-wrap items-end gap-2">
+        <div className="text-sm font-medium mr-1 self-center">Adicionar item</div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] text-muted-foreground">SKU</label>
+          <Input
+            value={novoSku}
+            onChange={(e) => setNovoSku(e.target.value)}
+            placeholder="ex.: 15984"
+            className="h-9 w-40"
+            onKeyDown={(e) => { if (e.key === "Enter") void addItemManual(); }}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] text-muted-foreground">Qtd</label>
+          <Input
+            value={novoQtd}
+            onChange={(e) => setNovoQtd(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            placeholder="0"
+            className="h-9 w-24 text-center tabular-nums"
+            onKeyDown={(e) => { if (e.key === "Enter") void addItemManual(); }}
+          />
+        </div>
+        <Button size="sm" className="h-9 gap-1.5" disabled={addingItem} onClick={() => void addItemManual()}>
+          {addingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Adicionar
+        </Button>
+        <span className="text-[11px] text-muted-foreground self-center">
+          A quantidade entra como embalada (é o que vira estoque no lançamento).
+        </span>
       </Card>
 
       {itensQ.isLoading ? (
@@ -2043,7 +2186,8 @@ function CardItemPacking({
 
   const completo = it.qtd_planejada > 0 && it.qtd_separada >= it.qtd_planejada;
   const commit = () => {
-    const n = Math.max(0, Math.min(parseInt(txt, 10) || 0, it.qtd_planejada));
+    // Sem teto no planejado — o embalado pode exceder o previsto.
+    const n = Math.max(0, parseInt(txt, 10) || 0);
     setTxt(String(n));
     if (n !== it.qtd_separada) onSet(n);
   };
@@ -2085,7 +2229,7 @@ function CardItemPacking({
             />
             <span className="text-muted-foreground font-normal">/ {it.qtd_planejada}</span>
           </div>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onSet(it.qtd_separada + 1)} disabled={completo}>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onSet(it.qtd_separada + 1)}>
             <Plus className="h-4 w-4" />
           </Button>
           {completo ? (
