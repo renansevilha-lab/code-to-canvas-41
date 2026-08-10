@@ -64,6 +64,20 @@ function iniciais(nome: string | null): string {
     .toUpperCase() || "?";
 }
 
+// Cor por quantidade de unidades por pedido — MESMA escala fixa da Separação
+// (ajuda a bancada a não confundir quantidades). 1=neutro, 2=azul, 3=âmbar,
+// 4=fúcsia, 5=esmeralda, 6+=vermelho.
+function corUnidades(n: number): string {
+  switch (Number(n) || 1) {
+    case 1: return "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200";
+    case 2: return "bg-blue-500 text-white";
+    case 3: return "bg-amber-500 text-white";
+    case 4: return "bg-fuchsia-600 text-white";
+    case 5: return "bg-emerald-600 text-white";
+    default: return "bg-red-600 text-white";
+  }
+}
+
 // Cores por tipo de envio (do design). Funcionam em tema claro/escuro.
 const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
   ER: { bg: "#3FA9F5", fg: "#04263F" },
@@ -275,9 +289,15 @@ function MonitoramentoPage() {
 
                 {/* Números */}
                 <div className="flex items-center gap-3.5 bg-muted/60 rounded-[14px] p-3">
-                  <div className="w-[66px] h-[66px] rounded-[15px] shrink-0 flex flex-col items-center justify-center bg-primary/10">
-                    <span className="text-[27px] font-extrabold leading-none tabular-nums text-primary">{num(c.unidades_por_pedido)}</span>
-                    <span className="text-[9px] font-bold uppercase tracking-wide text-primary">un/ped</span>
+                  <div
+                    className={cn(
+                      "w-[66px] h-[66px] rounded-[15px] shrink-0 flex flex-col items-center justify-center",
+                      corUnidades(num(c.unidades_por_pedido)),
+                    )}
+                    title={`${num(c.unidades_por_pedido)} unidade(s) por pedido`}
+                  >
+                    <span className="text-[27px] font-extrabold leading-none tabular-nums">{num(c.unidades_por_pedido)}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-wide opacity-90">un/ped</span>
                   </div>
                   <div className="w-px self-stretch bg-border" />
                   <div className="flex flex-col gap-1.5 flex-1 min-w-0">

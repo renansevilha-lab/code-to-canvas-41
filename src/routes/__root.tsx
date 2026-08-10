@@ -1,9 +1,9 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Component, type ReactNode } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
 
 
-import { LogOut } from "lucide-react";
+import { LogOut, PanelLeft } from "lucide-react";
 import appCss from "../styles.css?url";
 import { AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -156,11 +156,34 @@ function AppShell() {
   const { user, signOut } = useAuth();
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { grupo, titulo } = crumbDaRota(pathname);
+  // Menu recolhível (persistido). Inicia aberto no SSR/primeiro render e lê o
+  // localStorage após montar — evita mismatch de hidratação.
+  const [navAberto, setNavAberto] = useState(true);
+  useEffect(() => {
+    try { setNavAberto(localStorage.getItem("nav.aberto") !== "0"); } catch { /* noop */ }
+  }, []);
+  function toggleNav() {
+    setNavAberto((v) => {
+      const nv = !v;
+      try { localStorage.setItem("nav.aberto", nv ? "1" : "0"); } catch { /* noop */ }
+      return nv;
+    });
+  }
   return (
     <div className="min-h-screen flex w-full bg-background">
-      <AppSidebar />
+      {navAberto && <AppSidebar />}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-border px-8 py-3.5 bg-background/85 backdrop-blur">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-border px-8 py-3.5 bg-background/85 backdrop-blur">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleNav}
+            title={navAberto ? "Recolher menu" : "Expandir menu"}
+            aria-label={navAberto ? "Recolher menu" : "Expandir menu"}
+            className="shrink-0 -ml-2 h-9 w-9"
+          >
+            <PanelLeft className="h-5 w-5" />
+          </Button>
           <div className="flex-1 min-w-0 flex flex-col gap-0.5">
             <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground font-medium">
               <span>{grupo}</span>
