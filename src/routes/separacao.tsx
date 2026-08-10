@@ -1247,6 +1247,50 @@ function gerarZplIdentificador(o: {
   ].join("");
 }
 
+// Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
+// -> PrintNode). Reutilizada pelos dois fluxos de impressão: por lote ("Lotes do
+// dia") e por SKU (fila priorizada). No modo automático pula lote de 1 pedido.
+async function imprimirIdentificadorApi(
+  lote: TagLoteRow,
+  printerId: number,
+  opts?: { auto?: boolean },
+): Promise<void> {
+  if (opts?.auto && lote.qtd_pedidos < 2) return;
+  if (!printerId) {
+    if (!opts?.auto) toast.warning("Escolha a impressora primeiro.");
+    return;
+  }
+  try {
+    let produtoNome = "Vários itens";
+    if (lote.sku) {
+      const { data } = await supabaseExternal
+        .from("produtos").select("nome").eq("sku", lote.sku).maybeSingle();
+      produtoNome = (data as { nome?: string } | null)?.nome || `SKU ${lote.sku}`;
+    }
+    const mUn = /(\d+)\s*un\s*$/i.exec(lote.grupo_origem ?? "");
+    const unPorPedido = mUn ? Number(mUn[1]) : null;
+    const produtos = unPorPedido != null ? unPorPedido * lote.qtd_pedidos : null;
+    const zpl = gerarZplIdentificador({
+      tag: lote.tag,
+      grupo: lote.grupo_origem ?? "",
+      produtoNome,
+      pedidos: lote.qtd_pedidos,
+      produtos,
+      envio: lote.tipo_envio ?? "-",
+    });
+    const { data: res, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+      body: { modulo: "imprimir", zpl, printer_id: printerId, title: `Identificador ${lote.tag}` },
+    });
+    if (error) throw new Error(error.message);
+    if (!(res as { ok?: boolean })?.ok) {
+      throw new Error(JSON.stringify((res as { resposta?: unknown })?.resposta ?? res));
+    }
+    if (!opts?.auto) toast.success(`Identificador do lote ${lote.tag} enviado à impressora`);
+  } catch (e) {
+    toast.error(`Falha no identificador do lote ${lote.tag}`, { description: (e as Error).message });
+  }
+}
+
 // ============ Lotes do dia panel ============
 
 interface LotesDoDiaProps {
@@ -1280,37 +1324,10 @@ function LotesDoDia({
   // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
   // -> PrintNode). No modo automático pula lote de 1 pedido (não faz sentido).
   async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean }) {
-    if (opts?.auto && lote.qtd_pedidos < 2) return;
-    if (!printerId) { if (!opts?.auto) toast.warning("Escolha a impressora primeiro."); return; }
+    if (opts?.auto && lote.qtd_pedidos < 2) return; // evita piscar o spinner à toa
     setImprimindoIdent(lote.tag);
     try {
-      let produtoNome = "Vários itens";
-      if (lote.sku) {
-        const { data } = await supabaseExternal
-          .from("produtos").select("nome").eq("sku", lote.sku).maybeSingle();
-        produtoNome = (data as { nome?: string } | null)?.nome || `SKU ${lote.sku}`;
-      }
-      const mUn = /(\d+)\s*un\s*$/i.exec(lote.grupo_origem ?? "");
-      const unPorPedido = mUn ? Number(mUn[1]) : null;
-      const produtos = unPorPedido != null ? unPorPedido * lote.qtd_pedidos : null;
-      const zpl = gerarZplIdentificador({
-        tag: lote.tag,
-        grupo: lote.grupo_origem ?? "",
-        produtoNome,
-        pedidos: lote.qtd_pedidos,
-        produtos,
-        envio: lote.tipo_envio ?? "-",
-      });
-      const { data: res, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
-        body: { modulo: "imprimir", zpl, printer_id: printerId, title: `Identificador ${lote.tag}` },
-      });
-      if (error) throw new Error(error.message);
-      if (!(res as { ok?: boolean })?.ok) {
-        throw new Error(JSON.stringify((res as { resposta?: unknown })?.resposta ?? res));
-      }
-      if (!opts?.auto) toast.success(`Identificador do lote ${lote.tag} enviado à impressora`);
-    } catch (e) {
-      toast.error(`Falha no identificador do lote ${lote.tag}`, { description: (e as Error).message });
+      await imprimirIdentificadorApi(lote, printerId, opts);
     } finally {
       setImprimindoIdent(null);
     }
@@ -1811,6 +1828,16 @@ function FilaPriorizada() {
       }
       for (const g of groups.values()) {
         await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+      }
+      // Etiqueta identificadora por lote, se o toggle do painel "Lotes do dia"
+      // estiver ligado. Em segundo plano (void); a API pula lotes de 1 pedido.
+      let identOn = false;
+      try { identOn = localStorage.getItem(STORAGE_IDENT) === "1"; } catch { /* noop */ }
+      if (identOn) {
+        for (const g of groups.values()) {
+          const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
+          if (loteRow) void imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+        }
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
       if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
