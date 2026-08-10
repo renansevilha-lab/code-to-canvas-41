@@ -1,8 +1,9 @@
 # Tela de Monitoramento de Lotes — spec, backend e prompt de design
 
-> Estado em 10/ago/2026: **backend PRONTO no Supabase** (views + coluna + RPC).
-> **Falta o front** (`/monitoramento`) — montar o visual no Lovable com o mock
-> abaixo e ligar nas duas views + RPC. Decisões já fechadas com o dono.
+> Estado em 10/ago/2026: **backend PRONTO** (views + coluna + RPC) e **FRONT
+> PRONTO** — `src/routes/monitoramento.tsx` (commit 37ba76a) importado do Claude
+> Design, ligado nas 2 views + RPC (refetch 20s, update otimista no Finalizar).
+> Menu: Pedidos & Operação, módulo `galpao`. Decisões já fechadas com o dono.
 
 ## 1. Objetivo
 Painel de bancada para acompanhar, ao vivo, os pedidos que devem ser **separados
