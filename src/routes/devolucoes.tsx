@@ -18,9 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { DevolucoesRecebidas } from "@/components/DevolucoesRecebidas";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos / constantes
@@ -135,7 +137,25 @@ export const Route = createFileRoute("/devolucoes")({
 
 function DevolucoesPage() {
   const { empresa } = Route.useSearch();
-  return empresa === "svl" ? <SvlDevolucoes /> : <OttzDevolucoes />;
+  const [aba, setAba] = useState<"cancelados" | "recebidas">("cancelados");
+  return (
+    <Tabs value={aba} onValueChange={(v) => setAba(v as "cancelados" | "recebidas")} className="w-full">
+      <div className="px-6 pt-5 max-w-[1400px] mx-auto">
+        <TabsList>
+          <TabsTrigger value="cancelados">Cancelados (NF)</TabsTrigger>
+          <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="cancelados" className="mt-0">
+        {empresa === "svl" ? <SvlDevolucoes /> : <OttzDevolucoes />}
+      </TabsContent>
+      <TabsContent value="recebidas" className="mt-0">
+        <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
+          <DevolucoesRecebidas />
+        </div>
+      </TabsContent>
+    </Tabs>
+  );
 }
 
 // Segmento Ottz / SVL — troca a empresa na URL (sobrevive a remontagem).
