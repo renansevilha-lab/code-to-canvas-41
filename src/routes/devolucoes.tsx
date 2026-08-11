@@ -41,10 +41,11 @@ interface NotaCancelada {
   id_nota_devolucao: number | null;
   precisa_devolucao: boolean | null;
   devolucao_emitida: boolean | null;
+  motivo_cancelamento: string | null;
 }
 
 const COLS =
-  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,id_nota_fiscal,id_nota_devolucao,precisa_devolucao,devolucao_emitida";
+  "tiny_pedido_id,numero_pedido,numero_ecommerce,marca_canal,data_pedido,valor_nf,numero_nf,serie_nf,data_emissao_nf,id_nota_fiscal,id_nota_devolucao,precisa_devolucao,devolucao_emitida,motivo_cancelamento";
 
 const PAGE_SIZE = 50;
 
@@ -654,8 +655,13 @@ function OttzDevolucoes() {
                         />
                       </td>
                       <td className="px-3 py-2 font-mono text-xs">{r.numero_pedido ?? "—"}</td>
-                      <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground max-w-[200px] truncate">
-                        {r.numero_ecommerce ?? "—"}
+                      <td className="px-3 py-2 max-w-[220px]">
+                        <div className="font-mono text-[11px] text-muted-foreground truncate">{r.numero_ecommerce ?? "—"}</div>
+                        {r.motivo_cancelamento && (
+                          <div className="text-[11px] text-destructive/90 truncate" title={r.motivo_cancelamento}>
+                            {r.motivo_cancelamento}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
