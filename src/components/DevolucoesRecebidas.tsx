@@ -49,17 +49,25 @@ function shopeeCor(s: string | null): string {
   if (u === "TO_CONFIRM_RECEIVE" || u === "SHIPPED" || u === "PROCESSED") return "#2F6FB0";
   return "#6C7481";
 }
+function envioCor(e: string | null): string {
+  const u = (e ?? "").toLowerCase();
+  if (u.includes("full")) return "#6E56CF";
+  if (u.includes("xpress") || u.includes("spx")) return "#EE4D2D";
+  if (u.includes("rápid") || u.includes("rapid") || u.includes("turbo")) return "#B7791F";
+  if (u.includes("mercado") || u.includes("meli")) return "#2F6FB0";
+  return "#6C7481";
+}
 
 interface ItemEsperado { sku: string | null; nome: string | null; qtd: number }
 interface Conferido { sku: string | null; nome: string | null; qtd_esperada: number; qtd_recebida: number; estado: Estado; obs: string }
 interface PedidoMatch {
   order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
   situacao: string | null; shopee_status: string | null; rastreio: string | null;
-  itens: ItemEsperado[]; ja_recebida_em: string | null;
+  forma_envio: string | null; itens: ItemEsperado[]; ja_recebida_em: string | null;
 }
 interface Recebida {
   id: string; order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
-  shopee_status: string | null; status: string; recebido_em: string; recebido_por: string | null;
+  shopee_status: string | null; forma_envio: string | null; status: string; recebido_em: string; recebido_por: string | null;
   conferido_ok: boolean | null; observacao: string | null; devolucao_recebida_itens?: { sku: string | null }[];
 }
 
@@ -145,7 +153,7 @@ export function DevolucoesRecebidas() {
     queryFn: async (): Promise<Recebida[]> => {
       const { data, error } = await supabaseExternal
         .from("devolucoes_recebidas")
-        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
+        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, forma_envio, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
         .order("recebido_em", { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -171,7 +179,7 @@ export function DevolucoesRecebidas() {
       if (br) ors.push(`codigo_rastreamento.ilike.${br}*`);
       const { data, error } = await supabaseExternal
         .from("pedidos_tiny")
-        .select("numero_ecommerce, numero_pedido, marca_canal, situacao, codigo_rastreamento")
+        .select("numero_ecommerce, numero_pedido, marca_canal, situacao, codigo_rastreamento, forma_envio")
         .or(ors.join(","))
         .limit(5);
       if (error) throw error;
@@ -179,17 +187,19 @@ export function DevolucoesRecebidas() {
         setErro(`Pedido não encontrado para "${raw}". Confira o código e tente de novo.`);
         return;
       }
-      const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null };
+      const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };
 
       const [{ data: sepRows }, { data: pRow }, { data: jaRec }] = await Promise.all([
         supabaseExternal.from("separacao_tiny").select("sku_unico, nome_produto, qtd_unidades, qtd_skus, itens_json").eq("numero_ecommerce", pt.numero_ecommerce).limit(1),
-        supabaseExternal.from("pedidos").select("status_pedido").eq("id", pt.numero_ecommerce ?? "").maybeSingle(),
+        supabaseExternal.from("pedidos").select("status_pedido, opcao_envio").eq("id", pt.numero_ecommerce ?? "").maybeSingle(),
         supabaseExternal.from("devolucoes_recebidas").select("recebido_em").eq("order_sn", pt.numero_ecommerce).order("recebido_em", { ascending: false }).limit(1),
       ]);
+      const p = pRow as { status_pedido?: string; opcao_envio?: string } | null;
       const itens = construirItens(sepRows?.[0]);
       setPedido({
         order_sn: pt.numero_ecommerce, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
-        situacao: pt.situacao, shopee_status: (pRow as { status_pedido?: string } | null)?.status_pedido ?? null,
+        situacao: pt.situacao, shopee_status: p?.status_pedido ?? null,
+        forma_envio: p?.opcao_envio || pt.forma_envio || null,
         rastreio: pt.codigo_rastreamento, itens,
         ja_recebida_em: (jaRec?.[0]?.recebido_em as string) ?? null,
       });
@@ -210,7 +220,7 @@ export function DevolucoesRecebidas() {
       .eq("devolucao_id", r.id).order("criado_em", { ascending: true });
     setPedido({
       order_sn: r.order_sn, tiny_numero: r.tiny_numero, marca_canal: r.marca_canal,
-      situacao: null, shopee_status: r.shopee_status, rastreio: null, itens: [], ja_recebida_em: null,
+      situacao: null, shopee_status: r.shopee_status, forma_envio: r.forma_envio, rastreio: null, itens: [], ja_recebida_em: null,
     });
     setConf((itens ?? []).map((it) => {
       const i = it as { sku: string | null; nome_produto: string | null; qtd_esperada: number; qtd_recebida: number | null; estado: string | null; observacao: string | null };
@@ -254,6 +264,7 @@ export function DevolucoesRecebidas() {
           order_sn: pedido.order_sn, tiny_numero: pedido.tiny_numero, rastreio: pedido.rastreio,
           marketplace: marketplaceDoCanal(pedido.marca_canal), marca_canal: pedido.marca_canal,
           empresa: empresaDoCanal(pedido.marca_canal), shopee_status: pedido.shopee_status,
+          forma_envio: pedido.forma_envio,
           status: conferir ? "conferida" : "recebida", recebido_por: user?.email ?? null,
           conferido_ok: conferidoOk, observacao: obs.trim() || null,
         }).select("id").single();
@@ -320,6 +331,7 @@ export function DevolucoesRecebidas() {
               <span className="text-2xl font-extrabold font-mono tracking-tight">{pedido.order_sn}</span>
               <Pill cor="#6C7481">Tiny {pedido.tiny_numero}</Pill>
               <Pill cor={canalCor(pedido.marca_canal)}>{pedido.marca_canal}</Pill>
+              {pedido.forma_envio && <Pill cor={envioCor(pedido.forma_envio)}>{pedido.forma_envio}</Pill>}
               {pedido.situacao && <Pill cor={situacaoCor(pedido.situacao)}><span className="capitalize">{pedido.situacao}</span></Pill>}
               {pedido.shopee_status && <Pill cor={shopeeCor(pedido.shopee_status)}>Shopee: {pedido.shopee_status}</Pill>}
             </div>
@@ -458,7 +470,10 @@ export function DevolucoesRecebidas() {
                           </div>
                         </td>
                         <td className="py-3 px-2">
-                          <span className="text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap" style={{ background: `${cCor}1F`, color: cCor }}>{r.marca_canal}</span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className="text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap" style={{ background: `${cCor}1F`, color: cCor }}>{r.marca_canal}</span>
+                            {r.forma_envio && <span className="text-[10.5px] font-semibold" style={{ color: envioCor(r.forma_envio) }}>{r.forma_envio}</span>}
+                          </div>
                         </td>
                         <td className="py-3 px-2 min-w-0">
                           {pendente ? (
