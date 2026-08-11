@@ -1,9 +1,10 @@
 # Tela "Devoluções Recebidas" — escopo, backend e prompt de design
 
-> Estado em 10/ago/2026: **backend PRONTO** (tabelas + match validado ao vivo) e
-> **lógica do front PRONTA** (`src/components/DevolucoesRecebidas.tsx`, sub-aba de
-> `/devolucoes`). **Falta o VISUAL** — montar o mock no Claude Design com o prompt
-> abaixo e re-skinar por cima. Decisões fechadas com o dono.
+> Estado em 10/ago/2026: **Fase A COMPLETA e no ar** (commit 1afe802) — backend
+> (tabelas + match validado ao vivo) + front `src/components/DevolucoesRecebidas.tsx`
+> re-skinado do Claude Design (`Devoluções Recebidas.dc.html`), integrado como
+> **sub-aba de `/devolucoes`** ("Cancelados (NF)" + "Recebidas"). Faltam Fase B
+> (gerar/emitir NF) e Fase C (integração Shopee/ML). Prompt de design abaixo (mantido).
 
 ## 1. Objetivo
 Quando um **pacote de devolução chega fisicamente na empresa**, o operador **bipa
