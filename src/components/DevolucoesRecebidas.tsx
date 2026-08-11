@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PackageSearch, Loader2, Check, ScanLine, AlertTriangle, Package as PackageIcon, Minus, Plus } from "lucide-react";
+import { PackageSearch, Loader2, Check, ScanLine, AlertTriangle, Package as PackageIcon, Minus, Plus, ClipboardCheck } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
@@ -14,10 +14,11 @@ import { useAuth } from "@/hooks/useAuth";
 
 // ============================================================================
 // Devoluções recebidas (Fase A) — o pacote físico chega, o operador bipa/digita
-// o rastreio (BR…) ou o nº do pedido; o sistema casa com o pedido, mostra os
-// itens esperados e o operador confere (qtd + estado) antes de registrar.
-// Visual do Claude Design "Devoluções Recebidas.dc.html" (re-skin sobre os
-// tokens do app). Backend: devolucoes_recebidas + devolucao_recebida_itens.
+// o rastreio (BR…) ou o nº do pedido; casa com o pedido e:
+//   (a) "Só registrar" — dá entrada rápida (status 'recebida', a conferir); ou
+//   (b) "Registrar conferido" — já confere itens (qtd + estado) -> 'conferida'.
+// A lista permite CONFERIR depois um registro pendente. Mostra o status Shopee.
+// Backend: devolucoes_recebidas + devolucao_recebida_itens. Sem edge function.
 // ============================================================================
 
 type Estado = "ok" | "quebrado" | "furado" | "faltando";
@@ -41,17 +42,25 @@ function situacaoCor(s: string | null): string {
   if (u.includes("trânsit") || u.includes("transit")) return "#2F6FB0";
   return "#6C7481";
 }
+function shopeeCor(s: string | null): string {
+  const u = (s ?? "").toUpperCase();
+  if (u === "COMPLETED") return "#0E8A5F";
+  if (u === "TO_RETURN" || u === "CANCELLED" || u === "IN_CANCEL") return "#C9432F";
+  if (u === "TO_CONFIRM_RECEIVE" || u === "SHIPPED" || u === "PROCESSED") return "#2F6FB0";
+  return "#6C7481";
+}
 
 interface ItemEsperado { sku: string | null; nome: string | null; qtd: number }
 interface Conferido { sku: string | null; nome: string | null; qtd_esperada: number; qtd_recebida: number; estado: Estado; obs: string }
 interface PedidoMatch {
   order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
-  situacao: string | null; rastreio: string | null; itens: ItemEsperado[]; ja_recebida_em: string | null;
+  situacao: string | null; shopee_status: string | null; rastreio: string | null;
+  itens: ItemEsperado[]; ja_recebida_em: string | null;
 }
 interface Recebida {
   id: string; order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
-  status: string; recebido_em: string; recebido_por: string | null; conferido_ok: boolean | null;
-  observacao: string | null; devolucao_recebida_itens?: { sku: string | null }[];
+  shopee_status: string | null; status: string; recebido_em: string; recebido_por: string | null;
+  conferido_ok: boolean | null; observacao: string | null; devolucao_recebida_itens?: { sku: string | null }[];
 }
 
 const num = (x: unknown) => { const n = Number(x ?? 0); return Number.isFinite(n) ? n : 0; };
@@ -74,7 +83,6 @@ function construirItens(sep: { itens_json?: unknown; sku_unico?: string | null; 
   return [];
 }
 
-// Fotos por SKU (view_foto_produto), mesmo padrão do Fulfillment.
 function useFotos(skus: (string | null | undefined)[]) {
   const chave = useMemo(() => Array.from(new Set(skus.filter((s): s is string => !!s))).sort(), [skus]);
   return useQuery({
@@ -127,6 +135,8 @@ export function DevolucoesRecebidas() {
   const [conf, setConf] = useState<Conferido[]>([]);
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // Se setado, estamos conferindo um registro JÁ existente (da lista).
+  const [conferindoId, setConferindoId] = useState<string | null>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -135,7 +145,7 @@ export function DevolucoesRecebidas() {
     queryFn: async (): Promise<Recebida[]> => {
       const { data, error } = await supabaseExternal
         .from("devolucoes_recebidas")
-        .select("id, order_sn, tiny_numero, marca_canal, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
+        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
         .order("recebido_em", { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -148,10 +158,12 @@ export function DevolucoesRecebidas() {
   const fotosItens = useFotos(conf.map((c) => c.sku));
   const fotosLista = useFotos(lista.map((r) => r.devolucao_recebida_itens?.[0]?.sku));
 
+  function limpar() { setTermo(""); setPedido(null); setConf([]); setObs(""); setConferindoId(null); inputRef.current?.focus(); }
+
   async function buscar() {
     const raw = termo.trim();
     if (!raw) return;
-    setBuscando(true); setErro(null); setPedido(null); setConf([]);
+    setBuscando(true); setErro(null); setPedido(null); setConf([]); setConferindoId(null); setObs("");
     try {
       const brMatch = raw.match(/BR[A-Z0-9]{6,}/i);
       const br = brMatch ? brMatch[0] : null;
@@ -168,16 +180,17 @@ export function DevolucoesRecebidas() {
         return;
       }
       const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null };
-      const { data: sepRows } = await supabaseExternal
-        .from("separacao_tiny").select("sku_unico, nome_produto, qtd_unidades, qtd_skus, itens_json")
-        .eq("numero_ecommerce", pt.numero_ecommerce).limit(1);
+
+      const [{ data: sepRows }, { data: pRow }, { data: jaRec }] = await Promise.all([
+        supabaseExternal.from("separacao_tiny").select("sku_unico, nome_produto, qtd_unidades, qtd_skus, itens_json").eq("numero_ecommerce", pt.numero_ecommerce).limit(1),
+        supabaseExternal.from("pedidos").select("status_pedido").eq("id", pt.numero_ecommerce ?? "").maybeSingle(),
+        supabaseExternal.from("devolucoes_recebidas").select("recebido_em").eq("order_sn", pt.numero_ecommerce).order("recebido_em", { ascending: false }).limit(1),
+      ]);
       const itens = construirItens(sepRows?.[0]);
-      const { data: jaRec } = await supabaseExternal
-        .from("devolucoes_recebidas").select("recebido_em").eq("order_sn", pt.numero_ecommerce)
-        .order("recebido_em", { ascending: false }).limit(1);
       setPedido({
         order_sn: pt.numero_ecommerce, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
-        situacao: pt.situacao, rastreio: pt.codigo_rastreamento, itens,
+        situacao: pt.situacao, shopee_status: (pRow as { status_pedido?: string } | null)?.status_pedido ?? null,
+        rastreio: pt.codigo_rastreamento, itens,
         ja_recebida_em: (jaRec?.[0]?.recebido_em as string) ?? null,
       });
       setConf(itens.map((it) => ({ sku: it.sku, nome: it.nome, qtd_esperada: it.qtd, qtd_recebida: it.qtd, estado: "ok", obs: "" })));
@@ -189,41 +202,80 @@ export function DevolucoesRecebidas() {
     }
   }
 
+  // Abre a conferência de um registro JÁ recebido (pendente) a partir da lista.
+  async function abrirConferencia(r: Recebida) {
+    const { data: itens } = await supabaseExternal
+      .from("devolucao_recebida_itens")
+      .select("sku, nome_produto, qtd_esperada, qtd_recebida, estado, observacao")
+      .eq("devolucao_id", r.id).order("criado_em", { ascending: true });
+    setPedido({
+      order_sn: r.order_sn, tiny_numero: r.tiny_numero, marca_canal: r.marca_canal,
+      situacao: null, shopee_status: r.shopee_status, rastreio: null, itens: [], ja_recebida_em: null,
+    });
+    setConf((itens ?? []).map((it) => {
+      const i = it as { sku: string | null; nome_produto: string | null; qtd_esperada: number; qtd_recebida: number | null; estado: string | null; observacao: string | null };
+      return { sku: i.sku, nome: i.nome_produto, qtd_esperada: num(i.qtd_esperada), qtd_recebida: i.qtd_recebida == null ? num(i.qtd_esperada) : num(i.qtd_recebida), estado: (i.estado as Estado) ?? "ok", obs: i.observacao ?? "" };
+    }));
+    setObs(r.observacao ?? "");
+    setConferindoId(r.id);
+    setErro(null); setTermo("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function setConfItem(i: number, patch: Partial<Conferido>) {
     setConf((old) => old.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
   }
 
-  function limpar() { setTermo(""); setPedido(null); setConf([]); setObs(""); inputRef.current?.focus(); }
-
-  async function registrar() {
+  async function salvar(conferir: boolean) {
     if (!pedido) return;
     setSalvando(true);
     try {
-      const conferidoOk = conf.every((c) => c.estado === "ok" && c.qtd_recebida === c.qtd_esperada);
-      const { data: dev, error } = await supabaseExternal
-        .from("devolucoes_recebidas")
-        .insert({
+      const conferidoOk = conferir ? conf.every((c) => c.estado === "ok" && c.qtd_recebida === c.qtd_esperada) : null;
+
+      if (conferindoId) {
+        // Conferência de um registro já existente -> UPDATE.
+        const { error } = await supabaseExternal.from("devolucoes_recebidas").update({
+          status: "conferida", conferido_ok: conferidoOk, observacao: obs.trim() || null, atualizado_em: new Date().toISOString(),
+        }).eq("id", conferindoId);
+        if (error) throw error;
+        await supabaseExternal.from("devolucao_recebida_itens").delete().eq("devolucao_id", conferindoId);
+        if (conf.length) {
+          const linhas = conf.map((c) => ({
+            devolucao_id: conferindoId, sku: c.sku, nome_produto: c.nome, qtd_esperada: c.qtd_esperada,
+            qtd_recebida: c.qtd_recebida, estado: c.estado, observacao: c.obs.trim() || null,
+          }));
+          const { error: e2 } = await supabaseExternal.from("devolucao_recebida_itens").insert(linhas);
+          if (e2) throw e2;
+        }
+        toast.success(`Conferência do pedido ${pedido.order_sn} salva`, { description: conferidoOk ? "Tudo certo ✓" : "Com ressalva" });
+      } else {
+        // Novo registro (scan) -> INSERT (só registrar OU já conferido).
+        const { data: dev, error } = await supabaseExternal.from("devolucoes_recebidas").insert({
           order_sn: pedido.order_sn, tiny_numero: pedido.tiny_numero, rastreio: pedido.rastreio,
           marketplace: marketplaceDoCanal(pedido.marca_canal), marca_canal: pedido.marca_canal,
-          empresa: empresaDoCanal(pedido.marca_canal), status: "conferida",
-          recebido_por: user?.email ?? null, conferido_ok: conferidoOk, observacao: obs.trim() || null,
-        })
-        .select("id").single();
-      if (error) throw error;
-      const devId = (dev as { id: string }).id;
-      if (conf.length) {
-        const linhas = conf.map((c) => ({
-          devolucao_id: devId, sku: c.sku, nome_produto: c.nome, qtd_esperada: c.qtd_esperada,
-          qtd_recebida: c.qtd_recebida, estado: c.estado, observacao: c.obs.trim() || null,
-        }));
-        const { error: e2 } = await supabaseExternal.from("devolucao_recebida_itens").insert(linhas);
-        if (e2) throw e2;
+          empresa: empresaDoCanal(pedido.marca_canal), shopee_status: pedido.shopee_status,
+          status: conferir ? "conferida" : "recebida", recebido_por: user?.email ?? null,
+          conferido_ok: conferidoOk, observacao: obs.trim() || null,
+        }).select("id").single();
+        if (error) throw error;
+        const devId = (dev as { id: string }).id;
+        if (conf.length) {
+          const linhas = conf.map((c) => ({
+            devolucao_id: devId, sku: c.sku, nome_produto: c.nome, qtd_esperada: c.qtd_esperada,
+            qtd_recebida: conferir ? c.qtd_recebida : null, estado: conferir ? c.estado : null, observacao: c.obs.trim() || null,
+          }));
+          const { error: e2 } = await supabaseExternal.from("devolucao_recebida_itens").insert(linhas);
+          if (e2) throw e2;
+        }
+        toast.success(
+          conferir ? `Devolução ${pedido.order_sn} registrada e conferida` : `Devolução ${pedido.order_sn} registrada — a conferir`,
+          { description: conferir ? (conferidoOk ? "Tudo certo ✓" : "Com ressalva") : "Confira os itens quando quiser, pela lista." },
+        );
       }
-      toast.success(`Devolução do pedido ${pedido.order_sn} registrada`, { description: conferidoOk ? "Tudo certo ✓" : "Registrada com ressalva" });
       limpar();
       listaQ.refetch();
     } catch (e) {
-      toast.error("Falha ao registrar devolução", { description: (e as Error).message });
+      toast.error("Falha ao salvar devolução", { description: (e as Error).message });
     } finally {
       setSalvando(false);
     }
@@ -259,14 +311,20 @@ export function DevolucoesRecebidas() {
       {pedido && (
         <Card className="p-5 flex flex-col gap-4">
           <div className="flex flex-col gap-2.5">
+            {conferindoId && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-primary self-start">
+                <ClipboardCheck className="h-3.5 w-3.5" /> Conferindo devolução já registrada
+              </span>
+            )}
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="text-2xl font-extrabold font-mono tracking-tight">{pedido.order_sn}</span>
               <Pill cor="#6C7481">Tiny {pedido.tiny_numero}</Pill>
               <Pill cor={canalCor(pedido.marca_canal)}>{pedido.marca_canal}</Pill>
               {pedido.situacao && <Pill cor={situacaoCor(pedido.situacao)}><span className="capitalize">{pedido.situacao}</span></Pill>}
+              {pedido.shopee_status && <Pill cor={shopeeCor(pedido.shopee_status)}>Shopee: {pedido.shopee_status}</Pill>}
             </div>
-            <span className="text-[12.5px] text-muted-foreground font-mono">{pedido.rastreio ?? "—"}</span>
-            {pedido.ja_recebida_em && (
+            {pedido.rastreio && <span className="text-[12.5px] text-muted-foreground font-mono">{pedido.rastreio}</span>}
+            {pedido.ja_recebida_em && !conferindoId && (
               <div className="inline-flex items-center gap-2 rounded-[10px] px-3 py-2 self-start" style={{ background: "#B7791F16", border: "1px solid #B7791F44" }}>
                 <AlertTriangle className="h-3.5 w-3.5" style={{ color: "#B7791F" }} />
                 <span className="text-[12.5px] font-semibold" style={{ color: "#B7791F" }}>
@@ -336,10 +394,24 @@ export function DevolucoesRecebidas() {
             <Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Observação geral"
               className="flex-1 min-w-[220px] h-11 bg-muted/50" />
             <Button variant="outline" className="h-11 px-4" onClick={limpar}>Cancelar</Button>
-            <Button className="h-11 px-5 gap-2 font-bold" disabled={salvando} onClick={() => void registrar()}>
-              {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Registrar devolução
-            </Button>
+            {conferindoId ? (
+              <Button className="h-11 px-5 gap-2 font-bold" disabled={salvando} onClick={() => void salvar(true)}>
+                {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
+                Salvar conferência
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" className="h-11 px-4 gap-2" disabled={salvando} onClick={() => void salvar(false)}
+                  title="Dá entrada agora; a conferência dos itens fica pra depois (pela lista)">
+                  {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Só registrar
+                </Button>
+                <Button className="h-11 px-5 gap-2 font-bold" disabled={salvando} onClick={() => void salvar(true)}>
+                  {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
+                  Registrar conferido
+                </Button>
+              </>
+            )}
           </div>
         </Card>
       )}
@@ -356,10 +428,10 @@ export function DevolucoesRecebidas() {
         ) : (
           <Card className="overflow-hidden p-0">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
+              <table className="w-full text-sm min-w-[760px]">
                 <thead>
                   <tr className="bg-muted/50 border-b text-[10.5px] uppercase tracking-wider text-muted-foreground">
-                    <th className="w-[92px] py-3 px-4"></th>
+                    <th className="w-[80px] py-3 px-4"></th>
                     <th className="text-left py-3 px-2 font-bold whitespace-nowrap">Recebido</th>
                     <th className="text-left py-3 px-2 font-bold whitespace-nowrap">Pedido</th>
                     <th className="text-left py-3 px-2 font-bold whitespace-nowrap">Canal</th>
@@ -371,28 +443,41 @@ export function DevolucoesRecebidas() {
                   {lista.map((r) => {
                     const sku = r.devolucao_recebida_itens?.[0]?.sku ?? null;
                     const cCor = canalCor(r.marca_canal);
+                    const pendente = r.status === "recebida";
                     return (
                       <tr key={r.id} className="border-b last:border-0">
-                        <td className="py-2 px-4"><Foto url={sku ? fotosLista.data?.[sku] : undefined} className="w-[64px] h-[64px] rounded-[14px]" /></td>
+                        <td className="py-2 px-4"><Foto url={sku ? fotosLista.data?.[sku] : undefined} className="w-[60px] h-[60px] rounded-[14px]" /></td>
                         <td className="py-3 px-2 text-[12.5px] text-muted-foreground font-mono whitespace-nowrap">{format(parseISO(r.recebido_em), "dd/MM HH:mm")}</td>
                         <td className="py-3 px-2 min-w-0">
-                          <div className="flex flex-col leading-tight">
+                          <div className="flex flex-col leading-tight gap-0.5">
                             <span className="text-[12.5px] font-semibold font-mono truncate">{r.order_sn}</span>
                             <span className="text-[10.5px] text-muted-foreground">Tiny {r.tiny_numero}</span>
+                            {r.shopee_status && (
+                              <span className="text-[10px] font-semibold" style={{ color: shopeeCor(r.shopee_status) }}>Shopee: {r.shopee_status}</span>
+                            )}
                           </div>
                         </td>
                         <td className="py-3 px-2">
                           <span className="text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap" style={{ background: `${cCor}1F`, color: cCor }}>{r.marca_canal}</span>
                         </td>
                         <td className="py-3 px-2 min-w-0">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {r.conferido_ok ? (
-                              <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#0E8A5F1F", color: "#0E8A5F" }}>Tudo certo ✓</span>
-                            ) : (
-                              <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#B7791F1F", color: "#B7791F" }}>Com ressalva ⚠</span>
-                            )}
-                            <span className="text-[12.5px] text-muted-foreground truncate">{r.observacao ?? ""}</span>
-                          </div>
+                          {pendente ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#B7791F1F", color: "#B7791F" }}>A conferir</span>
+                              <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => void abrirConferencia(r)}>
+                                <ClipboardCheck className="h-3.5 w-3.5" /> Conferir
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3 min-w-0">
+                              {r.conferido_ok ? (
+                                <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#0E8A5F1F", color: "#0E8A5F" }}>Tudo certo ✓</span>
+                              ) : (
+                                <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#B7791F1F", color: "#B7791F" }}>Com ressalva ⚠</span>
+                              )}
+                              <span className="text-[12.5px] text-muted-foreground truncate">{r.observacao ?? ""}</span>
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-2 text-[12.5px] whitespace-nowrap">{(r.recebido_por ?? "").split("@")[0]}</td>
                       </tr>
