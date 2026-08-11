@@ -63,11 +63,14 @@ interface Conferido { sku: string | null; nome: string | null; qtd_esperada: num
 interface PedidoMatch {
   order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
   situacao: string | null; shopee_status: string | null; rastreio: string | null;
-  forma_envio: string | null; motivo_cancelamento: string | null; itens: ItemEsperado[]; ja_recebida_em: string | null;
+  forma_envio: string | null; motivo_cancelamento: string | null;
+  motivo_devolucao: string | null; texto_devolucao: string | null;
+  itens: ItemEsperado[]; ja_recebida_em: string | null;
 }
 interface Recebida {
   id: string; order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
-  shopee_status: string | null; forma_envio: string | null; status: string; recebido_em: string; recebido_por: string | null;
+  shopee_status: string | null; forma_envio: string | null; motivo_devolucao: string | null;
+  status: string; recebido_em: string; recebido_por: string | null;
   conferido_ok: boolean | null; observacao: string | null; devolucao_recebida_itens?: { sku: string | null }[];
 }
 
@@ -153,7 +156,7 @@ export function DevolucoesRecebidas() {
     queryFn: async (): Promise<Recebida[]> => {
       const { data, error } = await supabaseExternal
         .from("devolucoes_recebidas")
-        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, forma_envio, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
+        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, forma_envio, motivo_devolucao, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
         .order("recebido_em", { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -189,18 +192,21 @@ export function DevolucoesRecebidas() {
       }
       const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };
 
-      const [{ data: sepRows }, { data: pRow }, { data: jaRec }] = await Promise.all([
+      const [{ data: sepRows }, { data: pRow }, { data: jaRec }, { data: devRows }] = await Promise.all([
         supabaseExternal.from("separacao_tiny").select("sku_unico, nome_produto, qtd_unidades, qtd_skus, itens_json").eq("numero_ecommerce", pt.numero_ecommerce).limit(1),
         supabaseExternal.from("pedidos").select("status_pedido, opcao_envio, motivo_cancelamento").eq("id", pt.numero_ecommerce ?? "").maybeSingle(),
         supabaseExternal.from("devolucoes_recebidas").select("recebido_em").eq("order_sn", pt.numero_ecommerce).order("recebido_em", { ascending: false }).limit(1),
+        supabaseExternal.from("shopee_devolucoes").select("reason, text_reason").eq("order_sn", pt.numero_ecommerce ?? "").order("update_time", { ascending: false, nullsFirst: false }).limit(1),
       ]);
       const p = pRow as { status_pedido?: string; opcao_envio?: string; motivo_cancelamento?: string } | null;
+      const dev = devRows?.[0] as { reason?: string; text_reason?: string } | undefined;
       const itens = construirItens(sepRows?.[0]);
       setPedido({
         order_sn: pt.numero_ecommerce, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
         situacao: pt.situacao, shopee_status: p?.status_pedido ?? null,
         forma_envio: p?.opcao_envio || pt.forma_envio || null,
         motivo_cancelamento: p?.motivo_cancelamento ?? null,
+        motivo_devolucao: dev?.reason ?? null, texto_devolucao: dev?.text_reason ?? null,
         rastreio: pt.codigo_rastreamento, itens,
         ja_recebida_em: (jaRec?.[0]?.recebido_em as string) ?? null,
       });
@@ -221,7 +227,8 @@ export function DevolucoesRecebidas() {
       .eq("devolucao_id", r.id).order("criado_em", { ascending: true });
     setPedido({
       order_sn: r.order_sn, tiny_numero: r.tiny_numero, marca_canal: r.marca_canal,
-      situacao: null, shopee_status: r.shopee_status, forma_envio: r.forma_envio, motivo_cancelamento: null, rastreio: null, itens: [], ja_recebida_em: null,
+      situacao: null, shopee_status: r.shopee_status, forma_envio: r.forma_envio, motivo_cancelamento: null,
+      motivo_devolucao: r.motivo_devolucao ?? null, texto_devolucao: null, rastreio: null, itens: [], ja_recebida_em: null,
     });
     setConf((itens ?? []).map((it) => {
       const i = it as { sku: string | null; nome_produto: string | null; qtd_esperada: number; qtd_recebida: number | null; estado: string | null; observacao: string | null };
@@ -266,6 +273,7 @@ export function DevolucoesRecebidas() {
           marketplace: marketplaceDoCanal(pedido.marca_canal), marca_canal: pedido.marca_canal,
           empresa: empresaDoCanal(pedido.marca_canal), shopee_status: pedido.shopee_status,
           forma_envio: pedido.forma_envio,
+          motivo_devolucao: pedido.motivo_devolucao, texto_devolucao: pedido.texto_devolucao,
           status: conferir ? "conferida" : "recebida", recebido_por: user?.email ?? null,
           conferido_ok: conferidoOk, observacao: obs.trim() || null,
         }).select("id").single();
@@ -341,6 +349,15 @@ export function DevolucoesRecebidas() {
               <div className="inline-flex items-center gap-2 rounded-[10px] px-3 py-2 self-start" style={{ background: "#C9432F12", border: "1px solid #C9432F33" }}>
                 <span className="text-[11px] font-bold uppercase tracking-wide shrink-0" style={{ color: "#C9432F" }}>Motivo cancelamento</span>
                 <span className="text-[12.5px] font-medium text-foreground">{pedido.motivo_cancelamento}</span>
+              </div>
+            )}
+            {pedido.motivo_devolucao && (
+              <div className="flex flex-col gap-1 rounded-[10px] px-3 py-2 self-start max-w-full" style={{ background: "#B7791F12", border: "1px solid #B7791F33" }}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide shrink-0" style={{ color: "#B7791F" }}>Motivo devolução</span>
+                  <span className="text-[12.5px] font-semibold text-foreground">{pedido.motivo_devolucao}</span>
+                </div>
+                {pedido.texto_devolucao && <span className="text-[12px] text-muted-foreground italic">“{pedido.texto_devolucao}”</span>}
               </div>
             )}
             {pedido.ja_recebida_em && !conferindoId && (
@@ -473,6 +490,9 @@ export function DevolucoesRecebidas() {
                             <span className="text-[10.5px] text-muted-foreground">Tiny {r.tiny_numero}</span>
                             {r.shopee_status && (
                               <span className="text-[10px] font-semibold" style={{ color: shopeeCor(r.shopee_status) }}>Shopee: {r.shopee_status}</span>
+                            )}
+                            {r.motivo_devolucao && (
+                              <span className="text-[10px] font-semibold" style={{ color: "#B7791F" }} title="Motivo da devolução (Shopee)">Devol: {r.motivo_devolucao}</span>
                             )}
                           </div>
                         </td>
