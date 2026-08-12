@@ -202,7 +202,29 @@ export function DevolucoesRecebidas() {
           data = (r2.data ?? []) as PT[];
         }
       }
-      // Fallback 3: rastreio REVERSO de devolução Shopee (buyer return) -> order_sn -> pedido.
+      // Fallback 3: rastreio FORWARD que o Tiny não capturou (~1/3 dos pedidos Shopee vêm
+      // com codigo_rastreamento NULL). shopee_rastreio guarda o rastreio de ida completo
+      // (BR…SPXLM…) puxado da Shopee (cron); a etiqueta bipada é o prefixo dele.
+      if (data.length === 0) {
+        const maior = [...tokens].sort((a, b) => b.length - a.length)[0];
+        if (maior && maior.length >= 10) {
+          const rr = await supabaseExternal.from("shopee_rastreio")
+            .select("order_sn, shop_id")
+            .ilike("tracking_number", `${maior}%`)
+            .limit(1);
+          const osn = (rr.data?.[0] as { order_sn?: string } | undefined)?.order_sn;
+          if (osn) {
+            const r3 = await supabaseExternal.from("pedidos_tiny").select(sel).eq("numero_ecommerce", osn).limit(1);
+            data = (r3.data ?? []) as PT[];
+            if (data.length === 0) {
+              const shop = (rr.data?.[0] as { shop_id?: number } | undefined)?.shop_id;
+              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Sevilla Store [SHOPEE]" : null;
+              data = [{ numero_ecommerce: osn, numero_pedido: null, marca_canal: canal, situacao: null, codigo_rastreamento: maior, forma_envio: null }];
+            }
+          }
+        }
+      }
+      // Fallback 4: rastreio REVERSO de devolução Shopee (buyer return) -> order_sn -> pedido.
       // A etiqueta de devolução do comprador traz um rastreio NOVO (BR…Y/G), diferente do
       // forward que guardamos; ele fica em shopee_devolucoes.tracking_number.
       if (data.length === 0) {
