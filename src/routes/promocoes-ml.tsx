@@ -26,6 +26,7 @@ interface PromoItem {
   preco_min: number | null; preco_max: number | null; preco_sugerido: number | null;
   seller_percentage: number | null; meli_percentage: number | null;
   comissao_promo: number | null; frete: number | null; frete_estimado: boolean;
+  logistic_type: string | null; free_shipping: boolean | null; sold_quantity: number | null; date_created: string | null;
   cmv: number | null; imposto_promo: number | null; desconto_pct: number | null;
   promocao_nome: string | null; promocao_tipo: string | null; promocao_status: string | null;
   finish_date: string | null; titulo: string | null; foto: string | null; permalink: string | null;
@@ -71,8 +72,9 @@ function PromocoesMLPage() {
   const [promoSel, setPromoSel] = useState<string>("todas");
   const [statusFiltro, setStatusFiltro] = useState<"todas" | "started" | "candidate">("todas");
   const [soPrejuizo, setSoPrejuizo] = useState(false);
+  const [soFull, setSoFull] = useState(false);
   const [busca, setBusca] = useState("");
-  const [ordem, setOrdem] = useState<"delta" | "mc_promo" | "desconto">("delta");
+  const [ordem, setOrdem] = useState<"delta" | "mc_promo" | "desconto" | "vendas" | "recentes">("delta");
   const [sincronizando, setSincronizando] = useState(false);
   const [buscandoElegiveis, setBuscandoElegiveis] = useState(false);
   const [confirmar, setConfirmar] = useState<{ item: PromoItem; acao: "aplicar" | "remover" } | null>(null);
@@ -116,7 +118,7 @@ function PromocoesMLPage() {
     queryKey: ["promocoes-ml", "itens"],
     queryFn: async (): Promise<PromoItem[]> => {
       const { data, error } = await supabaseExternal.from("view_ml_promocoes")
-        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
+        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, logistic_type, free_shipping, sold_quantity, date_created, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
       if (error) throw error;
       return (data ?? []) as PromoItem[];
     },
@@ -132,16 +134,19 @@ function PromocoesMLPage() {
       if (promoSel !== "todas" && i.promocao_id !== promoSel) return false;
       if (statusFiltro !== "todas" && i.status !== statusFiltro) return false;
       if (soPrejuizo && !i.mc_negativa) return false;
+      if (soFull && i.logistic_type !== "fulfillment") return false;
       if (b && !(`${i.sku ?? ""} ${i.mlb} ${i.titulo ?? ""}`.toLowerCase().includes(b))) return false;
       return true;
     });
     arr = arr.sort((a, z) => {
-      if (ordem === "delta") return num(a.delta_mc) - num(z.delta_mc); // mais negativo primeiro
       if (ordem === "mc_promo") return num(a.mc_promo) - num(z.mc_promo);
-      return num(z.desconto_pct) - num(a.desconto_pct);
+      if (ordem === "desconto") return num(z.desconto_pct) - num(a.desconto_pct);
+      if (ordem === "vendas") return num(z.sold_quantity) - num(a.sold_quantity);
+      if (ordem === "recentes") return (z.date_created ?? "").localeCompare(a.date_created ?? "");
+      return num(a.delta_mc) - num(z.delta_mc); // delta: mais negativo primeiro
     });
     return arr;
-  }, [itens, promoSel, statusFiltro, soPrejuizo, busca, ordem]);
+  }, [itens, promoSel, statusFiltro, soPrejuizo, soFull, busca, ordem]);
 
   const resumo = useMemo(() => {
     const comMc = filtrados.filter((i) => i.mc_promo != null);
@@ -150,7 +155,7 @@ function PromocoesMLPage() {
     return { total: filtrados.length, comMc: comMc.length, neg, mcMedia };
   }, [filtrados]);
 
-  const limparFiltros = () => { setPromoSel("todas"); setStatusFiltro("todas"); setSoPrejuizo(false); setBusca(""); };
+  const limparFiltros = () => { setPromoSel("todas"); setStatusFiltro("todas"); setSoPrejuizo(false); setSoFull(false); setBusca(""); };
 
   async function sincronizar() {
     if (sincronizando) return;
@@ -302,7 +307,13 @@ function PromocoesMLPage() {
           <option value="delta">Ordenar: maior queda de MC</option>
           <option value="mc_promo">Ordenar: menor MC na promo</option>
           <option value="desconto">Ordenar: maior desconto</option>
+          <option value="vendas">Ordenar: mais vendas</option>
+          <option value="recentes">Ordenar: anúncios mais recentes</option>
         </select>
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+          <input type="checkbox" checked={soFull} onChange={(e) => setSoFull(e.target.checked)} className="accent-primary" />
+          Só Fulfillment
+        </label>
         <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
           <input type="checkbox" checked={soPrejuizo} onChange={(e) => setSoPrejuizo(e.target.checked)} className="accent-red-600" />
           Só com prejuízo
@@ -385,7 +396,7 @@ function PromocoesMLPage() {
                           <span className="text-xs font-semibold whitespace-nowrap inline-flex items-center gap-0.5" style={{ color: deltaNeg ? RED : GREEN }}>
                             {deltaNeg ? <TrendingDown className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}{formatBRL(num(i.delta_mc))}
                           </span>
-                          {i.frete_estimado && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: AMBER + "1c", color: AMBER }}>s/ frete</span>}
+                          {i.frete_estimado && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: AMBER + "1c", color: AMBER }} title="Frete estimado pela mediana (≥R$79 sem histórico de venda)">frete estim.</span>}
                         </div>
                       </div>
                     )}
