@@ -28,6 +28,15 @@
   populado por **`shopee-devolucao-probe?modulo=sync`** (**cron jobid 70, `*/30`**).
   Card e lista de Recebidas mostram; gravado em
   `devolucoes_recebidas.motivo_devolucao/texto_devolucao`.
+- **Identificação por rastreio — CAUSA RAIZ do "não identifica" (12/ago):** o
+  bipado é o **prefixo do rastreio de ida** (`BR…SPXLM…`), mas **43,6% dos pedidos
+  Shopee vêm com `codigo_rastreamento` NULL** do Tiny (NULL permanente, ~1/3). Fix:
+  tabela **`shopee_rastreio`** (order_sn→tracking_number) populada pela edge fn
+  **`shopee-rastreio`** (`logistics.get_tracking_number`) — **cron jobid 71 `*/10`**,
+  janela 30d, throttled, **sem backfill histórico** (decisão do dono). O `buscar()`
+  agora tem 4 camadas: forward em pedidos_tiny → forward em `shopee_rastreio` →
+  reverso em `shopee_devolucoes` → card mínimo por order_sn. Também casa blocos
+  alfanuméricos do valor bipado (QR com sufixo/prefixo diferente do texto).
 
 ### Outras telas recentes
 - **`/monitoramento`** (painel de bancada ao vivo, importado do Claude Design):
@@ -40,13 +49,16 @@
   (botão PanelLeft no header).
 
 ## Backend criado (Supabase — já aplicado, compartilhado)
-- Tabelas: `devolucoes_recebidas`, `devolucao_recebida_itens`, `shopee_devolucoes`,
+- Tabelas: `devolucoes_recebidas`, `devolucao_recebida_itens`, `shopee_devolucoes`
+  (+ `tracking_number`/`needs_logistics`), **`shopee_rastreio`** (order_sn→forward),
   `fulfillment_estoque_lancamentos`.
-- Edge functions: `fulfillment-estoque` (v2), `shopee-devolucao-probe` (v4 — virou
-  o **sync de produção** de devoluções; renomear p/ `shopee-devolucao` é pendência
-  cosmética).
-- Crons: **jobid 70** `shopee-devolucoes-sync` (`*/30`). *(jobid 69 da devolução
-  já removido.)*
+- Edge functions: `fulfillment-estoque` (v2), `shopee-devolucao-probe` (**v6** — sync
+  de produção de devoluções, janelas encadeadas até 90d; renomear p/ `shopee-devolucao`
+  é pendência cosmética), **`shopee-rastreio`** (v1 — `sync`/`tracking`, puxa
+  `get_tracking_number`).
+- Funções SQL: `shopee_rastreio_pendentes(dias,limite)`, `shopee_rastreio_marcar_falha`.
+- Crons: **jobid 70** `shopee-devolucoes-sync` (`*/30`), **jobid 71**
+  `shopee-rastreio-sync` (`*/10`, janela 30d, throttled). *(jobid 69 já removido.)*
 - Views: `view_devolucoes_lista` (+ motivo_cancelamento), `view_monitoramento_*`.
 
 ## Próximos passos (pendentes)
