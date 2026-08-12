@@ -340,7 +340,7 @@ function PromocoesMLPage() {
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
-          <div className="min-w-[1000px] flex flex-col">
+          <div className="min-w-[1140px] flex flex-col">
             {filtrados.map((i) => {
               const ti = tipoInfo(i.promocao_tipo);
               const mcNull = i.mc_promo == null;
@@ -350,7 +350,7 @@ function PromocoesMLPage() {
                 <div
                   key={`${i.promocao_id}|${i.mlb}`}
                   className="grid border-b border-border last:border-b-0"
-                  style={{ gridTemplateColumns: "minmax(240px,1fr) 1px 150px 1px 340px 1px 160px", background: i.mc_negativa ? RED + "0A" : undefined }}
+                  style={{ gridTemplateColumns: "minmax(240px,1fr) 1px 140px 1px 150px 1px 320px 1px 150px", background: i.mc_negativa ? RED + "0A" : undefined }}
                 >
                   {/* Produto */}
                   <div className="flex items-center gap-3.5 px-5 py-4 min-w-0">
@@ -374,6 +374,23 @@ function PromocoesMLPage() {
                       <span className="text-base font-bold tabular-nums">{formatBRL(num(i.promo_price))}</span>
                     </div>
                     <span className="text-xs font-bold tabular-nums" style={{ color: RED }}>−{num(i.desconto_pct).toFixed(0)}%</span>
+                  </div>
+                  <div className="bg-border" />
+                  {/* Custos (na promo): CMV + tarifas ML + imposto */}
+                  <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Custos (promo)</span>
+                    {mcNull && i.cmv == null ? (
+                      <span className="text-xs text-muted-foreground">sem CMV</span>
+                    ) : (
+                      <div className="flex flex-col gap-1 text-xs tabular-nums">
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">CMV</span><span className="font-semibold">{i.cmv == null ? "—" : formatBRL(i.cmv)}</span></div>
+                        <div className="flex justify-between gap-2" title={`Comissão ${formatBRL(num(i.comissao_promo))} + Frete ${formatBRL(num(i.frete))}${i.frete_estimado ? " (estim.)" : ""}`}>
+                          <span className="text-muted-foreground">Tarifas ML</span>
+                          <span className="font-semibold">{i.comissao_promo == null ? "—" : formatBRL(num(i.comissao_promo) + num(i.frete))}</span>
+                        </div>
+                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Imposto</span><span className="font-semibold">{i.imposto_promo == null ? "—" : formatBRL(i.imposto_promo)}</span></div>
+                      </div>
+                    )}
                   </div>
                   <div className="bg-border" />
                   {/* Margem de contribuição */}
