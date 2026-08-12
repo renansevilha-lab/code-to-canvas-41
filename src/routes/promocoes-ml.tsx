@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Zap, Loader2, RefreshCw, Search, AlertTriangle, ExternalLink, X, TrendingDown, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,7 +16,8 @@ import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/inte
 // teríamos ao aplicar cada uma, no preço promocional. Fonte: view_ml_promocoes
 // (MC no banco: recebido − CMV − imposto, comissão exata via listing_prices,
 // co-financiamento do ML). Aplicar/remover escreve no ML (edge fn ml-promocoes),
-// sempre com confirmação forte por item. Sync por cron (jobid 73).
+// com confirmação forte e seletor de preço na faixa. Sync por cron (jobid 73).
+// Layout re-skinado do Claude Design "Central de Promoções - Mercado Livre.dc.html".
 // ============================================================================
 
 interface PromoItem {
@@ -40,22 +40,23 @@ interface Promo {
 const num = (x: unknown): number => { const n = Number(x ?? 0); return Number.isFinite(n) ? n : 0; };
 const pct = (x: number | null): string => (x == null ? "—" : `${(x * 100).toFixed(1)}%`);
 
-// Cor por tipo de promoção (claro/escuro via tokens de acento fixos).
-const TIPO: Record<string, { bg: string; fg: string; nome: string }> = {
-  SMART: { bg: "#2F6FB0", fg: "#fff", nome: "Smart" },
-  DEAL: { bg: "#6E56CF", fg: "#fff", nome: "Oferta" },
-  LIGHTNING: { bg: "#E8791A", fg: "#fff", nome: "Relâmpago" },
-  DOD: { bg: "#C9432F", fg: "#fff", nome: "Oferta do dia" },
+// Cores semânticas (do design) — separadas do acento; funcionam em claro/escuro.
+const GREEN = "#0E8A5F", RED = "#C9432F", AMBER = "#B7791F";
+const TIPO: Record<string, { nome: string; cor: string }> = {
+  SMART: { nome: "Smart", cor: "#2F6FB0" },
+  DEAL: { nome: "Oferta", cor: "#7A5CC7" },
+  LIGHTNING: { nome: "Relâmpago", cor: "#DB6B1F" },
+  DOD: { nome: "Oferta do dia", cor: "#C9432F" },
 };
-const tipoInfo = (t: string | null) => TIPO[(t ?? "").toUpperCase()] ?? { bg: "#64748B", fg: "#fff", nome: t ?? "—" };
+const tipoInfo = (t: string | null) => TIPO[(t ?? "").toUpperCase()] ?? { nome: t ?? "—", cor: "#64748B" };
 
 function iniciais(nome: string | null): string {
   return (nome ?? "?").split(" ").filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 }
-function Foto({ url, nome }: { url: string | null; nome: string | null }) {
+function Foto({ url, nome, size = 54 }: { url: string | null; nome: string | null; size?: number }) {
   const [erro, setErro] = useState(false);
   return (
-    <div className="w-11 h-11 rounded-lg shrink-0 overflow-hidden flex items-center justify-center bg-muted text-muted-foreground">
+    <div className="rounded-[10px] shrink-0 overflow-hidden flex items-center justify-center bg-muted text-muted-foreground" style={{ width: size, height: size }}>
       {url && !erro ? (
         <img src={url} alt={nome ?? ""} loading="lazy" className="w-full h-full object-cover" onError={() => setErro(true)} />
       ) : (
@@ -149,6 +150,8 @@ function PromocoesMLPage() {
     return { total: filtrados.length, comMc: comMc.length, neg, mcMedia };
   }, [filtrados]);
 
+  const limparFiltros = () => { setPromoSel("todas"); setStatusFiltro("todas"); setSoPrejuizo(false); setBusca(""); };
+
   async function sincronizar() {
     if (sincronizando) return;
     setSincronizando(true);
@@ -227,29 +230,33 @@ function PromocoesMLPage() {
   const carregando = promosQ.isLoading || itensQ.isLoading;
 
   return (
-    <div className="flex flex-col gap-5 p-1">
+    <div className="flex flex-col gap-[18px] p-1">
       {/* Cabeçalho */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-extrabold tracking-tight flex items-center gap-2">
-            <Zap className="h-5 w-5 text-primary" /> Central de Promoções — Mercado Livre
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Margem de contribuição que teríamos ao aplicar cada promoção, no preço promocional.
-          </p>
+      <div className="flex items-start justify-between gap-5 flex-wrap">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-[11px] flex items-center justify-center shrink-0 bg-primary/10 text-primary">
+            <Zap className="h-4 w-4" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-xl font-extrabold tracking-tight leading-tight">Central de Promoções — Mercado Livre</h1>
+            <p className="text-sm text-muted-foreground leading-snug">Margem de contribuição que teríamos ao aplicar cada promoção, no preço promocional.</p>
+          </div>
         </div>
-        <Button variant="outline" onClick={() => void sincronizar()} disabled={sincronizando}>
-          {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Sincronizar
-        </Button>
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs font-semibold px-3 py-1.5 rounded-full whitespace-nowrap" style={{ background: GREEN + "16", color: GREEN }}>Sincronizado</span>
+          <Button variant="outline" onClick={() => void sincronizar()} disabled={sincronizando}>
+            {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Sincronizar
+          </Button>
+        </div>
       </div>
 
       {/* Chips de promoção */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         <button
           onClick={() => setPromoSel("todas")}
-          className={cn("px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors",
-            promoSel === "todas" ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-muted")}
+          className={cn("flex items-center gap-2 px-3.5 py-2 rounded-[10px] text-sm font-semibold border-[1.5px] transition-colors",
+            promoSel === "todas" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted")}
         >
           Todas ({itens.length})
         </button>
@@ -260,21 +267,21 @@ function PromocoesMLPage() {
             <button
               key={p.promocao_id}
               onClick={() => setPromoSel(p.promocao_id)}
-              className={cn("px-3 py-1.5 rounded-full text-sm font-medium border transition-colors flex items-center gap-2",
-                ativo ? "border-primary ring-1 ring-primary" : "border-border hover:bg-muted")}
+              className={cn("flex items-center gap-2 px-3.5 py-2 rounded-[10px] text-sm font-medium border-[1.5px] transition-colors",
+                ativo ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted")}
               title={`${p.tipo} · ${p.status}`}
             >
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: ti.bg, color: ti.fg }}>{ti.nome}</span>
-              <span className="truncate max-w-[160px]">{p.nome ?? p.promocao_id}</span>
+              <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: ti.cor }} />
+              <span className="truncate max-w-[180px]">{p.nome ?? p.promocao_id}</span>
               <span className="text-xs text-muted-foreground">{p.n_itens}</span>
-              {p.status === "pending" && <span className="text-[10px] text-amber-600 font-semibold">agendada</span>}
+              {p.status === "pending" && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: AMBER + "1c", color: AMBER }}>agendada</span>}
             </button>
           );
         })}
       </div>
 
       {/* Filtros + resumo */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-2.5 flex-wrap">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="SKU, MLB ou produto" className="pl-8 w-56" />
@@ -300,106 +307,112 @@ function PromocoesMLPage() {
           <input type="checkbox" checked={soPrejuizo} onChange={(e) => setSoPrejuizo(e.target.checked)} className="accent-red-600" />
           Só com prejuízo
         </label>
-        <div className="ml-auto text-sm text-muted-foreground flex items-center gap-3">
-          <span><strong className="text-foreground">{resumo.total}</strong> itens</span>
-          {resumo.neg > 0 && <span className="text-red-600 font-semibold flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />{resumo.neg} no prejuízo</span>}
-          {resumo.mcMedia != null && <span>MC média promo: <strong className={cn(resumo.mcMedia < 0 ? "text-red-600" : "text-emerald-600")}>{formatBRL(resumo.mcMedia)}</strong></span>}
+        <div className="ml-auto text-sm text-muted-foreground flex items-center gap-4 whitespace-nowrap">
+          <span><strong className="text-foreground">{resumo.total}</strong> {resumo.total === 1 ? "item" : "itens"}</span>
+          {resumo.neg > 0 && <span className="font-semibold flex items-center gap-1" style={{ color: RED }}><AlertTriangle className="h-3.5 w-3.5" />{resumo.neg} no prejuízo</span>}
+          {resumo.mcMedia != null && <span>MC média promo: <strong className="tabular-nums" style={{ color: resumo.mcMedia < 0 ? RED : GREEN }}>{formatBRL(resumo.mcMedia)}</strong></span>}
         </div>
       </div>
 
       {carregando ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando promoções…</div>
+        <div className="bg-card border border-border rounded-2xl py-16 flex flex-col items-center gap-3">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <span className="text-sm text-muted-foreground">Carregando promoções…</span>
+        </div>
       ) : filtrados.length === 0 ? (
-        <Card className="border-dashed py-16 flex flex-col items-center gap-2 text-center">
-          <Zap className="h-8 w-8 text-muted-foreground" />
-          <span className="font-bold">Nenhum item nesse filtro</span>
-          <span className="text-sm text-muted-foreground">Ajuste os filtros ou clique em Sincronizar para puxar as promoções do ML.</span>
-        </Card>
+        <div className="bg-card border border-dashed border-border rounded-2xl py-14 flex flex-col items-center gap-3.5 text-center px-6">
+          <span className="text-sm text-muted-foreground">Nenhum item nesse filtro — ajuste os filtros ou sincronize</span>
+          <div className="flex gap-2.5">
+            <Button variant="outline" size="sm" onClick={limparFiltros}>Limpar filtros</Button>
+            <Button size="sm" onClick={() => void sincronizar()}>Sincronizar</Button>
+          </div>
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm border-collapse min-w-[900px]">
-            <thead>
-              <tr className="bg-muted/60 text-muted-foreground text-xs">
-                <th className="text-left font-semibold px-3 py-2.5">Produto</th>
-                <th className="text-left font-semibold px-2 py-2.5">Status</th>
-                <th className="text-right font-semibold px-2 py-2.5">Preço → promo</th>
-                <th className="text-right font-semibold px-2 py-2.5">MC atual</th>
-                <th className="text-right font-semibold px-2 py-2.5">MC% atual</th>
-                <th className="text-right font-semibold px-2 py-2.5">MC na promo</th>
-                <th className="text-right font-semibold px-2 py-2.5">MC% promo</th>
-                <th className="text-right font-semibold px-2 py-2.5">Δ MC</th>
-                <th className="text-right font-semibold px-3 py-2.5">Ação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtrados.map((i) => {
-                const ti = tipoInfo(i.promocao_tipo);
-                const mcNull = i.mc_promo == null;
-                return (
-                  <tr key={`${i.promocao_id}|${i.mlb}`} className={cn("border-t border-border hover:bg-muted/30", i.mc_negativa && "bg-red-500/5")}>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Foto url={i.foto} nome={i.titulo} />
-                        <div className="flex flex-col min-w-0">
-                          <span className="font-medium leading-tight line-clamp-1">{i.titulo ?? "—"}</span>
-                          <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
-                            SKU {i.sku ?? "—"} · {i.mlb}
-                            {i.permalink && <a href={i.permalink} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex"><ExternalLink className="h-3 w-3" /></a>}
+        <div className="rounded-2xl border border-border bg-card overflow-x-auto">
+          <div className="min-w-[1000px] flex flex-col">
+            {filtrados.map((i) => {
+              const ti = tipoInfo(i.promocao_tipo);
+              const mcNull = i.mc_promo == null;
+              const mcCor = i.mc_negativa ? RED : GREEN;
+              const deltaNeg = num(i.delta_mc) < 0;
+              return (
+                <div
+                  key={`${i.promocao_id}|${i.mlb}`}
+                  className="grid border-b border-border last:border-b-0"
+                  style={{ gridTemplateColumns: "minmax(240px,1fr) 1px 150px 1px 340px 1px 160px", background: i.mc_negativa ? RED + "0A" : undefined }}
+                >
+                  {/* Produto */}
+                  <div className="flex items-center gap-3.5 px-5 py-4 min-w-0">
+                    <Foto url={i.foto} nome={i.titulo} />
+                    <div className="flex flex-col gap-1.5 min-w-0">
+                      <span className="text-[14.5px] font-semibold leading-tight truncate">{i.titulo ?? "—"}</span>
+                      <a href={i.permalink ?? undefined} target="_blank" rel="noreferrer"
+                        className="text-xs text-muted-foreground hover:text-primary inline-flex items-center gap-1 min-w-0">
+                        <span className="font-mono truncate">SKU {i.sku ?? "—"} · {i.mlb}</span>
+                        {i.permalink && <ExternalLink className="h-3 w-3 shrink-0" />}
+                      </a>
+                      <span className="self-start text-[11px] font-semibold px-2 py-0.5 rounded" style={{ background: ti.cor + "18", color: ti.cor }}>{ti.nome}</span>
+                    </div>
+                  </div>
+                  <div className="bg-border" />
+                  {/* Preço → promo */}
+                  <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Preço → promo</span>
+                    <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                      <span className="text-xs text-muted-foreground line-through tabular-nums">{formatBRL(num(i.original_price))}</span>
+                      <span className="text-base font-bold tabular-nums">{formatBRL(num(i.promo_price))}</span>
+                    </div>
+                    <span className="text-xs font-bold tabular-nums" style={{ color: RED }}>−{num(i.desconto_pct).toFixed(0)}%</span>
+                  </div>
+                  <div className="bg-border" />
+                  {/* Margem de contribuição */}
+                  <div className="flex flex-col justify-center gap-2 px-5 py-4">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Margem de contribuição</span>
+                    {mcNull ? (
+                      <span className="text-[13.5px] italic text-muted-foreground">sem CMV — margem não calculada</span>
+                    ) : (
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex flex-col gap-0.5 rounded-lg px-3 py-1.5 bg-muted">
+                          <span className="text-sm font-semibold text-muted-foreground tabular-nums whitespace-nowrap">{i.mc_atual == null ? "—" : formatBRL(i.mc_atual)}</span>
+                          <span className="text-[11px] text-muted-foreground whitespace-nowrap">{pct(i.mc_atual_pct)}</span>
+                        </div>
+                        <span className="text-muted-foreground text-sm">→</span>
+                        <div className="flex flex-col gap-0.5 rounded-lg px-3.5 py-2" style={{ background: mcCor + "14" }}>
+                          <span className="text-lg font-extrabold tabular-nums whitespace-nowrap" style={{ color: mcCor }}>{formatBRL(num(i.mc_promo))}</span>
+                          <span className="text-xs font-semibold whitespace-nowrap" style={{ color: mcCor }}>{pct(i.mc_promo_pct)}</span>
+                        </div>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="text-xs font-semibold whitespace-nowrap inline-flex items-center gap-0.5" style={{ color: deltaNeg ? RED : GREEN }}>
+                            {deltaNeg ? <TrendingDown className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}{formatBRL(num(i.delta_mc))}
                           </span>
-                          <span className="text-[10px]"><span className="px-1 py-0.5 rounded font-bold" style={{ background: ti.bg, color: ti.fg }}>{ti.nome}</span></span>
+                          {i.frete_estimado && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: AMBER + "1c", color: AMBER }}>s/ frete</span>}
                         </div>
                       </div>
-                    </td>
-                    <td className="px-2 py-2">
-                      {i.status === "started" ? (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600">Aplicada</span>
-                      ) : (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Candidata</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums whitespace-nowrap">
-                      <span className="text-muted-foreground line-through">{formatBRL(num(i.original_price))}</span>
-                      <span className="mx-1">→</span>
-                      <span className="font-semibold">{formatBRL(num(i.promo_price))}</span>
-                      <div className="text-[10px] text-red-600 font-semibold">−{num(i.desconto_pct).toFixed(0)}%</div>
-                    </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums">{i.mc_atual == null ? "—" : formatBRL(num(i.mc_atual))}</td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums">
-                      {i.mc_atual_pct == null ? <span className="text-muted-foreground">—</span> :
-                        <span className={cn("font-semibold", num(i.mc_atual_pct) < 0 ? "text-red-600" : "text-muted-foreground")}>{pct(i.mc_atual_pct)}</span>}
-                    </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums">
-                      {mcNull ? <span className="text-muted-foreground">sem CMV</span> : (
-                        <div className="flex flex-col items-end">
-                          <span className={cn("font-bold", i.mc_negativa ? "text-red-600" : "text-emerald-600")}>{formatBRL(num(i.mc_promo))}</span>
-                          {i.frete_estimado && <span className="text-[10px] text-amber-600">s/ frete</span>}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums">
-                      {i.mc_promo_pct == null ? <span className="text-muted-foreground">—</span> :
-                        <span className={cn("font-bold", num(i.mc_promo_pct) < 0 ? "text-red-600" : "text-emerald-600")}>{pct(i.mc_promo_pct)}</span>}
-                    </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums">
-                      {i.delta_mc == null ? "—" : (
-                        <span className={cn("inline-flex items-center gap-0.5 font-semibold", num(i.delta_mc) < 0 ? "text-red-600" : "text-emerald-600")}>
-                          {num(i.delta_mc) < 0 ? <TrendingDown className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}
-                          {formatBRL(num(i.delta_mc))}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {i.status === "started" ? (
-                        <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-red-600" onClick={() => setConfirmar({ item: i, acao: "remover" })}>Remover</Button>
-                      ) : (
-                        <Button size="sm" variant={i.mc_negativa ? "outline" : "default"} onClick={() => setConfirmar({ item: i, acao: "aplicar" })}>Aplicar</Button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    )}
+                  </div>
+                  <div className="bg-border" />
+                  {/* Status + Ação */}
+                  <div className="flex flex-col justify-center items-start gap-2.5 px-5 py-4">
+                    {i.status === "started" ? (
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap" style={{ background: GREEN + "18", color: GREEN }}>Aplicada</span>
+                    ) : (
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground whitespace-nowrap">Candidata</span>
+                    )}
+                    {mcNull ? (
+                      <span className="text-xs text-muted-foreground">Ação indisponível</span>
+                    ) : i.status === "started" ? (
+                      <Button size="sm" variant="outline" className="text-muted-foreground hover:text-red-600" onClick={() => setConfirmar({ item: i, acao: "remover" })}>Remover</Button>
+                    ) : (
+                      <Button size="sm" variant={i.mc_negativa ? "outline" : "default"}
+                        className={i.mc_negativa ? "border-[1.5px]" : ""}
+                        style={i.mc_negativa ? { borderColor: RED, color: RED } : undefined}
+                        onClick={() => setConfirmar({ item: i, acao: "aplicar" })}>Aplicar</Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -415,60 +428,64 @@ function PromocoesMLPage() {
         const neg = mcShow != null && mcShow < 0;
         const descShow = item.original_price && precoShow ? 100 * (1 - num(precoShow) / num(item.original_price)) : null;
         return (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !executando && setConfirmar(null)}>
-          <Card className="max-w-md w-full p-5 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-2">
-              <h2 className="text-lg font-bold">{ehAplicar ? "Aplicar promoção" : "Remover promoção"}</h2>
-              <button onClick={() => !executando && setConfirmar(null)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
-            </div>
-            <div className="flex items-center gap-3">
-              <Foto url={item.foto} nome={item.titulo} />
-              <div className="min-w-0">
-                <div className="font-medium line-clamp-2 leading-tight">{item.titulo ?? "—"}</div>
-                <div className="text-[11px] text-muted-foreground font-mono">SKU {item.sku ?? "—"} · {item.mlb}</div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-5" style={{ background: "rgba(15,18,22,.5)" }} onClick={() => !executando && setConfirmar(null)}>
+            <div className="bg-card border border-border rounded-2xl p-6 max-w-md w-full flex flex-col gap-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="text-lg font-bold">{ehAplicar ? "Aplicar promoção" : "Remover promoção"}</h2>
+                <button onClick={() => !executando && setConfirmar(null)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
               </div>
-            </div>
-            {ehAplicar ? (
-              <>
-                {ajustavel && (
-                  <div className="flex flex-col gap-2">
-                    <span className="text-xs font-semibold text-muted-foreground">Preço da promoção — você escolhe (entre {formatBRL(num(item.preco_min))} e {formatBRL(num(item.preco_max))})</span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Input type="number" step="0.01" min={item.preco_min ?? undefined} max={item.preco_max ?? undefined}
-                        value={simPreco ?? ""} onChange={(e) => { const v = Number(e.target.value); setSimPreco(Number.isFinite(v) && v > 0 ? v : null); }}
-                        className="w-28 font-mono" />
-                      {item.preco_sugerido != null && <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_sugerido)}>Sugerido</button>}
-                      <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_min)}>Mín</button>
-                      <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_max)}>Máx</button>
+              <div className="flex items-center gap-3">
+                <Foto url={item.foto} nome={item.titulo} size={48} />
+                <div className="min-w-0">
+                  <div className="font-medium line-clamp-2 leading-tight">{item.titulo ?? "—"}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">SKU {item.sku ?? "—"} · {item.mlb}</div>
+                </div>
+              </div>
+              {ehAplicar ? (
+                <>
+                  {ajustavel && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-semibold text-muted-foreground">Preço da promoção — você escolhe (entre {formatBRL(num(item.preco_min))} e {formatBRL(num(item.preco_max))})</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Input type="number" step="0.01" min={item.preco_min ?? undefined} max={item.preco_max ?? undefined}
+                          value={simPreco ?? ""} onChange={(e) => { const v = Number(e.target.value); setSimPreco(Number.isFinite(v) && v > 0 ? v : null); }}
+                          className="w-28 font-mono" />
+                        {item.preco_sugerido != null && <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_sugerido)}>Sugerido</button>}
+                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_min)}>Mín</button>
+                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_max)}>Máx</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="bg-muted rounded-xl p-4 flex flex-col gap-3">
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Preço público</span>
+                      <span className="text-sm font-semibold font-mono tabular-nums whitespace-nowrap">{formatBRL(num(item.original_price))} → <strong>{formatBRL(num(precoShow))}</strong>{descShow != null && <span style={{ color: RED }}> (−{descShow.toFixed(0)}%)</span>}</span>
+                    </div>
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Margem de contribuição</span>
+                      <span className="text-sm font-mono tabular-nums flex items-center gap-1 whitespace-nowrap">{formatBRL(num(item.mc_atual))} → <strong style={{ color: neg ? RED : GREEN }}>{mcShow == null ? "—" : formatBRL(mcShow)}</strong>{mcPctShow != null && <span className="text-muted-foreground">({pct(mcPctShow)})</span>}{simLoading && <Loader2 className="h-3 w-3 animate-spin" />}</span>
                     </div>
                   </div>
-                )}
-                <div className="text-sm bg-muted/60 rounded-lg p-3 flex flex-col gap-1.5">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Preço público</span>
-                    <span className="font-mono">{formatBRL(num(item.original_price))} → <strong>{formatBRL(num(precoShow))}</strong>{descShow != null && <span className="text-red-600"> (−{descShow.toFixed(0)}%)</span>}</span></div>
-                  <div className="flex justify-between items-center"><span className="text-muted-foreground">Margem de contribuição</span>
-                    <span className="font-mono flex items-center gap-1">{formatBRL(num(item.mc_atual))} → <strong className={cn(neg ? "text-red-600" : "text-emerald-600")}>{mcShow == null ? "—" : formatBRL(mcShow)}</strong>{mcPctShow != null && <span className="text-muted-foreground">({pct(mcPctShow)})</span>}{simLoading && <Loader2 className="h-3 w-3 animate-spin" />}</span></div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">O item volta ao preço cheio ({formatBRL(num(item.original_price))}) e sai desta promoção.</p>
+              )}
+              {ehAplicar && neg && (
+                <div className="rounded-lg p-3 text-sm font-medium flex items-start gap-2" style={{ background: RED + "14", border: `1px solid ${RED}40`, color: RED }}>
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>Atenção: com este preço a margem fica <strong>negativa</strong> ({mcShow == null ? "—" : formatBRL(mcShow)}). Você venderia no prejuízo.</span>
                 </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">O item volta ao preço cheio ({formatBRL(num(item.original_price))}) e sai desta promoção.</p>
-            )}
-            {ehAplicar && neg && (
-              <div className="text-sm bg-red-500/10 text-red-600 rounded-lg p-3 flex items-start gap-2 font-medium">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                Atenção: com este preço a margem fica <strong>negativa</strong> ({mcShow == null ? "—" : formatBRL(mcShow)}). Você venderia no prejuízo.
+              )}
+              <p className="text-xs text-muted-foreground">Esta ação altera o preço público do anúncio no Mercado Livre imediatamente.</p>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setConfirmar(null)} disabled={executando}>Cancelar</Button>
+                <Button variant={ehAplicar && neg ? "destructive" : "default"} onClick={() => void executar()} disabled={executando || simLoading}>
+                  {executando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {ehAplicar ? "Confirmar e aplicar" : "Confirmar remoção"}
+                </Button>
               </div>
-            )}
-            <p className="text-xs text-muted-foreground">Esta ação altera o preço público do anúncio no Mercado Livre imediatamente.</p>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setConfirmar(null)} disabled={executando}>Cancelar</Button>
-              <Button variant={ehAplicar && neg ? "destructive" : "default"} onClick={() => void executar()} disabled={executando || simLoading}>
-                {executando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {ehAplicar ? "Confirmar e aplicar" : "Confirmar remoção"}
-              </Button>
             </div>
-          </Card>
-        </div>
+          </div>
         );
       })()}
     </div>
