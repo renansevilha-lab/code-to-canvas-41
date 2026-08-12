@@ -1015,6 +1015,7 @@ const DOC_TIPOS: Array<{ id: string; label: string }> = [
   { id: "danfe", label: "DANFE" },
   { id: "folha_envio", label: "Folha de envio" },
   { id: "etiquetas", label: "Etiquetas" },
+  { id: "etiqueta_produto", label: "Etiqueta de produtos (Amazon)" },
   { id: "preparacao", label: "Prep. (SKUs)" },
   { id: "outro", label: "Outro" },
 ];
@@ -1655,13 +1656,14 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const [tipoDoc, setTipoDoc] = useState("danfe");
   const [subindoDoc, setSubindoDoc] = useState(false);
   const docRef = useRef<HTMLInputElement>(null);
+  const etiqPdfRef = useRef<HTMLInputElement>(null);
 
-  async function subirDoc(file: File) {
+  async function subirDoc(file: File, tipoOverride?: string) {
     setSubindoDoc(true);
     try {
       const b64 = await fileToBase64(file);
       const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
-        envio_id: envioId, tipo: tipoDoc, nome: file.name, mime: file.type || "application/pdf",
+        envio_id: envioId, tipo: tipoOverride ?? tipoDoc, nome: file.name, mime: file.type || "application/pdf",
         tamanho: file.size, conteudo_base64: b64,
       });
       if (error) throw error;
@@ -2073,6 +2075,18 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                 <Printer className="h-4 w-4" /> Subir etiquetas (ZPL)
               </Button>
             )}
+            <input
+              ref={etiqPdfRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void subirDoc(f, "etiqueta_produto"); }}
+            />
+            <Button variant="outline" size="sm" className="gap-2 h-9" disabled={subindoDoc} onClick={() => etiqPdfRef.current?.click()}
+              title="Amazon só deixa baixar a etiqueta de produtos em PDF. Suba aqui; imprima abrindo o PDF (Ctrl+P).">
+              {subindoDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              Etiqueta de produtos (PDF)
+            </Button>
             <Button
               size="sm"
               className="gap-2 h-9"
@@ -2101,6 +2115,23 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               </Button>
             )}
           </div>
+          {(() => {
+            const etiqProd = (docsQ.data ?? []).filter((d) => d.tipo === "etiqueta_produto");
+            if (etiqProd.length === 0) return null;
+            return (
+              <div className="mt-2 rounded-md border bg-muted/40 p-2 space-y-1">
+                <div className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5"><FileText className="h-3.5 w-3.5" /> Etiquetas de produtos (PDF)</div>
+                {etiqProd.map((d) => (
+                  <div key={d.id} className="flex items-center gap-2 text-sm">
+                    <span className="truncate flex-1">{d.nome ?? "etiqueta.pdf"}</span>
+                    <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{d.tamanho ? `${Math.round(d.tamanho / 1024)} KB` : ""}</span>
+                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => void abrirDoc(d)}><Printer className="h-3.5 w-3.5" /> Abrir / imprimir</Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void excluirDoc(d)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
         <Barra valor={sep} total={plan} />
       </Card>
