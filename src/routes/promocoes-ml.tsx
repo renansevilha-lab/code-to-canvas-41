@@ -28,7 +28,7 @@ interface PromoItem {
   cmv: number | null; imposto_promo: number | null; desconto_pct: number | null;
   promocao_nome: string | null; promocao_tipo: string | null; promocao_status: string | null;
   finish_date: string | null; titulo: string | null; foto: string | null; permalink: string | null;
-  mc_atual: number | null; mc_promo: number | null; mc_promo_pct: number | null;
+  mc_atual: number | null; mc_promo: number | null; mc_promo_pct: number | null; mc_atual_pct: number | null;
   delta_mc: number | null; mc_negativa: boolean;
 }
 interface Promo {
@@ -90,7 +90,7 @@ function PromocoesMLPage() {
     queryKey: ["promocoes-ml", "itens"],
     queryFn: async (): Promise<PromoItem[]> => {
       const { data, error } = await supabaseExternal.from("view_ml_promocoes")
-        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, delta_mc, mc_negativa");
+        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
       if (error) throw error;
       return (data ?? []) as PromoItem[];
     },
@@ -265,6 +265,7 @@ function PromocoesMLPage() {
                 <th className="text-right font-semibold px-2 py-2.5">Preço → promo</th>
                 <th className="text-right font-semibold px-2 py-2.5">MC atual</th>
                 <th className="text-right font-semibold px-2 py-2.5">MC na promo</th>
+                <th className="text-right font-semibold px-2 py-2.5">MC %</th>
                 <th className="text-right font-semibold px-2 py-2.5">Δ MC</th>
                 <th className="text-right font-semibold px-3 py-2.5">Ação</th>
               </tr>
@@ -306,7 +307,15 @@ function PromocoesMLPage() {
                       {mcNull ? <span className="text-muted-foreground">sem CMV</span> : (
                         <div className="flex flex-col items-end">
                           <span className={cn("font-bold", i.mc_negativa ? "text-red-600" : "text-emerald-600")}>{formatBRL(num(i.mc_promo))}</span>
-                          <span className="text-[10px] text-muted-foreground">{pct(i.mc_promo_pct)}{i.frete_estimado ? " · s/ frete" : ""}</span>
+                          {i.frete_estimado && <span className="text-[10px] text-amber-600">s/ frete</span>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-right font-mono tabular-nums whitespace-nowrap">
+                      {i.mc_promo_pct == null ? <span className="text-muted-foreground">—</span> : (
+                        <div className="flex flex-col items-end leading-tight">
+                          <span className={cn("font-bold", num(i.mc_promo_pct) < 0 ? "text-red-600" : "text-emerald-600")}>{pct(i.mc_promo_pct)}</span>
+                          {i.mc_atual_pct != null && <span className="text-[10px] text-muted-foreground">de {pct(i.mc_atual_pct)}</span>}
                         </div>
                       )}
                     </td>
