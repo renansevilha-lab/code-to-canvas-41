@@ -1199,6 +1199,13 @@ function PedidosDoSku({
 
 const STORAGE_IDENT = "separacao.identificadorLote";
 
+// Dedup da etiqueta identificadora. Os dois fluxos AUTOMÁTICOS (painel "Lotes do
+// dia" ao fim do imprimirLote, e a fila por SKU) podem disparar o mesmo lote em
+// sequência — saíam 2 identificadoras iguais. Guarda o último envio por tag; no
+// modo auto, pula se saiu nos últimos 60s. Botão manual (sem auto) nunca bloqueia.
+const IDENT_JANELA_MS = 60000;
+const identImpressoEm = new Map<string, number>();
+
 // Sanitiza texto pra ZPL: tira os caracteres de controle (^ ~) e troca o "·"
 // (que a fonte da Zebra não tem) por "-". ^CI28 cuida dos acentos.
 function zplSan(s: string): string {
@@ -1260,6 +1267,12 @@ async function imprimirIdentificadorApi(
     if (!opts?.auto) toast.warning("Escolha a impressora primeiro.");
     return;
   }
+  // Dedup no modo auto: pula se a identificadora deste lote já saiu nos últimos
+  // 60s (evita as 2 iguais quando painel + por-SKU disparam em sequência).
+  // Reserva o slot ANTES do await pra também barrar chamadas quase simultâneas.
+  const ultimoIdent = identImpressoEm.get(lote.tag);
+  if (opts?.auto && ultimoIdent != null && Date.now() - ultimoIdent < IDENT_JANELA_MS) return;
+  identImpressoEm.set(lote.tag, Date.now());
   try {
     let produtoNome = "Vários itens";
     if (lote.sku) {
@@ -1287,6 +1300,7 @@ async function imprimirIdentificadorApi(
     }
     if (!opts?.auto) toast.success(`Identificador do lote ${lote.tag} enviado à impressora`);
   } catch (e) {
+    identImpressoEm.delete(lote.tag); // libera pra retentar se falhou
     toast.error(`Falha no identificador do lote ${lote.tag}`, { description: (e as Error).message });
   }
 }
