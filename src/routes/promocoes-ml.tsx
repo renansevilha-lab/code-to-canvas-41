@@ -73,6 +73,7 @@ function PromocoesMLPage() {
   const [busca, setBusca] = useState("");
   const [ordem, setOrdem] = useState<"delta" | "mc_promo" | "desconto">("delta");
   const [sincronizando, setSincronizando] = useState(false);
+  const [buscandoElegiveis, setBuscandoElegiveis] = useState(false);
   const [confirmar, setConfirmar] = useState<{ item: PromoItem; acao: "aplicar" | "remover" } | null>(null);
   const [executando, setExecutando] = useState(false);
   // Seletor de preço (promoções com faixa min↔max): simula a MC no preço escolhido.
@@ -166,6 +167,36 @@ function PromocoesMLPage() {
     }
   }
 
+  // Puxa TODAS as promoções elegíveis do item buscado (item-promos) — inclui as que
+  // o ML não colocou no listing curado da campanha. Aceita MLB ou SKU na busca.
+  async function buscarElegiveis() {
+    const termo = busca.trim();
+    if (!termo) { toast.info("Digite um SKU ou MLB na busca primeiro."); return; }
+    setBuscandoElegiveis(true);
+    try {
+      let mlbs: string[] = [];
+      if (/^MLB\d+$/i.test(termo)) mlbs = [termo.toUpperCase()];
+      else {
+        const { data } = await supabaseExternal.from("ml_anuncios").select("mlb").eq("sku", termo).limit(8);
+        mlbs = (data ?? []).map((r: { mlb: string }) => r.mlb);
+      }
+      if (mlbs.length === 0) { toast.warning("Nenhum anúncio ML encontrado para esse SKU/MLB."); return; }
+      let add = 0;
+      for (const mlb of mlbs) {
+        const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?modulo=item&mlb=${mlb}`, { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } });
+        const d = await r.json().catch(() => ({}));
+        if (d.erro) throw new Error(d.erro);
+        add += d.adicionados ?? 0;
+      }
+      toast.success(add > 0 ? `${add} promoção(ões) elegível(is) adicionada(s)` : "Nenhuma promoção elegível nova para esse item");
+      await qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
+    } catch (e) {
+      toast.error("Falha ao buscar elegíveis", { description: (e as Error).message });
+    } finally {
+      setBuscandoElegiveis(false);
+    }
+  }
+
   async function executar() {
     if (!confirmar || executando) return;
     const { item, acao } = confirmar;
@@ -248,6 +279,11 @@ function PromocoesMLPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="SKU, MLB ou produto" className="pl-8 w-56" />
         </div>
+        <Button variant="outline" size="sm" onClick={() => void buscarElegiveis()} disabled={buscandoElegiveis || !busca.trim()}
+          title="Puxa TODAS as promoções elegíveis deste item (SKU ou MLB), inclusive as que o ML não colocou no listing da campanha">
+          {buscandoElegiveis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          Elegíveis do item
+        </Button>
         <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value as typeof statusFiltro)}
           className="h-9 rounded-md border border-border bg-background px-2 text-sm">
           <option value="todas">Todos os status</option>
