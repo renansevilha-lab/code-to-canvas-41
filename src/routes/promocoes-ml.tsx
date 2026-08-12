@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Zap, Loader2, RefreshCw, Search, AlertTriangle, ExternalLink, X, TrendingDown, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/inte
 interface PromoItem {
   promocao_id: string; mlb: string; sku: string | null; status: string;
   offer_id: string | null; original_price: number | null; promo_price: number | null;
+  preco_min: number | null; preco_max: number | null; preco_sugerido: number | null;
   seller_percentage: number | null; meli_percentage: number | null;
   comissao_promo: number | null; frete: number | null; frete_estimado: boolean;
   cmv: number | null; imposto_promo: number | null; desconto_pct: number | null;
@@ -74,6 +75,29 @@ function PromocoesMLPage() {
   const [sincronizando, setSincronizando] = useState(false);
   const [confirmar, setConfirmar] = useState<{ item: PromoItem; acao: "aplicar" | "remover" } | null>(null);
   const [executando, setExecutando] = useState(false);
+  // Seletor de preço (promoções com faixa min↔max): simula a MC no preço escolhido.
+  const [simPreco, setSimPreco] = useState<number | null>(null);
+  const [simResult, setSimResult] = useState<{ mc: number | null; mc_pct: number | null } | null>(null);
+  const [simLoading, setSimLoading] = useState(false);
+
+  useEffect(() => {
+    if (confirmar?.acao === "aplicar") { setSimPreco(confirmar.item.promo_price ?? null); setSimResult(null); }
+  }, [confirmar]);
+
+  useEffect(() => {
+    if (!confirmar || confirmar.acao !== "aplicar" || simPreco == null) return;
+    if (simPreco === confirmar.item.promo_price) { setSimResult(null); return; } // usa a MC já calculada
+    const t = setTimeout(async () => {
+      setSimLoading(true);
+      try {
+        const p = new URLSearchParams({ modulo: "simular", mlb: confirmar.item.mlb, promocao_id: confirmar.item.promocao_id, preco: String(simPreco) });
+        const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?${p.toString()}`, { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } });
+        const d = await r.json();
+        setSimResult({ mc: d.mc ?? null, mc_pct: d.mc_pct ?? null });
+      } catch { setSimResult(null); } finally { setSimLoading(false); }
+    }, 450);
+    return () => clearTimeout(t);
+  }, [simPreco, confirmar]);
 
   const promosQ = useQuery({
     queryKey: ["promocoes-ml", "promos"],
@@ -90,7 +114,7 @@ function PromocoesMLPage() {
     queryKey: ["promocoes-ml", "itens"],
     queryFn: async (): Promise<PromoItem[]> => {
       const { data, error } = await supabaseExternal.from("view_ml_promocoes")
-        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
+        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
       if (error) throw error;
       return (data ?? []) as PromoItem[];
     },
@@ -150,7 +174,7 @@ function PromocoesMLPage() {
       const p = new URLSearchParams({ modulo: acao, mlb: item.mlb, promocao_id: item.promocao_id, tipo: item.promocao_tipo ?? "", confirmar: "1" });
       if (acao === "aplicar") {
         if (item.offer_id) p.set("offer_id", item.offer_id);
-        else if (item.promo_price != null) p.set("deal_price", String(item.promo_price));
+        else { const dp = simPreco ?? item.promo_price; if (dp != null) p.set("deal_price", String(dp)); }
       }
       const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?${p.toString()}`, {
         headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
@@ -264,8 +288,9 @@ function PromocoesMLPage() {
                 <th className="text-left font-semibold px-2 py-2.5">Status</th>
                 <th className="text-right font-semibold px-2 py-2.5">Preço → promo</th>
                 <th className="text-right font-semibold px-2 py-2.5">MC atual</th>
+                <th className="text-right font-semibold px-2 py-2.5">MC% atual</th>
                 <th className="text-right font-semibold px-2 py-2.5">MC na promo</th>
-                <th className="text-right font-semibold px-2 py-2.5">MC %</th>
+                <th className="text-right font-semibold px-2 py-2.5">MC% promo</th>
                 <th className="text-right font-semibold px-2 py-2.5">Δ MC</th>
                 <th className="text-right font-semibold px-3 py-2.5">Ação</th>
               </tr>
@@ -304,6 +329,10 @@ function PromocoesMLPage() {
                     </td>
                     <td className="px-2 py-2 text-right font-mono tabular-nums">{i.mc_atual == null ? "—" : formatBRL(num(i.mc_atual))}</td>
                     <td className="px-2 py-2 text-right font-mono tabular-nums">
+                      {i.mc_atual_pct == null ? <span className="text-muted-foreground">—</span> :
+                        <span className={cn("font-semibold", num(i.mc_atual_pct) < 0 ? "text-red-600" : "text-muted-foreground")}>{pct(i.mc_atual_pct)}</span>}
+                    </td>
+                    <td className="px-2 py-2 text-right font-mono tabular-nums">
                       {mcNull ? <span className="text-muted-foreground">sem CMV</span> : (
                         <div className="flex flex-col items-end">
                           <span className={cn("font-bold", i.mc_negativa ? "text-red-600" : "text-emerald-600")}>{formatBRL(num(i.mc_promo))}</span>
@@ -311,13 +340,9 @@ function PromocoesMLPage() {
                         </div>
                       )}
                     </td>
-                    <td className="px-2 py-2 text-right font-mono tabular-nums whitespace-nowrap">
-                      {i.mc_promo_pct == null ? <span className="text-muted-foreground">—</span> : (
-                        <div className="flex flex-col items-end leading-tight">
-                          <span className={cn("font-bold", num(i.mc_promo_pct) < 0 ? "text-red-600" : "text-emerald-600")}>{pct(i.mc_promo_pct)}</span>
-                          {i.mc_atual_pct != null && <span className="text-[10px] text-muted-foreground">de {pct(i.mc_atual_pct)}</span>}
-                        </div>
-                      )}
+                    <td className="px-2 py-2 text-right font-mono tabular-nums">
+                      {i.mc_promo_pct == null ? <span className="text-muted-foreground">—</span> :
+                        <span className={cn("font-bold", num(i.mc_promo_pct) < 0 ? "text-red-600" : "text-emerald-600")}>{pct(i.mc_promo_pct)}</span>}
                     </td>
                     <td className="px-2 py-2 text-right font-mono tabular-nums">
                       {i.delta_mc == null ? "—" : (
@@ -343,49 +368,73 @@ function PromocoesMLPage() {
       )}
 
       {/* Modal de confirmação (ação escreve no ML — muda o preço público) */}
-      {confirmar && (
+      {confirmar && (() => {
+        const item = confirmar.item;
+        const ehAplicar = confirmar.acao === "aplicar";
+        const ajustavel = ehAplicar && item.preco_min != null && item.preco_max != null && !item.offer_id;
+        const usandoSim = ajustavel && simResult != null && simPreco != null && simPreco !== item.promo_price;
+        const precoShow = simPreco ?? item.promo_price;
+        const mcShow = usandoSim ? simResult!.mc : item.mc_promo;
+        const mcPctShow = usandoSim ? simResult!.mc_pct : item.mc_promo_pct;
+        const neg = mcShow != null && mcShow < 0;
+        const descShow = item.original_price && precoShow ? 100 * (1 - num(precoShow) / num(item.original_price)) : null;
+        return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !executando && setConfirmar(null)}>
           <Card className="max-w-md w-full p-5 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-2">
-              <h2 className="text-lg font-bold">{confirmar.acao === "aplicar" ? "Aplicar promoção" : "Remover promoção"}</h2>
+              <h2 className="text-lg font-bold">{ehAplicar ? "Aplicar promoção" : "Remover promoção"}</h2>
               <button onClick={() => !executando && setConfirmar(null)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
             </div>
             <div className="flex items-center gap-3">
-              <Foto url={confirmar.item.foto} nome={confirmar.item.titulo} />
+              <Foto url={item.foto} nome={item.titulo} />
               <div className="min-w-0">
-                <div className="font-medium line-clamp-2 leading-tight">{confirmar.item.titulo ?? "—"}</div>
-                <div className="text-[11px] text-muted-foreground font-mono">SKU {confirmar.item.sku ?? "—"} · {confirmar.item.mlb}</div>
+                <div className="font-medium line-clamp-2 leading-tight">{item.titulo ?? "—"}</div>
+                <div className="text-[11px] text-muted-foreground font-mono">SKU {item.sku ?? "—"} · {item.mlb}</div>
               </div>
             </div>
-            {confirmar.acao === "aplicar" ? (
-              <div className="text-sm bg-muted/60 rounded-lg p-3 flex flex-col gap-1.5">
-                <div className="flex justify-between"><span className="text-muted-foreground">Preço público</span>
-                  <span className="font-mono">{formatBRL(num(confirmar.item.original_price))} → <strong>{formatBRL(num(confirmar.item.promo_price))}</strong></span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Margem de contribuição</span>
-                  <span className="font-mono">{formatBRL(num(confirmar.item.mc_atual))} → <strong className={cn(confirmar.item.mc_negativa ? "text-red-600" : "text-emerald-600")}>{formatBRL(num(confirmar.item.mc_promo))}</strong></span></div>
-              </div>
+            {ehAplicar ? (
+              <>
+                {ajustavel && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-semibold text-muted-foreground">Preço da promoção — você escolhe (entre {formatBRL(num(item.preco_min))} e {formatBRL(num(item.preco_max))})</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Input type="number" step="0.01" min={item.preco_min ?? undefined} max={item.preco_max ?? undefined}
+                        value={simPreco ?? ""} onChange={(e) => { const v = Number(e.target.value); setSimPreco(Number.isFinite(v) && v > 0 ? v : null); }}
+                        className="w-28 font-mono" />
+                      {item.preco_sugerido != null && <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_sugerido)}>Sugerido</button>}
+                      <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_min)}>Mín</button>
+                      <button className="text-xs px-2 py-1 rounded border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_max)}>Máx</button>
+                    </div>
+                  </div>
+                )}
+                <div className="text-sm bg-muted/60 rounded-lg p-3 flex flex-col gap-1.5">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Preço público</span>
+                    <span className="font-mono">{formatBRL(num(item.original_price))} → <strong>{formatBRL(num(precoShow))}</strong>{descShow != null && <span className="text-red-600"> (−{descShow.toFixed(0)}%)</span>}</span></div>
+                  <div className="flex justify-between items-center"><span className="text-muted-foreground">Margem de contribuição</span>
+                    <span className="font-mono flex items-center gap-1">{formatBRL(num(item.mc_atual))} → <strong className={cn(neg ? "text-red-600" : "text-emerald-600")}>{mcShow == null ? "—" : formatBRL(mcShow)}</strong>{mcPctShow != null && <span className="text-muted-foreground">({pct(mcPctShow)})</span>}{simLoading && <Loader2 className="h-3 w-3 animate-spin" />}</span></div>
+                </div>
+              </>
             ) : (
-              <p className="text-sm text-muted-foreground">O item volta ao preço cheio ({formatBRL(num(confirmar.item.original_price))}) e sai desta promoção.</p>
+              <p className="text-sm text-muted-foreground">O item volta ao preço cheio ({formatBRL(num(item.original_price))}) e sai desta promoção.</p>
             )}
-            {confirmar.acao === "aplicar" && confirmar.item.mc_negativa && (
+            {ehAplicar && neg && (
               <div className="text-sm bg-red-500/10 text-red-600 rounded-lg p-3 flex items-start gap-2 font-medium">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                Atenção: com este preço a margem fica <strong>negativa</strong> ({formatBRL(num(confirmar.item.mc_promo))}). Você venderia no prejuízo.
+                Atenção: com este preço a margem fica <strong>negativa</strong> ({mcShow == null ? "—" : formatBRL(mcShow)}). Você venderia no prejuízo.
               </div>
             )}
             <p className="text-xs text-muted-foreground">Esta ação altera o preço público do anúncio no Mercado Livre imediatamente.</p>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setConfirmar(null)} disabled={executando}>Cancelar</Button>
-              <Button
-                variant={confirmar.acao === "aplicar" && confirmar.item.mc_negativa ? "destructive" : "default"}
-                onClick={() => void executar()} disabled={executando}>
+              <Button variant={ehAplicar && neg ? "destructive" : "default"} onClick={() => void executar()} disabled={executando || simLoading}>
                 {executando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {confirmar.acao === "aplicar" ? "Confirmar e aplicar" : "Confirmar remoção"}
+                {ehAplicar ? "Confirmar e aplicar" : "Confirmar remoção"}
               </Button>
             </div>
           </Card>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
