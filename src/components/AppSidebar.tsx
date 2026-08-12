@@ -82,6 +82,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "ADS Mercado Livre", url: "/ads-ml", icon: Megaphone, modulo: "ads" },
       { title: "Saúde ML", url: "/saude-ml", icon: Activity, modulo: "ads" },
       { title: "Promoções", url: "/promocoes", icon: Zap, modulo: "ads" },
+      { title: "Promoções ML", url: "/promocoes-ml", icon: Zap, modulo: "ads" },
       { title: "Amazon", url: "/amazon", icon: ShoppingCart, modulo: "produtos" },
     ],
   },

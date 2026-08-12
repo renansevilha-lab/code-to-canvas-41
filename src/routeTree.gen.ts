@@ -15,6 +15,7 @@ import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as SaudeMlRouteImport } from './routes/saude-ml'
 import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
+import { Route as PromocoesMlRouteImport } from './routes/promocoes-ml'
 import { Route as PromocoesRouteImport } from './routes/promocoes'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as ProdutosRouteImport } from './routes/produtos'
@@ -65,6 +66,11 @@ const SaudeMlRoute = SaudeMlRouteImport.update({
 const ReprocessarCmvRoute = ReprocessarCmvRouteImport.update({
   id: '/reprocessar-cmv',
   path: '/reprocessar-cmv',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PromocoesMlRoute = PromocoesMlRouteImport.update({
+  id: '/promocoes-ml',
+  path: '/promocoes-ml',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PromocoesRoute = PromocoesRouteImport.update({
@@ -194,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
+  '/promocoes-ml': typeof PromocoesMlRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
@@ -223,6 +230,7 @@ export interface FileRoutesByTo {
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
+  '/promocoes-ml': typeof PromocoesMlRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
@@ -253,6 +261,7 @@ export interface FileRoutesById {
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
+  '/promocoes-ml': typeof PromocoesMlRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
@@ -284,6 +293,7 @@ export interface FileRouteTypes {
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
+    | '/promocoes-ml'
     | '/reprocessar-cmv'
     | '/saude-ml'
     | '/separacao'
@@ -313,6 +323,7 @@ export interface FileRouteTypes {
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
+    | '/promocoes-ml'
     | '/reprocessar-cmv'
     | '/saude-ml'
     | '/separacao'
@@ -342,6 +353,7 @@ export interface FileRouteTypes {
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
+    | '/promocoes-ml'
     | '/reprocessar-cmv'
     | '/saude-ml'
     | '/separacao'
@@ -372,6 +384,7 @@ export interface RootRouteChildren {
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
   PromocoesRoute: typeof PromocoesRoute
+  PromocoesMlRoute: typeof PromocoesMlRoute
   ReprocessarCmvRoute: typeof ReprocessarCmvRoute
   SaudeMlRoute: typeof SaudeMlRoute
   SeparacaoRoute: typeof SeparacaoRoute
@@ -423,6 +436,13 @@ declare module '@tanstack/react-router' {
       path: '/reprocessar-cmv'
       fullPath: '/reprocessar-cmv'
       preLoaderRoute: typeof ReprocessarCmvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/promocoes-ml': {
+      id: '/promocoes-ml'
+      path: '/promocoes-ml'
+      fullPath: '/promocoes-ml'
+      preLoaderRoute: typeof PromocoesMlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/promocoes': {
@@ -596,6 +616,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,
   PromocoesRoute: PromocoesRoute,
+  PromocoesMlRoute: PromocoesMlRoute,
   ReprocessarCmvRoute: ReprocessarCmvRoute,
   SaudeMlRoute: SaudeMlRoute,
   SeparacaoRoute: SeparacaoRoute,
