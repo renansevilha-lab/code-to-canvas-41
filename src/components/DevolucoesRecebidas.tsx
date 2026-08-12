@@ -202,6 +202,29 @@ export function DevolucoesRecebidas() {
           data = (r2.data ?? []) as PT[];
         }
       }
+      // Fallback 3: rastreio REVERSO de devolução Shopee (buyer return) -> order_sn -> pedido.
+      // A etiqueta de devolução do comprador traz um rastreio NOVO (BR…Y/G), diferente do
+      // forward que guardamos; ele fica em shopee_devolucoes.tracking_number.
+      if (data.length === 0) {
+        const maior = [...tokens].sort((a, b) => b.length - a.length)[0];
+        if (maior && maior.length >= 10) {
+          const rd = await supabaseExternal.from("shopee_devolucoes")
+            .select("order_sn, shop_id")
+            .ilike("tracking_number", `%${maior}%`)
+            .limit(1);
+          const osn = (rd.data?.[0] as { order_sn?: string } | undefined)?.order_sn;
+          if (osn) {
+            const r3 = await supabaseExternal.from("pedidos_tiny").select(sel).eq("numero_ecommerce", osn).limit(1);
+            data = (r3.data ?? []) as PT[];
+            if (data.length === 0) {
+              // pedido não está no espelho Tiny — monta card mínimo pelo order_sn do return
+              const shop = (rd.data?.[0] as { shop_id?: number } | undefined)?.shop_id;
+              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Sevilla Store [SHOPEE]" : null;
+              data = [{ numero_ecommerce: osn, numero_pedido: null, marca_canal: canal, situacao: null, codigo_rastreamento: maior, forma_envio: null }];
+            }
+          }
+        }
+      }
       if (data.length === 0) {
         setErro(`Pedido não encontrado para "${raw}". Confira o código e tente de novo.`);
         return;
