@@ -176,17 +176,33 @@ export function DevolucoesRecebidas() {
     if (!raw) return;
     setBuscando(true); setErro(null); setPedido(null); setConf([]); setConferindoId(null); setObs("");
     try {
-      const brMatch = raw.match(/BR[A-Z0-9]{6,}/i);
-      const br = brMatch ? brMatch[0] : null;
-      const ors = [`numero_ecommerce.eq.${raw}`, `numero_pedido.eq.${raw}`];
-      if (br) ors.push(`codigo_rastreamento.ilike.${br}*`);
-      const { data, error } = await supabaseExternal
-        .from("pedidos_tiny")
-        .select("numero_ecommerce, numero_pedido, marca_canal, situacao, codigo_rastreamento, forma_envio")
-        .or(ors.join(","))
-        .limit(5);
-      if (error) throw error;
-      if (!data || data.length === 0) {
+      // Blocos alfanuméricos do valor bipado (>= 8) + o texto inteiro se for puro
+      // alfanumérico. Cobre order_sn, rastreio com/sem "BR" e com/sem sufixo SPX,
+      // e QR embrulhado (URL). Match: order_sn/Tiny exato ou rastreio por prefixo.
+      const up = raw.toUpperCase();
+      const tokens = Array.from(new Set([
+        ...(/^[A-Z0-9]+$/.test(up) ? [up] : []),
+        ...(up.match(/[A-Z0-9]{8,}/g) ?? []),
+      ])).slice(0, 6);
+      const sel = "numero_ecommerce, numero_pedido, marca_canal, situacao, codigo_rastreamento, forma_envio";
+      type PT = { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };
+      const ors: string[] = [];
+      for (const t of tokens) ors.push(`numero_ecommerce.eq.${t}`, `numero_pedido.eq.${t}`, `codigo_rastreamento.ilike.${t}*`);
+      let data: PT[] = [];
+      if (ors.length) {
+        const r1 = await supabaseExternal.from("pedidos_tiny").select(sel).or(ors.join(",")).limit(5);
+        if (r1.error) throw r1.error;
+        data = (r1.data ?? []) as PT[];
+      }
+      // Fallback: rastreio que CONTÉM o maior bloco (quando o QR traz prefixo/sufixo diferente).
+      if (data.length === 0) {
+        const maior = [...tokens].sort((a, b) => b.length - a.length)[0];
+        if (maior && maior.length >= 10) {
+          const r2 = await supabaseExternal.from("pedidos_tiny").select(sel).ilike("codigo_rastreamento", `%${maior}%`).limit(3);
+          data = (r2.data ?? []) as PT[];
+        }
+      }
+      if (data.length === 0) {
         setErro(`Pedido não encontrado para "${raw}". Confira o código e tente de novo.`);
         return;
       }
