@@ -624,6 +624,67 @@ function AtualizarDoTinyButton() {
   );
 }
 
+// Força o processo do cron (aplica a TAG + APROVA no Tiny os pedidos Shopee em
+// aberto) sob demanda, sem esperar os 5 min. Depois puxa a separação recém-criada
+// pra fila do app (aprovar gera a separação no Tiny).
+function ProcessarAbertosButton() {
+  const queryClient = useQueryClient();
+  const [rodando, setRodando] = useState(false);
+
+  const handle = async () => {
+    setRodando(true);
+    try {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=processar-abertos&canal=shopee`,
+        { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const d = (await resp.json().catch(() => ({}))) as { tags_aplicadas?: number; aprovados?: number; erro?: string; erros?: string[] };
+      if (!resp.ok || d.erro) throw new Error(d.erro ?? `HTTP ${resp.status}`);
+      const aprov = d.aprovados ?? 0;
+      const tags = d.tags_aplicadas ?? 0;
+      if (aprov === 0 && tags === 0) {
+        toast.info("Nenhum pedido em aberto para processar agora");
+      } else {
+        toast.success(
+          `${formatNumber(aprov)} pedido(s) aprovado(s) · ${formatNumber(tags)} tag(s)`,
+          d.erros?.length ? { description: `${d.erros.length} com erro (ver logs)` } : undefined,
+        );
+        // aprovar gera a separação no Tiny -> puxa pra fila do app
+        await fetch(`${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=sync&max=150`,
+          { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["separacao"] });
+    } catch (e) {
+      toast.error("Falha ao processar abertos", { description: (e as Error).message });
+    } finally {
+      setRodando(false);
+    }
+  };
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={handle}
+      disabled={rodando}
+      className="gap-2"
+      title="Aplica a tag e aprova no Tiny os pedidos Shopee em aberto AGORA, sem esperar o cron (5 min)."
+    >
+      {rodando ? (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Processando abertos...
+        </>
+      ) : (
+        <>
+          <Zap className="h-3.5 w-3.5" />
+          Processar abertos
+        </>
+      )}
+    </Button>
+  );
+}
+
 function SeparacaoTotaisCards() {
   const { data, isLoading, error } = useSeparacaoTotais();
 
@@ -2833,6 +2894,7 @@ function SeparacaoPage() {
           Fila de pedidos aguardando separação no galpão (Full excluído).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
+          <ProcessarAbertosButton />
           <AtualizarDoTinyButton />
           <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
             <RefreshCw className={cn("h-4 w-4 mr-2", isFetching && "animate-spin")} />
