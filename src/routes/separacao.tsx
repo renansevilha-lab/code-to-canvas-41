@@ -968,7 +968,7 @@ async function imprimirLoteApi(
   tag: string,
   printerId: number,
   printerNome?: string,
-) {
+): Promise<number> {
   const url =
     `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
     `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}`;
@@ -980,7 +980,7 @@ async function imprimirLoteApi(
     toast.error(`Falha ao imprimir lote ${tag}`, {
       description: data.erro ?? `HTTP ${resp.status}`,
     });
-    return;
+    return 0;
   }
   if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 0)) {
     toast.warning(
@@ -997,6 +997,7 @@ async function imprimirLoteApi(
       { description: printerNome ?? "" },
     );
   }
+  return data.etiquetas_enviadas ?? 0;
 }
 
 async function imprimirPedidoApi(
@@ -1321,9 +1322,12 @@ function gerarZplIdentificador(o: {
 async function imprimirIdentificadorApi(
   lote: TagLoteRow,
   printerId: number,
-  opts?: { auto?: boolean },
+  opts?: { auto?: boolean; pedidos?: number },
 ): Promise<void> {
-  if (opts?.auto && lote.qtd_pedidos < 2) return;
+  // pedidosReal = qtd IMPRESSA (passada pelo fluxo de impressão), não a tagueada —
+  // pra a etiqueta de controle bater com a pilha física (os pulados não contam).
+  const pedidosReal = opts?.pedidos != null ? opts.pedidos : lote.qtd_pedidos;
+  if (opts?.auto && pedidosReal < 2) return;
   if (!printerId) {
     if (!opts?.auto) toast.warning("Escolha a impressora primeiro.");
     return;
@@ -1343,12 +1347,12 @@ async function imprimirIdentificadorApi(
     }
     const mUn = /(\d+)\s*un\s*$/i.exec(lote.grupo_origem ?? "");
     const unPorPedido = mUn ? Number(mUn[1]) : null;
-    const produtos = unPorPedido != null ? unPorPedido * lote.qtd_pedidos : null;
+    const produtos = unPorPedido != null ? unPorPedido * pedidosReal : null;
     const zpl = gerarZplIdentificador({
       tag: lote.tag,
       grupo: lote.grupo_origem ?? "",
       produtoNome,
-      pedidos: lote.qtd_pedidos,
+      pedidos: pedidosReal,
       produtos,
       envio: lote.tipo_envio ?? "-",
     });
@@ -1398,8 +1402,9 @@ function LotesDoDia({
 
   // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
   // -> PrintNode). No modo automático pula lote de 1 pedido (não faz sentido).
-  async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean }) {
-    if (opts?.auto && lote.qtd_pedidos < 2) return; // evita piscar o spinner à toa
+  async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean; pedidos?: number }) {
+    const pedidosReal = opts?.pedidos != null ? opts.pedidos : lote.qtd_pedidos;
+    if (opts?.auto && pedidosReal < 2) return; // evita piscar o spinner à toa
     setImprimindoIdent(lote.tag);
     try {
       await imprimirIdentificadorApi(lote, printerId, opts);
@@ -1454,7 +1459,7 @@ function LotesDoDia({
       // Etiqueta identificadora ao final do lote (se ligado e 2+ pedidos). Roda
       // em segundo plano (void) — não atrasa a fila; sai como +1 etiqueta.
       if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
-        void imprimirIdentificador(lote, { auto: true });
+        void imprimirIdentificador(lote, { auto: true, pedidos: data.etiquetas_enviadas });
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
     } catch (e) {
@@ -1901,17 +1906,16 @@ function FilaPriorizada() {
         });
         return;
       }
-      for (const g of groups.values()) {
-        await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
-      }
-      // Etiqueta identificadora por lote, se o toggle do painel "Lotes do dia"
-      // estiver ligado. Em segundo plano (void); a API pula lotes de 1 pedido.
       let identOn = false;
       try { identOn = localStorage.getItem(STORAGE_IDENT) === "1"; } catch { /* noop */ }
-      if (identOn) {
-        for (const g of groups.values()) {
+      for (const g of groups.values()) {
+        // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
+        // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
+        const enviadas = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+        // identificadora por lote, contando o que REALMENTE foi impresso (não o tagueado).
+        if (identOn && enviadas > 0) {
           const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
-          if (loteRow) void imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+          if (loteRow) void imprimirIdentificadorApi(loteRow, printerId, { auto: true, pedidos: enviadas });
         }
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
