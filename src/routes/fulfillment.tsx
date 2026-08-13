@@ -1021,6 +1021,18 @@ const DOC_TIPOS: Array<{ id: string; label: string }> = [
 ];
 const DOC_TIPO_LABEL: Record<string, string> = Object.fromEntries(DOC_TIPOS.map((t) => [t.id, t.label]));
 
+// Adivinha o tipo do documento pelo NOME do arquivo (best-effort; o operador corrige
+// no seletor de cada linha se errar). Ordem importa: específico antes do genérico.
+function detectarTipoDoc(nome: string): string {
+  const n = (nome || "").toLowerCase();
+  if (/danfe|nf-?e|nota.?fiscal/.test(n)) return "danfe";
+  if (/fnsku|amazon|product.?label|etiqueta.?(de.?)?produto|unit.?label/.test(n)) return "etiqueta_produto";
+  if (/etiqueta|volume|\blabels?\b|\.zpl/.test(n)) return "etiquetas";
+  if (/prepar|instru|romaneio|packing|conte[úu]do|content/.test(n)) return "preparacao";
+  if (/folha|remessa|\benvio\b|shipment/.test(n)) return "folha_envio";
+  return "outro";
+}
+
 interface EnvioDoc {
   id: string;
   tipo: string;
@@ -1657,6 +1669,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const [subindoDoc, setSubindoDoc] = useState(false);
   const docRef = useRef<HTMLInputElement>(null);
   const etiqPdfRef = useRef<HTMLInputElement>(null);
+  const [arrastando, setArrastando] = useState(false);
+  const [subindoVarios, setSubindoVarios] = useState(false);
 
   async function subirDoc(file: File, tipoOverride?: string) {
     setSubindoDoc(true);
@@ -1674,6 +1688,39 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     } finally {
       setSubindoDoc(false);
     }
+  }
+  // Sobe VÁRIOS de uma vez, detectando o tipo de cada pelo nome do arquivo.
+  async function subirVarios(files: File[]) {
+    const arr = files.filter((f) => f && f.size > 0);
+    if (arr.length === 0) return;
+    setSubindoVarios(true);
+    const resumo: Record<string, number> = {};
+    try {
+      for (const f of arr) {
+        const tipo = detectarTipoDoc(f.name);
+        try {
+          const b64 = await fileToBase64(f);
+          const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
+            envio_id: envioId, tipo, nome: f.name, mime: f.type || "application/pdf", tamanho: f.size, conteudo_base64: b64,
+          });
+          if (error) throw error;
+          resumo[tipo] = (resumo[tipo] ?? 0) + 1;
+        } catch (e) {
+          toast.error(`Falha em "${f.name}"`, { description: (e as Error).message });
+        }
+      }
+      const total = Object.values(resumo).reduce((a, b) => a + b, 0);
+      const partes = Object.entries(resumo).map(([t, n]) => `${n} ${DOC_TIPO_LABEL[t] ?? t}`);
+      if (total > 0) toast.success(`${total} documento(s) anexado(s)`, { description: partes.join(" · ") });
+      docsQ.refetch();
+    } finally {
+      setSubindoVarios(false);
+    }
+  }
+  async function atualizarTipoDoc(id: string, tipo: string) {
+    const { error } = await supabaseExternal.from("fulfillment_envio_docs").update({ tipo }).eq("id", id);
+    if (error) { toast.error("Falha ao mudar o tipo", { description: error.message }); return; }
+    docsQ.refetch();
   }
   async function abrirDoc(d: EnvioDoc) {
     try {
@@ -2000,19 +2047,36 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               ref={docRef}
               type="file"
               accept="application/pdf,.pdf,image/*"
+              multiple
               className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void subirDoc(f); }}
+              onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.currentTarget.value = ""; if (fs.length) void subirVarios(fs); }}
             />
-            <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={subindoDoc} onClick={() => docRef.current?.click()}>
-              {subindoDoc ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Anexar PDF
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={subindoDoc || subindoVarios} onClick={() => docRef.current?.click()}>
+              {subindoDoc || subindoVarios ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Anexar PDFs
             </Button>
           </div>
+        </div>
+        <div
+          onDragOver={(e) => { e.preventDefault(); if (!arrastando) setArrastando(true); }}
+          onDragLeave={() => setArrastando(false)}
+          onDrop={(e) => { e.preventDefault(); setArrastando(false); const fs = Array.from(e.dataTransfer.files ?? []); if (fs.length) void subirVarios(fs); }}
+          onClick={() => docRef.current?.click()}
+          className={`rounded-md border border-dashed p-3 text-center text-xs cursor-pointer transition-colors ${arrastando ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground hover:bg-muted/40"}`}
+        >
+          {subindoVarios
+            ? <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Anexando e identificando…</span>
+            : "Arraste todos os documentos aqui de uma vez — o sistema identifica cada um (DANFE, etiquetas, folha de envio, preparação…)"}
         </div>
         {docsQ.data && docsQ.data.length > 0 ? (
           <div className="divide-y">
             {docsQ.data.map((d) => (
               <div key={d.id} className="flex items-center gap-2 py-1.5 text-sm">
-                <Badge variant="outline" className="text-[10px] h-5 px-1.5 shrink-0">{DOC_TIPO_LABEL[d.tipo] ?? d.tipo}</Badge>
+                <select value={d.tipo} onChange={(e) => void atualizarTipoDoc(d.id, e.target.value)}
+                  title="Tipo detectado — corrija aqui se errou"
+                  className="h-6 rounded border bg-card px-1 text-[10px] shrink-0 max-w-[150px]">
+                  {DOC_TIPOS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  {!DOC_TIPO_LABEL[d.tipo] && <option value={d.tipo}>{d.tipo}</option>}
+                </select>
                 <span className="truncate flex-1">{d.nome ?? "documento"}</span>
                 <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{d.tamanho ? `${Math.round(d.tamanho / 1024)} KB` : ""}</span>
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void abrirDoc(d)}>Abrir</Button>
