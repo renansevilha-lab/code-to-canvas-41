@@ -1396,6 +1396,8 @@ function LotesDoDia({
   const [imprimindo, setImprimindo] = useState<string | null>(null);
   const [lojaPorTag, setLojaPorTag] = useState<Record<string, "ottz" | "svl">>({});
   const [imprimindoIdent, setImprimindoIdent] = useState<string | null>(null);
+  const [selLotes, setSelLotes] = useState<Set<string>>(new Set());
+  const [embalandoLote, setEmbalandoLote] = useState(false);
   const [identificadorAtivo, setIdentificadorAtivo] = useState<boolean>(() => {
     try { return localStorage.getItem(STORAGE_IDENT) === "1"; } catch { return false; }
   });
@@ -1498,6 +1500,44 @@ function LotesDoDia({
       setConfirmar(null);
     }
   }
+
+  function toggleLote(tag: string, on: boolean) {
+    setSelLotes((prev) => { const n = new Set(prev); if (on) n.add(tag); else n.delete(tag); return n; });
+  }
+
+  // Marca EMBALADO no Tiny os lotes selecionados de uma vez (loop no embalar-lote,
+  // que respeita a trava de impressao confirmada — os sem etiqueta confirmada caem
+  // em "com pendencia"; use o botao individual + forcar se precisar).
+  async function marcarEmbaladoVarios() {
+    const tags = [...selLotes];
+    if (tags.length === 0 || embalandoLote) return;
+    if (!window.confirm(`Marcar ${tags.length} lote(s) como EMBALADO no Tiny? Não tem desfazer.`)) return;
+    setEmbalandoLote(true);
+    let okLotes = 0, totalEmb = 0;
+    const comPendencia: string[] = [];
+    try {
+      for (const tag of tags) {
+        try {
+          const data = await callSeparacaoFn<EmbalarLoteResponse>(
+            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
+          );
+          okLotes++;
+          totalEmb += data.embaladas ?? 0;
+          if (data.erros && data.erros.length > 0) comPendencia.push(tag);
+        } catch {
+          comPendencia.push(tag);
+        }
+      }
+      toast.success(`${formatNumber(totalEmb)} pedido(s) embalado(s) em ${okLotes} lote(s)`,
+        comPendencia.length ? { description: `${comPendencia.length} lote(s) com pendência (sem impressão confirmada): ${comPendencia.slice(0, 6).join(", ")}` } : undefined);
+      setSelLotes(new Set());
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
+    } finally {
+      setEmbalandoLote(false);
+    }
+  }
+
+  const lotesPendentes = (lotes ?? []).filter((l) => l.status !== "embalada");
 
   return (
     <Card className="p-4 space-y-3">
@@ -1630,10 +1670,30 @@ function LotesDoDia({
       )}
 
       {!isLoading && lotes && lotes.length > 0 && (
-        <div className="overflow-x-auto">
+        <div>
+          {selLotes.size > 0 && (
+            <div className="flex items-center gap-2 mb-2 p-2 rounded-md bg-primary/10 border border-primary/30 flex-wrap">
+              <span className="text-sm font-medium">{selLotes.size} lote(s) selecionado(s)</span>
+              <Button size="sm" onClick={() => void marcarEmbaladoVarios()} disabled={embalandoLote} className="gap-1.5">
+                {embalandoLote ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                Marcar embalado no Tiny (em massa)
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelLotes(new Set())}>Limpar</Button>
+            </div>
+          )}
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-muted-foreground">
               <tr className="border-b">
+                <th className="py-2 pr-2 w-6">
+                  <input
+                    type="checkbox"
+                    className="align-middle cursor-pointer"
+                    checked={lotesPendentes.length > 0 && lotesPendentes.every((l) => selLotes.has(l.tag))}
+                    onChange={(e) => setSelLotes(e.target.checked ? new Set(lotesPendentes.map((l) => l.tag)) : new Set())}
+                    title="Selecionar todos os aguardando impressão"
+                  />
+                </th>
                 <th className="text-left py-2 pr-3 font-medium">TAG</th>
                 <th className="text-left py-2 pr-3 font-medium">Bloco</th>
                 <th className="text-right py-2 pr-3 font-medium">Pedidos</th>
@@ -1646,6 +1706,16 @@ function LotesDoDia({
                 const embalada = l.status === "embalada";
                 return (
                   <tr key={l.id} className="border-b last:border-0">
+                    <td className="py-2 pr-2">
+                      {!embalada && (
+                        <input
+                          type="checkbox"
+                          className="align-middle cursor-pointer"
+                          checked={selLotes.has(l.tag)}
+                          onChange={(e) => toggleLote(l.tag, e.target.checked)}
+                        />
+                      )}
+                    </td>
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-base font-semibold tabular-nums">
@@ -1772,6 +1842,7 @@ function LotesDoDia({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
       </div>)}
@@ -1861,6 +1932,8 @@ function FilaPriorizada() {
   const [prazoFiltro, setPrazoFiltro] = useState<string>("todos");
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
+  const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
+  const [aplicandoLote, setAplicandoLote] = useState(false);
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
@@ -2108,6 +2181,38 @@ function FilaPriorizada() {
     }
   }
 
+  function toggleGrupo(grupo: string, on: boolean) {
+    setSelGrupos((prev) => { const n = new Set(prev); if (on) n.add(grupo); else n.delete(grupo); return n; });
+  }
+
+  // Aplica TAG em vários blocos selecionados de uma vez (loop no tag-lote) — pra
+  // não perder tempo aplicando TAG a TAG no início do dia.
+  async function aplicarTagVarios() {
+    const grupos = [...selGrupos].filter((g) => g && !bloqueados.has(g));
+    if (grupos.length === 0 || aplicandoLote) return;
+    setAplicandoLote(true);
+    let okTags = 0, totalPed = 0;
+    const comErro: string[] = [];
+    try {
+      for (const grupo of grupos) {
+        try {
+          const data = await callSeparacaoFn<TagLoteResponse>(`modulo=tag-lote&grupo=${encodeURIComponent(grupo)}`);
+          okTags++;
+          totalPed += data.pedidos_tagueados ?? 0;
+        } catch (e) {
+          const err = e as Error & { status?: number };
+          if (err.status !== 409) comErro.push(grupo); // 409 = já tagueados hoje, ok
+        }
+      }
+      toast.success(`${okTags} TAG(s) aplicada(s) · ${formatNumber(totalPed)} pedidos`,
+        comErro.length ? { description: `${comErro.length} bloco(s) com erro` } : undefined);
+      setSelGrupos(new Set());
+      await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+    } finally {
+      setAplicandoLote(false);
+    }
+  }
+
   function desbloquear(grupo: string) {
     setBloqueados((prev) => {
       const next = new Set(prev);
@@ -2222,6 +2327,16 @@ function FilaPriorizada() {
 
   return (
     <div className="space-y-5">
+      {selGrupos.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
+          <span className="text-sm font-medium">{selGrupos.size} bloco(s) selecionado(s)</span>
+          <Button size="sm" onClick={() => void aplicarTagVarios()} disabled={aplicandoLote} className="gap-1.5">
+            {aplicandoLote ? <Loader2 className="h-4 w-4 animate-spin" /> : <TagIcon className="h-4 w-4" />}
+            Aplicar TAG em massa
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelGrupos(new Set())}>Limpar</Button>
+        </div>
+      )}
       <SeparacaoTotaisCards />
       <LotesDoDia
         printerId={printerId}
@@ -2442,6 +2557,15 @@ function FilaPriorizada() {
                         // (pedidos sem tag na linha sempre podem receber uma tag nova)
                         return (
                           <div className="flex flex-col items-end gap-1">
+                            <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={selGrupos.has(grupo)}
+                                disabled={!grupo || bloqueados.has(grupo)}
+                                onChange={(e) => toggleGrupo(grupo, e.target.checked)}
+                              />
+                              marcar p/ TAG em massa
+                            </label>
                             <Button
                               size="sm"
                               variant={bloqueados.has(grupo) ? "secondary" : "outline"}
