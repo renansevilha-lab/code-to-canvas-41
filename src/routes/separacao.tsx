@@ -54,6 +54,35 @@ import {
   EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
 import { formatNumber } from "@/lib/format";
+import { usePerfil } from "@/hooks/usePerfil";
+
+// ============ Log da separação (histórico) ============
+// Append-only em separacao_log. Escrito aqui no front, que conhece o usuário
+// logado. Nunca trava a operação: erros são engolidos.
+type EventoSep = "tag_aplicada" | "etiqueta_impressa" | "tag_finalizada" | "embalado";
+async function registrarSeparacaoLog(entrada: {
+  evento: EventoSep;
+  usuario: string | null;
+  tag?: string | null;
+  order_sn?: string | null;
+  separacao_id?: number | null;
+  sku?: string | null;
+  detalhe?: Record<string, unknown> | null;
+}): Promise<void> {
+  try {
+    await supabaseExternal.from("separacao_log").insert({
+      evento: entrada.evento,
+      usuario: entrada.usuario ?? null,
+      tag: entrada.tag ?? null,
+      order_sn: entrada.order_sn ?? null,
+      separacao_id: entrada.separacao_id ?? null,
+      sku: entrada.sku ?? null,
+      detalhe: entrada.detalhe ?? null,
+    });
+  } catch {
+    /* log não deve travar a operação */
+  }
+}
 
 // ============ Edge function helpers ============
 
@@ -1390,6 +1419,7 @@ function LotesDoDia({
   impressoraSelecionada,
 }: LotesDoDiaProps) {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
   const { data: lotes, isLoading, error } = useTagsDoDia();
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const [corpoAberto, setCorpoAberto] = useState(true);
@@ -1460,6 +1490,13 @@ function LotesDoDia({
           { description: impressoraSelecionada?.nome ?? "" },
         );
       }
+      if ((data.etiquetas_enviadas ?? 0) > 0) {
+        void registrarSeparacaoLog({
+          evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+          tag: lote.tag, sku: lote.sku,
+          detalhe: { loja, enviadas: data.etiquetas_enviadas, forcar, via: "lote" },
+        });
+      }
       // Etiqueta identificadora junto do lote (se ligado e teve envio).
       // AWAIT (não void): como é um job SEPARADO no PrintNode, disparar em segundo
       // plano corria com o envio — a identificadora saía no meio/antes ou se perdia.
@@ -1499,6 +1536,13 @@ function LotesDoDia({
           { description: `Lote ${data.tag}` },
         );
       }
+      if ((data.embaladas ?? 0) > 0) {
+        void registrarSeparacaoLog({
+          evento: "embalado", usuario: perfil?.nome ?? null,
+          tag: lote.tag, sku: lote.sku,
+          detalhe: { embaladas: data.embaladas, total: data.total, via: "lote" },
+        });
+      }
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
       // enquanto a lista de 5000 linhas recarregava.
@@ -1534,6 +1578,12 @@ function LotesDoDia({
           );
           okLotes++;
           totalEmb += data.embaladas ?? 0;
+          if ((data.embaladas ?? 0) > 0) {
+            void registrarSeparacaoLog({
+              evento: "embalado", usuario: perfil?.nome ?? null,
+              tag, detalhe: { embaladas: data.embaladas, total: data.total, via: "lote-varios" },
+            });
+          }
           if (data.erros && data.erros.length > 0) comPendencia.push(tag);
         } catch {
           comPendencia.push(tag);
@@ -1924,6 +1974,7 @@ function LotesDoDia({
 
 function FilaPriorizada() {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
   const { data: rows, isLoading, error } = usePriorizadaRows();
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
@@ -2015,6 +2066,10 @@ function FilaPriorizada() {
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
         const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+        void registrarSeparacaoLog({
+          evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+          tag: g.tag, sku: item.sku, detalhe: { loja: g.loja, enviadas, jaPulados, via: "sku" },
+        });
         // identificadora por lote (impresso agora OU já estava todo impresso).
         // AWAIT (não void): sai DEPOIS das etiquetas de envio deste lote e antes
         // do próximo lote (não intercala no PrintNode). Conta pela TAG.
@@ -2073,6 +2128,10 @@ function FilaPriorizada() {
             `modulo=embalar-um&separacao_id=${id}&confirmar=1${qs}`,
           );
           ok++;
+          void registrarSeparacaoLog({
+            evento: "embalado", usuario: perfil?.nome ?? null,
+            separacao_id: id, sku: item.sku, detalhe: { via: "sku", forcado: !!forcado },
+          });
         } catch (e) {
           errs++;
           console.warn("embalar-um falhou", id, (e as Error).message);
@@ -2106,6 +2165,11 @@ function FilaPriorizada() {
     setImprimindoKey(key);
     try {
       await imprimirPedidoApi(loja, p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      void registrarSeparacaoLog({
+        evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+        order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
+        detalhe: { loja, via: "pedido" },
+      });
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
       // enquanto a lista de 5000 linhas recarregava.
@@ -2134,6 +2198,11 @@ function FilaPriorizada() {
       await callSeparacaoFn(
         `modulo=embalar-um&separacao_id=${p.separacao_id}&confirmar=1${qs}`,
       );
+      void registrarSeparacaoLog({
+        evento: "embalado", usuario: perfil?.nome ?? null,
+        order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
+        detalhe: { via: "pedido", forcado: !!forcado },
+      });
       toast.success(
         forcado
           ? `Pedido ${p.numero_ecommerce} embalado (forçado)`
@@ -2171,6 +2240,10 @@ function FilaPriorizada() {
       const data = await callSeparacaoFn<TagLoteResponse>(
         `modulo=tag-lote&grupo=${encodeURIComponent(grupo)}`,
       );
+      void registrarSeparacaoLog({
+        evento: "tag_aplicada", usuario: perfil?.nome ?? null,
+        tag: data.tag, detalhe: { grupo, pedidos_tagueados: data.pedidos_tagueados },
+      });
       toast.success(`TAG ${data.tag} aplicada em ${data.pedidos_tagueados} pedidos`, {
         description: `${data.proximo_passo}${data.aviso ? ` · ${data.aviso}` : ""}`,
         action: {
@@ -2231,6 +2304,10 @@ function FilaPriorizada() {
           const data = await callSeparacaoFn<TagLoteResponse>(`modulo=tag-lote&grupo=${encodeURIComponent(grupo)}`);
           okTags++;
           totalPed += data.pedidos_tagueados ?? 0;
+          void registrarSeparacaoLog({
+            evento: "tag_aplicada", usuario: perfil?.nome ?? null,
+            tag: data.tag, detalhe: { grupo, pedidos_tagueados: data.pedidos_tagueados, via: "varios" },
+          });
         } catch (e) {
           const err = e as Error & { status?: number };
           if (err.status !== 409) comErro.push(grupo); // 409 = já tagueados hoje, ok
