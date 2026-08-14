@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { usePerfil } from "@/hooks/usePerfil";
+import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 
 // ============================================================================
 // Monitoramento de Lotes de Separação — painel de bancada ao vivo.
@@ -108,6 +110,7 @@ function FotoProduto({ url, nome, tipo }: { url: string | null; nome: string | n
 
 function MonitoramentoPage() {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
   const [finalizando, setFinalizando] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -177,6 +180,12 @@ function MonitoramentoPage() {
       qc.setQueryData(["monitoramento", "totais"], prevTotais);
       toast.error(`Falha ao finalizar a TAG ${tag}`, { description: error.message });
     } else {
+      void registrarSeparacaoLog({
+        evento: "tag_finalizada", usuario: perfil?.nome ?? null, tag,
+        detalhe: card
+          ? { qtd_pedidos: num(card.qtd_pedidos), total_unidades: num(card.total_unidades), sku: card.sku }
+          : null,
+      });
       toast.success(`TAG ${tag} finalizada`, {
         description: "Saiu do painel — só monitoramento, não muda nada no Tiny.",
       });
