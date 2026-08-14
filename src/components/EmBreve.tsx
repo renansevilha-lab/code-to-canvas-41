@@ -24,7 +24,7 @@ export function EmBreve({ title, description }: Props) {
           Por enquanto, comece pelo módulo de Vendas — ele é o coração do sistema.
         </p>
         <Button asChild>
-          <Link to="/vendas">Ir para Vendas</Link>
+          <Link to="/vendas" search={{ period: "today", view: "sku", sort: "receita" }}>Ir para Vendas</Link>
         </Button>
       </Card>
     </div>

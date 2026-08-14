@@ -67,7 +67,7 @@ type SearchP = {
 
 export const Route = createFileRoute("/vendas")({
   validateSearch: (s: Record<string, unknown>): SearchP => ({
-    period: VALID_PRESETS.includes(s.period as PeriodPreset) ? (s.period as PeriodPreset) : "mtd",
+    period: VALID_PRESETS.includes(s.period as PeriodPreset) ? (s.period as PeriodPreset) : "today",
     from: typeof s.from === "string" ? s.from : undefined,
     to: typeof s.to === "string" ? s.to : undefined,
     view: s.view === "marca" ? "marca" : "sku",
