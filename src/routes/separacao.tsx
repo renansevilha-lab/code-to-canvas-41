@@ -153,6 +153,7 @@ interface ImprimirResponse {
   etiquetas_enviadas: number;
   pedidos_no_lote: number;
   etiquetas_prontas: number;
+  ja_impressos_pulados?: number;
   aviso: string | null;
   erro?: string;
 }
@@ -968,7 +969,7 @@ async function imprimirLoteApi(
   tag: string,
   printerId: number,
   printerNome?: string,
-): Promise<number> {
+): Promise<{ enviadas: number; jaPulados: number }> {
   const url =
     `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
     `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}`;
@@ -980,7 +981,7 @@ async function imprimirLoteApi(
     toast.error(`Falha ao imprimir lote ${tag}`, {
       description: data.erro ?? `HTTP ${resp.status}`,
     });
-    return 0;
+    return { enviadas: 0, jaPulados: 0 };
   }
   if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 0)) {
     toast.warning(
@@ -997,7 +998,7 @@ async function imprimirLoteApi(
       { description: printerNome ?? "" },
     );
   }
-  return data.etiquetas_enviadas ?? 0;
+  return { enviadas: data.etiquetas_enviadas ?? 0, jaPulados: data.ja_impressos_pulados ?? 0 };
 }
 
 async function imprimirPedidoApi(
@@ -1465,8 +1466,12 @@ function LotesDoDia({
       // Await garante que ela entre na fila DEPOIS das etiquetas de envio do lote.
       // Normal: modo auto (com dedup de 60s contra a duplicada). Reimpressão
       // forçada: deliberada, SEM dedup (o operador quer o controle na pilha).
-      if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
-        // conta pela TAG (qtd_pedidos), não pelo nº de etiquetas enviadas.
+      // Identificadora quando o lote foi impresso AGORA (enviadas>0) OU já estava
+      // todo impresso (ja_impressos_pulados>0 — o v51 pulou etiquetas já enviadas).
+      // Nos dois casos o lote está pronto e merece o controle. Conta pela TAG.
+      const loteImpresso =
+        (data.etiquetas_enviadas ?? 0) > 0 || (data.ja_impressos_pulados ?? 0) > 0;
+      if (identificadorAtivo && loteImpresso) {
         await imprimirIdentificador(lote, forcar ? {} : { auto: true });
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
@@ -2009,13 +2014,12 @@ function FilaPriorizada() {
       for (const g of groups.values()) {
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
-        const enviadas = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
-        // identificadora por lote, contando o que REALMENTE foi impresso (não o
-        // tagueado). AWAIT (não void): sai DEPOIS das etiquetas de envio deste
-        // lote e antes de imprimir o próximo lote (não intercala no PrintNode).
-        if (identOn && enviadas > 0) {
+        const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+        // identificadora por lote (impresso agora OU já estava todo impresso).
+        // AWAIT (não void): sai DEPOIS das etiquetas de envio deste lote e antes
+        // do próximo lote (não intercala no PrintNode). Conta pela TAG.
+        if (identOn && (enviadas > 0 || jaPulados > 0)) {
           const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
-          // conta pela TAG (qtd_pedidos), não pelo nº de etiquetas enviadas.
           if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
         }
       }
