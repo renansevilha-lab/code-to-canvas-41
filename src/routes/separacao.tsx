@@ -1322,11 +1322,12 @@ function gerarZplIdentificador(o: {
 async function imprimirIdentificadorApi(
   lote: TagLoteRow,
   printerId: number,
-  opts?: { auto?: boolean; pedidos?: number },
+  opts?: { auto?: boolean },
 ): Promise<void> {
-  // pedidosReal = qtd IMPRESSA (passada pelo fluxo de impressão), não a tagueada —
-  // pra a etiqueta de controle bater com a pilha física (os pulados não contam).
-  const pedidosReal = opts?.pedidos != null ? opts.pedidos : lote.qtd_pedidos;
+  // Conta SEMPRE pela TAG do sistema (lote.qtd_pedidos) — fonte da verdade.
+  // NÃO usar a contagem de etiquetas enviadas: a etiqueta Shopee tem ~2 blocos
+  // ^XA por pedido, então "enviadas" dava ~2x (8 pedidos apareciam como 14/16).
+  const pedidosReal = lote.qtd_pedidos;
   if (opts?.auto && pedidosReal < 2) return;
   if (!printerId) {
     if (!opts?.auto) toast.warning("Escolha a impressora primeiro.");
@@ -1404,9 +1405,8 @@ function LotesDoDia({
 
   // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
   // -> PrintNode). No modo automático pula lote de 1 pedido (não faz sentido).
-  async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean; pedidos?: number }) {
-    const pedidosReal = opts?.pedidos != null ? opts.pedidos : lote.qtd_pedidos;
-    if (opts?.auto && pedidosReal < 2) return; // evita piscar o spinner à toa
+  async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean }) {
+    if (opts?.auto && lote.qtd_pedidos < 2) return; // evita piscar o spinner à toa
     setImprimindoIdent(lote.tag);
     try {
       await imprimirIdentificadorApi(lote, printerId, opts);
@@ -1466,12 +1466,8 @@ function LotesDoDia({
       // Normal: modo auto (com dedup de 60s contra a duplicada). Reimpressão
       // forçada: deliberada, SEM dedup (o operador quer o controle na pilha).
       if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
-        await imprimirIdentificador(
-          lote,
-          forcar
-            ? { pedidos: data.etiquetas_enviadas }
-            : { auto: true, pedidos: data.etiquetas_enviadas },
-        );
+        // conta pela TAG (qtd_pedidos), não pelo nº de etiquetas enviadas.
+        await imprimirIdentificador(lote, forcar ? {} : { auto: true });
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
     } catch (e) {
@@ -2019,7 +2015,8 @@ function FilaPriorizada() {
         // lote e antes de imprimir o próximo lote (não intercala no PrintNode).
         if (identOn && enviadas > 0) {
           const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
-          if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true, pedidos: enviadas });
+          // conta pela TAG (qtd_pedidos), não pelo nº de etiquetas enviadas.
+          if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
         }
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
