@@ -1459,12 +1459,18 @@ function LotesDoDia({
           { description: impressoraSelecionada?.nome ?? "" },
         );
       }
-      // Etiqueta identificadora ao final do lote (se ligado e 2+ pedidos). Roda
-      // em segundo plano (void) — não atrasa a fila; sai como +1 etiqueta.
-      // Na reimpressão forçada NÃO repete a identificadora (é reenvio de etiquetas
-      // de envio que travaram, não um lote novo).
-      if (!forcar && identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
-        void imprimirIdentificador(lote, { auto: true, pedidos: data.etiquetas_enviadas });
+      // Etiqueta identificadora junto do lote (se ligado e teve envio). Roda em
+      // segundo plano (void) — sai como +1 etiqueta.
+      // Normal: modo auto (com dedup de 60s contra a duplicada). Reimpressão
+      // forçada: deliberada, SEM dedup, pra a identificadora sair junto do lote
+      // reimpresso (o operador quer o controle na pilha reimpressa).
+      if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
+        void imprimirIdentificador(
+          lote,
+          forcar
+            ? { pedidos: data.etiquetas_enviadas }
+            : { auto: true, pedidos: data.etiquetas_enviadas },
+        );
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
     } catch (e) {
@@ -1816,9 +1822,8 @@ function LotesDoDia({
                             onClick={() => {
                               if (
                                 window.confirm(
-                                  `Reimprimir as etiquetas de envio do lote ${l.tag}? ` +
-                                    `Use só se travaram/não saíram — pode gerar etiquetas duplicadas. ` +
-                                    `(A identificadora não sai de novo.)`,
+                                  `Reimprimir as etiquetas de envio do lote ${l.tag} (+ a identificadora)? ` +
+                                    `Use só se travaram/não saíram — pode gerar etiquetas duplicadas.`,
                                 )
                               ) {
                                 void imprimirLote(l, true);
