@@ -1459,13 +1459,14 @@ function LotesDoDia({
           { description: impressoraSelecionada?.nome ?? "" },
         );
       }
-      // Etiqueta identificadora junto do lote (se ligado e teve envio). Roda em
-      // segundo plano (void) — sai como +1 etiqueta.
+      // Etiqueta identificadora junto do lote (se ligado e teve envio).
+      // AWAIT (não void): como é um job SEPARADO no PrintNode, disparar em segundo
+      // plano corria com o envio — a identificadora saía no meio/antes ou se perdia.
+      // Await garante que ela entre na fila DEPOIS das etiquetas de envio do lote.
       // Normal: modo auto (com dedup de 60s contra a duplicada). Reimpressão
-      // forçada: deliberada, SEM dedup, pra a identificadora sair junto do lote
-      // reimpresso (o operador quer o controle na pilha reimpressa).
+      // forçada: deliberada, SEM dedup (o operador quer o controle na pilha).
       if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
-        void imprimirIdentificador(
+        await imprimirIdentificador(
           lote,
           forcar
             ? { pedidos: data.etiquetas_enviadas }
@@ -2013,10 +2014,12 @@ function FilaPriorizada() {
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
         const enviadas = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
-        // identificadora por lote, contando o que REALMENTE foi impresso (não o tagueado).
+        // identificadora por lote, contando o que REALMENTE foi impresso (não o
+        // tagueado). AWAIT (não void): sai DEPOIS das etiquetas de envio deste
+        // lote e antes de imprimir o próximo lote (não intercala no PrintNode).
         if (identOn && enviadas > 0) {
           const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
-          if (loteRow) void imprimirIdentificadorApi(loteRow, printerId, { auto: true, pedidos: enviadas });
+          if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true, pedidos: enviadas });
         }
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
