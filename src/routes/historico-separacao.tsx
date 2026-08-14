@@ -198,6 +198,17 @@ function HistoricoPage() {
   const dia = diaComOffset(dayOffset);
   const isToday = dayOffset === 0;
 
+  // Tela de auditoria: precisa refletir o que acabou de acontecer (ex.: uma TAG
+  // finalizada agora no Monitoramento). Por isso força refetch ao abrir/voltar
+  // o foco e a cada 30s — sem isso herda o "não recarrega" do QueryClient do app
+  // e a finalização recém-feita não aparece sem reload manual.
+  const frescor = {
+    staleTime: 0,
+    refetchOnMount: "always" as const,
+    refetchOnWindowFocus: true,
+    refetchInterval: 30000,
+  };
+
   const tagsQ = useQuery({
     queryKey: ["historico-sep", "tags", dia],
     queryFn: async (): Promise<TagRow[]> => {
@@ -206,6 +217,7 @@ function HistoricoPage() {
       if (error) throw error;
       return (data ?? []) as TagRow[];
     },
+    ...frescor,
   });
   const pedidosQ = useQuery({
     queryKey: ["historico-sep", "pedidos", dia],
@@ -215,6 +227,7 @@ function HistoricoPage() {
       if (error) throw error;
       return (data ?? []) as PedidoRow[];
     },
+    ...frescor,
   });
   const logQ = useQuery({
     queryKey: ["historico-sep", "log", dia],
@@ -224,6 +237,7 @@ function HistoricoPage() {
       if (error) throw error;
       return (data ?? []) as LogRow[];
     },
+    ...frescor,
   });
 
   const tags = useMemo(() => tagsQ.data ?? [], [tagsQ.data]);
