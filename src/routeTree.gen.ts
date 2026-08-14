@@ -24,6 +24,7 @@ import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
 import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
+import { Route as HistoricoSeparacaoRouteImport } from './routes/historico-separacao'
 import { Route as FulfillmentRouteImport } from './routes/fulfillment'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as DreRouteImport } from './routes/dre'
@@ -113,6 +114,11 @@ const MapeamentoSkusRoute = MapeamentoSkusRouteImport.update({
   path: '/mapeamento-skus',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HistoricoSeparacaoRoute = HistoricoSeparacaoRouteImport.update({
+  id: '/historico-separacao',
+  path: '/historico-separacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FulfillmentRoute = FulfillmentRouteImport.update({
   id: '/fulfillment',
   path: '/fulfillment',
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
+  '/historico-separacao': typeof HistoricoSeparacaoRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/monitoramento': typeof MonitoramentoRoute
@@ -222,6 +229,7 @@ export interface FileRoutesByTo {
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
+  '/historico-separacao': typeof HistoricoSeparacaoRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/monitoramento': typeof MonitoramentoRoute
@@ -253,6 +261,7 @@ export interface FileRoutesById {
   '/dre': typeof DreRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
+  '/historico-separacao': typeof HistoricoSeparacaoRoute
   '/mapeamento-skus': typeof MapeamentoSkusRoute
   '/metas': typeof MetasRoute
   '/monitoramento': typeof MonitoramentoRoute
@@ -285,6 +294,7 @@ export interface FileRouteTypes {
     | '/dre'
     | '/fluxo-caixa'
     | '/fulfillment'
+    | '/historico-separacao'
     | '/mapeamento-skus'
     | '/metas'
     | '/monitoramento'
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
     | '/dre'
     | '/fluxo-caixa'
     | '/fulfillment'
+    | '/historico-separacao'
     | '/mapeamento-skus'
     | '/metas'
     | '/monitoramento'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '/dre'
     | '/fluxo-caixa'
     | '/fulfillment'
+    | '/historico-separacao'
     | '/mapeamento-skus'
     | '/metas'
     | '/monitoramento'
@@ -376,6 +388,7 @@ export interface RootRouteChildren {
   DreRoute: typeof DreRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   FulfillmentRoute: typeof FulfillmentRoute
+  HistoricoSeparacaoRoute: typeof HistoricoSeparacaoRoute
   MapeamentoSkusRoute: typeof MapeamentoSkusRoute
   MetasRoute: typeof MetasRoute
   MonitoramentoRoute: typeof MonitoramentoRoute
@@ -501,6 +514,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MapeamentoSkusRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/historico-separacao': {
+      id: '/historico-separacao'
+      path: '/historico-separacao'
+      fullPath: '/historico-separacao'
+      preLoaderRoute: typeof HistoricoSeparacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fulfillment': {
       id: '/fulfillment'
       path: '/fulfillment'
@@ -608,6 +628,7 @@ const rootRouteChildren: RootRouteChildren = {
   DreRoute: DreRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   FulfillmentRoute: FulfillmentRoute,
+  HistoricoSeparacaoRoute: HistoricoSeparacaoRoute,
   MapeamentoSkusRoute: MapeamentoSkusRoute,
   MetasRoute: MetasRoute,
   MonitoramentoRoute: MonitoramentoRoute,
