@@ -1422,7 +1422,7 @@ function LotesDoDia({
     return "ottz";
   }
 
-  async function imprimirLote(lote: TagLoteRow) {
+  async function imprimirLote(lote: TagLoteRow, forcar = false) {
     if (imprimindo) return;
     setImprimindo(lote.tag);
     try {
@@ -1431,7 +1431,8 @@ function LotesDoDia({
         `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
         `?modulo=imprimir&loja=${loja}` +
         `&tag=${encodeURIComponent(lote.tag)}` +
-        `&printer_id=${printerId}`;
+        `&printer_id=${printerId}` +
+        (forcar ? `&forcar=1` : ``);
       const resp = await fetch(url, {
         headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
       });
@@ -1460,7 +1461,9 @@ function LotesDoDia({
       }
       // Etiqueta identificadora ao final do lote (se ligado e 2+ pedidos). Roda
       // em segundo plano (void) — não atrasa a fila; sai como +1 etiqueta.
-      if (identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
+      // Na reimpressão forçada NÃO repete a identificadora (é reenvio de etiquetas
+      // de envio que travaram, não um lote novo).
+      if (!forcar && identificadorAtivo && (data.etiquetas_enviadas ?? 0) > 0) {
         void imprimirIdentificador(lote, { auto: true, pedidos: data.etiquetas_enviadas });
       }
       await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
@@ -1805,6 +1808,26 @@ function LotesDoDia({
                                 Imprimir
                               </>
                             )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={imprimindo !== null}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Reimprimir as etiquetas de envio do lote ${l.tag}? ` +
+                                    `Use só se travaram/não saíram — pode gerar etiquetas duplicadas. ` +
+                                    `(A identificadora não sai de novo.)`,
+                                )
+                              ) {
+                                void imprimirLote(l, true);
+                              }
+                            }}
+                            title="Reimprime as etiquetas de envio já impressas deste lote (forçar)"
+                          >
+                            <Printer className="h-3 w-3 mr-1" />
+                            Reimprimir
                           </Button>
                           <Button
                             size="sm"
