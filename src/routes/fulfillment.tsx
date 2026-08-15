@@ -21,6 +21,7 @@ import {
   Send,
   Printer,
   FileText,
+  Pencil,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
@@ -986,6 +987,7 @@ interface EnvioItem {
 }
 interface ParsedItem {
   sku: string;
+  sku_origem: string | null; // SKU original do PDF (preservado quando o operador corrige o sku)
   ean: string | null;
   titulo: string | null;
   titulo_pdf: string | null;
@@ -1369,7 +1371,8 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       if ((data as { erro?: string })?.erro) throw new Error((data as { erro?: string }).erro);
       const d = data as { itens?: ParsedItem[]; total?: number; numero?: string; aviso?: string };
       const parsed = d.itens ?? [];
-      setItens(parsed);
+      // Guarda o SKU original do PDF em sku_origem para preservar quando o operador corrigir o sku.
+      setItens(parsed.map((p) => ({ ...p, sku_origem: p.sku_origem ?? p.sku })));
       setTotalPdf(d.total ?? null);
       if (d.numero && !numero) setNumero(String(d.numero));
       if (d.aviso) toast.warning(d.aviso);
@@ -1384,6 +1387,23 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
   function setQtd(idx: number, v: string) {
     const n = v === "" ? null : Math.max(0, parseInt(v, 10) || 0);
     setItens((prev) => prev.map((it, i) => (i === idx ? { ...it, qtd: n } : it)));
+  }
+  function setSku(idx: number, v: string) {
+    setItens((prev) => prev.map((it, i) => (i === idx ? { ...it, sku: v } : it)));
+  }
+  // Ao sair do campo de SKU: re-resolve título e "fora do cadastro" pelo produto
+  // do SKU corrigido (a foto re-resolve sozinha, pois useFotos depende da lista).
+  async function resolverSku(idx: number) {
+    const alvo = itens[idx];
+    const sku = (alvo?.sku ?? "").trim();
+    setItens((prev) => prev.map((x, i) => (i === idx ? { ...x, sku } : x)));
+    if (!sku) return;
+    const { data: prod } = await supabaseExternal
+      .from("produtos").select("nome").eq("sku", sku).maybeSingle();
+    const nome = (prod as { nome?: string } | null)?.nome ?? null;
+    // no_cadastro = "está NO cadastro" (true = existe em produtos).
+    setItens((prev) => prev.map((x, i) =>
+      i === idx ? { ...x, titulo: nome ?? x.titulo_pdf, no_cadastro: !!prod } : x));
   }
   function remover(idx: number) {
     setItens((prev) => prev.filter((_, i) => i !== idx));
@@ -1414,7 +1434,8 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       const envioId = (env as { id: string }).id;
       const linhas = itens.map((it, i) => ({
         envio_id: envioId,
-        sku: it.sku,
+        sku: (it.sku ?? "").trim() || null,
+        sku_origem: it.sku_origem ?? null,
         ean: it.ean,
         titulo: it.titulo ?? it.titulo_pdf,
         qtd_planejada: Number(it.qtd) || 0,
@@ -1535,7 +1556,7 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
               </thead>
               <tbody>
                 {itens.map((it, i) => (
-                  <tr key={`${it.sku}-${i}`} className="border-t border-border/50">
+                  <tr key={`it-${it.ordem}-${i}`} className="border-t border-border/50">
                     <td className="py-1.5 px-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <Thumb url={fotos?.[it.sku]} alt={it.titulo ?? it.sku} />
@@ -1545,7 +1566,16 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
                         </div>
                       </div>
                     </td>
-                    <td className="px-2 font-mono text-xs">{it.sku}</td>
+                    <td className="px-2">
+                      <Input
+                        value={it.sku}
+                        onChange={(e) => setSku(i, e.target.value)}
+                        onBlur={() => void resolverSku(i)}
+                        onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur(); }}
+                        title="Corrija o SKU se o PDF veio errado (ex.: SKU da Amazon)"
+                        className={cn("h-8 w-28 font-mono text-xs", !it.no_cadastro && "border-amber-500")}
+                      />
+                    </td>
                     <td className="px-2 text-right">
                       <Input
                         value={it.qtd ?? ""}
@@ -1799,6 +1829,34 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       toast.error("Falha ao salvar", { description: error.message });
       itensQ.refetch();
     }
+  }
+
+  // Corrige o SKU de um item já criado (ex.: PDF da Amazon veio com o SKU
+  // errado). Preserva o SKU original em sku_origem, re-resolve o título pelo
+  // cadastro e persiste. Update otimista. A foto re-resolve sozinha (useFotos).
+  async function trocarSku(item: EnvioItem, novoSkuRaw: string) {
+    const novoSku = (novoSkuRaw ?? "").trim();
+    if (!novoSku || novoSku === item.sku) return;
+    const { data: prod } = await supabaseExternal
+      .from("produtos").select("nome, id_tiny").eq("sku", novoSku).maybeSingle();
+    const nome = (prod as { nome?: string } | null)?.nome ?? null;
+    const origem = item.sku_origem ?? item.sku;
+    const titulo = nome ?? item.titulo;
+    qc.setQueryData<EnvioItem[]>(["fulfillment", "envio-itens", envioId], (old) =>
+      (old ?? []).map((r) => (r.id === item.id ? { ...r, sku: novoSku, sku_origem: origem, titulo } : r)),
+    );
+    const { error } = await supabaseExternal
+      .from("fulfillment_envio_itens")
+      .update({ sku: novoSku, sku_origem: origem, titulo })
+      .eq("id", item.id);
+    if (error) {
+      toast.error("Falha ao trocar o SKU", { description: error.message });
+      itensQ.refetch();
+      return;
+    }
+    if (!prod) toast.warning(`SKU ${novoSku} não está no cadastro — trocado assim mesmo (sem id_tiny não lança estoque).`);
+    else if (!(prod as { id_tiny?: number }).id_tiny) toast.warning(`SKU ${novoSku} sem id_tiny — não será lançado no estoque.`);
+    else toast.success(`SKU alterado para ${novoSku}.`);
   }
 
   async function marcarEnviado() {
@@ -2241,6 +2299,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
               it={it}
               url={it.sku ? fotos?.[it.sku] : undefined}
               onSet={(novo) => void setSeparada(it, novo)}
+              onTrocarSku={(novo) => void trocarSku(it, novo)}
               temEtiqueta={!!it.sku && zplPorSku.has(it.sku)}
               imprimindo={imprimindoSku === it.sku}
               onImprimir={(qty) => void imprimirSku(it.sku, qty)}
@@ -2259,6 +2318,7 @@ function CardItemPacking({
   it,
   url,
   onSet,
+  onTrocarSku,
   temEtiqueta,
   imprimindo,
   onImprimir,
@@ -2266,6 +2326,7 @@ function CardItemPacking({
   it: EnvioItem;
   url?: string;
   onSet: (novo: number) => void;
+  onTrocarSku: (novoSku: string) => void;
   temEtiqueta: boolean;
   imprimindo: boolean;
   onImprimir: (qty: number) => void;
@@ -2274,6 +2335,17 @@ function CardItemPacking({
   useEffect(() => {
     setTxt(String(it.qtd_separada));
   }, [it.qtd_separada]);
+  const [editSku, setEditSku] = useState(false);
+  const [skuTxt, setSkuTxt] = useState(it.sku ?? "");
+  useEffect(() => {
+    setSkuTxt(it.sku ?? "");
+  }, [it.sku]);
+  const commitSku = () => {
+    const v = skuTxt.trim();
+    setEditSku(false);
+    if (v && v !== (it.sku ?? "")) onTrocarSku(v);
+    else setSkuTxt(it.sku ?? "");
+  };
   const [qtdImp, setQtdImp] = useState(String(it.qtd_planejada));
   useEffect(() => {
     setQtdImp(String(it.qtd_planejada));
@@ -2306,7 +2378,33 @@ function CardItemPacking({
       </div>
       <div className="min-w-0 flex-1 flex flex-col">
         <div className="text-sm font-medium leading-tight line-clamp-2">{it.titulo ?? "—"}</div>
-        <div className="text-xs text-muted-foreground font-mono mt-0.5">SKU {it.sku}</div>
+        <div className="text-xs text-muted-foreground font-mono mt-0.5 flex items-center gap-1">
+          {editSku ? (
+            <>
+              <Input
+                value={skuTxt}
+                onChange={(e) => setSkuTxt(e.target.value)}
+                autoFocus
+                onBlur={commitSku}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+                  if (e.key === "Escape") { setSkuTxt(it.sku ?? ""); setEditSku(false); }
+                }}
+                className="h-6 w-24 font-mono text-xs px-1"
+              />
+              <Button variant="ghost" size="icon" className="h-6 w-6" onMouseDown={(e) => e.preventDefault()} onClick={commitSku} title="Confirmar SKU">
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          ) : (
+            <>
+              <span>SKU {it.sku ?? "—"}</span>
+              <button type="button" onClick={() => setEditSku(true)} className="opacity-50 hover:opacity-100" title="Corrigir SKU (ex.: veio errado da Amazon)">
+                <Pencil className="h-3 w-3" />
+              </button>
+            </>
+          )}
+        </div>
         <div className="mt-auto flex items-center gap-1.5 pt-2">
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onSet(it.qtd_separada - 1)} disabled={it.qtd_separada <= 0}>
             <Minus className="h-4 w-4" />
