@@ -44,7 +44,15 @@ function UsuariosPage() {
       const us = ((data as { usuarios?: UsuarioRow[] }).usuarios ?? []) as UsuarioRow[];
       setUsuarios(us);
       const e: Record<string, Edit> = {};
-      for (const u of us) e[u.user_id] = { nome: u.nome ?? "", modulos: [...u.modulos], ativo: u.tem_perfil ? u.ativo : true };
+      // `perfis_usuario.nome` é NOT NULL: quem ainda não tem nome entra com o
+      // prefixo do e-mail (o admin edita se quiser) em vez de ir vazio/null.
+      for (const u of us) {
+        e[u.user_id] = {
+          nome: u.nome ?? (u.email ? u.email.split("@")[0] : ""),
+          modulos: [...u.modulos],
+          ativo: u.tem_perfil ? u.ativo : true,
+        };
+      }
       setEdits(e);
     } catch (e) {
       setErro((e as Error).message);
