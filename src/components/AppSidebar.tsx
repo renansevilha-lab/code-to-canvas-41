@@ -66,7 +66,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Monitoramento", url: "/monitoramento", icon: Radar, modulo: "galpao" },
       { title: "Histórico de Separação", url: "/historico-separacao", icon: History, modulo: "galpao" },
       { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "galpao" },
-      { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "financeiro" },
+      { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "devolucoes" },
     ],
   },
   {

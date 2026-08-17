@@ -59,7 +59,11 @@ export function PerfilProvider({ children }: { children: ReactNode }) {
   const temAcesso = (slug: string) => {
     if (!perfil || !perfil.ativo) return false;
     if (perfil.modulos.includes("todos")) return true;
-    return perfil.modulos.includes(slug);
+    if (perfil.modulos.includes(slug)) return true;
+    // "financeiro" é superconjunto de "devolucoes": quem tem o financeiro
+    // completo continua vendo a aba de Devoluções sem precisar do módulo à parte.
+    if (slug === "devolucoes" && perfil.modulos.includes("financeiro")) return true;
+    return false;
   };
 
   return <Ctx.Provider value={{ perfil, loading, temAcesso }}>{children}</Ctx.Provider>;
@@ -74,10 +78,11 @@ export function usePerfil() {
 export const MODULOS: Array<{ slug: string; label: string; desc: string }> = [
   { slug: "dashboard", label: "Visão & indicadores", desc: "Dashboard, Metas, Tendências, Anomalias" },
   { slug: "galpao", label: "Galpão", desc: "Separação e Fulfillment (operação do galpão)" },
+  { slug: "devolucoes", label: "Devoluções", desc: "Só a aba de Devoluções (dar entrada, marcar, emitir NF) — sem os relatórios financeiros" },
   { slug: "separacao", label: "Pedidos", desc: "Pedidos e Pedidos Integrados (com margem/custo)" },
   { slug: "produtos", label: "Produtos", desc: "Catálogo, Produtos, Mapeamento SKUs, Amazon" },
   { slug: "ads", label: "Mídia & Canais", desc: "ADS Shopee, ADS Mercado Livre, Promoções" },
-  { slug: "financeiro", label: "Financeiro", desc: "DRE, Fluxo de Caixa, Contas a Pagar, Carteira, Devoluções" },
+  { slug: "financeiro", label: "Financeiro", desc: "DRE, Fluxo de Caixa, Contas a Pagar, Carteira (inclui Devoluções)" },
   { slug: "todos", label: "Administrador", desc: "Acesso total + gestão de usuários" },
 ];
 
@@ -98,7 +103,7 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/fluxo-caixa", "financeiro"],
   ["/carteira-saldos", "financeiro"],
   ["/carteira", "financeiro"],
-  ["/devolucoes", "financeiro"],
+  ["/devolucoes", "devolucoes"],
   ["/reprocessar-cmv", "financeiro"],
   ["/dre", "financeiro"],
   ["/produtos-margem", "produtos"],
@@ -126,6 +131,7 @@ export function primeiraRotaPermitida(modulos: string[]): string {
     ["financeiro", "/dre"],
     ["produtos", "/produtos-margem"],
     ["ads", "/ads-shopee"],
+    ["devolucoes", "/devolucoes"],
   ];
   if (modulos.includes("todos")) return "/";
   for (const [slug, rota] of preferencia) {
