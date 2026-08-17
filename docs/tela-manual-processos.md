@@ -1,8 +1,16 @@
 # Tela Manual de Processos — backend + prompt de design
 
-> Estado: **backend PRONTO** (migration `manual_processos_backend`, 14/ago/2026).
-> Falta o **front** (`/processos`) — montar visual no Lovable com o prompt abaixo e
-> ligar nas tabelas. Baseado no HTML `Manual_Interativo_Processos.html`.
+> Estado: **CONCLUÍDO** (15/ago/2026). Backend na migration
+> `manual_processos_backend` (14/ago) e **front em `src/routes/processos.tsx`**,
+> portado do design `Manual de Processos.dc.html` (Claude Design) e ligado nas
+> tabelas. Menu + `ROTA_MODULO` no módulo `galpao`.
+>
+> O prompt de design abaixo fica como registro da intenção original.
+>
+> **Pendência de operação:** ninguém em `manual_equipe` tem `user_id` preenchido
+> ainda, então cada pessoa escolhe seu nome na tela (guardado no localStorage).
+> Para o vínculo automático por login, preencher `manual_equipe.user_id` com o
+> `auth.users.id` de cada um.
 
 ## Decisões (com o dono)
 1. **Checklist INDIVIDUAL por pessoa** — cada um marca o seu; progresso do dia é por pessoa.
