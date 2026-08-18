@@ -1,3 +1,4 @@
+import { BotaoSincronizar } from "@/components/BotaoSincronizar";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -259,24 +260,38 @@ function FulfillmentPage() {
           <p className="text-sm text-muted-foreground">
             Estoque nos centros de distribuição e sugestão de reposição (envios Full)
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 gap-2"
-            onClick={() => {
-              invQuery.refetch();
-              repQuery.refetch();
-            }}
-            disabled={invQuery.isFetching || repQuery.isFetching}
-          >
-            <RefreshCw
-              className={cn(
-                "h-3.5 w-3.5",
-                (invQuery.isFetching || repQuery.isFetching) && "animate-spin",
-              )}
+          <div className="flex items-center gap-2">
+            {/* "Atualizar" relê o que já está no banco; "Sincronizar CDs" vai
+                buscar nos marketplaces (o cron faz isso 2x por dia). */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-2"
+              onClick={() => {
+                invQuery.refetch();
+                repQuery.refetch();
+              }}
+              disabled={invQuery.isFetching || repQuery.isFetching}
+            >
+              <RefreshCw
+                className={cn(
+                  "h-3.5 w-3.5",
+                  (invQuery.isFetching || repQuery.isFetching) && "animate-spin",
+                )}
+              />
+              Atualizar
+            </Button>
+            <BotaoSincronizar
+              rotulo="Sincronizar CDs"
+              titulo="Puxa o estoque de Amazon FBA, Shopee SBS e ML Full agora. O cron faz isso às 8h e às 18h."
+              rotas={[
+                "fulfillment-sync?modulo=amazon",
+                "fulfillment-sync?modulo=shopee",
+                "fulfillment-sync?modulo=ml&limite=120",
+              ]}
+              invalidar={["fulfillment"]}
             />
-            Atualizar
-          </Button>
+          </div>
         </div>
 
         <Tabs value={tab} onValueChange={(v) => update({ tab: v as SubTab })}>

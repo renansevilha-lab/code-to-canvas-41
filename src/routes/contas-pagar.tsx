@@ -1,3 +1,4 @@
+import { BotaoSincronizar } from "@/components/BotaoSincronizar";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -109,6 +110,8 @@ function ContasPagarPage() {
   const [contas, setContas] = useState<Conta[]>([]);
   const [loading, setLoading] = useState(true);
   const [buscaDraft, setBuscaDraft] = useState(q);
+  // Incrementado pelo botão "Sincronizar" para reler as contas depois do sync.
+  const [recarga, setRecarga] = useState(0);
 
   const setSearch = (next: Partial<SearchParams>) =>
     navigate({ search: { ...search, ...next }, replace: true });
@@ -135,7 +138,7 @@ function ContasPagarPage() {
       }
     })();
     return () => { cancel = true; };
-  }, []);
+  }, [recarga]);
 
   // Universo em aberto (aberto + parcial), cada uma com dias e saldo.
   const abertas = useMemo(
@@ -273,7 +276,15 @@ function ContasPagarPage() {
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
-      <SyncStatusFooter area="contas_pagar" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SyncStatusFooter area="contas_pagar" />
+        <BotaoSincronizar
+          rotulo="Sincronizar contas"
+          titulo="Puxa as contas a pagar do Tiny agora. O cron faz isso 1x por dia (madrugada)."
+          rotas={["tiny-sync-contas-pagar?modulo=contas&limite=5000"]}
+          onConcluido={() => setRecarga((n) => n + 1)}
+        />
+      </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-[14px]">

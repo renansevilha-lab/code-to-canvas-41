@@ -1,3 +1,4 @@
+import { BotaoSincronizar } from "@/components/BotaoSincronizar";
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -29,6 +30,8 @@ function ProdutosPage() {
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<string>("todos");
+  // Incrementado pelo botão "Sincronizar" para reler a view depois do sync.
+  const [recarga, setRecarga] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -40,7 +43,7 @@ function ProdutosPage() {
       if (!error) setProdutos((data ?? []) as Produto[]);
       setLoading(false);
     })();
-  }, []);
+  }, [recarga]);
 
   const filtrados = useMemo(
     () =>
@@ -60,11 +63,23 @@ function ProdutosPage() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Catálogo & Margem</h1>
-        <p className="text-muted-foreground">
-          Produtos com preço de venda, CMV efetivo e margem bruta calculada.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">Catálogo & Margem</h1>
+          <p className="text-muted-foreground">
+            Produtos com preço de venda, CMV efetivo e margem bruta calculada.
+          </p>
+        </div>
+        <BotaoSincronizar
+          rotulo="Sincronizar catálogo"
+          titulo="Puxa produtos, detalhes e kits do Tiny agora. O cron faz isso 1x por dia (madrugada)."
+          rotas={[
+            "tiny-sync-produtos?modulo=produtos&limite=5000",
+            "tiny-sync-produtos?modulo=detalhar&limite=200",
+            "tiny-sync?modulo=kits&max_kits=20",
+          ]}
+          onConcluido={() => setRecarga((n) => n + 1)}
+        />
       </header>
 
       <SyncStatusFooter area="catalogo" />
