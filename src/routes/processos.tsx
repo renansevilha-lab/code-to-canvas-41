@@ -1,900 +1,925 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, Pencil, Check, Plus, X, Trash2 } from "lucide-react";
+import {
+  AlertTriangle, ClipboardCheck, Info, Loader2, Pencil, Search, LifeBuoy,
+  ChevronDown, ChevronRight, ClipboardList, Copy, Users,
+} from "lucide-react";
+import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePerfil } from "@/hooks/usePerfil";
-import { toast } from "sonner";
+import { ManualAdmin } from "@/components/manual/ManualAdmin";
+import {
+  type ErroCatalogo, type Item, type Membro, type Progresso, type Secao,
+  dataExtensoSP, diaSemanaSP, faltaDetalhe, hojeSP, horaCurtaSP, itemCompleto,
+  montarRelatorio, exigeDetalhe, responsavelDe, rodaHoje, saudacao, turnoSugerido,
+} from "@/lib/manual";
 
 // ============================================================================
-// Manual de Processos — checklist operacional DIÁRIO do galpão/expedição.
-// Import do design "Manual de Processos.dc.html" (Claude Design), portado para
-// o tema do app (o toggle de tema do mock sai: o app já tem o seu).
+// Manual de Operação — três telas numa rota só:
+//   1. Checklist do Dia         (rotina marcável: matinal + encerramento)
+//   2. Responsabilidades        (documentação, sem marcação)
+//   3. Solução de problemas     (catálogo de erros)
+// + modo edição (admin) para a estrutura.
 //
-// O checklist é INDIVIDUAL: cada pessoa marca o seu, e o progresso do dia é por
-// pessoa (manual_progresso tem UNIQUE (data, tarefa_id, pessoa_id)).
-//
-// Fonte de dados:
-//   manual_equipe    pessoas/funções (user_id liga a pessoa ao login)
-//   manual_secoes    processos (avisos jsonb, tabela_ref jsonb)
-//   manual_tarefas   tarefas da seção (responsavel_id null = herda da seção)
-//   manual_progresso marcação do dia, por pessoa
-// Editar a estrutura é só para admin (perfil com módulo `todos`); marcar tarefa
-// é de qualquer um do galpão.
+// Substituiu o modelo de 14/ago (manual_equipe/tarefas). O progresso agora é do
+// TIME — unique(dia, item_id) — e a coluna `por` guarda quem marcou.
 // ============================================================================
 
-// ---- paleta de acento (do design; funciona em tema claro/escuro) ----
-const PALETTE = ["#2F6FB0", "#7A5CC7", "#DB6B1F", "#0E8A5F", "#B7791F", "#0891B2", "#BE4B8F"];
-const GREEN = "#0E8A5F", RED = "#C9432F", AMBER = "#B7791F", BLUE = "#2F6FB0";
-const ACCENT = "#6E56CF";
+const ABAS = ["dia", "processos", "problemas"] as const;
+type Aba = (typeof ABAS)[number];
+const TURNOS = ["inicio", "fim", "todos"] as const;
+type TurnoFiltro = (typeof TURNOS)[number];
 
-type Aviso = { tipo: "info" | "warn"; texto: string };
-type TabelaRef = { head: string[]; rows: string[][] };
-
-type Pessoa = { id: number; nome: string; cor: string; user_id: string | null; ordem: number };
-type Secao = {
-  id: number; codigo: string; titulo: string; descricao: string | null;
-  frequencia: string | null; responsavel_id: number | null;
-  avisos: Aviso[]; tabela_ref: TabelaRef | null; ordem: number;
-};
-type Tarefa = {
-  id: number; secao_id: number; texto: string; tags: string[];
-  responsavel_id: number | null; ordem: number;
-};
-
-// Dia de hoje (SP) em YYYY-MM-DD — a virada do dia segue o fuso da operação.
-function hojeSP(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-}
-function dataExtenso(): string {
-  const s = new Date().toLocaleDateString("pt-BR", {
-    weekday: "long", day: "2-digit", month: "long", timeZone: "America/Sao_Paulo",
-  });
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// Alguns textos vieram do manual em HTML e usam <b> para o ponto crítico. Em vez
-// de dangerouslySetInnerHTML (o texto é editável por admin — não confiar), só o
-// <b> é reconhecido e vira <strong>; qualquer outra marcação segue como texto.
-function comNegrito(texto: string) {
-  const partes = texto.split(/(<b>.*?<\/b>)/gi);
-  return partes.map((p, i) => {
-    const m = /^<b>(.*)<\/b>$/is.exec(p);
-    return m ? <strong key={i}>{m[1]}</strong> : <span key={i}>{p}</span>;
-  });
-}
-
-// Cor da tag (do design): "Se ..." = âmbar (condicional), "Diária" = azul, resto neutro.
-function tagStyle(tag: string): { bg: string; fg: string } {
-  const t = tag.toLowerCase();
-  if (t.startsWith("se ")) return { bg: AMBER + "16", fg: AMBER };
-  if (tag === "Diária") return { bg: BLUE + "16", fg: BLUE };
-  return { bg: "", fg: "" }; // neutro → usa classes do tema
-}
-
-type SearchParams = { q: string; pessoa: number | null };
+type SearchParams = { aba: Aba; turno: TurnoFiltro; membro: string; q: string };
 
 export const Route = createFileRoute("/processos")({
+  // Estado na URL: sobrevive a remontagem da árvore ao voltar para a aba.
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
+    aba: ABAS.includes(s.aba as Aba) ? (s.aba as Aba) : "dia",
+    turno: TURNOS.includes(s.turno as TurnoFiltro) ? (s.turno as TurnoFiltro) : "todos",
+    membro: typeof s.membro === "string" ? s.membro : "",
     q: typeof s.q === "string" ? s.q : "",
-    pessoa: Number.isFinite(Number(s.pessoa)) && s.pessoa !== null && s.pessoa !== "" ? Number(s.pessoa) : null,
   }),
-  component: ProcessosPage,
+  component: ManualPage,
 });
 
-function ProcessosPage() {
+const CHAVE_EU = "manual.euId";
+
+function ManualPage() {
+  const search = Route.useSearch();
   const navigate = useNavigate({ from: "/processos" });
-  const { q, pessoa: pessoaFiltro } = Route.useSearch();
+  const setSearch = (next: Partial<SearchParams>) =>
+    navigate({ search: { ...search, ...next }, replace: true });
+
+  const qc = useQueryClient();
   const { user } = useAuth();
   const { perfil } = usePerfil();
-  const qc = useQueryClient();
-
   const isAdmin = !!perfil?.modulos?.includes("todos");
-  const [editMode, setEditMode] = useState(false);
-  const editOn = editMode && isAdmin;
+  const [editando, setEditando] = useState(false);
 
   const dia = hojeSP();
+  const dow = diaSemanaSP();
 
-  // ---- dados ----
-  const equipeQ = useQuery({
-    queryKey: ["manual", "equipe"],
-    queryFn: async (): Promise<Pessoa[]> => {
-      const { data, error } = await supabaseExternal
-        .from("manual_equipe")
-        .select("id, nome, cor, user_id, ordem")
-        .eq("ativo", true)
-        .order("ordem", { ascending: true }).order("id", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Pessoa[];
+  // ---- estrutura (muda pouco; o staleTime do QueryClient já segura) ----
+  const estrutura = useQuery({
+    queryKey: ["manual", "estrutura"],
+    queryFn: async () => {
+      const [m, s, i] = await Promise.all([
+        supabaseExternal.from("equipe_membros").select("*").eq("ativo", true).order("ordem"),
+        supabaseExternal.from("manual_secoes").select("*").eq("ativo", true).order("ordem"),
+        supabaseExternal.from("manual_itens").select("*").eq("ativo", true).order("ordem"),
+      ]);
+      if (m.error) throw m.error;
+      if (s.error) throw s.error;
+      if (i.error) throw i.error;
+      return {
+        membros: (m.data ?? []) as Membro[],
+        secoes: (s.data ?? []) as Secao[],
+        itens: (i.data ?? []) as Item[],
+      };
     },
   });
 
-  const secoesQ = useQuery({
-    queryKey: ["manual", "secoes"],
-    queryFn: async (): Promise<Secao[]> => {
-      const { data, error } = await supabaseExternal
-        .from("manual_secoes")
-        .select("id, codigo, titulo, descricao, frequencia, responsavel_id, avisos, tabela_ref, ordem")
-        .eq("ativo", true)
-        .order("ordem", { ascending: true }).order("id", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Secao[];
-    },
-  });
-
-  const tarefasQ = useQuery({
-    queryKey: ["manual", "tarefas"],
-    queryFn: async (): Promise<Tarefa[]> => {
-      const { data, error } = await supabaseExternal
-        .from("manual_tarefas")
-        .select("id, secao_id, texto, tags, responsavel_id, ordem")
-        .eq("ativo", true)
-        .order("ordem", { ascending: true }).order("id", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Tarefa[];
-    },
-  });
-
-  const equipe = useMemo(() => equipeQ.data ?? [], [equipeQ.data]);
-  const secoes = useMemo(() => secoesQ.data ?? [], [secoesQ.data]);
-  const tarefas = useMemo(() => tarefasQ.data ?? [], [tarefasQ.data]);
-
-  // ---- quem sou eu: pelo user_id; senão escolha manual (localStorage) ----
-  const [euManual, setEuManual] = useState<number | null>(() => {
-    if (typeof window === "undefined") return null;
-    const v = window.localStorage.getItem("processos.euId");
-    return v ? Number(v) : null;
-  });
-  const eu = useMemo(() => {
-    const porLogin = user ? equipe.find((p) => p.user_id === user.id) : undefined;
-    if (porLogin) return porLogin;
-    return equipe.find((p) => p.id === euManual) ?? null;
-  }, [equipe, user, euManual]);
-
-  function escolherEu(id: number) {
-    setEuManual(id);
-    if (typeof window !== "undefined") window.localStorage.setItem("processos.euId", String(id));
-  }
-
-  // ---- progresso do dia (meu) ----
-  const progressoQ = useQuery({
-    queryKey: ["manual", "progresso", dia, eu?.id ?? 0],
-    enabled: !!eu,
-    queryFn: async (): Promise<Set<number>> => {
+  // ---- progresso do dia ----
+  const progressoQuery = useQuery({
+    queryKey: ["manual", "progresso", dia],
+    queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("manual_progresso")
-        .select("tarefa_id, feito")
-        .eq("data", dia).eq("pessoa_id", eu!.id);
+        .select("*")
+        .eq("dia", dia);
       if (error) throw error;
-      const s = new Set<number>();
-      for (const r of (data ?? []) as { tarefa_id: number; feito: boolean }[]) {
-        if (r.feito) s.add(r.tarefa_id);
-      }
-      return s;
+      return (data ?? []) as Progresso[];
     },
   });
-  const feitas = progressoQ.data ?? new Set<number>();
 
-  const pessoaPorId = useMemo(() => new Map(equipe.map((p) => [p.id, p])), [equipe]);
-  const secaoPorId = useMemo(() => new Map(secoes.map((s) => [s.id, s])), [secoes]);
-  // Responsável efetivo: o da tarefa, senão o da seção.
-  const efetivo = (t: Tarefa): number | null =>
-    t.responsavel_id ?? secaoPorId.get(t.secao_id)?.responsavel_id ?? null;
+  // Realtime: duas pessoas em máquinas diferentes marcando o mesmo checklist.
+  useEffect(() => {
+    const canal = supabaseExternal
+      .channel("manual-progresso")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "manual_progresso" },
+        () => void qc.invalidateQueries({ queryKey: ["manual", "progresso", dia] }),
+      )
+      .subscribe();
+    return () => {
+      void supabaseExternal.removeChannel(canal);
+    };
+  }, [qc, dia]);
 
-  const contarDe = (pid: number) => tarefas.filter((t) => efetivo(t) === pid).length;
+  const membros = estrutura.data?.membros ?? [];
+  const secoes = estrutura.data?.secoes ?? [];
+  const itens = estrutura.data?.itens ?? [];
 
-  // ---- progresso global (minhas tarefas de hoje) ----
-  const minhas = eu ? tarefas.filter((t) => efetivo(t) === eu.id) : [];
-  const minhasTotal = minhas.length;
-  const minhasFeitas = minhas.filter((t) => feitas.has(t.id)).length;
-  const globalPct = minhasTotal ? Math.round((minhasFeitas / minhasTotal) * 100) : 0;
-  const globalBar = globalPct === 100 ? GREEN : ACCENT;
+  const progressoPorItem = useMemo(() => {
+    const mapa = new Map<string, Progresso>();
+    for (const p of progressoQuery.data ?? []) mapa.set(p.item_id, p);
+    return mapa;
+  }, [progressoQuery.data]);
 
-  // ---- marcação (update otimista) ----
-  const progKey = ["manual", "progresso", dia, eu?.id ?? 0];
-  async function marcarTarefa(tarefaId: number, feito: boolean) {
-    if (!eu) return;
-    qc.setQueryData<Set<number>>(progKey, (old) => {
-      const s = new Set(old ?? []);
-      if (feito) s.add(tarefaId); else s.delete(tarefaId);
-      return s;
-    });
+  // ---- quem sou eu: e-mail do login -> membro; senão escolha manual ----
+  const [euManual, setEuManual] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : window.localStorage.getItem(CHAVE_EU),
+  );
+  const euPorEmail = useMemo(() => {
+    const email = user?.email?.toLowerCase();
+    if (!email) return null;
+    return membros.find((m) => m.email?.toLowerCase() === email)?.id ?? null;
+  }, [user?.email, membros]);
+  const euId = euPorEmail ?? euManual;
+  const eu = membros.find((m) => m.id === euId) ?? null;
+
+  function escolherMembro(id: string) {
+    setEuManual(id);
+    if (typeof window !== "undefined") window.localStorage.setItem(CHAVE_EU, id);
+  }
+
+  // ---- gravação (upsert por dia+item) ----
+  async function salvar(item: Item, patch: Partial<Progresso>) {
+    if (!euId) {
+      toast.error("Escolha quem é você antes de marcar.");
+      return;
+    }
+    const atual = progressoPorItem.get(item.id);
+    const linha = {
+      dia,
+      item_id: item.id,
+      concluido: patch.concluido ?? atual?.concluido ?? false,
+      resposta: (patch.resposta ?? atual?.resposta ?? null) as "sim" | "nao" | null,
+      detalhe: patch.detalhe ?? atual?.detalhe ?? null,
+      por: euId,
+      em: new Date().toISOString(),
+    };
     const { error } = await supabaseExternal
       .from("manual_progresso")
-      .upsert(
-        { data: dia, tarefa_id: tarefaId, pessoa_id: eu.id, feito, feito_em: new Date().toISOString() },
-        { onConflict: "data,tarefa_id,pessoa_id" },
-      );
+      .upsert(linha, { onConflict: "dia,item_id" });
     if (error) {
-      toast.error("Não deu para salvar", { description: error.message });
-      void progressoQ.refetch();
+      toast.error("Não consegui salvar", { description: error.message });
+      return;
     }
+    void qc.invalidateQueries({ queryKey: ["manual", "progresso", dia] });
   }
 
-  async function iniciarNovoDia() {
-    if (!eu) return;
-    if (!window.confirm("Iniciar novo dia? Isso desmarca todas as suas tarefas concluídas hoje. As atribuições continuam as mesmas.")) return;
-    qc.setQueryData<Set<number>>(progKey, new Set<number>());
-    const { error } = await supabaseExternal
-      .from("manual_progresso").delete().eq("data", dia).eq("pessoa_id", eu.id);
-    if (error) {
-      toast.error("Falha ao reiniciar o dia", { description: error.message });
-      void progressoQ.refetch();
-    } else {
-      toast.success("Novo dia iniciado");
-    }
-  }
-
-  // ---- colapso das seções ----
-  const [colapsadas, setColapsadas] = useState<Record<number, boolean>>({});
-  const toggleColapso = (id: number) => setColapsadas((c) => ({ ...c, [id]: !c[id] }));
-
-  // ---- filtros (URL) ----
-  const setQ = (v: string) => navigate({ search: (s) => ({ ...s, q: v }), replace: true });
-  const setPessoa = (v: number | null) => navigate({ search: (s) => ({ ...s, pessoa: v }), replace: true });
-  const busca = q.trim().toLowerCase();
-
-  // ---- CRUD (admin) ----
-  const invalidar = (k: string) => qc.invalidateQueries({ queryKey: ["manual", k] });
-
-  async function salvarPessoa(id: number, patch: Partial<Pessoa>) {
-    qc.setQueryData<Pessoa[]>(["manual", "equipe"], (old) =>
-      (old ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    const { error } = await supabaseExternal.from("manual_equipe").update(patch).eq("id", id);
-    if (error) { toast.error("Falha ao salvar pessoa", { description: error.message }); void invalidar("equipe"); }
-  }
-  async function adicionarPessoa(nome: string) {
-    const usados = equipe.map((p) => p.cor);
-    const cor = PALETTE.find((c) => !usados.includes(c)) ?? PALETTE[equipe.length % PALETTE.length];
-    const ordem = equipe.reduce((m, p) => Math.max(m, p.ordem), 0) + 1;
-    const { error } = await supabaseExternal.from("manual_equipe").insert({ nome, cor, ordem });
-    if (error) toast.error("Falha ao adicionar", { description: error.message });
-    void invalidar("equipe");
-  }
-  async function removerPessoa(p: Pessoa) {
-    if (equipe.length <= 1) { toast.warning("Precisa haver ao menos uma pessoa na equipe."); return; }
-    if (!window.confirm(`Remover "${p.nome}"? As tarefas dela ficam sem responsável até você reatribuir.`)) return;
-    // Solta as referências antes de desativar (senão as tarefas ficam órfãs "invisíveis").
-    await supabaseExternal.from("manual_tarefas").update({ responsavel_id: null }).eq("responsavel_id", p.id);
-    await supabaseExternal.from("manual_secoes").update({ responsavel_id: null }).eq("responsavel_id", p.id);
-    const { error } = await supabaseExternal.from("manual_equipe").update({ ativo: false }).eq("id", p.id);
-    if (error) toast.error("Falha ao remover", { description: error.message });
-    if (pessoaFiltro === p.id) setPessoa(null);
-    void invalidar("equipe"); void invalidar("secoes"); void invalidar("tarefas");
-  }
-
-  async function salvarSecao(id: number, patch: Partial<Secao>) {
-    qc.setQueryData<Secao[]>(["manual", "secoes"], (old) =>
-      (old ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)));
-    const { error } = await supabaseExternal.from("manual_secoes").update(patch).eq("id", id);
-    if (error) { toast.error("Falha ao salvar seção", { description: error.message }); void invalidar("secoes"); }
-  }
-  async function adicionarSecao() {
-    const ordem = secoes.reduce((m, s) => Math.max(m, s.ordem), 0) + 1;
-    const { error } = await supabaseExternal.from("manual_secoes").insert({
-      codigo: `NOVA-${String(secoes.length + 1).padStart(2, "0")}`,
-      titulo: "Nova seção", descricao: "", frequencia: "Diária",
-      responsavel_id: equipe[0]?.id ?? null, avisos: [], ordem,
-    });
-    if (error) toast.error("Falha ao criar seção", { description: error.message });
-    void invalidar("secoes");
-  }
-  async function removerSecao(s: Secao) {
-    if (!window.confirm(`Remover a seção "${s.titulo}" e todas as suas tarefas?`)) return;
-    await supabaseExternal.from("manual_tarefas").update({ ativo: false }).eq("secao_id", s.id);
-    const { error } = await supabaseExternal.from("manual_secoes").update({ ativo: false }).eq("id", s.id);
-    if (error) toast.error("Falha ao remover seção", { description: error.message });
-    void invalidar("secoes"); void invalidar("tarefas");
-  }
-
-  async function salvarTarefa(id: number, patch: Partial<Tarefa>) {
-    qc.setQueryData<Tarefa[]>(["manual", "tarefas"], (old) =>
-      (old ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)));
-    const { error } = await supabaseExternal.from("manual_tarefas").update(patch).eq("id", id);
-    if (error) { toast.error("Falha ao salvar tarefa", { description: error.message }); void invalidar("tarefas"); }
-  }
-  async function adicionarTarefa(secaoId: number, texto: string) {
-    const daSecao = tarefas.filter((t) => t.secao_id === secaoId);
-    const ordem = daSecao.reduce((m, t) => Math.max(m, t.ordem), 0) + 1;
-    const { error } = await supabaseExternal.from("manual_tarefas")
-      .insert({ secao_id: secaoId, texto, tags: [], ordem });
-    if (error) toast.error("Falha ao adicionar tarefa", { description: error.message });
-    void invalidar("tarefas");
-  }
-  async function removerTarefa(id: number) {
-    qc.setQueryData<Tarefa[]>(["manual", "tarefas"], (old) => (old ?? []).filter((t) => t.id !== id));
-    const { error } = await supabaseExternal.from("manual_tarefas").update({ ativo: false }).eq("id", id);
-    if (error) { toast.error("Falha ao remover tarefa", { description: error.message }); void invalidar("tarefas"); }
-  }
-
-  // ---- montagem das seções visíveis ----
-  const secoesVisiveis = useMemo(() => {
-    return secoes
-      .map((s) => {
-        const daSecao = tarefas.filter((t) => t.secao_id === s.id);
-        const visiveis = daSecao.filter((t) => {
-          if (editOn) return true;
-          if (pessoaFiltro != null && efetivo(t) !== pessoaFiltro) return false;
-          if (busca) {
-            const hay = `${t.texto} ${s.titulo} ${s.codigo} ${(t.tags ?? []).join(" ")}`.toLowerCase();
-            if (!hay.includes(busca)) return false;
-          }
-          return true;
-        });
-        const done = daSecao.filter((t) => feitas.has(t.id)).length;
-        const pct = daSecao.length ? Math.round((done / daSecao.length) * 100) : 0;
-        return { secao: s, tarefas: visiveis, pct, completa: daSecao.length > 0 && pct === 100 };
-      })
-      .filter((x) => editOn || x.tarefas.length > 0);
-  }, [secoes, tarefas, editOn, pessoaFiltro, busca, feitas, secaoPorId]);
-
-  const carregando = equipeQ.isLoading || secoesQ.isLoading || tarefasQ.isLoading;
-  const erro = equipeQ.error || secoesQ.error || tarefasQ.error;
-
-  const totalTarefas = tarefas.length;
+  const carregando = estrutura.isLoading || progressoQuery.isLoading;
+  const erro = (estrutura.error as Error | null)?.message ?? (progressoQuery.error as Error | null)?.message;
 
   return (
-    <div className="w-full max-w-[900px] mx-auto px-4 md:px-6 py-6 flex flex-col gap-4">
-      {/* Cabeçalho */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-[21px] font-extrabold tracking-tight leading-tight">Manual de Processos</h1>
-          <span className="text-[13px] font-semibold text-muted-foreground tracking-wide">
-            Operação · Separação · Expedição
-          </span>
+    <div className="p-6 md:p-8 max-w-6xl mx-auto flex flex-col gap-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="h-6 w-6" /> Manual de Operação
+          </h1>
+          <p className="text-sm text-muted-foreground">{dataExtensoSP()}</p>
         </div>
-        <span className="text-[12.5px] font-semibold text-muted-foreground whitespace-nowrap mt-1">
-          {dataExtenso()}
-        </span>
-      </div>
+        {isAdmin && (
+          <Button
+            variant={editando ? "default" : "outline"}
+            size="sm"
+            className="h-9 gap-2"
+            onClick={() => setEditando((v) => !v)}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {editando ? "Sair da edição" : "Editar estrutura"}
+          </Button>
+        )}
+      </header>
 
       {erro && (
-        <Card className="p-4 border-destructive/30 bg-destructive/5">
-          <p className="text-sm text-destructive font-medium">Erro ao carregar o manual</p>
-          <p className="text-xs text-muted-foreground mt-1">{(erro as Error).message}</p>
+        <Card className="p-4 border-destructive/40 bg-destructive/5 text-sm text-destructive">
+          {erro}
         </Card>
       )}
 
-      {/* Quem sou eu (quando o login não está ligado a uma pessoa) */}
-      {!carregando && !eu && equipe.length > 0 && (
-        <Card className="p-4 flex flex-col gap-3">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-bold">Quem é você?</span>
-            <span className="text-xs text-muted-foreground">
-              O checklist é individual. Escolha seu nome para marcar as suas tarefas do dia.
-              {isAdmin && " (No modo edição dá para ligar cada pessoa a um login.)"}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {equipe.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => escolherEu(p.id)}
-                className="flex items-center gap-2 rounded-full border-[1.5px] px-3.5 py-2 text-[12.5px] font-bold transition-colors hover:bg-muted"
-                style={{ borderColor: p.cor, color: p.cor }}
-              >
-                <span className="w-[7px] h-[7px] rounded-full" style={{ background: p.cor }} />
-                {p.nome}
-              </button>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Progresso do dia */}
-      <Card className="p-[18px_20px] flex flex-col gap-2.5">
-        <div className="flex items-baseline justify-between gap-2.5">
-          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Progresso do dia</span>
-          <span className="text-[26px] font-extrabold font-mono tracking-tight tabular-nums" style={{ color: globalBar }}>
-            {globalPct}%
-          </span>
-        </div>
-        <div className="h-2.5 rounded-md bg-muted overflow-hidden">
-          <div className="h-full rounded-md transition-all duration-300" style={{ width: `${globalPct}%`, background: globalBar }} />
-        </div>
-        <span className="text-xs text-muted-foreground">
-          {!eu
-            ? "Escolha quem é você para acompanhar o seu progresso."
-            : minhasTotal > 0
-              ? `${minhasFeitas} de ${minhasTotal} tarefas suas concluídas hoje, ${eu.nome}`
-              : "Nenhuma tarefa atribuída a você hoje."}
-        </span>
-      </Card>
-
-      {/* Chips por pessoa */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {[{ id: null as number | null, nome: "Todos", cor: ACCENT, count: totalTarefas }]
-          .concat(equipe.map((p) => ({ id: p.id as number | null, nome: p.nome, cor: p.cor, count: contarDe(p.id) })))
-          .map((c) => {
-            const ativo = pessoaFiltro === c.id;
-            return (
-              <button
-                key={String(c.id)}
-                onClick={() => setPessoa(c.id)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full border-[1.5px] px-3 py-2 text-[12.5px] font-bold whitespace-nowrap transition-colors",
-                  ativo ? "" : "bg-card border-border text-foreground hover:border-muted-foreground/40",
-                )}
-                style={ativo ? { background: c.cor + "18", color: c.cor, borderColor: c.cor } : undefined}
-              >
-                <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: c.cor }} />
-                <span>{c.nome}</span>
-                <span
-                  className={cn("text-[10.5px] font-bold rounded-full px-[7px] py-px", !ativo && "bg-muted text-muted-foreground")}
-                  style={ativo ? { background: c.cor + "2a", color: c.cor } : undefined}
-                >
-                  {c.count}
-                </span>
-              </button>
-            );
-          })}
-      </div>
-
-      {/* Busca + ações */}
-      <div className="flex items-center gap-2.5 flex-wrap">
-        <div className="flex-1 min-w-[180px] flex items-center gap-2 bg-card border border-border rounded-[11px] px-3.5 py-3">
-          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar tarefa, processo ou palavra-chave"
-            className="border-0 outline-none bg-transparent text-[13.5px] flex-1 min-w-0 text-foreground"
-          />
-        </div>
-        <button
-          onClick={() => void iniciarNovoDia()}
-          disabled={!eu}
-          className="border border-border bg-card text-foreground text-[13px] font-bold px-4 py-3 rounded-[11px] whitespace-nowrap hover:bg-muted transition-colors disabled:opacity-50"
-        >
-          Iniciar novo dia
-        </button>
-        {isAdmin && (
-          <button
-            onClick={() => setEditMode((v) => !v)}
-            className="text-[13px] font-bold px-4 py-3 rounded-[11px] whitespace-nowrap text-white inline-flex items-center gap-1.5"
-            style={{ background: ACCENT }}
-          >
-            {editMode ? <><Check className="h-4 w-4" /> Concluir edição</> : <><Pencil className="h-3.5 w-3.5" /> Editar</>}
-          </button>
-        )}
-      </div>
-
-      {editOn && (
-        <div
-          className="text-[12.5px] font-bold px-3.5 py-2.5 rounded-[10px] text-center border"
-          style={{ background: ACCENT + "1a", borderColor: ACCENT, color: ACCENT }}
-        >
-          Modo edição — gerencie a equipe, processos e responsáveis
-        </div>
-      )}
-
-      {editOn && <Roster equipe={equipe} contarDe={contarDe} onSalvar={salvarPessoa} onAdicionar={adicionarPessoa} onRemover={removerPessoa} eu={eu} />}
-
-      {carregando ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground py-10 justify-center">
-          <Loader2 className="h-4 w-4 animate-spin" /> Carregando o manual…
-        </div>
-      ) : secoes.length === 0 ? (
-        <Card className="p-[60px_24px] border-dashed flex flex-col items-center gap-2.5 text-center">
-          <span className="text-[14.5px] font-semibold">Nenhum processo cadastrado ainda</span>
-          {editOn && (
-            <button onClick={() => void adicionarSecao()} className="text-[13px] font-bold text-white px-4 py-2.5 rounded-[10px]" style={{ background: ACCENT }}>
-              + Nova seção
-            </button>
-          )}
-        </Card>
-      ) : secoesVisiveis.length === 0 ? (
-        <Card className="p-[50px_24px] border-dashed flex flex-col items-center gap-3.5 text-center">
-          <span className="text-sm text-muted-foreground">Nenhuma tarefa encontrada com esse filtro ou busca</span>
-          <button
-            onClick={() => { setQ(""); setPessoa(null); }}
-            className="border border-border bg-card text-[13px] font-semibold px-4 py-2.5 rounded-[9px] hover:bg-muted transition-colors"
-          >
-            Limpar filtros
-          </button>
-        </Card>
+      {editando && isAdmin ? (
+        <ManualAdmin
+          membros={membros}
+          secoes={secoes}
+          itens={itens}
+          onMudou={() => void qc.invalidateQueries({ queryKey: ["manual", "estrutura"] })}
+        />
       ) : (
-        <div className="flex flex-col gap-3.5">
-          {secoesVisiveis.map(({ secao, tarefas: ts, pct, completa }) => (
-            <SecaoCard
-              key={secao.id}
-              secao={secao}
-              tarefas={ts}
-              pct={pct}
-              completa={completa}
-              colapsada={!!colapsadas[secao.id]}
-              onToggleColapso={() => toggleColapso(secao.id)}
-              equipe={equipe}
-              pessoaPorId={pessoaPorId}
-              efetivo={efetivo}
-              feitas={feitas}
-              podeMarcar={!!eu}
-              editOn={editOn}
-              onMarcar={marcarTarefa}
-              onSalvarSecao={salvarSecao}
-              onRemoverSecao={removerSecao}
-              onSalvarTarefa={salvarTarefa}
-              onAdicionarTarefa={adicionarTarefa}
-              onRemoverTarefa={removerTarefa}
-            />
-          ))}
-        </div>
-      )}
+        <Tabs value={search.aba} onValueChange={(v) => setSearch({ aba: v as Aba })}>
+          <TabsList>
+            <TabsTrigger value="dia" className="gap-1.5">
+              <ClipboardCheck className="h-4 w-4" /> Checklist do Dia
+            </TabsTrigger>
+            <TabsTrigger value="processos" className="gap-1.5">
+              <ClipboardList className="h-4 w-4" /> Responsabilidades
+            </TabsTrigger>
+            <TabsTrigger value="problemas" className="gap-1.5">
+              <LifeBuoy className="h-4 w-4" /> Solução de problemas
+            </TabsTrigger>
+          </TabsList>
 
-      {editOn && secoes.length > 0 && (
-        <button
-          onClick={() => void adicionarSecao()}
-          className="border border-dashed text-[13px] font-bold px-4 py-3.5 rounded-[14px] bg-transparent"
-          style={{ borderColor: ACCENT, color: ACCENT }}
-        >
-          + Nova seção
-        </button>
-      )}
+          <TabsContent value="dia" className="mt-4">
+            {carregando ? (
+              <EsqueletoLista />
+            ) : !eu ? (
+              <SeletorMembro membros={membros} onEscolher={escolherMembro} />
+            ) : (
+              <ChecklistDoDia
+                eu={eu}
+                membros={membros}
+                secoes={secoes}
+                itens={itens}
+                progresso={progressoPorItem}
+                dow={dow}
+                turnoFiltro={search.turno}
+                onTurno={(t) => setSearch({ turno: t })}
+                busca={search.q}
+                onBusca={(q) => setSearch({ q })}
+                onSalvar={salvar}
+                onTrocarMembro={() => setEuManual(null)}
+                podeTrocar={!euPorEmail}
+              />
+            )}
+          </TabsContent>
 
-      <span className="text-[11.5px] text-muted-foreground text-center leading-relaxed mt-1.5">
-        Revisar este manual a cada 6 meses ou quando houver mudança de processo. · Versão 2.0
-      </span>
+          <TabsContent value="processos" className="mt-4">
+            {carregando ? (
+              <EsqueletoLista />
+            ) : (
+              <Responsabilidades
+                membros={membros}
+                secoes={secoes}
+                itens={itens}
+                membroFiltro={search.membro}
+                onMembro={(m) => setSearch({ membro: m })}
+                busca={search.q}
+                onBusca={(q) => setSearch({ q })}
+              />
+            )}
+          </TabsContent>
+
+          <TabsContent value="problemas" className="mt-4">
+            <SolucaoProblemas busca={search.q} onBusca={(q) => setSearch({ q })} isAdmin={isAdmin} />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Equipe (modo edição)
-
-function Roster({
-  equipe, contarDe, onSalvar, onAdicionar, onRemover, eu,
-}: {
-  equipe: Pessoa[];
-  contarDe: (id: number) => number;
-  onSalvar: (id: number, patch: Partial<Pessoa>) => void;
-  onAdicionar: (nome: string) => void;
-  onRemover: (p: Pessoa) => void;
-  eu: Pessoa | null;
-}) {
-  const [novo, setNovo] = useState("");
-  const [paletaDe, setPaletaDe] = useState<number | null>(null);
-
+// ============================================================================
+// Seletor de "quem sou eu" (quando o e-mail do login não casa com um membro)
+// ============================================================================
+function SeletorMembro({ membros, onEscolher }: { membros: Membro[]; onEscolher: (id: string) => void }) {
   return (
-    <div className="rounded-2xl p-[18px_20px] flex flex-col gap-3 border-[1.5px]" style={{ background: ACCENT + "0d", borderColor: ACCENT }}>
-      <div className="flex flex-col gap-0.5">
-        <span className="text-sm font-extrabold" style={{ color: ACCENT }}>Equipe</span>
-        <span className="text-xs text-muted-foreground">
-          Renomeie clicando no nome, troque a cor no quadrado e remova pessoas. Tarefas de alguém removido ficam sem responsável.
-        </span>
+    <Card className="p-6">
+      <div className="flex items-center gap-2 mb-1">
+        <Users className="h-5 w-5" />
+        <h2 className="text-lg font-semibold">Quem é você?</h2>
       </div>
-
-      <div className="flex flex-col gap-2">
-        {equipe.map((p) => (
-          <div key={p.id} className="flex flex-col gap-2">
-            <div className="flex items-center gap-2.5 bg-card border border-border rounded-[11px] px-3 py-2.5 flex-wrap">
-              <button
-                onClick={() => setPaletaDe((v) => (v === p.id ? null : p.id))}
-                title="Trocar cor"
-                className="w-6 h-6 rounded-[7px] border-2 border-border shrink-0"
-                style={{ background: p.cor }}
-              />
-              <input
-                defaultValue={p.nome}
-                onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.nome) onSalvar(p.id, { nome: v }); }}
-                className="flex-1 min-w-[90px] border-0 outline-none bg-transparent text-[13.5px] font-bold text-foreground"
-              />
-              <span className="text-[11px] font-semibold text-muted-foreground bg-muted rounded-full px-2.5 py-0.5 whitespace-nowrap">
-                {contarDe(p.id)} tarefas
-              </span>
-              {equipe.length > 1 && p.id !== eu?.id && (
-                <button onClick={() => onRemover(p)} title="Remover" className="p-1 rounded-md" style={{ color: RED }}>
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-            {paletaDe === p.id && (
-              <div className="flex gap-1.5 flex-wrap p-2 bg-card border border-border rounded-[10px]">
-                {PALETTE.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => { onSalvar(p.id, { cor: c }); setPaletaDe(null); }}
-                    className="w-6 h-6 rounded-[7px] border-2 border-transparent"
-                    style={{ background: c }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+      <p className="text-sm text-muted-foreground mb-4">
+        Seu login ainda não está ligado a um membro da equipe. Escolha seu nome — fica guardado
+        neste computador. (Um admin pode preencher o e-mail no modo edição para ligar automaticamente.)
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {membros.map((m) => (
+          <button
+            key={m.id}
+            onClick={() => onEscolher(m.id)}
+            className="rounded-lg border p-4 text-left hover:bg-muted/50 transition-colors"
+            style={{ borderLeftWidth: 4, borderLeftColor: m.cor }}
+          >
+            <div className="font-semibold">{m.nome}</div>
+          </button>
         ))}
       </div>
+    </Card>
+  );
+}
 
-      <div className="flex gap-2 flex-wrap">
-        <input
-          value={novo}
-          onChange={(e) => setNovo(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && novo.trim()) { onAdicionar(novo.trim()); setNovo(""); } }}
-          placeholder="Nome do novo integrante"
-          className="flex-1 min-w-[160px] border border-border rounded-[9px] px-3 py-2.5 text-[13px] bg-card text-foreground outline-none"
-        />
-        <button
-          onClick={() => { if (novo.trim()) { onAdicionar(novo.trim()); setNovo(""); } }}
-          className="text-[13px] font-bold text-white px-3.5 py-2.5 rounded-[9px] whitespace-nowrap inline-flex items-center gap-1"
-          style={{ background: ACCENT }}
-        >
-          <Plus className="h-4 w-4" /> Adicionar
-        </button>
+// ============================================================================
+// TELA 1 — Checklist do Dia
+// ============================================================================
+function ChecklistDoDia(props: {
+  eu: Membro;
+  membros: Membro[];
+  secoes: Secao[];
+  itens: Item[];
+  progresso: Map<string, Progresso>;
+  dow: number;
+  turnoFiltro: TurnoFiltro;
+  onTurno: (t: TurnoFiltro) => void;
+  busca: string;
+  onBusca: (q: string) => void;
+  onSalvar: (item: Item, patch: Partial<Progresso>) => Promise<void>;
+  onTrocarMembro: () => void;
+  podeTrocar: boolean;
+}) {
+  const { eu, membros, secoes, itens, progresso, dow, turnoFiltro, busca } = props;
+  const secaoDe = useMemo(() => new Map(secoes.map((s) => [s.code, s])), [secoes]);
+  const [verEquipe, setVerEquipe] = useState(false);
+
+  // Só rotina, só o que roda hoje.
+  const doDia = useMemo(
+    () => itens.filter((i) => secaoDe.get(i.secao_code)?.tipo === "rotina" && rodaHoje(i, dow)),
+    [itens, secaoDe, dow],
+  );
+
+  const meus = useMemo(
+    () => doDia.filter((i) => responsavelDe(i, secaoDe.get(i.secao_code)) === eu.id),
+    [doDia, secaoDe, eu.id],
+  );
+  const dosOutros = useMemo(
+    () => doDia.filter((i) => responsavelDe(i, secaoDe.get(i.secao_code)) !== eu.id),
+    [doDia, secaoDe, eu.id],
+  );
+
+  const feitos = meus.filter((i) => itemCompleto(i, progresso.get(i.id))).length;
+  const total = meus.length;
+  const pct = total > 0 ? Math.round((feitos / total) * 100) : 0;
+
+  // Mensagem contextual: o que falta no turno de agora.
+  const turnoAgora = turnoSugerido();
+  const pendentesTurno = meus.filter(
+    (i) => i.turno === turnoAgora && !itemCompleto(i, progresso.get(i.id)),
+  ).length;
+
+  const filtrar = (lista: Item[]) =>
+    lista.filter((i) => {
+      if (turnoFiltro !== "todos" && i.turno !== turnoFiltro) return false;
+      if (busca) {
+        const q = busca.toLowerCase();
+        return i.texto.toLowerCase().includes(q) || (i.tags ?? []).some((t) => t.toLowerCase().includes(q));
+      }
+      return true;
+    });
+
+  function copiarRelatorio() {
+    const txt = montarRelatorio({
+      itens, secoes, membros, progresso, dow, dataLabel: dataExtensoSP(),
+    });
+    navigator.clipboard.writeText(txt).then(
+      () => toast.success("Relatório copiado", { description: "Cole no WhatsApp ou Discord." }),
+      () => toast.error("Não consegui copiar"),
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Saudação + progresso */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold">
+              {saudacao()}, {eu.nome}
+            </h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {total === 0
+                ? "Nada na sua rotina hoje."
+                : pendentesTurno > 0
+                  ? `Faltam ${pendentesTurno} ${pendentesTurno === 1 ? "item" : "itens"} ${turnoAgora === "inicio" ? "na rotina matinal" : "no encerramento"}.`
+                  : feitos === total
+                    ? "Tudo concluído. Dia fechado."
+                    : "Turno atual em dia — confira o outro turno."}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {props.podeTrocar && (
+              <Button variant="ghost" size="sm" className="h-9" onClick={props.onTrocarMembro}>
+                Trocar
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="h-9 gap-2" onClick={copiarRelatorio}>
+              <Copy className="h-3.5 w-3.5" /> Relatório do dia
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-3">
+          <div className="h-2 flex-1 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${pct}%`, background: eu.cor }}
+            />
+          </div>
+          <span className="text-sm font-semibold tabular-nums">
+            {feitos}/{total}
+          </span>
+        </div>
+      </Card>
+
+      {/* Filtros */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border p-0.5">
+          {(["inicio", "fim", "todos"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => props.onTurno(t)}
+              className={cn(
+                "px-3 py-1.5 text-sm rounded-md transition-colors",
+                turnoFiltro === t ? "bg-primary text-primary-foreground" : "hover:bg-muted",
+              )}
+            >
+              {t === "inicio" ? "Matinal" : t === "fim" ? "Encerramento" : "Dia todo"}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar item…"
+            value={busca}
+            onChange={(e) => props.onBusca(e.target.value)}
+            className="pl-8 h-9"
+          />
+        </div>
       </div>
+
+      {/* Meus itens */}
+      <div className="flex flex-col gap-2">
+        {filtrar(meus).length === 0 ? (
+          <Card className="p-8 text-center text-sm text-muted-foreground">
+            Nenhum item seu com esse filtro.
+          </Card>
+        ) : (
+          filtrar(meus).map((item) => (
+            <LinhaItem
+              key={item.id}
+              item={item}
+              prog={progresso.get(item.id)}
+              membros={membros}
+              onSalvar={props.onSalvar}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Resto da equipe (recolhido) */}
+      {dosOutros.length > 0 && (
+        <Card className="p-0 overflow-hidden">
+          <button
+            onClick={() => setVerEquipe((v) => !v)}
+            className="w-full flex items-center justify-between p-4 hover:bg-muted/40 transition-colors"
+          >
+            <span className="text-sm font-medium flex items-center gap-2">
+              {verEquipe ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              Resto da equipe
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {dosOutros.filter((i) => itemCompleto(i, progresso.get(i.id))).length}/{dosOutros.length} concluídos
+            </span>
+          </button>
+          {verEquipe && (
+            <div className="border-t p-3 flex flex-col gap-2">
+              {filtrar(dosOutros).map((item) => (
+                <LinhaItem
+                  key={item.id}
+                  item={item}
+                  prog={progresso.get(item.id)}
+                  membros={membros}
+                  onSalvar={props.onSalvar}
+                  dono={membros.find(
+                    (m) => m.id === responsavelDe(item, secaoDe.get(item.secao_code)),
+                  )}
+                />
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Cartão de seção
-
-function SecaoCard({
-  secao, tarefas, pct, completa, colapsada, onToggleColapso, equipe, pessoaPorId, efetivo,
-  feitas, podeMarcar, editOn, onMarcar, onSalvarSecao, onRemoverSecao, onSalvarTarefa,
-  onAdicionarTarefa, onRemoverTarefa,
-}: {
-  secao: Secao; tarefas: Tarefa[]; pct: number; completa: boolean;
-  colapsada: boolean; onToggleColapso: () => void;
-  equipe: Pessoa[]; pessoaPorId: Map<number, Pessoa>;
-  efetivo: (t: Tarefa) => number | null;
-  feitas: Set<number>; podeMarcar: boolean; editOn: boolean;
-  onMarcar: (id: number, feito: boolean) => void;
-  onSalvarSecao: (id: number, patch: Partial<Secao>) => void;
-  onRemoverSecao: (s: Secao) => void;
-  onSalvarTarefa: (id: number, patch: Partial<Tarefa>) => void;
-  onAdicionarTarefa: (secaoId: number, texto: string) => void;
-  onRemoverTarefa: (id: number) => void;
+// ---------------------------------------------------------------------------
+// Uma linha do checklist — check (caixa) ou pergunta (Sim/Não + campo)
+// ---------------------------------------------------------------------------
+function LinhaItem(props: {
+  item: Item;
+  prog: Progresso | undefined;
+  membros: Membro[];
+  onSalvar: (item: Item, patch: Partial<Progresso>) => Promise<void>;
+  dono?: Membro;
 }) {
-  const [novaTarefa, setNovaTarefa] = useState("");
-  const barra = pct === 100 ? GREEN : ACCENT;
+  const { item, prog, membros, dono } = props;
+  const completo = itemCompleto(item, prog);
+  const pendenteDetalhe = faltaDetalhe(item, prog);
+  const [rascunho, setRascunho] = useState(prog?.detalhe ?? "");
+  const [salvando, setSalvando] = useState(false);
 
-  const chip = (pid: number | null) => {
-    const p = pid != null ? pessoaPorId.get(pid) : undefined;
-    if (!p) return { nome: "Não atribuído", bg: "", fg: "" };
-    return { nome: p.nome, bg: p.cor + "18", fg: p.cor };
-  };
-  const respSecao = chip(secao.responsavel_id);
+  // Se outra pessoa editar (realtime), o campo local acompanha.
+  useEffect(() => {
+    setRascunho(prog?.detalhe ?? "");
+  }, [prog?.detalhe]);
+
+  const quem = membros.find((m) => m.id === prog?.por);
+
+  async function acao(patch: Partial<Progresso>) {
+    setSalvando(true);
+    try {
+      await props.onSalvar(item, patch);
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   return (
-    <div className="bg-card border-[1.5px] border-border rounded-2xl overflow-hidden">
-      {/* Cabeçalho da seção */}
-      <div onClick={onToggleColapso} className="cursor-pointer p-[16px_18px] flex items-center gap-3.5 flex-wrap hover:bg-muted/40 transition-colors">
-        <span className="text-[13px] font-extrabold font-mono px-2.5 py-1.5 rounded-lg shrink-0 bg-foreground text-background">
-          {secao.codigo}
-        </span>
-
-        <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
-          <span className="text-lg font-extrabold tracking-tight leading-tight">{secao.titulo}</span>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span
-              className={cn("text-[11.5px] font-bold px-2.5 py-0.5 rounded-full whitespace-nowrap", !respSecao.bg && "bg-muted text-muted-foreground")}
-              style={respSecao.bg ? { background: respSecao.bg, color: respSecao.fg } : undefined}
-            >
-              Responsável: {respSecao.nome}
-            </span>
-            {secao.frequencia && <span className="text-xs text-muted-foreground">{secao.frequencia}</span>}
-          </div>
-        </div>
-
-        {completa ? (
-          <span className="text-xs font-bold px-3 py-1.5 rounded-full whitespace-nowrap shrink-0" style={{ background: GREEN + "18", color: GREEN }}>
-            ✓ Concluído
-          </span>
+    <Card
+      className={cn(
+        "p-4 transition-colors",
+        completo && "bg-emerald-500/5 border-emerald-500/30",
+        pendenteDetalhe && "bg-amber-500/5 border-amber-500/40",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        {item.tipo === "check" ? (
+          <Checkbox
+            checked={completo}
+            disabled={salvando}
+            onCheckedChange={(v) => void acao({ concluido: v === true })}
+            className="mt-0.5 h-5 w-5"
+          />
         ) : (
-          <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-[64px]">
-            <span className="text-[15px] font-extrabold font-mono tabular-nums" style={{ color: barra }}>{pct}%</span>
-            <div className="w-16 h-1.5 rounded bg-muted overflow-hidden">
-              <div className="h-full rounded" style={{ width: `${pct}%`, background: barra }} />
-            </div>
+          <div className="mt-0.5 h-5 w-5 flex items-center justify-center">
+            {salvando ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : completo ? (
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓</span>
+            ) : pendenteDetalhe ? (
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+            )}
           </div>
         )}
 
-        <span className={cn("text-sm text-muted-foreground transition-transform shrink-0", colapsada && "-rotate-90")}>⌄</span>
-      </div>
-
-      {/* Conteúdo */}
-      {!colapsada && (
-        <div className="border-t border-border p-[4px_18px_18px] flex flex-col gap-1">
-          {!editOn ? (
-            secao.descricao && (
-              <span className="text-[13px] text-muted-foreground py-2.5 px-0.5 border-b border-border mb-1">{secao.descricao}</span>
-            )
-          ) : (
-            <div className="flex flex-col gap-2 py-2.5 px-0.5 pb-3.5 border-b border-border mb-1.5">
-              <div className="flex gap-2 flex-wrap">
-                <input
-                  defaultValue={secao.codigo}
-                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== secao.codigo) onSalvarSecao(secao.id, { codigo: v }); }}
-                  placeholder="Código"
-                  className="w-[110px] border border-border rounded-lg px-2.5 py-2 font-mono text-[12.5px] font-bold bg-muted text-foreground outline-none"
-                />
-                <input
-                  defaultValue={secao.titulo}
-                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== secao.titulo) onSalvarSecao(secao.id, { titulo: v }); }}
-                  placeholder="Título da seção"
-                  className="flex-1 min-w-[180px] border border-border rounded-lg px-2.5 py-2 text-sm font-bold bg-muted text-foreground outline-none"
-                />
-              </div>
-              <input
-                defaultValue={secao.descricao ?? ""}
-                onBlur={(e) => { const v = e.target.value; if (v !== (secao.descricao ?? "")) onSalvarSecao(secao.id, { descricao: v }); }}
-                placeholder="Descrição curta"
-                className="border border-border rounded-lg px-2.5 py-2 text-[13px] bg-muted text-foreground outline-none"
-              />
-              <div className="flex gap-2 flex-wrap items-center">
-                <span className="text-xs text-muted-foreground font-semibold">Responsável:</span>
-                <select
-                  value={secao.responsavel_id ?? ""}
-                  onChange={(e) => onSalvarSecao(secao.id, { responsavel_id: e.target.value ? Number(e.target.value) : null })}
-                  className="border rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold bg-card text-foreground cursor-pointer outline-none"
-                  style={{ borderColor: ACCENT }}
-                >
-                  <option value="">— Não atribuído</option>
-                  {equipe.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                </select>
-                <span className="text-xs text-muted-foreground font-semibold">Frequência:</span>
-                <input
-                  defaultValue={secao.frequencia ?? ""}
-                  onBlur={(e) => { const v = e.target.value; if (v !== (secao.frequencia ?? "")) onSalvarSecao(secao.id, { frequencia: v }); }}
-                  className="w-[140px] border border-border rounded-lg px-2.5 py-1.5 text-[12.5px] bg-muted text-foreground outline-none"
-                />
-                <div className="flex-1" />
-                <button
-                  onClick={() => onRemoverSecao(secao)}
-                  className="border bg-transparent text-xs font-bold px-2.5 py-1.5 rounded-lg whitespace-nowrap"
-                  style={{ borderColor: RED, color: RED }}
-                >
-                  Remover seção
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Avisos */}
-          {(secao.avisos ?? []).map((a, i) => {
-            const warn = a.tipo === "warn";
-            const cor = warn ? RED : GREEN;
-            return (
-              <div
-                key={i}
-                className="flex gap-2.5 items-start rounded-[10px] px-3.5 py-2.5 text-[13px] font-medium my-1.5 border"
-                style={{ background: cor + "14", borderColor: cor + "40", color: cor }}
-              >
-                <span className="shrink-0">{warn ? "⚠" : "✓"}</span>
-                <span>{comNegrito(a.texto)}</span>
-              </div>
-            );
-          })}
-
-          {/* Tarefas */}
-          <div className="flex flex-col">
-            {tarefas.map((t) => {
-              const done = feitas.has(t.id);
-              const c = chip(efetivo(t));
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => { if (!editOn && podeMarcar) onMarcar(t.id, !done); }}
-                  className={cn(
-                    "flex items-start gap-3 py-3 px-1.5 border-t border-border transition-colors",
-                    !editOn && podeMarcar ? "cursor-pointer hover:bg-muted/40" : "cursor-default",
-                  )}
-                >
-                  <span
-                    className="shrink-0 w-6 h-6 mt-px rounded-[7px] border-2 flex items-center justify-center"
-                    style={{ background: done ? GREEN : "transparent", borderColor: done ? GREEN : "hsl(var(--border))" }}
-                  >
-                    <Check className="h-3.5 w-3.5 text-white" style={{ opacity: done ? 1 : 0 }} strokeWidth={3.4} />
-                  </span>
-                  <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    {!editOn ? (
-                      <>
-                        <span className={cn("text-[14.5px] font-medium leading-snug", done && "line-through text-muted-foreground")}>
-                          {t.texto}
-                        </span>
-                        <div className="flex gap-1.5 flex-wrap items-center">
-                          <span
-                            className={cn("text-[11px] font-bold px-2.5 py-0.5 rounded-full whitespace-nowrap", !c.bg && "bg-muted text-muted-foreground")}
-                            style={c.bg ? { background: c.bg, color: c.fg } : undefined}
-                          >
-                            {c.nome}
-                          </span>
-                          {(t.tags ?? []).map((tag) => {
-                            const st = tagStyle(tag);
-                            return (
-                              <span
-                                key={tag}
-                                className={cn("text-[11px] font-semibold px-2.5 py-0.5 rounded-full", !st.bg && "bg-muted text-muted-foreground")}
-                                style={st.bg ? { background: st.bg, color: st.fg } : undefined}
-                              >
-                                {tag}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <input
-                          defaultValue={t.texto}
-                          onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== t.texto) onSalvarTarefa(t.id, { texto: v }); }}
-                          className="border border-border rounded-lg px-2.5 py-2 text-[13.5px] bg-muted text-foreground outline-none"
-                        />
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[11.5px] text-muted-foreground font-semibold">Responsável:</span>
-                          <select
-                            value={t.responsavel_id ?? ""}
-                            onChange={(e) => onSalvarTarefa(t.id, { responsavel_id: e.target.value ? Number(e.target.value) : null })}
-                            className="border rounded-lg px-2 py-1.5 text-xs font-semibold bg-card text-foreground cursor-pointer outline-none"
-                            style={{ borderColor: ACCENT }}
-                          >
-                            <option value="">↳ Herda da seção</option>
-                            {equipe.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                          </select>
-                          <button
-                            onClick={() => onRemoverTarefa(t.id)}
-                            className="text-xs font-bold px-2 py-1.5 rounded-md inline-flex items-center gap-1"
-                            style={{ color: RED }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" /> Remover
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn("text-sm", completo && "text-muted-foreground line-through")}>
+              {item.texto}
+            </span>
+            {dono && (
+              <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: dono.cor, color: dono.cor }}>
+                {dono.nome}
+              </Badge>
+            )}
+            {(item.tags ?? []).map((t) => (
+              <Badge key={t} variant="secondary" className="text-[10px] py-0">
+                {t}
+              </Badge>
+            ))}
           </div>
 
-          {editOn && (
-            <div className="flex gap-2 pt-2.5 px-1.5 flex-wrap">
-              <input
-                value={novaTarefa}
-                onChange={(e) => setNovaTarefa(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && novaTarefa.trim()) { onAdicionarTarefa(secao.id, novaTarefa.trim()); setNovaTarefa(""); } }}
-                placeholder="Nova tarefa…"
-                className="flex-1 min-w-[180px] border border-border rounded-lg px-2.5 py-2.5 text-[13px] bg-muted text-foreground outline-none"
-              />
-              <button
-                onClick={() => { if (novaTarefa.trim()) { onAdicionarTarefa(secao.id, novaTarefa.trim()); setNovaTarefa(""); } }}
-                className="text-[12.5px] font-bold text-white px-3.5 py-2.5 rounded-lg whitespace-nowrap"
-                style={{ background: ACCENT }}
-              >
-                + Adicionar tarefa
-              </button>
+          {item.tipo === "pergunta" && (
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                {(["sim", "nao"] as const).map((r) => (
+                  <Button
+                    key={r}
+                    size="sm"
+                    variant={prog?.resposta === r ? "default" : "outline"}
+                    className="h-8 px-4"
+                    disabled={salvando}
+                    onClick={() => void acao({ resposta: r })}
+                  >
+                    {r === "sim" ? "Sim" : "Não"}
+                  </Button>
+                ))}
+              </div>
+
+              {exigeDetalhe(item, prog?.resposta) && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    {item.campo_label ?? "Descreva"} — obrigatório
+                  </label>
+                  <Textarea
+                    value={rascunho}
+                    onChange={(e) => setRascunho(e.target.value)}
+                    onBlur={() => {
+                      if ((rascunho ?? "") !== (prog?.detalhe ?? "")) void acao({ detalhe: rascunho });
+                    }}
+                    rows={2}
+                    placeholder="O que aconteceu…"
+                    className="text-sm"
+                  />
+                </div>
+              )}
             </div>
           )}
 
-          {/* Tabela de referência */}
-          {secao.tabela_ref && (
-            <div className="overflow-x-auto mt-2.5 rounded-[10px] border border-border">
-              <table className="w-full border-collapse text-[12.5px]">
-                <thead>
-                  <tr>
-                    {secao.tabela_ref.head.map((h, i) => (
-                      <th key={i} className="text-left text-[10.5px] font-bold uppercase tracking-wider bg-foreground text-background px-3 py-2.5 whitespace-nowrap">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {secao.tabela_ref.rows.map((row, ri) => (
-                    <tr key={ri}>
-                      {row.map((cell, ci) => (
-                        <td key={ci} className="px-3 py-2.5 border-t border-border">{cell}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {prog?.em && (completo || prog.resposta) && (
+            <p className="text-[11px] text-muted-foreground mt-1.5">
+              ✓ {quem?.nome ?? "—"} · {horaCurtaSP(prog.em)}
+            </p>
           )}
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// ============================================================================
+// TELA 2 — Responsabilidades & Processos (documentação, sem marcação)
+// ============================================================================
+function Responsabilidades(props: {
+  membros: Membro[];
+  secoes: Secao[];
+  itens: Item[];
+  membroFiltro: string;
+  onMembro: (m: string) => void;
+  busca: string;
+  onBusca: (q: string) => void;
+}) {
+  const { membros, secoes, itens, membroFiltro, busca } = props;
+
+  const processos = secoes.filter((s) => s.tipo === "processo");
+  const visiveis = processos.filter((s) => {
+    if (membroFiltro && s.responsavel_id !== membroFiltro) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      const nosPassos = itens.some(
+        (i) => i.secao_code === s.code && i.texto.toLowerCase().includes(q),
+      );
+      return s.titulo.toLowerCase().includes(q) || nosPassos;
+    }
+    return true;
+  });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => props.onMembro("")}
+          className={cn(
+            "px-3 py-1.5 text-sm rounded-full border transition-colors",
+            !membroFiltro ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted",
+          )}
+        >
+          Todos
+        </button>
+        {membros.map((m) => (
+          <button
+            key={m.id}
+            onClick={() => props.onMembro(m.id === membroFiltro ? "" : m.id)}
+            className={cn(
+              "px-3 py-1.5 text-sm rounded-full border transition-colors",
+              membroFiltro === m.id ? "text-white" : "hover:bg-muted",
+            )}
+            style={membroFiltro === m.id ? { background: m.cor, borderColor: m.cor } : { borderColor: m.cor }}
+          >
+            {m.nome}
+          </button>
+        ))}
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar processo ou passo…"
+            value={busca}
+            onChange={(e) => props.onBusca(e.target.value)}
+            className="pl-8 h-9"
+          />
+        </div>
+      </div>
+
+      {visiveis.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-muted-foreground">Nenhum processo com esse filtro.</Card>
+      ) : (
+        visiveis.map((s) => {
+          const dono = membros.find((m) => m.id === s.responsavel_id);
+          const passos = itens.filter((i) => i.secao_code === s.code);
+          return (
+            <Card key={s.code} className="p-5" style={{ borderLeftWidth: 4, borderLeftColor: dono?.cor ?? "var(--color-border)" }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className="text-[10px] font-mono py-0">{s.code}</Badge>
+                    <h3 className="text-lg font-semibold">{s.titulo}</h3>
+                  </div>
+                  {s.descricao && <p className="text-sm text-muted-foreground mt-1">{s.descricao}</p>}
+                </div>
+                <div className="text-right">
+                  {dono && (
+                    <div className="text-sm font-semibold" style={{ color: dono.cor }}>
+                      {dono.nome}
+                    </div>
+                  )}
+                  {s.frequencia && <div className="text-xs text-muted-foreground">{s.frequencia}</div>}
+                </div>
+              </div>
+
+              {(s.callouts ?? []).map((c, idx) => (
+                <div
+                  key={idx}
+                  className={cn(
+                    "mt-3 rounded-lg p-3 text-sm flex items-start gap-2",
+                    c.tipo === "warn"
+                      ? "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                      : "bg-blue-500/10 text-blue-800 dark:text-blue-300",
+                  )}
+                >
+                  {c.tipo === "warn" ? (
+                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  ) : (
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  )}
+                  <span>{c.texto}</span>
+                </div>
+              ))}
+
+              {passos.length > 0 && (
+                <ol className="mt-4 flex flex-col gap-2">
+                  {passos.map((p, idx) => {
+                    const donoPasso = p.responsavel_id
+                      ? membros.find((m) => m.id === p.responsavel_id)
+                      : undefined;
+                    return (
+                      <li key={p.id} className="flex items-start gap-3 text-sm">
+                        <span className="shrink-0 h-6 w-6 rounded-full bg-muted flex items-center justify-center text-xs font-semibold tabular-nums">
+                          {idx + 1}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                          <span>{p.texto}</span>
+                          {donoPasso && (
+                            <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: donoPasso.cor, color: donoPasso.cor }}>
+                              {donoPasso.nome}
+                            </Badge>
+                          )}
+                          {(p.tags ?? []).map((t) => (
+                            <Badge key={t} variant="secondary" className="text-[10px] py-0">{t}</Badge>
+                          ))}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+
+              {s.tabela_ref && (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm border rounded-lg overflow-hidden">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        {s.tabela_ref.head.map((h) => (
+                          <th key={h} className="text-left px-3 py-2 text-xs font-medium uppercase text-muted-foreground">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.tabela_ref.rows.map((r, i) => (
+                        <tr key={i} className="border-t">
+                          {r.map((celula, j) => (
+                            <td key={j} className="px-3 py-2">{celula}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          );
+        })
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// TELA 3 — Solução de problemas (catálogo de erros)
+// ============================================================================
+function SolucaoProblemas(props: { busca: string; onBusca: (q: string) => void; isAdmin: boolean }) {
+  const { busca } = props;
+  const [aberto, setAberto] = useState<string | null>(null);
+
+  const q = useQuery({
+    queryKey: ["manual", "erros"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("erros_catalogo")
+        .select("*")
+        .eq("ativo", true)
+        .order("ordem");
+      if (error) throw error;
+      return (data ?? []) as ErroCatalogo[];
+    },
+  });
+
+  const lista = (q.data ?? []).filter((e) => {
+    if (!busca) return true;
+    const t = busca.toLowerCase();
+    return e.titulo.toLowerCase().includes(t) || (e.tags ?? []).some((x) => x.toLowerCase().includes(t));
+  });
+
+  if (q.isLoading) return <EsqueletoLista />;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Buscar erro por título ou tag…"
+          value={busca}
+          onChange={(e) => props.onBusca(e.target.value)}
+          className="pl-8 h-9"
+        />
+      </div>
+
+      {lista.length === 0 ? (
+        <Card className="p-8 text-center">
+          <LifeBuoy className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">
+            {(q.data ?? []).length === 0
+              ? "Nenhum erro cadastrado ainda. Um admin pode cadastrar em “Editar estrutura”."
+              : "Nenhum erro com esse filtro."}
+          </p>
+        </Card>
+      ) : (
+        lista.map((e) => {
+          const expandido = aberto === e.id;
+          return (
+            <Card key={e.id} className="overflow-hidden">
+              <button
+                onClick={() => setAberto(expandido ? null : e.id)}
+                className="w-full flex items-start justify-between gap-3 p-4 text-left hover:bg-muted/40 transition-colors"
+              >
+                <div className="flex items-start gap-2">
+                  {expandido ? (
+                    <ChevronDown className="h-4 w-4 mt-1 shrink-0" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 mt-1 shrink-0" />
+                  )}
+                  <div>
+                    <div className="font-medium">{e.titulo}</div>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {(e.tags ?? []).map((t) => (
+                        <Badge key={t} variant="secondary" className="text-[10px] py-0">{t}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </button>
+
+              {expandido && (
+                <div className="border-t p-4 flex flex-col gap-4 text-sm">
+                  <BlocoLista titulo="Sintomas" itens={e.sintomas} />
+                  <BlocoTexto titulo="Teste rápido" texto={e.teste_rapido} />
+                  <BlocoTexto titulo="Causa raiz" texto={e.causa_raiz} />
+                  <BlocoLista titulo="Solução" itens={e.solucao} numerado />
+                  <BlocoTexto titulo="Como confirmar" texto={e.como_confirmar} />
+                  <BlocoTexto titulo="Quando escalar" texto={e.quando_escalar} />
+                  <BlocoTexto titulo="Prevenção" texto={e.prevencao} />
+                </div>
+              )}
+            </Card>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function BlocoTexto({ titulo, texto }: { titulo: string; texto: string | null }) {
+  if (!texto) return null;
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">{titulo}</h4>
+      <p className="whitespace-pre-wrap">{texto}</p>
+    </div>
+  );
+}
+
+function BlocoLista({
+  titulo, itens, numerado,
+}: { titulo: string; itens: string[] | null; numerado?: boolean }) {
+  if (!itens || itens.length === 0) return null;
+  const Lista = numerado ? "ol" : "ul";
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">{titulo}</h4>
+      <Lista className={cn("flex flex-col gap-1", numerado ? "list-decimal" : "list-disc", "pl-5")}>
+        {itens.map((t, i) => (
+          <li key={i}>{t}</li>
+        ))}
+      </Lista>
+    </div>
+  );
+}
+
+function EsqueletoLista() {
+  return (
+    <div className="flex flex-col gap-2">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Skeleton key={i} className="h-16 w-full" />
+      ))}
     </div>
   );
 }

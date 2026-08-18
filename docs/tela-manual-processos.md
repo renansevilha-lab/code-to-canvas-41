@@ -1,69 +1,94 @@
-# Tela Manual de Processos — backend + prompt de design
+# Manual de Operação — rota `/processos`
 
-> Estado: **CONCLUÍDO** (15/ago/2026). Backend na migration
-> `manual_processos_backend` (14/ago) e **front em `src/routes/processos.tsx`**,
-> portado do design `Manual de Processos.dc.html` (Claude Design) e ligado nas
-> tabelas. Menu + `ROTA_MODULO` no módulo `galpao`.
->
-> O prompt de design abaixo fica como registro da intenção original.
->
-> **Pendência de operação:** ninguém em `manual_equipe` tem `user_id` preenchido
-> ainda, então cada pessoa escolhe seu nome na tela (guardado no localStorage).
-> Para o vínculo automático por login, preencher `manual_equipe.user_id` com o
-> `auth.users.id` de cada um.
+> Estado: **v2 no ar (18/ago/2026)**. Substituiu o modelo de 14/ago
+> (`manual_equipe` / `manual_tarefas`), que tinha **zero linhas de progresso** —
+> a tela nunca chegou a ser usada, então não houve perda de histórico.
+> Front: `src/routes/processos.tsx` + `src/components/manual/ManualAdmin.tsx`.
+> Regras puras (datas, completude, relatório): `src/lib/manual.ts`.
+> Menu + `ROTA_MODULO` no módulo `galpao`.
 
-## Decisões (com o dono)
-1. **Checklist INDIVIDUAL por pessoa** — cada um marca o seu; progresso do dia é por pessoa.
-2. **Editar estrutura = só admin** (perfil com módulo `todos`). Marcar tarefas = qualquer um do galpão.
-3. Visual pelo Lovable; backend + wiring por aqui.
-4. Rota `/processos`, módulo **`galpao`** (adicionar em `ROTA_MODULO` do `usePerfil` + menu).
+## O que a tela faz
 
-## Backend (Supabase) — JÁ CRIADO
-- **`manual_equipe`** `(id, nome, cor, user_id, ordem, ativo)` — pessoas/funções. `user_id` liga a pessoa ao login (para o checklist individual saber "quem sou eu").
-- **`manual_secoes`** `(id, codigo, titulo, descricao, frequencia, responsavel_id→equipe, avisos jsonb, tabela_ref jsonb, ordem, ativo)`
-  - `avisos` = `[{tipo:'info'|'warn', texto}]`; `tabela_ref` = `{head:[...], rows:[[...]]}` ou null.
-- **`manual_tarefas`** `(id, secao_id→secoes, texto, tags text[], responsavel_id→equipe (override; null=herda da seção), ordem, ativo)`
-- **`manual_progresso`** `(id, data, tarefa_id, pessoa_id→equipe, feito, feito_em)` — UNIQUE(data, tarefa_id, pessoa_id).
-- GRANT select/insert/update/delete p/ anon+authenticated (sem RLS; edição de estrutura gated no front por perfil `todos`).
+Uma rota, três abas:
 
-## Contrato de dados (como o front liga)
-- **Ler estrutura:** `manual_secoes` (ativo=true, order by ordem) + `manual_tarefas` (por secao, ativo=true, order by ordem) + `manual_equipe` (ativo=true, order by ordem).
-- **Quem sou eu:** achar em `manual_equipe` a linha com `user_id = auth user`. Se não houver, mostrar seletor de pessoa (ou read-only). O admin liga `user_id` no modo edição.
-- **Responsável efetivo da tarefa:** `manual_tarefas.responsavel_id ?? manual_secoes.responsavel_id`.
-- **Marcar tarefa (individual):** upsert em `manual_progresso` `{data: hoje, tarefa_id, pessoa_id: eu, feito}` (onConflict `data,tarefa_id,pessoa_id`). Progresso do dia lido com `data = hoje` e `pessoa_id = eu`.
-- **Iniciar novo dia:** apaga (ou marca feito=false) o progresso de hoje da pessoa. (O dia vira sozinho: só ler `data = hoje`.)
-- **Admin (perfil.modulos inclui `todos`):** insert/update/delete em `manual_equipe`, `manual_secoes`, `manual_tarefas`. Fora do admin, esconder o modo edição.
-- Padrões do projeto: `QueryClient` de módulo, `refetchOnWindowFocus:false`, estado (filtro/busca) na URL.
+1. **Checklist do Dia** — rotina marcável (matinal + encerramento).
+2. **Responsabilidades** — documentação de quem cuida do quê, sem marcação.
+3. **Solução de problemas** — catálogo de erros (`erros_catalogo`).
 
----
+Mais o **modo edição** (só perfil com módulo `todos`), com CRUD de itens, seções,
+equipe e erros.
 
-## PROMPT PARA O CLAUDE DESIGN (copiar/colar no Lovable)
+## Modelo de dados
 
-```text
-Crie uma tela "Manual de Processos" — um checklist operacional diário da equipe de galpão/expedição, inspirado num manual de processos impresso. Referência de layout: cabeçalho escuro com barra de "Progresso do dia", cartões de seção recolhíveis, tarefas com caixa de marcar.
+| Tabela | Papel |
+|---|---|
+| `equipe_membros` | `(id slug, nome, cor, email, ativo, ordem)`. O `email` liga o login ao membro. |
+| `manual_secoes` | PK é o **`code`** (`ROT-AM`, `RESP-01`). `tipo` = `rotina` (vira checklist) ou `processo` (vira documentação). `callouts` jsonb `[{tipo:'warn'\|'info',texto}]`, `tabela_ref` jsonb `{head,rows}`. |
+| `manual_itens` | `tipo` = `check` ou `pergunta`; `turno` = `inicio`/`fim` (null em processo); `dias int[]` (null = todo dia, `[1,3]` = seg e qua, 0=dom); `abre_quando` + `campo_label` para as perguntas; `responsavel_id` null = **herda da seção**. |
+| `manual_progresso` | `unique (dia, item_id)` — o progresso é **do time**, não por pessoa; `por` registra quem marcou. |
+| `erros_catalogo` | `sintomas`/`solucao` são jsonb array de string; o resto é texto. |
 
-TOPO: título "Manual de Processos" + subtítulo "Operação · Separação · Expedição", data de hoje, e uma barra de "Progresso do dia" (percentual das MINHAS tarefas concluídas hoje). Abaixo: uma linha de chips para filtrar por pessoa (Todos + cada pessoa com sua cor e a contagem de tarefas) e um campo de busca.
+RLS habilitada com policy `for all to authenticated using(true) with check(true)`
+em todas. `anon` fica de fora de propósito (lockdown de 15/ago).
 
-CORPO: uma lista de cartões de SEÇÃO (processo). Cada cartão traz:
-- Um código (ex.: ENV-01) num selo escuro.
-- Título grande (ex.: "Envios Fulfillment").
-- "Responsável: <pessoa>" como chip colorido + a frequência (ex.: Diária).
-- Barra de progresso da seção + percentual.
-- É recolhível (clicar no cabeçalho abre/fecha). Quando 100%, mostra um selo "Concluído".
-- Dentro: descrição curta; a lista de TAREFAS (cada uma com uma caixa de marcar à esquerda, o texto, e etiquetas/tags coloridas — inclusive um chip com o responsável); avisos em destaque (verde = info, vermelho = atenção); e, quando houver, uma tabela de referência simples.
+## A regra de completude (é a alma do sistema)
 
-INTERAÇÃO:
-- Marcar uma tarefa risca o texto e atualiza as barras (é o MEU checklist do dia — individual).
-- Filtro por pessoa e busca por palavra escondem/mostram tarefas.
-- Botão "Iniciar novo dia" (desmarca minhas tarefas do dia, com confirmação).
-- MODO EDIÇÃO (só para administrador): um botão "Editar" revela a gestão da equipe (adicionar/renomear/trocar cor/remover pessoas) e a reatribuição de responsáveis por seção e por tarefa; também permite adicionar/editar/remover seções e tarefas. Para quem não é admin, o botão de editar nem aparece.
+Vive em `src/lib/manual.ts`, com 31 testes cobrindo os casos:
 
-VISUAL: sério e legível, cores por pessoa, boa hierarquia (código + título grandes), cartões com borda. Suporte a tema claro e escuro. Estados vazios amigáveis. Responsivo (funciona no celular do galpão).
+- **check** — completo quando existe progresso com `concluido = true`.
+- **pergunta** — completo quando tem resposta **E**, se essa resposta é
+  justamente a que abre o campo (`resposta === abre_quando`, e `abre_quando`
+  não é `nunca`), o `detalhe` está preenchido (trim não vazio).
 
-DADOS (mock com esta forma):
-- equipe: [{ id, nome, cor }]
-- secoes: [{ id, codigo, titulo, descricao, frequencia, responsavel_id, avisos:[{tipo,texto}], tabela_ref:{head,rows}|null, tarefas:[{ id, texto, tags:[], responsavel_id|null }] }]
-- meuProgressoHoje: { [tarefa_id]: true }
-- eu: { id, nome } (pessoa logada)
-- ações: marcarTarefa(tarefa_id, feito), iniciarNovoDia(), e (admin) CRUD de equipe/seções/tarefas.
-```
+Ou seja: **pergunta respondida "não" sem motivo NÃO fecha o dia** — fica
+pendente, destacada em âmbar. É isso que impede o encerramento de virar um
+clique automático.
+
+## Armadilhas que o código já trata
+
+- **Datas sempre em `America/Sao_Paulo`** (`hojeSP`, `diaSemanaSP`, `horaSP`).
+  O banco roda em UTC: usar `CURRENT_DATE`/`getDay()` faria o dia virar às 21h e
+  jogaria a rotina para o dia seguinte.
+- **Sem `supabase.rpc()`** — só `select` em tabelas (restrição do projeto).
+- **Realtime** em `manual_progresso`: duas pessoas em máquinas diferentes veem a
+  marcação uma da outra.
+- **Desativar em vez de apagar** no admin (`ativo = false`): apagar um item
+  levaria o progresso junto por cascata.
+- **E-mail vazio vira `null`** ao salvar membro — a coluna é UNIQUE e `''`
+  repetido quebraria o segundo cadastro.
+
+## Como cada pessoa é identificada
+
+1. `auth.email()` casa com `equipe_membros.email` → automático.
+2. Sem match: a tela mostra o seletor de membro e guarda a escolha no
+   `localStorage` (`manual.euId`).
+
+Para ligar automático, um admin preenche o e-mail de cada um no modo edição →
+aba **Equipe**.
+
+## Relatório do dia
+
+Botão no topo do checklist: gera **texto puro** (sem markdown — asterisco e `#`
+viram lixo visível no WhatsApp/Discord), agrupado por pessoa e turno, com
+`[x]`/`[ ]`/`[!]`, respostas em SIM/NÃO, os detalhes preenchidos,
+`SEM RESPOSTA` e `*** NAO PREENCHIDO ***` onde falta, resumo e lista de
+pendências. Vai para o clipboard.
+
+## Conteúdo migrado
+
+O seed traz `ROT-AM`, `ROT-PM` e `RESP-01..05` conforme especificado, mais dois
+itens preservados do modelo anterior para não perder cadastro:
+
+- membro **`equipe`** ("Equipe", genérico);
+- seção **`RESP-06` "Envios Fulfillment"** (era `ENV-01`), com seus 3 passos.
+
+## Pendências
+
+- **`erros_catalogo` está vazia.** A tabela foi criada nesta migration — não
+  existia no banco, ao contrário do que o pedido supunha. O conteúdo do catálogo
+  de erros vive no HTML standalone; cadastrar pelo admin (aba **Erros**) ou pedir
+  um seed a partir daquele arquivo.
+- Nenhum `equipe_membros.email` preenchido ainda — todo mundo passa pelo seletor
+  na primeira vez.
+- Identidade visual refinada (paleta kraft/laranja/navy, fonte condensada nos
+  títulos) virá depois via Claude Design; hoje a tela usa o padrão do app.
