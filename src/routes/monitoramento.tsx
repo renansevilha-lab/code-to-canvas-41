@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, PackageX } from "lucide-react";
+import {
+  AlertTriangle, Check, ChevronDown, ChevronRight, Hourglass, Loader2, PackageX,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -54,7 +56,160 @@ const num = (x: unknown): number => {
   const n = Number(x ?? 0);
   return Number.isFinite(n) ? n : 0;
 };
+
+// ---------------------------------------------------------------------------
+// Pedidos de uma TAG (expansão do card) — mesma leitura da aba Separação.
+//
+// A fonte é `separacao_tiny`, NÃO `view_separacao_pedidos`: a view só devolve
+// situação 1 (aguardando), e aqui os lotes já foram separados/embalados
+// (situação 2 e 3). Ler a view perderia justamente os pedidos deste painel —
+// é a armadilha da seção 5 do CLAUDE.md, a mesma que já quebrou a impressão
+// de etiquetas por lote uma vez.
+// ---------------------------------------------------------------------------
+
+type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
+
+// Um pedido pode ter mais de uma linha em impressao_etiquetas (retentativa,
+// forçado): vale o estado mais avançado.
+function rankEstado(e: EstadoImpressao): number {
+  return e === "done" ? 4 : e === "forcado" ? 3 : e === "sent" ? 2 : e === "error" ? 1 : 0;
+}
+
+interface PedidoDaTag {
+  separacao_id: number | null;
+  numero_ecommerce: string | null;
+  marca_canal: string | null;
+  situacao: number | null;
+  qtd_unidades: number | string | null;
+  estado: EstadoImpressao;
+}
+
+const SITUACAO_LABEL: Record<number, string> = {
+  1: "aguardando",
+  2: "em separação",
+  3: "embalada",
+  9: "concluída",
+};
 const fmt = (x: unknown): string => num(x).toLocaleString("pt-BR");
+
+/** Lista os pedidos de uma TAG com o estado de impressão de cada um. */
+function PedidosDaTag({ tag }: { tag: string }) {
+  const q = useQuery({
+    queryKey: ["monitoramento", "pedidos-tag", tag],
+    queryFn: async (): Promise<PedidoDaTag[]> => {
+      const { data: seps, error } = await supabaseExternal
+        .from("separacao_tiny")
+        .select("separacao_id, numero_ecommerce, marca_canal, situacao, qtd_unidades")
+        .eq("tag_lote", tag)
+        .order("numero_ecommerce");
+      if (error) throw error;
+
+      const linhas = (seps ?? []) as Omit<PedidoDaTag, "estado">[];
+      const ids = linhas.map((l) => l.separacao_id).filter((n): n is number => n != null);
+
+      const porSep = new Map<number, EstadoImpressao>();
+      if (ids.length > 0) {
+        const { data: imps, error: e2 } = await supabaseExternal
+          .from("impressao_etiquetas")
+          .select("separacao_id, estado")
+          .in("separacao_id", ids);
+        if (e2) throw e2;
+        for (const r of (imps ?? []) as { separacao_id: number; estado: string }[]) {
+          const est = (r.estado as EstadoImpressao) ?? "ausente";
+          const atual = porSep.get(r.separacao_id) ?? "ausente";
+          if (rankEstado(est) > rankEstado(atual)) porSep.set(r.separacao_id, est);
+        }
+      }
+
+      return linhas.map((l) => ({
+        ...l,
+        estado: l.separacao_id != null ? (porSep.get(l.separacao_id) ?? "ausente") : "ausente",
+      }));
+    },
+  });
+
+  if (q.isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Carregando pedidos…
+      </div>
+    );
+  }
+  if (q.error) {
+    return <div className="py-3 text-sm text-destructive">{(q.error as Error).message}</div>;
+  }
+
+  const pedidos = q.data ?? [];
+  const impressos = pedidos.filter((p) => p.estado === "done" || p.estado === "forcado").length;
+  const pendentes = pedidos.length - impressos;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold">{pedidos.length} pedidos</span>
+        <span className="text-emerald-700 dark:text-emerald-400">{impressos} impressos</span>
+        {pendentes > 0 && (
+          <span className="text-amber-700 dark:text-amber-400">{pendentes} sem impressão</span>
+        )}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[10px] uppercase text-muted-foreground border-b">
+              <th className="py-1.5 pr-2 font-medium">Pedido</th>
+              <th className="py-1.5 pr-2 font-medium">Canal</th>
+              <th className="py-1.5 pr-2 font-medium">Situação</th>
+              <th className="py-1.5 pr-2 font-medium text-right">Un.</th>
+              <th className="py-1.5 font-medium">Impressão</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pedidos.map((p) => (
+              <tr key={p.separacao_id ?? p.numero_ecommerce} className="border-b last:border-0">
+                <td className="py-1.5 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
+                <td className="py-1.5 pr-2 text-muted-foreground">{p.marca_canal ?? "—"}</td>
+                <td className="py-1.5 pr-2 text-muted-foreground">
+                  {SITUACAO_LABEL[p.situacao ?? 0] ?? p.situacao ?? "—"}
+                </td>
+                <td className="py-1.5 pr-2 text-right tabular-nums">{num(p.qtd_unidades)}</td>
+                <td className="py-1.5">
+                  <SeloImpressao estado={p.estado} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Mesmos rótulos e cores da aba Separação, para não criar dialeto novo. */
+function SeloImpressao({ estado }: { estado: EstadoImpressao }) {
+  if (estado === "done" || estado === "forcado") {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">
+        <Check className="h-2.5 w-2.5" /> {estado === "done" ? "impresso" : "forçado"}
+      </span>
+    );
+  }
+  if (estado === "sent") {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+        <Hourglass className="h-2.5 w-2.5" /> aguardando
+      </span>
+    );
+  }
+  if (estado === "error") {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">
+        <AlertTriangle className="h-2.5 w-2.5" /> erro
+      </span>
+    );
+  }
+  return <span className="text-[10px] text-muted-foreground">sem impressão</span>;
+}
 
 function iniciais(nome: string | null): string {
   return (nome ?? "?")
@@ -112,6 +267,15 @@ function MonitoramentoPage() {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const [finalizando, setFinalizando] = useState<string | null>(null);
+  // TAGs abertas — a lista de pedidos só é buscada quando a TAG expande.
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const alternarTag = (tag: string) =>
+    setExpandidas((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(tag)) proximo.delete(tag);
+      else proximo.add(tag);
+      return proximo;
+    });
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -268,6 +432,7 @@ function MonitoramentoPage() {
             const completo = imp >= ped;
             const progColor = completo ? "#0E8A5F" : "#B7791F";
             const saindo = finalizando === c.tag;
+            const expandida = expandidas.has(c.tag);
             return (
               <Card
                 key={c.tag}
@@ -275,10 +440,24 @@ function MonitoramentoPage() {
                   "p-5 flex flex-col gap-3.5 border-[1.5px] transition-all duration-300",
                   saindo && "opacity-40 scale-[0.97]",
                 )}
+                // Expandida ocupa a linha toda: a tabela de pedidos não cabe
+                // na coluna de 300px do grid.
+                style={expandida ? { gridColumn: "1 / -1" } : undefined}
               >
-                {/* TAG + tipo */}
+                {/* TAG + tipo — clicar na TAG abre a lista de pedidos */}
                 <div className="flex items-center justify-between gap-2.5">
-                  <span className="text-3xl font-extrabold tracking-tight font-mono">{c.tag}</span>
+                  <button
+                    onClick={() => alternarTag(c.tag)}
+                    className="flex items-center gap-1.5 text-left hover:opacity-70 transition-opacity"
+                    title={expandida ? "Recolher pedidos" : "Ver pedidos da TAG"}
+                  >
+                    {expandida ? (
+                      <ChevronDown className="h-5 w-5 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-5 w-5 shrink-0" />
+                    )}
+                    <span className="text-3xl font-extrabold tracking-tight font-mono">{c.tag}</span>
+                  </button>
                   <span
                     className="text-[13px] font-extrabold tracking-wide px-3 py-1.5 rounded-[9px]"
                     style={{ background: ts.bg, color: ts.fg }}
@@ -334,6 +513,13 @@ function MonitoramentoPage() {
                     <div className="h-full rounded absolute left-0 top-0" style={{ width: `${printW}%`, background: progColor, opacity: 0.35 }} />
                   </div>
                 </div>
+
+                {/* Pedidos da TAG (carrega só quando abre) */}
+                {expandida && (
+                  <div className="border-t pt-3">
+                    <PedidosDaTag tag={c.tag} />
+                  </div>
+                )}
 
                 {/* Finalizar */}
                 <button
