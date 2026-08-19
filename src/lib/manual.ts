@@ -43,6 +43,10 @@ export type Item = {
   campo_label: string | null;
   ordem: number;
   ativo: boolean;
+  // Vigência — usada só pelo histórico, para não cobrar um item de um dia em
+  // que ele ainda não existia (ou já tinha sido removido).
+  criado_em?: string | null;
+  desativado_em?: string | null;
 };
 
 export type Progresso = {
@@ -134,6 +138,53 @@ export function horaCurtaSP(iso: string | null): string {
 }
 
 export const NOMES_DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+/**
+ * Dia da semana de uma data YYYY-MM-DD (0=domingo).
+ * Via Date.UTC de propósito: `new Date("2026-08-19")` seria interpretado como
+ * meia-noite UTC e, num navegador a oeste de Greenwich, cairia no dia anterior.
+ */
+export function diaSemanaDe(dia: string): number {
+  const [ano, mes, d] = dia.split("-").map(Number);
+  return new Date(Date.UTC(ano, (mes ?? 1) - 1, d ?? 1)).getUTCDay();
+}
+
+/** Soma (ou subtrai) dias de uma data YYYY-MM-DD, sem passar por fuso. */
+export function somarDias(dia: string, n: number): string {
+  const [ano, mes, d] = dia.split("-").map(Number);
+  const base = new Date(Date.UTC(ano, (mes ?? 1) - 1, d ?? 1));
+  base.setUTCDate(base.getUTCDate() + n);
+  return base.toISOString().slice(0, 10);
+}
+
+export function dataExtensoDe(dia: string): string {
+  const [ano, mes, d] = dia.split("-").map(Number);
+  const s = new Date(Date.UTC(ano, (mes ?? 1) - 1, d ?? 1)).toLocaleDateString("pt-BR", {
+    weekday: "long", day: "2-digit", month: "long", timeZone: "UTC",
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * O item valia naquela data? Evita que o histórico cobre item criado depois
+ * (falso pendente) ou esconda item que existia e foi removido.
+ * Compara pela DATA em SP, não pelo instante — criar um item às 23h não pode
+ * tirá-lo do próprio dia.
+ */
+export function vigenteEm(item: Item, dia: string): boolean {
+  const diaDe = (iso: string | null | undefined): string | null =>
+    iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }) : null;
+
+  const nasceu = diaDe(item.criado_em);
+  if (nasceu && dia < nasceu) return false;
+
+  const morreu = diaDe(item.desativado_em);
+  if (morreu && dia > morreu) return false;
+
+  // Sem data de desativação, item inativo é tratado como nunca vigente no
+  // passado apenas se não houver registro — quem decide isso é a tela.
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Recorrência e completude

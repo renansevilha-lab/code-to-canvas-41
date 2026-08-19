@@ -160,9 +160,16 @@ function LinhaItemAdmin({
   }
 
   async function desativar() {
-    const { error } = await supabaseExternal.from("manual_itens").update({ ativo: false }).eq("id", item.id);
+    // Grava a data: sem ela o Histórico não saberia até quando o item valia e
+    // passaria a cobrá-lo (ou a escondê-lo) nos dias errados.
+    const { error } = await supabaseExternal
+      .from("manual_itens")
+      .update({ ativo: false, desativado_em: new Date().toISOString() })
+      .eq("id", item.id);
     if (error) return toast.error("Falha ao remover", { description: error.message });
-    toast.success("Item removido da lista");
+    toast.success("Item removido da lista", {
+      description: "O histórico dos dias anteriores continua mostrando este item.",
+    });
     onMudou();
   }
 

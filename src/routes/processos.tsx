@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ClipboardCheck, Info, Loader2, Pencil, Search, LifeBuoy,
-  ChevronDown, ChevronRight, ClipboardList, Copy, Users,
+  ChevronDown, ChevronRight, ClipboardList, Copy, History, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,6 +20,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePerfil } from "@/hooks/usePerfil";
 import { ManualAdmin } from "@/components/manual/ManualAdmin";
+import { HistoricoChecklist } from "@/components/manual/HistoricoChecklist";
 import {
   type ErroCatalogo, type Item, type Membro, type Progresso, type Secao,
   dataExtensoSP, diaSemanaSP, faltaDetalhe, hojeSP, horaCurtaSP, itemCompleto,
@@ -37,7 +38,7 @@ import {
 // TIME — unique(dia, item_id) — e a coluna `por` guarda quem marcou.
 // ============================================================================
 
-const ABAS = ["dia", "processos", "problemas"] as const;
+const ABAS = ["dia", "processos", "problemas", "historico"] as const;
 type Aba = (typeof ABAS)[number];
 const TURNOS = ["inicio", "fim", "todos"] as const;
 type TurnoFiltro = (typeof TURNOS)[number];
@@ -223,6 +224,11 @@ function ManualPage() {
             <TabsTrigger value="problemas" className="gap-1.5">
               <LifeBuoy className="h-4 w-4" /> Solução de problemas
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="historico" className="gap-1.5">
+                <History className="h-4 w-4" /> Histórico
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="dia" className="mt-4">
@@ -267,6 +273,18 @@ function ManualPage() {
 
           <TabsContent value="problemas" className="mt-4">
             <SolucaoProblemas busca={search.q} onBusca={(q) => setSearch({ q })} isAdmin={isAdmin} />
+          </TabsContent>
+
+          {/* Só admin: a aba nem é montada para os demais, e o link direto
+              (?aba=historico) cai no aviso abaixo em vez de renderizar. */}
+          <TabsContent value="historico" className="mt-4">
+            {isAdmin ? (
+              <HistoricoChecklist membros={membros} secoes={secoes} />
+            ) : (
+              <Card className="p-8 text-center text-sm text-muted-foreground">
+                O histórico do checklist é restrito a administradores.
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       )}
