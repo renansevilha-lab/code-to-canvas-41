@@ -8,6 +8,7 @@ import appCss from "../styles.css?url";
 import { AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
+import { useLogoutInatividade } from "@/hooks/useLogoutInatividade";
 import { useAuth } from "@/hooks/useAuth";
 import { PerfilProvider } from "@/hooks/usePerfil";
 import { PerfilGate } from "@/components/PerfilGate";
@@ -154,6 +155,9 @@ function RootComponent() {
 
 function AppShell() {
   const { user, signOut } = useAuth();
+  // Sessão do Supabase se renova sozinha: sem isto ninguém nunca é desconectado.
+  // Só age fora do expediente (18h–7h) para não derrubar a bancada no meio do dia.
+  useLogoutInatividade(signOut);
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { grupo, titulo } = crumbDaRota(pathname);
   // Menu recolhível (persistido). Inicia aberto no SSR/primeiro render e lê o

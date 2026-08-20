@@ -127,7 +127,10 @@ export function moduloDaRota(pathname: string): string {
 export function primeiraRotaPermitida(modulos: string[]): string {
   const preferencia: Array<[string, string]> = [
     ["dashboard", "/"],
-    ["galpao", "/separacao"],
+    // Galpão cai no checklist do dia, não na fila de separação: a rotina
+    // matinal é a primeira coisa a fazer ao abrir o sistema. Quem tem
+    // `dashboard` (ou `todos`) continua indo para o Dashboard.
+    ["galpao", "/processos"],
     ["separacao", "/pedidos-integrados"],
     ["financeiro", "/dre"],
     ["produtos", "/produtos-margem"],
