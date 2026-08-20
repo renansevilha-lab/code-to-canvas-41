@@ -1319,6 +1319,18 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
                           <span className="h-2 w-2 rounded-full shrink-0" style={{ background: MKT_COLOR[e.marketplace] ?? "#888" }} />
                           <span className="text-[12.5px] font-semibold font-mono whitespace-nowrap">{e.numero ? `#${e.numero}` : "(s/ nº)"}</span>
                           <div className="flex-1" />
+                          {/* "E" = estoque já lançado no Tiny (transferência Geral → Full).
+                              Evita relançar por engano e mostra de relance o que falta. */}
+                          {e.estoque_lancado_em && (
+                            <span
+                              className="shrink-0 h-[18px] w-[18px] rounded-full flex items-center justify-center text-[10px] font-bold leading-none"
+                              style={{ background: "#0E8A5F", color: "#fff" }}
+                              title={`Estoque lançado no Tiny em ${format(parseISO(e.estoque_lancado_em), "dd/MM/yyyy 'às' HH:mm")}${e.estoque_lancado_por ? ` por ${e.estoque_lancado_por}` : ""}`}
+                              aria-label="Estoque lançado no Tiny"
+                            >
+                              E
+                            </span>
+                          )}
                           <span className="text-[#C9CFD8] text-xs tracking-tighter">⠿</span>
                         </div>
                         <span
