@@ -105,6 +105,7 @@ export function VendasMargemChart({
         return {
           data: r.data,
           receita,
+          margem, // valor cru para o tooltip (margemBar zera quando oculta)
           margemBar: vis.margem ? margem : 0,
           semMargemBar: vis.venda ? semMargem : 0,
           margem_pct: r.margem_pct != null ? Number(r.margem_pct) : null,
@@ -228,36 +229,48 @@ export function VendasMargemChart({
                 width={40}
               />
               <Tooltip
-                contentStyle={{
-                  background: "var(--color-popover)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 10,
-                  fontSize: 12,
-                }}
-                labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                formatter={(value, name, item) => {
-                  const n = Number(value ?? 0);
-                  if (name === "Margem %") return [formatPercent(n), name];
-                  // A serie "Venda" plota a FATIA empilhada (receita − margem)
-                  // para a barra somar a receita. No tooltip, porem, "Venda"
-                  // tem que ser a receita CHEIA — mostrar a fatia fazia o
-                  // grafico parecer divergente dos cards (15,9k vs 18,9k).
-                  if (name === "Venda") {
-                    const receita = Number(
-                      (item as { payload?: { receita?: number } })?.payload?.receita ?? n,
-                    );
-                    return [formatBRL(receita), name];
-                  }
-                  return [formatBRL(n), name];
-                }}
-                itemSorter={(item) => {
-                  const order: Record<string, number> = {
-                    Venda: 0,
-                    "Margem R$": 1,
-                    "Margem %": 2,
-                    "Meta do dia": 3,
+                // Tooltip proprio lendo a LINHA inteira (payload[0].payload):
+                // a serie "Venda" plota a fatia empilhada (receita − margem)
+                // para a barra somar a receita, e o formatter padrao exibia a
+                // fatia como se fosse a venda (15,9k vs 18,9k dos cards). Ler
+                // a linha direto nao depende da assinatura do formatter, que
+                // varia entre versoes do recharts.
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const row = (payload[0]?.payload ?? {}) as {
+                    receita?: number; margem?: number;
+                    margem_pct?: number | null; meta_dia?: number | null;
                   };
-                  return order[String(item.name)] ?? 99;
+                  const linhas: Array<{ nome: string; valor: string; cor: string }> = [
+                    { nome: "Venda", valor: formatBRL(Number(row.receita ?? 0)), cor: COR_VENDA },
+                    { nome: "Margem R$", valor: formatBRL(Number(row.margem ?? 0)), cor: COR_MARGEM },
+                  ];
+                  if (row.margem_pct != null) {
+                    linhas.push({ nome: "Margem %", valor: formatPercent(Number(row.margem_pct)), cor: COR_MARGEM_PCT });
+                  }
+                  if (row.meta_dia != null) {
+                    linhas.push({ nome: "Meta", valor: formatBRL(Number(row.meta_dia)), cor: COR_META });
+                  }
+                  return (
+                    <div
+                      style={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 10,
+                        fontSize: 12,
+                        padding: "8px 12px",
+                      }}
+                    >
+                      <p style={{ fontWeight: 600, marginBottom: 4 }}>
+                        {format(parseISO(String(label)), "dd 'de' MMM", { locale: ptBR })}
+                      </p>
+                      {linhas.map((l) => (
+                        <p key={l.nome} style={{ color: l.cor, margin: "2px 0" }}>
+                          {l.nome}: {l.valor}
+                        </p>
+                      ))}
+                    </div>
+                  );
                 }}
               />
               <Legend
