@@ -978,6 +978,17 @@ function marcaToLoja(m: string | null): "ottz" | "svl" | "tiktok" | null {
  * shopee-sync-ads; ML = PDF pelo ml-etiqueta). Antes disso "Mercado Livre
  * (Ottz Pet)" casava o "ottz" do marcaToLoja e ia parar na rota da Shopee.
  */
+/**
+ * A etiqueta do ML sai pelo token da conta OTTZ. Os pedidos "[SVLL] Mercado
+ * Livre" sao da segunda conta, que NAO esta integrada — a API do ML responde
+ * 403 e nao ha o que fazer pelo app (tem que imprimir pelo painel do ML).
+ * Saber disso aqui evita o operador clicar e tomar erro na bancada.
+ */
+function mlContaIntegrada(m: string | null): boolean {
+  const s = (m ?? "").toLowerCase();
+  return !(s.includes("svl") || s.includes("sevilla") || s.includes("bumi"));
+}
+
 function marcaToCanal(m: string | null): "shopee" | "mercadolivre" | "tiktok" | "outro" {
   if (!m) return "outro";
   const s = m.toLowerCase();
@@ -1180,7 +1191,8 @@ function PedidosDoSku({
             const isTiktok = canal === "tiktok";
             // Canal que o app não sabe etiquetar (Temu, etc.) — botão desligado
             // em vez de deixar clicar e falhar na cara do operador.
-            const semEtiqueta = canal === "tiktok" || canal === "outro" ||
+            const mlNaoIntegrado = canal === "mercadolivre" && !mlContaIntegrada(p.marca_canal);
+            const semEtiqueta = canal === "tiktok" || canal === "outro" || mlNaoIntegrado ||
               (canal === "shopee" && (loja === null || loja === "tiktok"));
             const key = `ped:${p.numero_ecommerce}`;
             const busyImp = imprimindoKey === key;
@@ -1251,7 +1263,9 @@ function PedidosDoSku({
                       title={
                         isTiktok
                           ? "TikTok não usa etiqueta do app"
-                          : semEtiqueta
+                          : mlNaoIntegrado
+                            ? "Conta SVL do Mercado Livre não integrada — imprima pelo painel do ML"
+                            : semEtiqueta
                             ? `Sem etiqueta pelo app: ${rotuloCanal(p.marca_canal)}`
                             : canal === "mercadolivre"
                               ? "Imprimir etiqueta ML (PDF)"
@@ -2214,6 +2228,13 @@ function FilaPriorizada() {
     }
     if (canal === "shopee" && (!loja || loja === "tiktok")) {
       toast.error(`Loja Shopee não reconhecida em "${rotuloCanal(p.marca_canal)}"`);
+      return;
+    }
+    if (canal === "mercadolivre" && !mlContaIntegrada(p.marca_canal)) {
+      toast.error("Conta SVL do Mercado Livre não integrada", {
+        description: "A etiqueta sai pelo token da Ottz. Imprima este pedido pelo painel do ML.",
+        duration: 8000,
+      });
       return;
     }
     if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
