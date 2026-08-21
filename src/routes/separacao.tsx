@@ -1079,7 +1079,7 @@ async function imprimirPedidoMlApi(
   orderId: string,
   printerId: number,
   printerNome?: string,
-) {
+): Promise<boolean> {
   const url =
     `${EXTERNAL_URL}/functions/v1/ml-etiqueta` +
     `?modulo=imprimir&order_id=${encodeURIComponent(orderId)}&printer_id=${printerId}`;
@@ -1094,15 +1094,16 @@ async function imprimirPedidoMlApi(
       description: data.dica ?? `status ${data.status ?? "?"}`,
       duration: 10000,
     });
-    return;
+    return false;
   }
   if (!resp.ok || data.erro) {
     toast.error(`Falha ao imprimir ML ${orderId}`, {
       description: data.erro ?? `HTTP ${resp.status}`,
     });
-    return;
+    return false;
   }
   toast.success(`Etiqueta ML ${orderId} enviada`, { description: printerNome ?? "" });
+  return true;
 }
 
 // ============ Pedidos individuais expandidos (por SKU) ============
@@ -1511,10 +1512,73 @@ function LotesDoDia({
     return "ottz";
   }
 
+  /**
+   * Etiquetas de um lote do MERCADO LIVRE, pedido a pedido.
+   *
+   * A Shopee entrega o lote inteiro numa chamada (ZPL de N etiquetas). O ML nao
+   * tem lote: cada envio tem a sua etiqueta (PDF), entao aqui e um laco. Sem
+   * isso o botao "Imprimir" do painel de lotes mandava TUDO para a rota da
+   * Shopee, que filtra por marca_canal e simplesmente ignorava os pedidos do ML
+   * — o lote saia vazio e a bancada ficava sem etiqueta, sem erro visivel.
+   */
+  async function imprimirLoteMl(tag: string, pedidos: { numero_ecommerce: string; marca_canal: string | null }[]) {
+    let ok = 0;
+    const semConta: string[] = [];
+    for (const p of pedidos) {
+      if (!mlContaIntegrada(p.marca_canal)) { semConta.push(p.numero_ecommerce); continue; }
+      try {
+        if (await imprimirPedidoMlApi(p.numero_ecommerce, printerId, impressoraSelecionada?.nome)) ok++;
+      } catch {
+        /* o proprio imprimirPedidoMlApi ja avisa o operador; segue o lote */
+      }
+    }
+    if (ok > 0) {
+      void registrarSeparacaoLog({
+        evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+        tag, detalhe: { canal: "mercadolivre", enviadas: ok, via: "lote-ml" },
+      });
+    }
+    if (semConta.length > 0) {
+      toast.warning(`${semConta.length} pedido(s) da conta SVL do ML nao saem pelo app`, {
+        description: "A integracao e da conta Ottz. Imprima esses pelo painel do ML.",
+        duration: 10000,
+      });
+    }
+    return ok;
+  }
+
   async function imprimirLote(lote: TagLoteRow, forcar = false) {
     if (imprimindo) return;
     setImprimindo(lote.tag);
     try {
+      // Um lote pode ter pedidos do ML (a fila mistura os canais). Descobrimos a
+      // composicao ANTES de escolher a rota — o canal esta no pedido, nao no lote.
+      const { data: pedsLote } = await supabaseExternal
+        .from("separacao_tiny")
+        .select("numero_ecommerce, marca_canal")
+        .eq("tag_lote", lote.tag);
+      const lista = (pedsLote ?? []).filter(
+        (p): p is { numero_ecommerce: string; marca_canal: string | null } =>
+          typeof p.numero_ecommerce === "string" && p.numero_ecommerce.length > 5,
+      );
+      const doMl = lista.filter((p) => marcaToCanal(p.marca_canal) === "mercadolivre");
+      const daShopee = lista.filter((p) => marcaToCanal(p.marca_canal) === "shopee");
+
+      if (doMl.length > 0) {
+        const impressas = await imprimirLoteMl(lote.tag, doMl);
+        if (daShopee.length === 0) {
+          if (impressas > 0) {
+            toast.success(`Lote ${lote.tag}: ${impressas} etiqueta(s) do Mercado Livre enviadas`, {
+              description: impressoraSelecionada?.nome ?? "",
+            });
+            if (identificadorAtivo) await imprimirIdentificador(lote, forcar ? {} : { auto: true });
+          }
+          await qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+          return;
+        }
+        // lote misto: as do ML ja sairam, segue para as da Shopee abaixo
+      }
+
       const loja = lojaDoLote(lote);
       const url =
         `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
