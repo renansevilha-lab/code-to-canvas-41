@@ -234,7 +234,8 @@ function sparkPoints(vals: number[]): string {
 // Component
 // ============================================================
 function Dashboard() {
-  const [preset, setPreset] = useState<PresetKey>("mes_atual");
+  // Definição do dono (20/ago/2026): a Dashboard SEMPRE abre no dia de hoje.
+  const [preset, setPreset] = useState<PresetKey>("hoje");
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
   const range = useMemo(
     () => computeRange(preset, customRange ?? undefined),
