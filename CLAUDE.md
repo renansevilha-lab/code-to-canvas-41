@@ -310,7 +310,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v43 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v54 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
 | `shopee-sync` | v20 | Pedidos Shopee |
@@ -322,11 +322,48 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
+| `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
+| `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |
+| `resumo-operacao` | v3 | Resumos de abertura/fechamento/fulfillment no Discord |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso
 já causou falha silenciosa: a pré-geração de etiquetas batia 30s em *toda*
 execução, retornava 200 e não gravava nada — a fila nunca andava.
+
+---
+
+## 6.1 Discord — avisos e menções
+
+**Porta única:** todo envio passa pela `discord-notify`. A URL do webhook é
+**credencial** (quem tem, posta como se fosse o sistema) e mora só lá, em
+secret — nunca no front, nunca no banco. Canais por secret:
+`DISCORD_WEBHOOK_GERAL` (fallback), `_PEDIDOS`, `_FULFILMENT`, `_ERROS`,
+`_ESTOQUE`, `_DEVOLUCOES`, `_COMPRAS`. Diagnóstico: `?modulo=status` mostra
+quais estão configurados; `?modulo=teste&canal=X` manda uma mensagem de prova.
+
+**Como marcar alguém (duas pegadinhas que custam o aviso não chegar):**
+1. O Discord **só notifica pelo ID numérico** — `<@583378141901357075>`.
+   Escrever "@Nikolas" em texto **não marca ninguém**.
+2. Menção **dentro de embed NÃO notifica**. Tem que ir no `content`.
+
+Por isso a `discord-notify` **v2** aceita `marcar: [ids]` (vira `<@id>` no
+`content`) e `conteudo` (texto livre fora do embed). O `allowed_mentions`
+limita o alcance aos IDs pedidos — `@everyone`/`@here` nunca disparam por
+acidente. Os IDs ficam em **`equipe_membros.discord_user_id`** (vazio = cita o
+nome, sem marcar).
+
+**Aviso de checklist (`discord-avisos`):** cobra quem não fechou a rotina.
+`?turno=inicio|fim`, `&dry=1` (monta sem enviar), `&sempre=1` (posta mesmo com
+tudo em dia). Lê `view_manual_pendentes_hoje`, que **espelha em SQL a regra de
+completude do front** (`src/lib/manual.ts`): check → `concluido`; pergunta →
+resposta E, se ela "abre" o campo, o detalhe preenchido (um "não" seco não
+fecha o item). **Silêncio é bom:** sem pendência não posta nada — aviso diário
+sem motivo vira ruído e a equipe para de ler.
+
+**Crons (BRT = UTC−3):** `checklist-matinal-discord` `0 12 * * 1-5` (9h) e
+`checklist-fim-discord` `30 20 * * 1-5` (17h30). O fim de semana é limitado
+**no cron**, porque a maioria dos itens está com `dias = null` (roda todo dia).
 
 **Lojas Shopee:** Ottz `shop_id 522186766` (partner 2034179) · SVL
 `shop_id 759046323` (partner 2037384). Chaves em secrets separados.
@@ -370,6 +407,17 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   o limite do plano (0,5 GB) sozinhas. Existe cron de limpeza; não desative.
 - **A resposta do `net.http_post` nem sempre persiste.** Para validar se uma
   função rodou, confira o **efeito na tabela**, não a resposta HTTP.
+- **`etiquetas_cache` cresce sem teto e já sozinha passou de 144 MB** (o ZPL é
+  pesado). Em 21/ago o banco bateu **527 MB** (teto 500 MB) e o Supabase passou
+  a limitar a performance. Limpeza feita mantendo só os **últimos 5 dias** (a
+  janela do `pregerar`): 144 MB → 23 MB. Etiqueta fora do cache **não se perde**
+  — o `imprimir` regenera sob demanda. Sem cron de retenção ainda: **conferir
+  o tamanho de tempos em tempos**.
+- **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
+  sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
+  original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e
+  preserva grants/PK, diferente de dropar e recriar). Foi assim com
+  `etiquetas_cache` e `cron.job_run_details` (42 MB → 856 kB).
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
   transaction block"). `TRUNCATE` libera espaço na hora.
 
