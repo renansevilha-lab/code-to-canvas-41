@@ -6,6 +6,7 @@ import { Loader2, PackageSearch, Search } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { rotuloCanal } from "@/lib/canais";
 
 // ============================================================================
 // Histórico de Separação — registro visual e auditável do que aconteceu com cada
@@ -528,7 +529,7 @@ function HistoricoPage() {
                     <span className="text-sm font-extrabold font-mono">{p.numero_ecommerce ?? "—"}</span>
                     <span className="text-[11px] text-muted-foreground font-mono">venda {p.venda_numero ?? "—"}</span>
                     <div className="flex gap-1.5 mt-0.5">
-                      {p.marca_canal && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap" style={{ background: canalColor(p.marca_canal) + "20", color: canalColor(p.marca_canal) }}>{p.marca_canal}</span>}
+                      {p.marca_canal && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap" style={{ background: canalColor(p.marca_canal) + "20", color: canalColor(p.marca_canal) }}>{rotuloCanal(p.marca_canal)}</span>}
                       {p.forma_envio && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap" style={{ background: envioColor(p.forma_envio) + "20", color: envioColor(p.forma_envio) }}>{p.forma_envio}</span>}
                     </div>
                   </div>

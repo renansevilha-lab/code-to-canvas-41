@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber } from "@/lib/format";
 import { rangeToSPIso } from "@/lib/date";
+import { rotuloCanal } from "@/lib/canais";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
   PERIOD_SUFFIX,
@@ -237,7 +238,7 @@ function PedidosPage() {
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {p.data_pedido ? new Date(p.data_pedido).toLocaleDateString("pt-BR") : "—"}
                     </td>
-                    <td className="px-4 py-2.5">{p.marca_canal ?? "—"}</td>
+                    <td className="px-4 py-2.5">{rotuloCanal(p.marca_canal)}</td>
                     <td className="px-4 py-2.5 truncate max-w-[200px]">{p.cliente_nome ?? "—"}</td>
                     <td className="px-4 py-2.5">{p.cliente_uf ?? "—"}</td>
                     <td className="px-4 py-2.5">

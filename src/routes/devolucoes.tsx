@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DevolucoesRecebidas } from "@/components/DevolucoesRecebidas";
+import { rotuloCanal } from "@/lib/canais";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos / constantes
@@ -670,7 +671,7 @@ function OttzDevolucoes() {
                             className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
                             style={{ backgroundColor: corCanal(r.marca_canal) }}
                           />
-                          {r.marca_canal ?? "—"}
+                          {rotuloCanal(r.marca_canal)}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">

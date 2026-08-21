@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { useAuth } from "@/hooks/useAuth";
+import { rotuloCanal } from "@/lib/canais";
 
 // ============================================================================
 // Devoluções recebidas (Fase A) — o pacote físico chega, o operador bipa/digita
@@ -400,7 +401,7 @@ export function DevolucoesRecebidas() {
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="text-2xl font-extrabold font-mono tracking-tight">{pedido.order_sn}</span>
               <Pill cor="#6C7481">Tiny {pedido.tiny_numero}</Pill>
-              <Pill cor={canalCor(pedido.marca_canal)}>{pedido.marca_canal}</Pill>
+              <Pill cor={canalCor(pedido.marca_canal)}>{rotuloCanal(pedido.marca_canal)}</Pill>
               {pedido.forma_envio && <Pill cor={envioCor(pedido.forma_envio)}>{pedido.forma_envio}</Pill>}
               {pedido.situacao && <Pill cor={situacaoCor(pedido.situacao)}><span className="capitalize">{pedido.situacao}</span></Pill>}
               {pedido.shopee_status && <Pill cor={shopeeCor(pedido.shopee_status)}>Shopee: {pedido.shopee_status}</Pill>}
@@ -559,7 +560,7 @@ export function DevolucoesRecebidas() {
                         </td>
                         <td className="py-3 px-2">
                           <div className="flex flex-col gap-1 items-start">
-                            <span className="text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap" style={{ background: `${cCor}1F`, color: cCor }}>{r.marca_canal}</span>
+                            <span className="text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap" style={{ background: `${cCor}1F`, color: cCor }}>{rotuloCanal(r.marca_canal)}</span>
                             {r.forma_envio && <span className="text-[10.5px] font-semibold" style={{ color: envioCor(r.forma_envio) }}>{r.forma_envio}</span>}
                           </div>
                         </td>

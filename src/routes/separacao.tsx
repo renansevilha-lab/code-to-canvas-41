@@ -56,6 +56,7 @@ import {
 import { formatNumber } from "@/lib/format";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
+import { rotuloCanal } from "@/lib/canais";
 
 // ============ Edge function helpers ============
 
@@ -1207,7 +1208,7 @@ function PedidosDoSku({
                             : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
                     )}
                   >
-                    {p.marca_canal ?? "—"}
+                    {rotuloCanal(p.marca_canal)}
                   </span>
                 </td>
                 <td className="py-1 pr-2">
@@ -1251,7 +1252,7 @@ function PedidosDoSku({
                         isTiktok
                           ? "TikTok não usa etiqueta do app"
                           : semEtiqueta
-                            ? `Sem etiqueta pelo app: ${p.marca_canal ?? "—"}`
+                            ? `Sem etiqueta pelo app: ${rotuloCanal(p.marca_canal)}`
                             : canal === "mercadolivre"
                               ? "Imprimir etiqueta ML (PDF)"
                               : "Imprimir etiqueta"
@@ -2208,11 +2209,11 @@ function FilaPriorizada() {
     const loja = marcaToLoja(p.marca_canal);
     if (canal === "tiktok") { toast.error("TikTok não usa etiqueta do app"); return; }
     if (canal === "outro") {
-      toast.error(`Canal sem etiqueta pelo app: ${p.marca_canal ?? "—"}`);
+      toast.error(`Canal sem etiqueta pelo app: ${rotuloCanal(p.marca_canal)}`);
       return;
     }
     if (canal === "shopee" && (!loja || loja === "tiktok")) {
-      toast.error(`Loja Shopee não reconhecida em "${p.marca_canal}"`);
+      toast.error(`Loja Shopee não reconhecida em "${rotuloCanal(p.marca_canal)}"`);
       return;
     }
     if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
@@ -3417,7 +3418,7 @@ function SeparacaoPage() {
                       <td className="px-4 py-2 font-mono text-xs">
                         {r.numero_pedido ?? r.numero_ecommerce ?? "—"}
                       </td>
-                      <td className="px-4 py-2 text-xs">{r.marca_canal ?? "—"}</td>
+                      <td className="px-4 py-2 text-xs">{rotuloCanal(r.marca_canal)}</td>
                       <td className="px-4 py-2">
                         {isMulti ? (
                           <Badge variant="secondary" className="text-[10px]">

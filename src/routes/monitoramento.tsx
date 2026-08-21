@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
+import { rotuloCanal } from "@/lib/canais";
 
 // ============================================================================
 // Monitoramento de Lotes de Separação — painel de bancada ao vivo.
@@ -168,7 +169,7 @@ function PedidosDaTag({ tag }: { tag: string }) {
             {pedidos.map((p) => (
               <tr key={p.separacao_id ?? p.numero_ecommerce} className="border-b last:border-0">
                 <td className="py-1.5 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
-                <td className="py-1.5 pr-2 text-muted-foreground">{p.marca_canal ?? "—"}</td>
+                <td className="py-1.5 pr-2 text-muted-foreground">{rotuloCanal(p.marca_canal)}</td>
                 <td className="py-1.5 pr-2 text-muted-foreground">
                   {SITUACAO_LABEL[p.situacao ?? 0] ?? p.situacao ?? "—"}
                 </td>
