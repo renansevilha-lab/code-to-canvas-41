@@ -235,9 +235,19 @@ export function VendasMargemChart({
                   fontSize: 12,
                 }}
                 labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                formatter={(value, name) => {
+                formatter={(value, name, item) => {
                   const n = Number(value ?? 0);
                   if (name === "Margem %") return [formatPercent(n), name];
+                  // A serie "Venda" plota a FATIA empilhada (receita − margem)
+                  // para a barra somar a receita. No tooltip, porem, "Venda"
+                  // tem que ser a receita CHEIA — mostrar a fatia fazia o
+                  // grafico parecer divergente dos cards (15,9k vs 18,9k).
+                  if (name === "Venda") {
+                    const receita = Number(
+                      (item as { payload?: { receita?: number } })?.payload?.receita ?? n,
+                    );
+                    return [formatBRL(receita), name];
+                  }
                   return [formatBRL(n), name];
                 }}
                 itemSorter={(item) => {
