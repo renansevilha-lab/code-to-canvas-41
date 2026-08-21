@@ -218,7 +218,7 @@ export function DevolucoesRecebidas() {
             data = (r3.data ?? []) as PT[];
             if (data.length === 0) {
               const shop = (rr.data?.[0] as { shop_id?: number } | undefined)?.shop_id;
-              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Sevilla Store [SHOPEE]" : null;
+              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Bumi Pet [Shopee]" : null;
               data = [{ numero_ecommerce: osn, numero_pedido: null, marca_canal: canal, situacao: null, codigo_rastreamento: maior, forma_envio: null }];
             }
           }
@@ -241,7 +241,7 @@ export function DevolucoesRecebidas() {
             if (data.length === 0) {
               // pedido não está no espelho Tiny — monta card mínimo pelo order_sn do return
               const shop = (rd.data?.[0] as { shop_id?: number } | undefined)?.shop_id;
-              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Sevilla Store [SHOPEE]" : null;
+              const canal = shop === 522186766 ? "Shopee (Ottz Pet)" : shop === 759046323 ? "Bumi Pet [Shopee]" : null;
               data = [{ numero_ecommerce: osn, numero_pedido: null, marca_canal: canal, situacao: null, codigo_rastreamento: maior, forma_envio: null }];
             }
           }

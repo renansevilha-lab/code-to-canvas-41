@@ -332,7 +332,9 @@ execução, retornava 200 e não gravava nada — a fila nunca andava.
 `shop_id 759046323` (partner 2037384). Chaves em secrets separados.
 
 **`marca_canal`** (grafia exata, usada em filtros): `"Shopee (Ottz Pet)"` e
-`"Sevilla Store [SHOPEE]"`.
+`"Bumi Pet [Shopee]"` (ex-`"Sevilla Store [SHOPEE]"` — o Tiny RENOMEOU o canal
+em 21/ago/2026; mesmo shop 759046323. Filtros por grafia exata devem aceitar as
+DUAS: o rename derrubou o cron de TAGs por um dia inteiro até ser notado).
 
 ---
 
