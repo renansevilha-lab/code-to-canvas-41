@@ -1106,6 +1106,29 @@ async function imprimirPedidoMlApi(
   return true;
 }
 
+/**
+ * Etiquetas do ML de uma lista de pedidos, uma a uma — o ML nao tem lote na API
+ * (cada envio tem a sua etiqueta PDF). Usado pelos dois caminhos da tela: o
+ * botao do painel de lotes e o "Imprimir etiqueta" da fila (por SKU).
+ * Pedidos da conta SVL sao contados a parte: a integracao e da conta Ottz.
+ */
+async function imprimirMlPedidos(
+  pedidos: { numero_ecommerce: string; marca_canal: string | null }[],
+  printerId: number,
+  printerNome?: string,
+): Promise<{ ok: number; semConta: number }> {
+  let ok = 0, semConta = 0;
+  for (const p of pedidos) {
+    if (!mlContaIntegrada(p.marca_canal)) { semConta++; continue; }
+    try {
+      if (await imprimirPedidoMlApi(p.numero_ecommerce, printerId, printerNome)) ok++;
+    } catch {
+      /* imprimirPedidoMlApi ja avisa o operador; segue para o proximo */
+    }
+  }
+  return { ok, semConta };
+}
+
 // ============ Pedidos individuais expandidos (por SKU) ============
 
 interface PedidosDoSkuProps {
@@ -1522,24 +1545,15 @@ function LotesDoDia({
    * — o lote saia vazio e a bancada ficava sem etiqueta, sem erro visivel.
    */
   async function imprimirLoteMl(tag: string, pedidos: { numero_ecommerce: string; marca_canal: string | null }[]) {
-    let ok = 0;
-    const semConta: string[] = [];
-    for (const p of pedidos) {
-      if (!mlContaIntegrada(p.marca_canal)) { semConta.push(p.numero_ecommerce); continue; }
-      try {
-        if (await imprimirPedidoMlApi(p.numero_ecommerce, printerId, impressoraSelecionada?.nome)) ok++;
-      } catch {
-        /* o proprio imprimirPedidoMlApi ja avisa o operador; segue o lote */
-      }
-    }
+    const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
     if (ok > 0) {
       void registrarSeparacaoLog({
         evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
         tag, detalhe: { canal: "mercadolivre", enviadas: ok, via: "lote-ml" },
       });
     }
-    if (semConta.length > 0) {
-      toast.warning(`${semConta.length} pedido(s) da conta SVL do ML nao saem pelo app`, {
+    if (semConta > 0) {
+      toast.warning(`${semConta} pedido(s) da conta SVL do ML nao saem pelo app`, {
         description: "A integracao e da conta Ottz. Imprima esses pelo painel do ML.",
         duration: 10000,
       });
@@ -2169,22 +2183,34 @@ function FilaPriorizada() {
       const { data, error: e1 } = await qImp;
       if (e1) throw e1;
       const groups = new Map<string, { loja: "ottz" | "svl"; tag: string }>();
+      // O ML sai por OUTRA rota (ml-etiqueta), pedido a pedido — a API do ML não
+      // tem lote. Antes esses pedidos eram apenas PULADOS aqui: o botão avisava
+      // "nada para imprimir" e nenhuma requisição chegava a sair do navegador.
+      const mlPorTag = new Map<string, { numero_ecommerce: string; marca_canal: string | null }[]>();
       let skTiktok = 0, skNoLote = 0;
       for (const p of (data ?? []) as PedidoSepRow[]) {
-        // Só Shopee entra aqui: a impressão por lote é da API da Shopee. Sem
-        // este filtro um pedido ML casava o "ottz" do nome do canal e entraria
-        // num lote Shopee. (ML não tem lote — imprime pedido a pedido.)
-        if (marcaToCanal(p.marca_canal) !== "shopee") { skTiktok++; continue; }
+        const canal = marcaToCanal(p.marca_canal);
+        if (canal === "mercadolivre") {
+          if (!p.numero_ecommerce) { skNoLote++; continue; }
+          const chave = p.tag_lote ?? "";
+          const atual = mlPorTag.get(chave) ?? [];
+          atual.push({ numero_ecommerce: p.numero_ecommerce, marca_canal: p.marca_canal });
+          mlPorTag.set(chave, atual);
+          continue;
+        }
+        // Shopee: a impressão é por lote, na API da Shopee. O filtro por canal
+        // evita que um pedido ML case o "ottz" do nome e entre num lote Shopee.
+        if (canal !== "shopee") { skTiktok++; continue; }
         const loja = marcaToLoja(p.marca_canal);
         if (loja === "tiktok" || loja === null) { skTiktok++; continue; }
         if (!p.tag_lote) { skNoLote++; continue; }
         groups.set(`${loja}|${p.tag_lote}`, { loja, tag: p.tag_lote });
       }
-      if (groups.size === 0) {
+      if (groups.size === 0 && mlPorTag.size === 0) {
         toast.warning("Nada para imprimir", {
           description: skNoLote > 0
             ? "Nenhum pedido com TAG aplicada ainda."
-            : "Nenhum pedido Shopee neste SKU (lote é só da Shopee).",
+            : "Nenhum pedido com etiqueta pelo app neste SKU.",
         });
         return;
       }
@@ -2206,7 +2232,29 @@ function FilaPriorizada() {
           if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
         }
       }
-      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) não-Shopee ignorados (imprima pedido a pedido)`);
+      // Mercado Livre: uma etiqueta por pedido. A identificadora do lote sai
+      // depois, igual ao fluxo Shopee (o lote físico é o mesmo).
+      for (const [tag, pedidos] of mlPorTag.entries()) {
+        const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
+        if (ok > 0) {
+          void registrarSeparacaoLog({
+            evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+            tag: tag || null, sku: item.sku,
+            detalhe: { canal: "mercadolivre", enviadas: ok, via: "sku-ml" },
+          });
+          if (identOn && tag) {
+            const loteRow = (lotesHoje ?? []).find((l) => l.tag === tag);
+            if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+          }
+        }
+        if (semConta > 0) {
+          toast.warning(`${semConta} pedido(s) da conta SVL do ML não saem pelo app`, {
+            description: "A integração é da conta Ottz. Imprima esses pelo painel do ML.",
+            duration: 10000,
+          });
+        }
+      }
+      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) sem etiqueta pelo app ignorados`);
       if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
