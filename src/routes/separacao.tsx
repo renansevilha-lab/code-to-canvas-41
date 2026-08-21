@@ -957,13 +957,35 @@ interface PedidoSepRow {
   impresso_em?: string | null;
 }
 
+/** Qual LOJA Shopee — só faz sentido quando marcaToCanal() === "shopee". */
 function marcaToLoja(m: string | null): "ottz" | "svl" | "tiktok" | null {
   if (!m) return null;
   const s = m.toLowerCase();
-  if (s.includes("ottz")) return "ottz";
-  if (s.includes("svl") || s.includes("sevilla")) return "svl";
+  // TikTok PRIMEIRO: o canal se chama "TikTok Shop l Bumi Pet" e casaria o
+  // "bumi" da SVL logo abaixo, mandando pedido TikTok para a etiqueta Shopee.
   if (s.includes("tiktok")) return "tiktok";
+  if (s.includes("ottz")) return "ottz";
+  // "Bumi Pet [Shopee]" = a SVL renomeada no Tiny (mesmo shop 759046323).
+  // Sem esta grafia o botão de imprimir morria com "TikTok não usa etiqueta"
+  // e o fluxo por SKU pulava os lotes da SVL em silêncio.
+  if (s.includes("svl") || s.includes("sevilla") || s.includes("bumi")) return "svl";
   return null;
+}
+
+/**
+ * Qual MARKETPLACE — decide a rota de impressão (Shopee = ZPL pelo
+ * shopee-sync-ads; ML = PDF pelo ml-etiqueta). Antes disso "Mercado Livre
+ * (Ottz Pet)" casava o "ottz" do marcaToLoja e ia parar na rota da Shopee.
+ */
+function marcaToCanal(m: string | null): "shopee" | "mercadolivre" | "tiktok" | "outro" {
+  if (!m) return "outro";
+  const s = m.toLowerCase();
+  if (s.includes("tiktok")) return "tiktok";
+  if (s.includes("mercado livre") || s.includes("mercadolivre") || s.includes("meli")) {
+    return "mercadolivre";
+  }
+  if (s.includes("shopee")) return "shopee";
+  return "outro";
 }
 
 async function imprimirLoteApi(
@@ -1032,6 +1054,43 @@ async function imprimirPedidoApi(
       description: printerNome ?? "",
     });
   }
+}
+
+/**
+ * Etiqueta do Mercado Livre. Rota separada da Shopee de propósito: o ML entrega
+ * PDF (o PrintNode imprime nativamente) e a Shopee entrega ZPL. Não há lote —
+ * o ML dá uma etiqueta por envio, então aqui é sempre um pedido por vez.
+ * O envio só tem etiqueta quando o ML libera (`ready_to_ship`); antes disso a
+ * função devolve 409 com o substatus, que mostramos como aviso e não como erro.
+ */
+async function imprimirPedidoMlApi(
+  orderId: string,
+  printerId: number,
+  printerNome?: string,
+) {
+  const url =
+    `${EXTERNAL_URL}/functions/v1/ml-etiqueta` +
+    `?modulo=imprimir&order_id=${encodeURIComponent(orderId)}&printer_id=${printerId}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    erro?: string; enviado?: boolean; status?: string; substatus?: string; dica?: string;
+  };
+  if (resp.status === 409) {
+    toast.warning(`ML ${orderId}: envio ainda não liberado`, {
+      description: data.dica ?? `status ${data.status ?? "?"}`,
+      duration: 10000,
+    });
+    return;
+  }
+  if (!resp.ok || data.erro) {
+    toast.error(`Falha ao imprimir ML ${orderId}`, {
+      description: data.erro ?? `HTTP ${resp.status}`,
+    });
+    return;
+  }
+  toast.success(`Etiqueta ML ${orderId} enviada`, { description: printerNome ?? "" });
 }
 
 // ============ Pedidos individuais expandidos (por SKU) ============
@@ -1116,7 +1175,12 @@ function PedidosDoSku({
         <tbody>
           {pedidos.map((p, i) => {
             const loja = marcaToLoja(p.marca_canal);
-            const isTiktok = loja === "tiktok";
+            const canal = marcaToCanal(p.marca_canal);
+            const isTiktok = canal === "tiktok";
+            // Canal que o app não sabe etiquetar (Temu, etc.) — botão desligado
+            // em vez de deixar clicar e falhar na cara do operador.
+            const semEtiqueta = canal === "tiktok" || canal === "outro" ||
+              (canal === "shopee" && (loja === null || loja === "tiktok"));
             const key = `ped:${p.numero_ecommerce}`;
             const busyImp = imprimindoKey === key;
             const busyEmb = embalandoKey === key;
@@ -1136,9 +1200,11 @@ function PedidosDoSku({
                       "text-[10px] px-1.5 py-0.5 rounded",
                       isTiktok
                         ? "bg-black text-white"
-                        : loja === "svl"
-                          ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
-                          : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
+                        : canal === "mercadolivre"
+                          ? "bg-yellow-100 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300"
+                          : loja === "svl"
+                            ? "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                            : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
                     )}
                   >
                     {p.marca_canal ?? "—"}
@@ -1179,12 +1245,16 @@ function PedidosDoSku({
                       size="sm"
                       variant="ghost"
                       className="h-7 px-2"
-                      disabled={isTiktok || busyImp || imprimindoKey !== null}
+                      disabled={semEtiqueta || busyImp || imprimindoKey !== null}
                       onClick={() => onImprimir(p)}
                       title={
                         isTiktok
-                          ? "TikTok não usa etiqueta Shopee"
-                          : "Imprimir etiqueta"
+                          ? "TikTok não usa etiqueta do app"
+                          : semEtiqueta
+                            ? `Sem etiqueta pelo app: ${p.marca_canal ?? "—"}`
+                            : canal === "mercadolivre"
+                              ? "Imprimir etiqueta ML (PDF)"
+                              : "Imprimir etiqueta"
                       }
                     >
                       {busyImp ? (
@@ -2022,6 +2092,10 @@ function FilaPriorizada() {
       const groups = new Map<string, { loja: "ottz" | "svl"; tag: string }>();
       let skTiktok = 0, skNoLote = 0;
       for (const p of (data ?? []) as PedidoSepRow[]) {
+        // Só Shopee entra aqui: a impressão por lote é da API da Shopee. Sem
+        // este filtro um pedido ML casava o "ottz" do nome do canal e entraria
+        // num lote Shopee. (ML não tem lote — imprime pedido a pedido.)
+        if (marcaToCanal(p.marca_canal) !== "shopee") { skTiktok++; continue; }
         const loja = marcaToLoja(p.marca_canal);
         if (loja === "tiktok" || loja === null) { skTiktok++; continue; }
         if (!p.tag_lote) { skNoLote++; continue; }
@@ -2029,7 +2103,9 @@ function FilaPriorizada() {
       }
       if (groups.size === 0) {
         toast.warning("Nada para imprimir", {
-          description: skNoLote > 0 ? "Nenhum pedido com TAG aplicada ainda." : "Só há pedidos TikTok neste SKU.",
+          description: skNoLote > 0
+            ? "Nenhum pedido com TAG aplicada ainda."
+            : "Nenhum pedido Shopee neste SKU (lote é só da Shopee).",
         });
         return;
       }
@@ -2051,7 +2127,7 @@ function FilaPriorizada() {
           if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
         }
       }
-      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) TikTok ignorados (não usam etiqueta Shopee)`);
+      if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) não-Shopee ignorados (imprima pedido a pedido)`);
       if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
@@ -2128,8 +2204,17 @@ function FilaPriorizada() {
 
   async function imprimirPedido(p: PedidoSepRow) {
     const key = `ped:${p.numero_ecommerce}`;
+    const canal = marcaToCanal(p.marca_canal);
     const loja = marcaToLoja(p.marca_canal);
-    if (loja === "tiktok" || !loja) { toast.error("TikTok não usa etiqueta Shopee"); return; }
+    if (canal === "tiktok") { toast.error("TikTok não usa etiqueta do app"); return; }
+    if (canal === "outro") {
+      toast.error(`Canal sem etiqueta pelo app: ${p.marca_canal ?? "—"}`);
+      return;
+    }
+    if (canal === "shopee" && (!loja || loja === "tiktok")) {
+      toast.error(`Loja Shopee não reconhecida em "${p.marca_canal}"`);
+      return;
+    }
     if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
     if (imprimindoKey) return;
     if (impressoraSelecionada?.estado === "offline") {
@@ -2137,11 +2222,15 @@ function FilaPriorizada() {
     }
     setImprimindoKey(key);
     try {
-      await imprimirPedidoApi(loja, p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      if (canal === "mercadolivre") {
+        await imprimirPedidoMlApi(p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      } else {
+        await imprimirPedidoApi(loja as "ottz" | "svl", p.numero_ecommerce, printerId, impressoraSelecionada?.nome);
+      }
       void registrarSeparacaoLog({
         evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
         order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
-        detalhe: { loja, via: "pedido" },
+        detalhe: { loja, canal, via: "pedido" },
       });
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
