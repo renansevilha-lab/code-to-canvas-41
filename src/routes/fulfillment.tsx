@@ -60,6 +60,7 @@ import {
   EXTERNAL_URL,
   EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
+import { avisarDiscord } from "@/lib/discord";
 import { usePerfil } from "@/hooks/usePerfil";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1471,6 +1472,24 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       }));
       const { error: e2 } = await supabaseExternal.from("fulfillment_envio_itens").insert(linhas);
       if (e2) throw e2;
+      // Avisa o galpao no Discord. Depois dos DOIS inserts: um envio sem itens
+      // nao e noticia. Fire-and-forget — Discord fora do ar nao pode travar a
+      // criacao do envio (ver src/lib/discord.ts).
+      avisarDiscord({
+        canal: "fulfilment",
+        nivel: "ok",
+        titulo: `Novo envio ${MKT_LABEL[marketplace] ?? marketplace}${numero ? ` · ${numero}` : ""}`,
+        descricao: `Criado por **${perfil?.nome ?? "alguem"}** — pronto para separar.`,
+        campos: [
+          { nome: "Marketplace", valor: MKT_LABEL[marketplace] ?? marketplace, inline: true },
+          { nome: "Empresa", valor: empresa || "—", inline: true },
+          { nome: "Centro", valor: centro || "—", inline: true },
+          { nome: "Itens", valor: `**${linhas.length}** SKUs`, inline: true },
+          { nome: "Unidades", valor: `**${somaQtd}**`, inline: true },
+          { nome: "Numero", valor: numero || "—", inline: true },
+        ],
+        rodape: "Fulfillment > Envios > packing",
+      });
       toast.success("Envio criado — bora separar!");
       onCriado(envioId);
     } catch (e) {
