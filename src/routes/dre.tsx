@@ -164,7 +164,7 @@ function formatMes(m: string): string {
 // "A revisar" e "Frete / Logística", mas a função emite "Outras / a
 // classificar", "Pessoal/Creative (revisar)" e "Frete/Logística" (sem espaços).
 const DESPESA_CATEGORIAS: Record<string, string | null> = {
-  "Marketing / ADS": null, // ADS não vem da view de detalhe (vem de shopee_ads_diario)
+  "Marketing / ADS": null, // ADS não vem da view de detalhe (shopee_ads_diario + ml_ads_diario)
   Pessoal: "Pessoal",
   Aluguel: "Aluguel",
   Administrativas: "Administrativas",

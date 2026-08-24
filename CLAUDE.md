@@ -60,6 +60,7 @@ agendamentos via `pg_cron`.
 | `estoque_fulfillment` | Estoque nos CDs (Amazon FBA, ML Full, Shopee SBS) por marketplace/CD/sku_marketplace: sellable, reserved, in_transit, unsellable. Populada por `fulfillment-sync` (cron). Base do motor de reposição. Fonte da aba **Fulfillment › Inventário** |
 | `view_reposicao_full` | Motor de reposição por SKU interno: estoque_full, em_transito, cobertura_atual_dias, cobertura_alvo_dias, necessidade, **sugestao_envio**, estoque_empresa. Fonte da aba **Fulfillment › Reposição** |
 | `view_reposicao_skus_alvo` | Lista de SKUs-alvo da reposição |
+| `ml_ads_diario` | ADS do ML por DIA (gasto, cliques, vendas atribuídas). Construída pelo `ml-sync-ads?modulo=diario` (a API só agrega por campanha; 1 request/dia). Cron `ml-ads-diario` 1×/dia re-sincroniza 8 dias (o ML reatribui vendas retroativamente). Histórico: 26/mai/2026+ (API recusa >90 dias). Alimenta ADS do ML em `view_dre_mensal`, `view_dre_ads_marketplace`, `view_canais_diario` e `view_metas_realizado` |
 | `produtos.foto_capa` | Imagem do produto por **SKU interno**. Usada p/ miniaturas (Fulfillment, etc.). Atenção: 1.668 linhas — nunca puxar tudo (corte de 1.000 do PostgREST); buscar só os SKUs visíveis com `.in()` |
 | `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (varredura por cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL` (**situação 3 = NF cancelada, não precisa devolução**; 6/7 = viva). Campos: `precisa_devolucao` (marcação), `devolucao_emitida`+`id_nota_devolucao` (preenchidos pelo módulo `emitir`). GRANT select/update p/ anon+authenticated |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
@@ -320,6 +321,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `amazon-sync-pedidos` | v12 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9 |
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
+| `ml-sync-ads` | v3 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario`) |
 | `ml-etiqueta` | v4 | Etiqueta de envio do ML (PDF via PrintNode), pedido a pedido — ver seção 6.2 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
