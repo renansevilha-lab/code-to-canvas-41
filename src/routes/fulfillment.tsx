@@ -23,6 +23,8 @@ import {
   Printer,
   FileText,
   Pencil,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
@@ -987,6 +989,8 @@ interface Envio {
   atualizado_em: string;
   estoque_lancado_em: string | null;
   estoque_lancado_por: string | null;
+  arquivado_em: string | null;
+  arquivado_por: string | null;
 }
 interface EnvioItem {
   id: string;
@@ -1135,7 +1139,11 @@ function Barra({ valor, total }: { valor: number; total: number }) {
 
 function EnviosTab({ ativo }: { ativo: boolean }) {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
   const [view, setView] = useState<"lista" | "novo">("lista");
+  // Arquivados ficam fora do quadro (e do resumo do Discord — a view filtra),
+  // mas continuam no banco: arquivar e reversivel, excluir nao.
+  const [mostrarArquivados, setMostrarArquivados] = useState(false);
   const [packingId, setPackingId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -1220,6 +1228,33 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     }
   }
 
+  async function definirArquivado(e: Envio, arquivar: boolean) {
+    const rotulo = e.numero ? `#${e.numero}` : "(sem número)";
+    const patch = arquivar
+      ? { arquivado_em: new Date().toISOString(), arquivado_por: perfil?.nome ?? null }
+      : { arquivado_em: null, arquivado_por: null };
+    // Otimista: o cartão muda de lista na hora; o banco confirma em seguida.
+    qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) =>
+      (old ?? []).map((x) => (x.id === e.id ? { ...x, ...patch } : x)),
+    );
+    const { error } = await supabaseExternal
+      .from("fulfillment_envios")
+      .update({ ...patch, atualizado_em: new Date().toISOString() })
+      .eq("id", e.id);
+    if (error) {
+      toast.error(arquivar ? "Falha ao arquivar" : "Falha ao desarquivar", { description: error.message });
+      recarregar();
+      return;
+    }
+    if (arquivar) {
+      toast.success(`Envio ${rotulo} arquivado`, {
+        action: { label: "Desfazer", onClick: () => void definirArquivado(e, false) },
+      });
+    } else {
+      toast.success(`Envio ${rotulo} voltou para o quadro`);
+    }
+  }
+
   async function excluirEnvio(e: Envio) {
     const rotulo = e.numero ? `#${e.numero}` : "(sem número)";
     if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
@@ -1238,22 +1273,87 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     }
   }
 
-  const envios = enviosQ.data ?? [];
+  const todos = enviosQ.data ?? [];
+  const envios = todos.filter((e) => !e.arquivado_em);
+  const arquivados = todos.filter((e) => !!e.arquivado_em);
   const hoje = new Date().toISOString().slice(0, 10);
   const totPlan = envios.reduce((s, e) => s + (progressoQ.data?.get(e.id)?.plan ?? e.total_unidades ?? 0), 0);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] text-[#8B93A1]">
-          {envios.length} envios abertos · {formatNumber(totPlan)} unidades planejadas · arraste os cartões entre as colunas para mudar o estágio
+          {mostrarArquivados
+            ? `${arquivados.length} envio(s) arquivado(s) — fora do quadro e do resumo diário`
+            : `${envios.length} envios abertos · ${formatNumber(totPlan)} unidades planejadas · arraste os cartões entre as colunas para mudar o estágio`}
         </p>
-        <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
-          <Plus className="h-4 w-4" /> Novo envio
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant={mostrarArquivados ? "default" : "outline"}
+            className="gap-1.5"
+            onClick={() => setMostrarArquivados((v) => !v)}
+          >
+            <Archive className="h-3.5 w-3.5" />
+            {mostrarArquivados ? "Voltar ao quadro" : `Arquivados${arquivados.length ? ` (${arquivados.length})` : ""}`}
+          </Button>
+          {!mostrarArquivados && (
+            <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
+              <Plus className="h-4 w-4" /> Novo envio
+            </Button>
+          )}
+        </div>
       </div>
 
       {enviosQ.isLoading ? (
         <Skeleton className="h-64 w-full" />
+      ) : mostrarArquivados ? (
+        arquivados.length === 0 ? (
+          <Card className="p-10 text-center text-sm text-muted-foreground">
+            Nenhum envio arquivado. Use o ícone <Archive className="inline h-3.5 w-3.5 -mt-0.5" /> no cartão para tirar um envio do quadro.
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {arquivados.map((e) => {
+              const st = stageDe(e.status);
+              const p = progressoQ.data?.get(e.id);
+              const planT = p?.plan ?? e.total_unidades ?? 0;
+              const sepT = p?.sep ?? 0;
+              return (
+                <div
+                  key={e.id}
+                  onClick={() => setPackingId(e.id)}
+                  className="bg-card rounded-xl px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer hover:bg-muted/40"
+                  style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${st.col}` }}
+                >
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ background: MKT_COLOR[e.marketplace] ?? "#888" }} />
+                  <span className="text-[12.5px] font-semibold font-mono">{e.numero ? `#${e.numero}` : "(s/ nº)"}</span>
+                  <span className="text-[11.5px] text-muted-foreground">
+                    {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
+                  </span>
+                  <span className={cn("text-[10.5px] px-1.5 py-0.5 rounded font-medium", st.cls)}>{st.curto}</span>
+                  <span className="text-[11.5px] text-[#4B5462] font-mono">{formatNumber(sepT)} / {formatNumber(planT)} un</span>
+                  <span className="text-[11.5px] text-muted-foreground font-mono">
+                    {e.data_envio_agendada ? `coleta ${format(parseISO(e.data_envio_agendada), "dd/MM")}` : "sem data"}
+                  </span>
+                  <div className="flex-1" />
+                  {e.arquivado_em && (
+                    <span className="text-[11px] text-muted-foreground">
+                      arquivado {format(parseISO(e.arquivado_em), "dd/MM 'às' HH:mm")}{e.arquivado_por ? ` por ${e.arquivado_por}` : ""}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 h-7"
+                    onClick={(ev) => { ev.stopPropagation(); void definirArquivado(e, false); }}
+                  >
+                    <ArchiveRestore className="h-3.5 w-3.5" /> Desarquivar
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )
       ) : envios.length === 0 ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">
           Nenhum envio ainda. Clique em <strong>Novo envio</strong> e suba o PDF de preparação.
@@ -1331,6 +1431,16 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
                               E
                             </span>
                           )}
+                          <button
+                            type="button"
+                            className="shrink-0 h-[18px] w-[18px] rounded flex items-center justify-center text-[#B8BEC8] hover:text-[#4B5462] hover:bg-[#F1F2F5]"
+                            title="Arquivar — sai do quadro sem excluir (dá para desarquivar)"
+                            aria-label="Arquivar envio"
+                            draggable={false}
+                            onClick={(ev) => { ev.stopPropagation(); void definirArquivado(e, true); }}
+                          >
+                            <Archive className="h-3 w-3" />
+                          </button>
                           <span className="text-[#C9CFD8] text-xs tracking-tighter">⠿</span>
                         </div>
                         <span
