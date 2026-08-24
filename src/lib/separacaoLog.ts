@@ -8,7 +8,8 @@ export type EventoSep =
   | "tag_aplicada"
   | "etiqueta_impressa"
   | "tag_finalizada"
-  | "embalado";
+  | "embalado"
+  | "falta_estoque";
 
 export async function registrarSeparacaoLog(entrada: {
   evento: EventoSep;

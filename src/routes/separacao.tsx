@@ -20,6 +20,8 @@ import {
   ChevronRight,
   Printer,
   AlertTriangle,
+  MoreVertical,
+  PackageX,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -56,6 +58,13 @@ import {
 import { formatNumber } from "@/lib/format";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { rotuloCanal } from "@/lib/canais";
 
 // ============ Edge function helpers ============
@@ -1163,6 +1172,51 @@ function PedidosDoSku({
   estadosPorSep,
 }: PedidosDoSkuProps) {
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
+  const { perfil } = usePerfil();
+  const [reportando, setReportando] = useState<number | null>(null);
+
+  /**
+   * Reportar falta de estoque: marcador "FALTA ESTOQUE" no pedido do Tiny +
+   * aviso no Discord (edge fn separacao-falta — separada da tiny-separacao de
+   * propósito, para não mexer na função crítica de bancada).
+   */
+  async function reportarFalta(p: PedidoSepRow) {
+    if (p.separacao_id == null) { toast.error("Sem separacao_id"); return; }
+    if (!window.confirm(
+      `Reportar FALTA DE ESTOQUE?
+
+` +
+      `Pedido ${p.numero_ecommerce ?? p.separacao_id} · SKU ${p.sku_unico ?? "?"}
+` +
+      `Aplica o marcador "FALTA ESTOQUE" no Tiny e avisa a equipe no Discord.`,
+    )) return;
+    setReportando(p.separacao_id);
+    try {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/separacao-falta?separacao_id=${p.separacao_id}` +
+        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const d = (await resp.json().catch(() => ({}))) as {
+        ok?: boolean; erro?: string; discord?: boolean;
+      };
+      if (!resp.ok || !d.ok) throw new Error(d.erro ?? `HTTP ${resp.status}`);
+      toast.success(`Falta reportada — ${p.sku_unico ?? p.numero_ecommerce}`, {
+        description: d.discord
+          ? "Marcador no Tiny + aviso no Discord."
+          : "Marcador aplicado no Tiny (Discord indisponível agora).",
+      });
+      void registrarSeparacaoLog({
+        evento: "falta_estoque", usuario: perfil?.nome ?? null,
+        order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
+        detalhe: { via: "menu_pedido" },
+      });
+    } catch (e) {
+      toast.error("Erro ao reportar falta", { description: (e as Error).message });
+    } finally {
+      setReportando(null);
+    }
+  }
   const { data, isLoading, error } = useQuery({
     queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio, tagSugerida],
     enabled: !!sku,
@@ -1210,12 +1264,12 @@ function PedidosDoSku({
       <table className="w-full text-xs">
         <thead className="text-[10px] uppercase text-muted-foreground">
           <tr className="border-b">
+            <th className="w-7 py-1"></th>
             <th className="text-left py-1 pr-2 font-medium">Pedido</th>
             <th className="text-left py-1 pr-2 font-medium">Canal</th>
             <th className="text-left py-1 pr-2 font-medium">Prazo despacho</th>
             <th className="text-left py-1 pr-2 font-medium">Lote</th>
             <th className="text-left py-1 pr-2 font-medium">Impressão</th>
-            <th className="text-right py-1 font-medium">Ação</th>
           </tr>
         </thead>
         <tbody>
@@ -1240,6 +1294,72 @@ function PedidosDoSku({
             const bloqueado = estado === "error" || estado === "ausente";
             return (
               <tr key={`${p.numero_ecommerce}-${i}`} className="border-b last:border-0">
+                {/* Menu de ações à esquerda, como no Tiny — as ações saíram da
+                    coluna da direita para cá (pedido do dono, 24/ago). */}
+                <td className="py-1 pr-1 w-7">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 w-6 p-0"
+                        disabled={busyImp || busyEmb || reportando === p.separacao_id}
+                        title="Ações do pedido"
+                      >
+                        {busyImp || busyEmb || reportando === p.separacao_id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <MoreVertical className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-60">
+                      <DropdownMenuItem
+                        disabled={semEtiqueta || imprimindoKey !== null}
+                        onClick={() => onImprimir(p)}
+                      >
+                        <Printer className="h-3.5 w-3.5 mr-2" />
+                        {isTiktok
+                          ? "Etiqueta (TikTok não usa o app)"
+                          : mlNaoIntegrado
+                            ? "Etiqueta (conta SVL — use o painel ML)"
+                            : canal === "mercadolivre"
+                              ? "Imprimir etiqueta (ML)"
+                              : "Imprimir etiqueta"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={!liberado || embalandoKey !== null}
+                        onClick={() => onEmbalar(p)}
+                      >
+                        <Package className="h-3.5 w-3.5 mr-2" />
+                        {liberado
+                          ? "Marcar embalado"
+                          : aguardando
+                            ? "Embalado — aguardando impressão"
+                            : "Embalado — imprima antes"}
+                      </DropdownMenuItem>
+                      {bloqueado && (
+                        <DropdownMenuItem
+                          disabled={embalandoKey !== null}
+                          onClick={() => setForcar(p)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 mr-2" />
+                          Forçar embalado…
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        disabled={reportando !== null || p.separacao_id == null}
+                        onClick={() => void reportarFalta(p)}
+                        className="text-amber-700 dark:text-amber-400 focus:text-amber-700"
+                      >
+                        <PackageX className="h-3.5 w-3.5 mr-2" />
+                        Reportar falta de estoque
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </td>
                 <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
                 <td className="py-1 pr-2">
                   <span
@@ -1286,71 +1406,7 @@ function PedidosDoSku({
                     <span className="text-[10px] text-muted-foreground">sem impressão</span>
                   )}
                 </td>
-                <td className="py-1 text-right">
-                  <div className="inline-flex gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2"
-                      disabled={semEtiqueta || busyImp || imprimindoKey !== null}
-                      onClick={() => onImprimir(p)}
-                      title={
-                        isTiktok
-                          ? "TikTok não usa etiqueta do app"
-                          : mlNaoIntegrado
-                            ? "Conta SVL do Mercado Livre não integrada — imprima pelo painel do ML"
-                            : semEtiqueta
-                            ? `Sem etiqueta pelo app: ${rotuloCanal(p.marca_canal)}`
-                            : canal === "mercadolivre"
-                              ? "Imprimir etiqueta ML (PDF)"
-                              : "Imprimir etiqueta"
-                      }
-                    >
-                      {busyImp ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Printer className="h-3 w-3" />
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={liberado ? "default" : "ghost"}
-                      className={cn(
-                        "h-7 px-2",
-                        aguardando && "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
-                        bloqueado && "opacity-50",
-                      )}
-                      disabled={busyEmb || embalandoKey !== null || !liberado}
-                      onClick={() => onEmbalar(p)}
-                      title={
-                        liberado
-                          ? "Marcar embalado"
-                          : aguardando
-                            ? "Aguardando confirmação de impressão"
-                            : "Bloqueado — imprima antes ou force embalado"
-                      }
-                    >
-                      {busyEmb ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Package className="h-3 w-3" />
-                      )}
-                    </Button>
-                    {bloqueado && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-destructive hover:text-destructive"
-                        disabled={busyEmb || embalandoKey !== null}
-                        onClick={() => setForcar(p)}
-                        title="Forçar embalado (pula trava)"
-                      >
-                        <AlertTriangle className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
+                              </tr>
             );
           })}
         </tbody>
@@ -1514,7 +1570,9 @@ function LotesDoDia({
   const { perfil } = usePerfil();
   const { data: lotes, isLoading, error } = useTagsDoDia();
   const [ajudaAberta, setAjudaAberta] = useState(false);
-  const [corpoAberto, setCorpoAberto] = useState(true);
+  // Recolhido por definição (pedido do dono, 24/ago): a tela abre direto na
+  // fila; o painel expande no clique quando o operador precisa dele.
+  const [corpoAberto, setCorpoAberto] = useState(false);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
@@ -2787,6 +2845,24 @@ function FilaPriorizada() {
                       isER && "border-destructive/40",
                     )}
                   >
+                    {/* Checkbox à esquerda, como no Tiny (pedido do dono,
+                        24/ago). Mesma semântica do antigo "marcar p/ TAG em
+                        massa" que ficava no bloco da TAG à direita. */}
+                    {(() => {
+                      const grupoSel = item.tag_sugerida ?? "";
+                      const infoSel = tagsPorLinha?.get(linhaKeyDe(item));
+                      const jaTemTag = (infoSel?.estado ?? "sem_tag") === "com_tag";
+                      return (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
+                          checked={selGrupos.has(grupoSel)}
+                          disabled={!grupoSel || bloqueados.has(grupoSel) || jaTemTag}
+                          onChange={(ev) => toggleGrupo(grupoSel, ev.target.checked)}
+                          title={jaTemTag ? "Linha já tem TAG" : "Marcar p/ TAG em massa"}
+                        />
+                      );
+                    })()}
                     <button
                       type="button"
                       onClick={() => toggleExpand(skuKey)}
@@ -2872,15 +2948,6 @@ function FilaPriorizada() {
                         // (pedidos sem tag na linha sempre podem receber uma tag nova)
                         return (
                           <div className="flex flex-col items-end gap-1">
-                            <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={selGrupos.has(grupo)}
-                                disabled={!grupo || bloqueados.has(grupo)}
-                                onChange={(e) => toggleGrupo(grupo, e.target.checked)}
-                              />
-                              marcar p/ TAG em massa
-                            </label>
                             <Button
                               size="sm"
                               variant={bloqueados.has(grupo) ? "secondary" : "outline"}

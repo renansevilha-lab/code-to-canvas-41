@@ -25,12 +25,15 @@ const ENVIO_STYLE: Record<string, string> = { ER: "#3FA9F5", SPX: "#FF6A39", ML:
 const EV_LABEL: Record<string, string> = {
   tag_aplicada: "TAG aplicada", etiqueta_impressa: "Etiqueta impressa",
   embalado: "Embalado", tag_finalizada: "TAG finalizada",
+  falta_estoque: "Falta de estoque",
 };
 const EV_ICON: Record<string, string> = {
   tag_aplicada: "🏷", etiqueta_impressa: "🖨", embalado: "📦", tag_finalizada: "✓",
+  falta_estoque: "⚠",
 };
 const EV_COLOR: Record<string, string> = {
   tag_aplicada: BLUE, etiqueta_impressa: AMBER, embalado: ROXO, tag_finalizada: GREEN,
+  falta_estoque: AMBER,
 };
 
 const num = (x: unknown): number => {
@@ -95,6 +98,7 @@ function detalheTexto(evento: string, detalhe: Record<string, unknown> | null): 
     return d.forcado ? "Embalado (forçado)" : "Pedido embalado";
   }
   if (evento === "tag_finalizada") return "Lote finalizado — só monitoramento";
+  if (evento === "falta_estoque") return "Marcador FALTA ESTOQUE no Tiny + aviso no Discord";
   return "";
 }
 

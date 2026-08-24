@@ -313,6 +313,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `shopee-sync-ads` | v54 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
+| `separacao-falta` | v1 | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal estoque). Separada da tiny-separacao de propósito |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
