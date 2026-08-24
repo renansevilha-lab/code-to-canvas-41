@@ -2326,6 +2326,58 @@ function FilaPriorizada() {
     });
   }
 
+  const [reportandoLinha, setReportandoLinha] = useState<string | null>(null);
+
+  /**
+   * Reportar falta de estoque da LINHA inteira da fila (todos os pedidos do
+   * grupo sku·envio·qtd, mesmo sem lote ainda). Passa o grupo EXATO
+   * (tag_sugerida) — o fallback sku+envio mistura quantidades: medido, a linha
+   * de 8 pedidos viraria 12 sem ele.
+   */
+  async function reportarFaltaLinha(item: PriorizadaRow) {
+    const chave = `${item.sku}|${item.tipo_envio}`;
+    if (!window.confirm(
+      `Reportar FALTA DE ESTOQUE da linha inteira?
+
+` +
+      `${item.sku ?? "?"} · ${item.tipo_envio ?? ""} — ${item.qtd_pedidos ?? "?"} pedido(s)
+` +
+      `Aplica o marcador "FALTA ESTOQUE" em cada pedido no Tiny e manda UM aviso no Discord.`,
+    )) return;
+    setReportandoLinha(chave);
+    try {
+      const filtro = item.tag_sugerida
+        ? `grupo=${encodeURIComponent(item.tag_sugerida)}`
+        : `sku=${encodeURIComponent(item.sku ?? "")}&envio=${encodeURIComponent(item.tipo_envio ?? "")}`;
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/separacao-falta?${filtro}` +
+        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const d = (await resp.json().catch(() => ({}))) as {
+        ok?: boolean; erro?: string; aplicados?: number;
+        pedidos_no_lote?: number; falhas?: string[]; discord?: boolean;
+      };
+      if (!resp.ok || !d.ok) throw new Error(d.erro ?? d.falhas?.[0] ?? `HTTP ${resp.status}`);
+      const parcial = (d.aplicados ?? 0) < (d.pedidos_no_lote ?? 0);
+      toast.success(`Falta reportada — ${item.sku}`, {
+        description: `${d.aplicados}/${d.pedidos_no_lote} pedido(s) marcados no Tiny` +
+          (parcial ? " — rode de novo para o restante" : "") +
+          (d.discord ? " · aviso no Discord" : ""),
+        duration: parcial ? 10000 : 5000,
+      });
+      void registrarSeparacaoLog({
+        evento: "falta_estoque", usuario: perfil?.nome ?? null,
+        sku: item.sku,
+        detalhe: { via: "menu_linha", grupo: item.tag_sugerida, aplicados: d.aplicados, na_linha: d.pedidos_no_lote },
+      });
+    } catch (e) {
+      toast.error("Erro ao reportar falta", { description: (e as Error).message });
+    } finally {
+      setReportandoLinha(null);
+    }
+  }
+
   async function imprimirPorSku(item: PriorizadaRow) {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (imprimindoKey) return;
@@ -2938,6 +2990,35 @@ function FilaPriorizada() {
                       isER && "border-destructive/40",
                     )}
                   >
+                    {/* Menu de ações da LINHA (⋮), como no Tiny — primeira
+                        coisa da linha (24/ago). */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 shrink-0"
+                          disabled={reportandoLinha === skuKey}
+                          title="Ações da linha"
+                        >
+                          {reportandoLinha === skuKey ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <MoreVertical className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-64">
+                        <DropdownMenuItem
+                          disabled={reportandoLinha !== null}
+                          onClick={() => void reportarFaltaLinha(item)}
+                          className="text-amber-700 dark:text-amber-400 focus:text-amber-700"
+                        >
+                          <PackageX className="h-4 w-4 mr-2" />
+                          Reportar falta de estoque ({formatNumber(item.qtd_pedidos ?? 0)} pedidos)
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {/* Checkbox à esquerda, como no Tiny (pedido do dono,
                         24/ago). Mesma semântica do antigo "marcar p/ TAG em
                         massa" que ficava no bloco da TAG à direita. */}
