@@ -259,6 +259,8 @@ interface TagsPorLinha {
   tag?: string;
   semTag: number;
   comTag: number;
+  /** pedidos da linha com falta de estoque reportada (badge + filtro) */
+  falta: number;
 }
 function useTagsPorLinha() {
   return useQuery({
@@ -266,16 +268,17 @@ function useTagsPorLinha() {
     queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("view_separacao_pedidos")
-        .select("sku_unico, tipo_envio, tag_lote, tag_sugerida")
+        .select("sku_unico, tipo_envio, tag_lote, tag_sugerida, falta_estoque_em")
         .limit(20000);
       if (error) throw error;
       const map = new Map<string, TagsPorLinha>();
-      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number }>();
-      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null; tag_sugerida: string | null }[]) {
+      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number; falta: number }>();
+      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null; tag_sugerida: string | null; falta_estoque_em: string | null }[]) {
         const key = linhaKeyDe(p);
-        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0 };
+        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0, falta: 0 };
         if (p.tag_lote) { b.tags.add(p.tag_lote); b.com++; }
         else { b.sem++; }
+        if (p.falta_estoque_em) b.falta++;
         buckets.set(key, b);
       }
       for (const [key, b] of buckets) {
@@ -286,7 +289,7 @@ function useTagsPorLinha() {
         else if (tagsArr.length === 1 && b.sem === 0) { estado = "com_tag"; tag = tagsArr[0]; }
         else if (tagsArr.length === 1 && b.sem > 0) { estado = "parcial"; tag = tagsArr[0]; }
         else estado = "tags_mistas";
-        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com });
+        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com, falta: b.falta });
       }
       return map;
     },
@@ -965,6 +968,8 @@ interface PedidoSepRow {
   days_to_ship?: number | null;
   embalado_em?: string | null;
   impresso_em?: string | null;
+  falta_estoque_em?: string | null;
+  falta_estoque_por?: string | null;
 }
 
 /** Qual LOJA Shopee — só faz sentido quando marcaToCanal() === "shopee". */
@@ -1171,6 +1176,7 @@ function PedidosDoSku({
   onEmbalar,
   estadosPorSep,
 }: PedidosDoSkuProps) {
+  const qc = useQueryClient();
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { perfil } = usePerfil();
   const [reportando, setReportando] = useState<number | null>(null);
@@ -1211,6 +1217,8 @@ function PedidosDoSku({
         order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
         detalhe: { via: "menu_pedido" },
       });
+      // badge/filtro "sem estoque" atualizam na hora (em segundo plano)
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao reportar falta", { description: (e as Error).message });
     } finally {
@@ -1360,7 +1368,19 @@ function PedidosDoSku({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </td>
-                <td className="py-1 pr-2 font-mono">{p.numero_ecommerce ?? "—"}</td>
+                <td className="py-1 pr-2 font-mono">
+                  <span className="inline-flex items-center gap-1.5">
+                    {p.numero_ecommerce ?? "—"}
+                    {p.falta_estoque_em && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-sans"
+                        title={`Falta de estoque reportada${p.falta_estoque_por ? ` por ${p.falta_estoque_por}` : ""}`}
+                      >
+                        <PackageX className="h-2.5 w-2.5" /> sem estoque
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="py-1 pr-2">
                   <span
                     className={cn(
@@ -1620,6 +1640,7 @@ function LotesDoDia({
         tag: lote.tag, sku: lote.sku,
         detalhe: { via: "menu_lote", aplicados: d.aplicados, no_lote: d.pedidos_no_lote },
       });
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error(`Erro ao reportar falta do lote ${lote.tag}`, {
         description: (e as Error).message,
@@ -2308,6 +2329,8 @@ function FilaPriorizada() {
   const [buscaSku, setBuscaSku] = useState("");
   // filtro por prazo máximo de despacho: "todos" | "vencidos" | "0"(hoje) | "1" | "2" | "3" | "5" (dias)
   const [prazoFiltro, setPrazoFiltro] = useState<string>("todos");
+  // Filtro "sem estoque": mostra so linhas com falta reportada (badge ambar).
+  const [soSemEstoque, setSoSemEstoque] = useState(false);
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
@@ -2371,6 +2394,7 @@ function FilaPriorizada() {
         sku: item.sku,
         detalhe: { via: "menu_linha", grupo: item.tag_sugerida, aplicados: d.aplicados, na_linha: d.pedidos_no_lote },
       });
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     } catch (e) {
       toast.error("Erro ao reportar falta", { description: (e as Error).message });
     } finally {
@@ -2767,6 +2791,7 @@ function FilaPriorizada() {
     const q = buscaSku.trim().toLowerCase();
     return (rows ?? []).filter((r) => {
       if (r.tipo_envio && !enviosAtivosSet.has(r.tipo_envio)) return false;
+      if (soSemEstoque && (tagsPorLinha?.get(linhaKeyDe(r))?.falta ?? 0) === 0) return false;
       if (q) {
         const hit =
           (r.sku ?? "").toLowerCase().includes(q) ||
@@ -2784,7 +2809,7 @@ function FilaPriorizada() {
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, tagsPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -2898,6 +2923,36 @@ function FilaPriorizada() {
             </span>
           </span>
         )}
+        {(() => {
+          // total de PEDIDOS com falta reportada (todas as linhas, sem filtro)
+          let f = 0;
+          for (const v of tagsPorLinha?.values() ?? []) f += v.falta;
+          if (f === 0 && !soSemEstoque) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => setSoSemEstoque((v) => !v)}
+              className={cn(
+                "flex items-center gap-2 rounded-[9px] border pl-3 pr-2 py-[7px] text-[12.5px] font-semibold transition-colors",
+                soSemEstoque
+                  ? "bg-amber-500 border-amber-500 text-white"
+                  : "bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+              )}
+              title="Só linhas com falta de estoque reportada"
+            >
+              <PackageX className="h-3.5 w-3.5" />
+              SEM ESTOQUE
+              <span
+                className={cn(
+                  "rounded-md px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums",
+                  soSemEstoque ? "bg-white/25 text-white" : "bg-amber-100 text-amber-800 dark:bg-amber-900/50",
+                )}
+              >
+                {formatNumber(f)}
+              </span>
+            </button>
+          );
+        })()}
         {fullCount != null && fullCount > 0 && (
           <span
             className="rounded-[9px] border border-dashed border-border bg-muted/40 px-3 py-[7px] text-[11.5px] text-muted-foreground"
@@ -3060,6 +3115,18 @@ function FilaPriorizada() {
                         <span>{item.tipo_envio ?? ""}</span>
                         <span className="text-muted-foreground">·</span>
                         <UnBadge n={item.qtd_unidades ?? 1} />
+                        {(() => {
+                          const f = tagsPorLinha?.get(linhaKeyDe(item))?.falta ?? 0;
+                          if (f <= 0) return null;
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                              title={`${f} pedido(s) desta linha com falta de estoque reportada`}
+                            >
+                              <PackageX className="h-3 w-3" /> sem estoque ({f})
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div
                         className="text-sm text-muted-foreground truncate"
