@@ -1580,6 +1580,54 @@ function LotesDoDia({
   const [imprimindoIdent, setImprimindoIdent] = useState<string | null>(null);
   const [selLotes, setSelLotes] = useState<Set<string>>(new Set());
   const [embalandoLote, setEmbalandoLote] = useState(false);
+  const [reportandoFalta, setReportandoFalta] = useState<string | null>(null);
+
+  /**
+   * Reportar falta de estoque do LOTE inteiro: marcador "FALTA ESTOQUE" em
+   * cada pedido ainda na fila + UM aviso agregado no Discord (separacao-falta
+   * v2, modo ?tag=). Evita o um-por-um quando a prateleira está vazia.
+   */
+  async function reportarFaltaLote(lote: TagLoteRow) {
+    if (!window.confirm(
+      `Reportar FALTA DE ESTOQUE do lote ${lote.tag}?
+
+` +
+      `${lote.sku ?? "?"} · ${lote.qtd_pedidos} pedido(s)
+` +
+      `Aplica o marcador "FALTA ESTOQUE" em cada pedido no Tiny e manda UM aviso no Discord.`,
+    )) return;
+    setReportandoFalta(lote.tag);
+    try {
+      const resp = await fetch(
+        `${EXTERNAL_URL}/functions/v1/separacao-falta?tag=${encodeURIComponent(lote.tag)}` +
+        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
+        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+      );
+      const d = (await resp.json().catch(() => ({}))) as {
+        ok?: boolean; erro?: string; aplicados?: number;
+        pedidos_no_lote?: number; falhas?: string[]; discord?: boolean;
+      };
+      if (!resp.ok || !d.ok) throw new Error(d.erro ?? d.falhas?.[0] ?? `HTTP ${resp.status}`);
+      const parcial = (d.aplicados ?? 0) < (d.pedidos_no_lote ?? 0);
+      toast.success(`Falta reportada — lote ${lote.tag}`, {
+        description: `${d.aplicados}/${d.pedidos_no_lote} pedido(s) marcados no Tiny` +
+          (parcial ? ` — ${d.falhas?.[0] ?? "reste rode de novo"}` : "") +
+          (d.discord ? " · aviso no Discord" : ""),
+        duration: parcial ? 10000 : 5000,
+      });
+      void registrarSeparacaoLog({
+        evento: "falta_estoque", usuario: perfil?.nome ?? null,
+        tag: lote.tag, sku: lote.sku,
+        detalhe: { via: "menu_lote", aplicados: d.aplicados, no_lote: d.pedidos_no_lote },
+      });
+    } catch (e) {
+      toast.error(`Erro ao reportar falta do lote ${lote.tag}`, {
+        description: (e as Error).message,
+      });
+    } finally {
+      setReportandoFalta(null);
+    }
+  }
   const [identificadorAtivo, setIdentificadorAtivo] = useState<boolean>(() => {
     try { return localStorage.getItem(STORAGE_IDENT) === "1"; } catch { return false; }
   });
@@ -1950,6 +1998,7 @@ function LotesDoDia({
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-muted-foreground">
               <tr className="border-b">
+                <th className="py-2 pr-1 w-7"></th>
                 <th className="py-2 pr-2 w-6">
                   <input
                     type="checkbox"
@@ -1971,6 +2020,50 @@ function LotesDoDia({
                 const embalada = l.status === "embalada";
                 return (
                   <tr key={l.id} className="border-b last:border-0">
+                    {/* Menu de ações à esquerda, como nos pedidos (24/ago).
+                        Só ações secundárias — imprimir/embalar do lote seguem
+                        nos botões da coluna Ação, que a bancada usa o dia todo. */}
+                    <td className="py-2 pr-1 w-7">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 w-6 p-0"
+                            disabled={reportandoFalta === l.tag}
+                            title="Ações do lote"
+                          >
+                            {reportandoFalta === l.tag ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <MoreVertical className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-64">
+                          <DropdownMenuItem onClick={() => void copyToClipboard(l.tag)}>
+                            <Copy className="h-3.5 w-3.5 mr-2" />
+                            Copiar TAG
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={imprimindoIdent !== null}
+                            onClick={() => void imprimirIdentificador(l)}
+                          >
+                            <TagIcon className="h-3.5 w-3.5 mr-2" />
+                            Imprimir etiqueta identificadora
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={embalada || reportandoFalta !== null}
+                            onClick={() => void reportarFaltaLote(l)}
+                            className="text-amber-700 dark:text-amber-400 focus:text-amber-700"
+                          >
+                            <PackageX className="h-3.5 w-3.5 mr-2" />
+                            Reportar falta de estoque (lote)
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
                     <td className="py-2 pr-2">
                       {!embalada && (
                         <input
