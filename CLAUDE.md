@@ -319,6 +319,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `amazon-sync-pedidos` | v12 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9 |
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
+| `ml-etiqueta` | v4 | Etiqueta de envio do ML (PDF via PrintNode), pedido a pedido — ver seção 6.2 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
@@ -332,6 +333,35 @@ já causou falha silenciosa: a pré-geração de etiquetas batia 30s em *toda*
 execução, retornava 200 e não gravava nada — a fila nunca andava.
 
 ---
+
+## 6.2 CORS — o erro que faz o botão não fazer NADA
+
+**Toda edge function chamada pelo front precisa responder o preflight com o
+bloco CORS completo** — não basta o `Access-Control-Allow-Origin`:
+
+```ts
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+```
+
+Sem o **`Access-Control-Allow-Headers`** o navegador não recebe permissão para
+enviar o cabeçalho `authorization` e **bloqueia a requisição real**: o `OPTIONS`
+sai, o `GET` nunca. O sintoma na bancada é o pior possível — **o botão não faz
+nada e nenhum erro aparece na tela** (o erro fica só no console do navegador).
+
+Custou 3 dias de "o ML não imprime" (21→24/ago). A `ml-etiqueta` era a única
+função do projeto fora do padrão. **Como diagnosticar:** nos logs, agrupe por
+método — se só há `OPTIONS` e zero `GET`/`POST`, é CORS, não é lógica:
+
+```sql
+select log_attributes['request.method'], count(*) from logs
+where source='function_edge_logs' and event_message like '%<funcao>%'
+group by 1;
+```
 
 ## 6.1 Discord — avisos e menções
 
