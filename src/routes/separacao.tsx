@@ -1072,8 +1072,11 @@ async function imprimirPedidoApi(
  * Etiqueta do Mercado Livre. Rota separada da Shopee de propósito: o ML entrega
  * PDF (o PrintNode imprime nativamente) e a Shopee entrega ZPL. Não há lote —
  * o ML dá uma etiqueta por envio, então aqui é sempre um pedido por vez.
- * O envio só tem etiqueta quando o ML libera (`ready_to_ship`); antes disso a
- * função devolve 409 com o substatus, que mostramos como aviso e não como erro.
+ * O envio só tem etiqueta quando o ML libera (`ready_to_ship`). Antes disso a
+ * função devolve 200 com `liberado: false` — é ESTADO do pedido, não erro do
+ * app. (Era 409, e o monitor de erros da tela acusava "Runtime error" na
+ * bancada por um pedido que o ML apenas ainda segura.) Continuamos aceitando
+ * 409 para não depender da ordem do deploy front × função.
  */
 async function imprimirPedidoMlApi(
   orderId: string,
@@ -1087,11 +1090,12 @@ async function imprimirPedidoMlApi(
     headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
   });
   const data = (await resp.json().catch(() => ({}))) as {
-    erro?: string; enviado?: boolean; status?: string; substatus?: string; dica?: string;
+    erro?: string; enviado?: boolean; liberado?: boolean; motivo?: string;
+    status?: string; substatus?: string; dica?: string;
   };
-  if (resp.status === 409) {
+  if (resp.status === 409 || data.liberado === false) {
     toast.warning(`ML ${orderId}: envio ainda não liberado`, {
-      description: data.dica ?? `status ${data.status ?? "?"}`,
+      description: data.dica ?? data.motivo ?? `status ${data.status ?? "?"}`,
       duration: 10000,
     });
     return false;
@@ -1102,13 +1106,19 @@ async function imprimirPedidoMlApi(
     });
     return false;
   }
+  if (data.enviado === false) {
+    toast.warning(`ML ${orderId}: não foi para a impressora`, {
+      description: data.motivo ?? "a impressora recusou o trabalho",
+    });
+    return false;
+  }
   toast.success(`Etiqueta ML ${orderId} enviada`, { description: printerNome ?? "" });
   return true;
 }
 
 /**
  * Etiquetas do ML de uma lista de pedidos, uma a uma — o ML nao tem lote na API
- * (cada envio tem a sua etiqueta PDF). Usado pelos dois caminhos da tela: o
+ * (cada envio tem a sua etiqueta). Usado pelos dois caminhos da tela: o
  * botao do painel de lotes e o "Imprimir etiqueta" da fila (por SKU).
  * Pedidos da conta SVL sao contados a parte: a integracao e da conta Ottz.
  */
