@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   MoreVertical,
   PackageX,
+  StickyNote,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -331,6 +332,72 @@ function usePrazosPorLinha() {
 // ============ Estado da impressão (impressao_etiquetas) ============
 
 export type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
+
+// ============ Observações da equipe (pedido / linha / lote) ============
+// Anotação de resolução de problema (ex.: falta de estoque — "comprado,
+// chega amanhã"), visível na fila. Uma ativa por alvo; vazio remove.
+interface ObsSep { texto: string; autor: string | null; em: string }
+function useObsSeparacao() {
+  return useQuery({
+    queryKey: ["separacao", "obs"],
+    queryFn: async (): Promise<Map<string, ObsSep>> => {
+      const { data, error } = await supabaseExternal
+        .from("separacao_obs")
+        .select("escopo, chave, texto, autor, criado_em")
+        .limit(2000);
+      if (error) throw error;
+      const map = new Map<string, ObsSep>();
+      for (const r of (data ?? []) as { escopo: string; chave: string; texto: string; autor: string | null; criado_em: string }[]) {
+        map.set(`${r.escopo}|${r.chave}`, { texto: r.texto, autor: r.autor, em: r.criado_em });
+      }
+      return map;
+    },
+  });
+}
+
+/** prompt() com o texto atual; vazio remove. Devolve true se algo mudou. */
+async function editarObsSeparacao(
+  escopo: "pedido" | "linha" | "lote", chave: string,
+  atual: string | undefined, autor: string | null,
+): Promise<boolean> {
+  const texto = window.prompt(
+    "Observação — visível para toda a equipe na fila. Deixe vazio para remover.",
+    atual ?? "",
+  );
+  if (texto === null) return false;
+  const t = texto.trim();
+  if (!t) {
+    if (!atual) return false;
+    const { error } = await supabaseExternal
+      .from("separacao_obs").delete().eq("escopo", escopo).eq("chave", chave);
+    if (error) { toast.error("Falha ao remover observação", { description: error.message }); return false; }
+    toast.success("Observação removida");
+    return true;
+  }
+  const { error } = await supabaseExternal.from("separacao_obs").upsert(
+    { escopo, chave, texto: t, autor, criado_em: new Date().toISOString() },
+    { onConflict: "escopo,chave" },
+  );
+  if (error) { toast.error("Falha ao salvar observação", { description: error.message }); return false; }
+  toast.success("Observação salva");
+  return true;
+}
+
+/** Linha visual padrão da observação (fila, pedidos e lotes). */
+function ObsLinha({ obs }: { obs: ObsSep | undefined }) {
+  if (!obs) return null;
+  return (
+    <span
+      className="inline-flex items-start gap-1 text-[11.5px] leading-tight"
+      style={{ color: "#7A5CC7" }}
+      title={`${obs.autor ?? "equipe"} · ${new Date(obs.em).toLocaleString("pt-BR")}`}
+    >
+      <StickyNote className="h-3 w-3 mt-[1px] shrink-0" />
+      <span className="font-medium">{obs.texto}</span>
+      {obs.autor && <span className="text-muted-foreground">— {obs.autor}</span>}
+    </span>
+  );
+}
 
 function rankEstado(e: EstadoImpressao): number {
   return e === "done" ? 4 : e === "forcado" ? 3 : e === "sent" ? 2 : e === "error" ? 1 : 0;
@@ -1197,6 +1264,7 @@ function PedidosDoSku({
   const qc = useQueryClient();
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { perfil } = usePerfil();
+  const obsQ = useObsSeparacao();
   const [reportando, setReportando] = useState<number | null>(null);
 
   /**
@@ -1383,10 +1451,23 @@ function PedidosDoSku({
                         <PackageX className="h-3.5 w-3.5 mr-2" />
                         Reportar falta de estoque
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={p.separacao_id == null}
+                        onClick={() => {
+                          const chave = String(p.separacao_id);
+                          void editarObsSeparacao("pedido", chave,
+                            obsQ.data?.get(`pedido|${chave}`)?.texto, perfil?.nome ?? null,
+                          ).then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); });
+                        }}
+                      >
+                        <StickyNote className="h-3.5 w-3.5 mr-2" />
+                        {obsQ.data?.get(`pedido|${p.separacao_id}`) ? "Editar observação…" : "Adicionar observação…"}
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </td>
                 <td className="py-1 pr-2 font-mono">
+                  <div className="flex flex-col gap-0.5">
                   <span className="inline-flex items-center gap-1.5">
                     {p.numero_ecommerce ?? "—"}
                     {p.falta_estoque_em && (
@@ -1398,6 +1479,8 @@ function PedidosDoSku({
                       </span>
                     )}
                   </span>
+                  <ObsLinha obs={obsQ.data?.get(`pedido|${p.separacao_id}`)} />
+                  </div>
                 </td>
                 <td className="py-1 pr-2">
                   <span
@@ -1619,6 +1702,7 @@ function LotesDoDia({
   const [selLotes, setSelLotes] = useState<Set<string>>(new Set());
   const [embalandoLote, setEmbalandoLote] = useState(false);
   const [reportandoFalta, setReportandoFalta] = useState<string | null>(null);
+  const obsQ = useObsSeparacao();
 
   /**
    * Reportar falta de estoque do LOTE inteiro: marcador "FALTA ESTOQUE" em
@@ -2100,6 +2184,16 @@ function LotesDoDia({
                             <PackageX className="h-3.5 w-3.5 mr-2" />
                             Reportar falta de estoque (lote)
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              void editarObsSeparacao("lote", l.tag,
+                                obsQ.data?.get(`lote|${l.tag}`)?.texto, perfil?.nome ?? null,
+                              ).then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); });
+                            }}
+                          >
+                            <StickyNote className="h-3.5 w-3.5 mr-2" />
+                            {obsQ.data?.get(`lote|${l.tag}`) ? "Editar observação…" : "Adicionar observação…"}
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </td>
@@ -2128,6 +2222,7 @@ function LotesDoDia({
                           <Copy className="h-3 w-3" />
                         </Button>
                       </div>
+                      <ObsLinha obs={obsQ.data?.get(`lote|${l.tag}`)} />
                     </td>
                     <td className="py-2 pr-3 text-muted-foreground">
                       {(() => {
@@ -2414,6 +2509,7 @@ function FilaPriorizada() {
   }
 
   const [reportandoLinha, setReportandoLinha] = useState<string | null>(null);
+  const obsSepQ = useObsSeparacao();
 
   /**
    * Reportar falta de estoque da LINHA inteira da fila (todos os pedidos do
@@ -3167,6 +3263,17 @@ function FilaPriorizada() {
                           <PackageX className="h-4 w-4 mr-2" />
                           Reportar falta de estoque ({formatNumber(item.qtd_pedidos ?? 0)} pedidos)
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            const chave = linhaKeyDe(item);
+                            void editarObsSeparacao("linha", chave,
+                              obsSepQ.data?.get(`linha|${chave}`)?.texto, perfil?.nome ?? null,
+                            ).then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); });
+                          }}
+                        >
+                          <StickyNote className="h-4 w-4 mr-2" />
+                          {obsSepQ.data?.get(`linha|${linhaKeyDe(item)}`) ? "Editar observação…" : "Adicionar observação…"}
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {/* Checkbox à esquerda, como no Tiny (pedido do dono,
@@ -3229,6 +3336,7 @@ function FilaPriorizada() {
                       >
                         {item.nome_produto ?? "—"}
                       </div>
+                      <ObsLinha obs={obsSepQ.data?.get(`linha|${linhaKeyDe(item)}`)} />
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="flex flex-col items-center gap-0.5 w-24">
