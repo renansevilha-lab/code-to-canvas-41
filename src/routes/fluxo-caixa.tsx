@@ -37,22 +37,23 @@ export const Route = createFileRoute("/fluxo-caixa")({
   component: FluxoCaixaPage,
 });
 
-interface DiaRow {
-  dia: string;
-  entradas: number | null;
-  entradas_reais: number | null;
-  saidas: number | null;
-  liquido: number | null;
-  acumulado: number | null;
-}
 interface EventoRow {
   dia: string;
   fluxo: "entrada" | "saida";
   origem: string;
-  confianca: "real" | "estimado";
+  confianca: "real" | "estimado" | "projetado";
   valor: number;
   itens: number;
   detalhe: string | null;
+}
+interface DiaAgg {
+  dia: string;
+  entradas: number;
+  reais: number;
+  projetadas: number;
+  saidas: number;
+  liquido: number;
+  acumulado: number;
 }
 interface SaldoRow { carteira: string; saldo_em_conta: number; marketplace: string }
 
@@ -61,15 +62,6 @@ const n = (v: unknown): number => Number(v ?? 0) || 0;
 function FluxoCaixaPage() {
   const [expandido, setExpandido] = useState<Set<string>>(new Set());
 
-  const diarioQ = useQuery({
-    queryKey: ["fluxo", "diario"],
-    queryFn: async (): Promise<DiaRow[]> => {
-      const { data, error } = await supabaseExternal
-        .from("view_fluxo_caixa_diario").select("*").order("dia");
-      if (error) throw error;
-      return (data ?? []) as DiaRow[];
-    },
-  });
   const eventosQ = useQuery({
     queryKey: ["fluxo", "eventos"],
     queryFn: async (): Promise<EventoRow[]> => {
@@ -89,27 +81,62 @@ function FluxoCaixaPage() {
     },
   });
 
-  const dias = diarioQ.data ?? [];
+  // Vendas projetadas ligadas por padrão; o toggle recalcula TUDO (cards,
+  // gráfico, acumulado) — projeção nunca se disfarça de caixa contratado.
+  const [comProjecao, setComProjecao] = useState<boolean>(() => {
+    try { return localStorage.getItem("fluxo_com_projecao") !== "0"; } catch { return true; }
+  });
+  const alternarProjecao = (v: boolean) => {
+    setComProjecao(v);
+    try { localStorage.setItem("fluxo_com_projecao", v ? "1" : "0"); } catch { /* noop */ }
+  };
+
   const saldoInicial = useMemo(
     () => (saldosQ.data ?? []).reduce((s, r) => s + n(r.saldo_em_conta), 0),
     [saldosQ.data],
   );
 
+  // Agrega os eventos por dia no cliente — assim o toggle de projeção
+  // recalcula líquido e acumulado na hora, sem outra consulta.
+  const dias = useMemo<DiaAgg[]>(() => {
+    const evs = (eventosQ.data ?? []).filter((e) => comProjecao || e.confianca !== "projetado");
+    const m = new Map<string, { entradas: number; reais: number; projetadas: number; saidas: number }>();
+    for (const e of evs) {
+      const g = m.get(e.dia) ?? { entradas: 0, reais: 0, projetadas: 0, saidas: 0 };
+      if (e.fluxo === "entrada") {
+        g.entradas += n(e.valor);
+        if (e.confianca === "real") g.reais += n(e.valor);
+        if (e.confianca === "projetado") g.projetadas += n(e.valor);
+      } else {
+        g.saidas += n(e.valor);
+      }
+      m.set(e.dia, g);
+    }
+    let acc = 0;
+    return [...m.keys()].sort().map((k) => {
+      const g = m.get(k)!;
+      const liquido = g.entradas - g.saidas;
+      acc += liquido;
+      return { dia: k, ...g, liquido, acumulado: acc };
+    });
+  }, [eventosQ.data, comProjecao]);
+
   const chartData = useMemo(() => dias.map((d) => ({
     dia: d.dia,
-    entradaReal: n(d.entradas_reais),
-    entradaEstimada: Math.max(0, n(d.entradas) - n(d.entradas_reais)),
-    saida: -n(d.saidas),
-    saldoProjetado: saldoInicial + n(d.acumulado),
+    entradaReal: d.reais,
+    entradaEstimada: Math.max(0, d.entradas - d.reais - d.projetadas),
+    entradaProjetada: d.projetadas,
+    saida: -d.saidas,
+    saldoProjetado: saldoInicial + d.acumulado,
   })), [dias, saldoInicial]);
 
   const resumo = useMemo(() => {
     let e7 = 0, s7 = 0, liq30 = 0;
     let vale: { dia: string; valor: number } | null = null;
     dias.forEach((d, i) => {
-      const saldo = saldoInicial + n(d.acumulado);
-      if (i < 7) { e7 += n(d.entradas); s7 += n(d.saidas); }
-      if (i < 30) liq30 += n(d.liquido);
+      const saldo = saldoInicial + d.acumulado;
+      if (i < 7) { e7 += d.entradas; s7 += d.saidas; }
+      if (i < 30) liq30 += d.liquido;
       if (!vale || saldo < vale.valor) vale = { dia: d.dia, valor: saldo };
     });
     return { e7, s7, liq30, vale: vale as { dia: string; valor: number } | null };
@@ -133,13 +160,21 @@ function FluxoCaixaPage() {
     return nx;
   });
 
-  const carregando = diarioQ.isLoading || saldosQ.isLoading;
+  const carregando = eventosQ.isLoading || saldosQ.isLoading;
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
-      <p className="text-sm text-muted-foreground">
-        Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee estimada (ciclo mediano de 8 dias)
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee estimada (ciclo mediano de 8 dias)
+        </p>
+        <label className="flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
+          <input type="checkbox" className="h-4 w-4 accent-primary"
+            checked={comProjecao} onChange={(e) => alternarProjecao(e.target.checked)} />
+          incluir <span className="font-semibold" style={{ color: "#2F6FB0" }}>vendas projetadas</span>
+          <span className="text-muted-foreground">(média por dia-da-semana, 4 semanas)</span>
+        </label>
+      </div>
 
       {/* Cards */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
@@ -183,6 +218,9 @@ function FluxoCaixaPage() {
                         <p style={{ fontWeight: 600, marginBottom: 4 }}>{format(parseISO(String(label)), "dd 'de' MMM", { locale: ptBR })}</p>
                         <p style={{ color: "#0E8A5F" }}>Entrada real: {formatBRL(row.entradaReal)}</p>
                         <p style={{ color: "#7A5CC7" }}>Entrada estimada: {formatBRL(row.entradaEstimada)}</p>
+                        {row.entradaProjetada > 0 && (
+                          <p style={{ color: "#2F6FB0" }}>Venda projetada: {formatBRL(row.entradaProjetada)}</p>
+                        )}
                         <p style={{ color: "#C9432F" }}>Saídas: {formatBRL(Math.abs(row.saida))}</p>
                         <p style={{ fontWeight: 600 }}>Saldo projetado: {formatBRL(row.saldoProjetado)}</p>
                       </div>
@@ -192,6 +230,7 @@ function FluxoCaixaPage() {
                 <ReferenceLine y={0} stroke="var(--color-border)" />
                 <Bar dataKey="entradaReal" name="Entrada real" stackId="f" fill="#0E8A5F" />
                 <Bar dataKey="entradaEstimada" name="Entrada estimada" stackId="f" fill="#7A5CC7" />
+                <Bar dataKey="entradaProjetada" name="Venda projetada" stackId="f" fill="#2F6FB0" />
                 <Bar dataKey="saida" name="Saídas" stackId="f" fill="#C9432F" />
                 <Line type="monotone" dataKey="saldoProjetado" name="Saldo projetado" stroke="#B7791F" strokeWidth={2} dot={false} />
               </ComposedChart>
@@ -217,8 +256,8 @@ function FluxoCaixaPage() {
           <tbody>
             {dias.map((d) => {
               const aberto = expandido.has(d.dia);
-              const eventos = eventosPorDia.get(d.dia) ?? [];
-              const saldo = saldoInicial + n(d.acumulado);
+              const eventos = (eventosPorDia.get(d.dia) ?? []).filter((e) => comProjecao || e.confianca !== "projetado");
+              const saldo = saldoInicial + d.acumulado;
               return [
                 <tr key={d.dia} className="border-b last:border-0 cursor-pointer hover:bg-muted/40" onClick={() => toggle(d.dia)}>
                   <td className="py-1.5">{aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</td>
@@ -226,13 +265,13 @@ function FluxoCaixaPage() {
                     {format(parseISO(d.dia), "EEE dd/MM", { locale: ptBR })}
                   </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums font-mono text-emerald-700 dark:text-emerald-400">
-                    {n(d.entradas) > 0 ? formatBRL(n(d.entradas)) : "—"}
+                    {d.entradas > 0 ? formatBRL(d.entradas) : "—"}
                   </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums font-mono text-red-700 dark:text-red-400">
-                    {n(d.saidas) > 0 ? formatBRL(n(d.saidas)) : "—"}
+                    {d.saidas > 0 ? formatBRL(d.saidas) : "—"}
                   </td>
-                  <td className={cn("py-1.5 pr-2 text-right tabular-nums font-mono", n(d.liquido) < 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
-                    {formatBRL(n(d.liquido))}
+                  <td className={cn("py-1.5 pr-2 text-right tabular-nums font-mono", d.liquido < 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
+                    {formatBRL(d.liquido)}
                   </td>
                   <td className={cn("py-1.5 text-right tabular-nums font-mono font-semibold", saldo < 0 && "text-red-700 dark:text-red-400")}>
                     {formatBRL(saldo)}
@@ -254,6 +293,9 @@ function FluxoCaixaPage() {
                             </span>
                             {e.confianca === "estimado" && (
                               <span className="text-[10px] px-1 rounded bg-muted text-muted-foreground shrink-0">estimado</span>
+                            )}
+                            {e.confianca === "projetado" && (
+                              <span className="text-[10px] px-1 rounded shrink-0" style={{ background: "#2F6FB01F", color: "#2F6FB0" }}>projeção</span>
                             )}
                             <span className="text-muted-foreground text-[11px] tabular-nums shrink-0">{e.itens}×</span>
                             <span className={cn("tabular-nums font-mono w-[96px] text-right shrink-0", e.fluxo === "saida" && "text-red-700 dark:text-red-400")}>
@@ -291,6 +333,7 @@ function ComoCalculado() {
           <li><strong className="text-foreground">ADS</strong> — regra da casa: dia <strong>10</strong> paga o gasto de ADS do mês anterior (Shopee + ML). Competência em curso é extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Impostos</strong> — regra da casa: dia <strong>20</strong> paga o imposto sobre vendas do mês anterior. Competência em curso extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Gastos recorrentes</strong> — cadastrados no DRE, lançados no dia 5 de cada mês (premissa).</li>
+          <li><strong className="text-foreground">Vendas projetadas</strong> — média de venda líquida por dia-da-semana das últimas 4 semanas (qui vende ~35% mais que sex — o padrão importa). A venda projetada de um dia vira caixa com o ciclo do marketplace: Shopee +8 dias, ML +10 (medianas medidas). Sempre em <span style={{ color: "#2F6FB0" }} className="font-semibold">azul</span> e desligável no topo — projeção nunca se mistura com caixa contratado.</li>
           <li><strong className="text-foreground">Limite do modelo</strong> — só entram pedidos que <em>já existem</em>: as entradas Shopee drenam em ~10 dias e, além disso, o saldo projetado é <em>conservador</em> (vendas futuras não são inventadas). Saldo inicial = carteiras Shopee (o ML não expõe saldo).</li>
         </ul>
       )}
