@@ -41,6 +41,14 @@ interface DevAberta {
   due_date: string | null;
   itens: { sku: string | null; nome: string | null; qtd: number | null }[] | null;
   create_time: string | null;
+  // cruzamento com o recebimento fisico no estoque (bipagem) — por order_sn
+  recebida_id: string | null;
+  recebida_status: string | null;
+  conferido_ok: boolean | null;
+  recebido_em: string | null;
+  recebido_por: string | null;
+  recebida_obs: string | null;
+  itens_problema: { sku: string | null; estado: string | null; obs: string | null; qtd_esperada: number | null; qtd_recebida: number | null }[] | null;
 }
 
 const MOTIVO_PT: Record<string, string> = {
@@ -110,8 +118,8 @@ export function DevolucoesShopeeAbertas() {
     queryFn: async (): Promise<DevAberta[]> => {
       // abertas = em andamento OU aprovadas ainda dentro do prazo do vendedor
       const { data, error } = await supabaseExternal
-        .from("shopee_devolucoes")
-        .select("return_sn, order_sn, shop_id, reason, text_reason, status, refund_amount, images, needs_logistics, tracking_number, due_date, itens, create_time")
+        .from("view_devolucoes_shopee_abertas")
+        .select("*")
         .or(`status.in.(REQUESTED,PROCESSING,JUDGING),and(status.eq.ACCEPTED,due_date.gt.${new Date().toISOString()})`)
         .order("due_date", { ascending: true, nullsFirst: false })
         .limit(200);
@@ -223,6 +231,53 @@ export function DevolucoesShopeeAbertas() {
                       {d.refund_amount != null && <span className="font-semibold text-foreground">R$ {Number(d.refund_amount).toFixed(2)}</span>}
                       {d.needs_logistics && <span title="O comprador devolve o produto">📦 devolve o produto{d.tracking_number ? ` · ${d.tracking_number}` : ""}</span>}
                     </div>
+                    {/* Cruzamento com o ESTOQUE (bipagem): é o dado que orienta a
+                        resposta — voltou com ressalva = base para disputar;
+                        voltou "tudo certo" = reembolsa tranquilo. */}
+                    {(() => {
+                      if (!d.recebida_id) {
+                        if (!d.needs_logistics) return null;
+                        return (
+                          <div className="text-[11.5px] text-muted-foreground">
+                            📭 Ainda <span className="font-semibold">não recebida</span> no estoque
+                          </div>
+                        );
+                      }
+                      const quando = d.recebido_em ? format(parseISO(d.recebido_em), "dd/MM HH:mm") : "";
+                      const quem = (d.recebido_por ?? "").split("@")[0];
+                      if (d.recebida_status === "recebida") {
+                        return (
+                          <div className="text-[11.5px] font-medium" style={{ color: "#B7791F" }}>
+                            📦 Recebida no estoque {quando} — <span className="font-semibold">a conferir</span>
+                          </div>
+                        );
+                      }
+                      if (d.conferido_ok) {
+                        return (
+                          <div className="text-[11.5px] font-medium" style={{ color: "#0E8A5F" }}>
+                            📦 Recebida e conferida {quando}{quem ? ` por ${quem}` : ""} — tudo certo ✓
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-[11.5px] font-semibold" style={{ color: "#C9432F" }}>
+                            📦 Recebida {quando}{quem ? ` por ${quem}` : ""} — COM RESSALVA (base para disputa):
+                          </div>
+                          {(d.itens_problema ?? []).map((it, i) => (
+                            <span key={i} className="text-[11px] leading-tight" style={{ color: "#B7791F" }}>
+                              <span className="font-mono font-semibold">{it.sku ?? "?"}</span>
+                              {it.estado && it.estado !== "ok" && <> · {it.estado}</>}
+                              {it.qtd_recebida != null && it.qtd_esperada != null && it.qtd_recebida !== it.qtd_esperada && (
+                                <> · recebido {it.qtd_recebida}/{it.qtd_esperada}</>
+                              )}
+                              {it.obs && <span className="text-muted-foreground"> — {it.obs}</span>}
+                            </span>
+                          ))}
+                          {d.recebida_obs && <span className="text-[11px] text-muted-foreground">{d.recebida_obs}</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {podeResponder && (
                     <div className="flex flex-col gap-1.5 shrink-0">
