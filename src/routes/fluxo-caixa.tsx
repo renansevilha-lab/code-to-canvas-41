@@ -1,439 +1,295 @@
-import { SyncStatusFooter } from "@/components/SyncStatusFooter";
+// ============================================================================
+// Fluxo de Caixa projetado — 60 dias, pedido a pedido (reescrito 26/ago).
+//
+// A versão anterior usava as RPCs get_kpis_fluxo_caixa/get_projecao_fluxo_caixa
+// (anteriores à conciliação da carteira). Esta lê as views novas:
+//   · view_fluxo_caixa_diario  — agregado por dia (entradas/saídas/acumulado)
+//   · view_fluxo_caixa_eventos — o drill (origem, real × estimado)
+//   · view_carteira_saldo      — saldo inicial (Shopee Ottz + Bumi)
+//
+// ENTRADAS: ML = data REAL de liberação do Mercado Pago; Shopee = estimada
+// (data do pedido + 8 dias, mediana medida em 12,7 mil créditos reais; piso
+// por estágio). SAÍDAS: contas a pagar em aberto pelo vencimento (vencidas
+// caem em hoje) + gastos recorrentes (dia 5, premissa).
+//
+// HONESTIDADE DO MODELO: só projetamos pedidos que JÁ EXISTEM — as entradas
+// Shopee se esgotam em ~10 dias (o funil atual drena); depois disso o saldo
+// projetado é CONSERVADOR (sem vendas futuras inventadas).
+// ============================================================================
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { format, parseISO, differenceInCalendarDays } from "date-fns";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { AlertTriangle, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import {
+  Bar, CartesianGrid, ComposedChart, Line, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+import { ChevronDown, ChevronRight, Info, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatBRL, formatNumber } from "@/lib/format";
+import { formatBRL } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/fluxo-caixa")({
   component: FluxoCaixaPage,
 });
 
-type KpisFC = {
-  saldo_7d: number;
-  saldo_30d: number;
-  saldo_60d: number;
-  saldo_90d: number;
-  total_a_receber_30d: number;
-  total_a_pagar_30d: number;
-  contas_atrasadas_qtd: number;
-  contas_atrasadas_valor: number;
-  pior_dia: string | null;
-  pior_dia_saldo: number | null;
-};
-
-type ProjecaoRow = {
+interface DiaRow {
   dia: string;
-  entradas_projetadas: number;
-  saidas_planejadas: number;
-  saldo_acumulado: number;
-};
+  entradas: number | null;
+  entradas_reais: number | null;
+  saidas: number | null;
+  liquido: number | null;
+  acumulado: number | null;
+}
+interface EventoRow {
+  dia: string;
+  fluxo: "entrada" | "saida";
+  origem: string;
+  confianca: "real" | "estimado";
+  valor: number;
+  itens: number;
+}
+interface SaldoRow { carteira: string; saldo_em_conta: number; marketplace: string }
 
-type ProximoVencimento = {
-  id: string;
-  data_vencimento: string;
-  fornecedor_nome: string | null;
-  numero_documento: string | null;
-  descricao: string | null;
-  valor_total: number;
-};
-
-const HORIZONS = [30, 60, 90, 180] as const;
-type Horizon = (typeof HORIZONS)[number];
+const n = (v: unknown): number => Number(v ?? 0) || 0;
 
 function FluxoCaixaPage() {
-  const [kpis, setKpis] = useState<KpisFC | null>(null);
-  const [horizon, setHorizon] = useState<Horizon>(90);
-  const [projecao, setProjecao] = useState<ProjecaoRow[]>([]);
-  const [proximos, setProximos] = useState<ProximoVencimento[]>([]);
-  const [loadingKpis, setLoadingKpis] = useState(true);
-  const [loadingChart, setLoadingChart] = useState(true);
-  const [loadingProx, setLoadingProx] = useState(true);
-  const [erro, setErro] = useState<string | null>(null);
+  const [expandido, setExpandido] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabaseExternal.rpc("get_kpis_fluxo_caixa");
-      if (error) setErro(error.message);
-      const row = Array.isArray(data) ? data[0] : data;
-      setKpis((row ?? null) as KpisFC | null);
-      setLoadingKpis(false);
-    })();
-  }, []);
+  const diarioQ = useQuery({
+    queryKey: ["fluxo", "diario"],
+    queryFn: async (): Promise<DiaRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_fluxo_caixa_diario").select("*").order("dia");
+      if (error) throw error;
+      return (data ?? []) as DiaRow[];
+    },
+  });
+  const eventosQ = useQuery({
+    queryKey: ["fluxo", "eventos"],
+    queryFn: async (): Promise<EventoRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_fluxo_caixa_eventos").select("*").order("dia").limit(2000);
+      if (error) throw error;
+      return (data ?? []) as EventoRow[];
+    },
+  });
+  const saldosQ = useQuery({
+    queryKey: ["fluxo", "saldos"],
+    queryFn: async (): Promise<SaldoRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_carteira_saldo").select("carteira, saldo_em_conta, marketplace");
+      if (error) throw error;
+      return (data ?? []) as SaldoRow[];
+    },
+  });
 
-  useEffect(() => {
-    let cancel = false;
-    setLoadingChart(true);
-    (async () => {
-      const { data, error } = await supabaseExternal.rpc("get_projecao_fluxo_caixa", {
-        p_dias_futuro: horizon,
-      });
-      if (cancel) return;
-      if (error) setErro(error.message);
-      // Convertemos saídas para negativo no gráfico
-      const rows = ((data ?? []) as ProjecaoRow[]).map((r) => ({
-        ...r,
-        entradas_projetadas: Number(r.entradas_projetadas ?? 0),
-        saidas_planejadas: -Math.abs(Number(r.saidas_planejadas ?? 0)),
-        saldo_acumulado: Number(r.saldo_acumulado ?? 0),
-      }));
-      setProjecao(rows);
-      setLoadingChart(false);
-    })();
-    return () => {
-      cancel = true;
-    };
-  }, [horizon]);
+  const dias = diarioQ.data ?? [];
+  const saldoInicial = useMemo(
+    () => (saldosQ.data ?? []).reduce((s, r) => s + n(r.saldo_em_conta), 0),
+    [saldosQ.data],
+  );
 
-  useEffect(() => {
-    (async () => {
-      const today = format(new Date(), "yyyy-MM-dd");
-      const in30 = format(new Date(Date.now() + 30 * 86400000), "yyyy-MM-dd");
-      const { data } = await supabaseExternal
-        .from("contas_pagar")
-        .select("id,data_vencimento,fornecedor_nome,numero_documento,descricao,valor_total")
-        .in("status", ["aberto", "parcial"])
-        .gte("data_vencimento", today)
-        .lte("data_vencimento", in30)
-        .order("data_vencimento", { ascending: true })
-        .limit(200);
-      setProximos((data ?? []) as ProximoVencimento[]);
-      setLoadingProx(false);
-    })();
-  }, []);
+  const chartData = useMemo(() => dias.map((d) => ({
+    dia: d.dia,
+    entradaReal: n(d.entradas_reais),
+    entradaEstimada: Math.max(0, n(d.entradas) - n(d.entradas_reais)),
+    saida: -n(d.saidas),
+    saldoProjetado: saldoInicial + n(d.acumulado),
+  })), [dias, saldoInicial]);
 
-  const piorDiaInfo = useMemo(() => {
-    if (!kpis?.pior_dia || kpis.pior_dia_saldo == null || kpis.pior_dia_saldo >= 0) return null;
-    const days = differenceInCalendarDays(parseISO(kpis.pior_dia), new Date());
-    if (days < 0 || days > 90) return null;
-    return { date: kpis.pior_dia, saldo: kpis.pior_dia_saldo };
-  }, [kpis]);
+  const resumo = useMemo(() => {
+    let e7 = 0, s7 = 0, liq30 = 0;
+    let vale: { dia: string; valor: number } | null = null;
+    dias.forEach((d, i) => {
+      const saldo = saldoInicial + n(d.acumulado);
+      if (i < 7) { e7 += n(d.entradas); s7 += n(d.saidas); }
+      if (i < 30) liq30 += n(d.liquido);
+      if (!vale || saldo < vale.valor) vale = { dia: d.dia, valor: saldo };
+    });
+    return { e7, s7, liq30, vale: vale as { dia: string; valor: number } | null };
+  }, [dias, saldoInicial]);
 
-  if (erro && !kpis && projecao.length === 0) {
-    return (
-      <div className="p-6 md:p-10 max-w-7xl mx-auto">
-        <Card className="p-6 border-destructive/30 bg-destructive/5">
-          <h2 className="font-semibold text-destructive">Erro ao carregar fluxo de caixa</h2>
-          <p className="text-sm text-muted-foreground mt-1">{erro}</p>
-          <p className="text-xs text-muted-foreground mt-3">
-            Pode faltar rodar o SQL das funções <code>get_kpis_fluxo_caixa</code> ou{" "}
-            <code>get_projecao_fluxo_caixa</code>.
-          </p>
-        </Card>
-      </div>
-    );
-  }
+  const eventosPorDia = useMemo(() => {
+    const m = new Map<string, EventoRow[]>();
+    for (const e of eventosQ.data ?? []) {
+      if (!m.has(e.dia)) m.set(e.dia, []);
+      m.get(e.dia)!.push(e);
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => (a.fluxo === b.fluxo ? n(b.valor) - n(a.valor) : a.fluxo === "entrada" ? -1 : 1));
+    }
+    return m;
+  }, [eventosQ.data]);
+
+  const toggle = (dia: string) => setExpandido((prev) => {
+    const nx = new Set(prev);
+    if (nx.has(dia)) nx.delete(dia); else nx.add(dia);
+    return nx;
+  });
+
+  const carregando = diarioQ.isLoading || saldosQ.isLoading;
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Fluxo de Caixa</h1>
-        <p className="text-muted-foreground max-w-3xl text-sm">
-          Projeção baseada em média histórica de receita e contas a pagar com vencimentos confirmados.
-        </p>
-      </header>
+    <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
+      <p className="text-sm text-muted-foreground">
+        Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee estimada (ciclo mediano de 8 dias)
+      </p>
 
-      <SyncStatusFooter area="fluxo_caixa" />
-
-      {/* Linha 1 — saldos previstos */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <SaldoCard label="Saldo 7 dias" value={kpis?.saldo_7d} loading={loadingKpis} />
-        <SaldoCard label="Saldo 30 dias" value={kpis?.saldo_30d} loading={loadingKpis} />
-        <SaldoCard label="Saldo 60 dias" value={kpis?.saldo_60d} loading={loadingKpis} />
-        <SaldoCard label="Saldo 90 dias" value={kpis?.saldo_90d} loading={loadingKpis} />
-      </section>
-
-      {/* Linha 2 — receber x pagar */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <FlowCard
-          icon={TrendingUp}
-          label="A receber · próx. 30 dias"
-          value={kpis ? formatBRL(kpis.total_a_receber_30d) : "—"}
-          accent="success"
+      {/* Cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+        <CardKpi rotulo="Saldo em carteiras" valor={saldoInicial} icone={<Wallet className="h-4 w-4" />}
+          hint="Shopee Ottz + Bumi (ML não expõe saldo)" />
+        <CardKpi rotulo="Entradas 7 dias" valor={resumo.e7} icone={<TrendingUp className="h-4 w-4" />} positivo />
+        <CardKpi rotulo="Saídas 7 dias" valor={resumo.s7} icone={<TrendingDown className="h-4 w-4" />} negativo />
+        <CardKpi rotulo="Líquido 30 dias" valor={resumo.liq30} icone={<TrendingUp className="h-4 w-4" />}
+          positivo={resumo.liq30 >= 0} negativo={resumo.liq30 < 0} />
+        <CardKpi
+          rotulo="Menor saldo projetado"
+          valor={resumo.vale?.valor ?? 0}
+          icone={<TrendingDown className="h-4 w-4" />}
+          negativo={(resumo.vale?.valor ?? 0) < 0}
+          hint={resumo.vale ? format(parseISO(resumo.vale.dia), "dd 'de' MMM", { locale: ptBR }) : ""}
         />
-        <FlowCard
-          icon={TrendingDown}
-          label="A pagar · próx. 30 dias"
-          value={kpis ? formatBRL(kpis.total_a_pagar_30d) : "—"}
-          accent="danger"
-        />
-      </section>
+      </div>
 
-      {/* Linha 3 — alertas */}
-      {kpis && kpis.contas_atrasadas_qtd > 0 && (
-        <Card className="p-4 border-destructive/40 bg-destructive/5 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="font-semibold text-destructive">
-              {formatNumber(kpis.contas_atrasadas_qtd)} contas atrasadas
-            </p>
-            <p className="text-muted-foreground">
-              Total em atraso: {formatBRL(kpis.contas_atrasadas_valor)}
-            </p>
-          </div>
-        </Card>
-      )}
-      {piorDiaInfo && (
-        <Card className="p-4 border-warning/40 bg-warning/5 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="font-semibold text-warning">
-              Pior dia projetado: {format(parseISO(piorDiaInfo.date), "dd/MM/yyyy", { locale: ptBR })}
-            </p>
-            <p className="text-muted-foreground">
-              Saldo negativo de {formatBRL(piorDiaInfo.saldo)}
-            </p>
-          </div>
-        </Card>
-      )}
+      {/* Premissas do modelo */}
+      <div className="flex items-start gap-2 text-[12px] text-muted-foreground bg-muted/40 border rounded-md px-3 py-2">
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>
+          Só entram pedidos que <strong>já existem</strong>: as entradas Shopee se esgotam em ~10 dias
+          (o funil atual drena). Depois disso o saldo projetado é <strong>conservador</strong> — vendas
+          futuras não são inventadas. Saídas: contas a pagar em aberto (vencidas caem em hoje) +
+          gastos recorrentes no dia 5 de cada mês.
+        </span>
+      </div>
 
-      {/* Linha 4 — gráfico */}
-      <section>
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <div>
-              <h2 className="font-semibold">Projeção diária</h2>
-              <p className="text-xs text-muted-foreground">
-                Entradas previstas, contas a pagar e saldo acumulado
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              {HORIZONS.map((h) => (
-                <Button
-                  key={h}
-                  size="sm"
-                  variant={horizon === h ? "default" : "outline"}
-                  onClick={() => setHorizon(h)}
-                  className="h-7 px-2.5 text-xs"
-                >
-                  {h}d
-                </Button>
-              ))}
-            </div>
-          </div>
-          {loadingChart ? (
-            <div className="h-80 animate-pulse bg-muted/40 rounded-md" />
-          ) : projecao.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sem dados de projeção.</p>
-          ) : (
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={projecao} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
-                  <XAxis
-                    dataKey="dia"
-                    tickFormatter={(v) => format(parseISO(v), "dd/MM", { locale: ptBR })}
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={11}
-                  />
-                  <YAxis
-                    yAxisId="left"
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={11}
-                    tickFormatter={(v) => formatBRL(Number(v), { compact: true })}
-                    width={80}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={11}
-                    tickFormatter={(v) => formatBRL(Number(v), { compact: true })}
-                    width={80}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "hsl(var(--popover))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    labelFormatter={(v) => format(parseISO(String(v)), "dd 'de' MMM", { locale: ptBR })}
-                    formatter={(value, name) => {
-                      const label =
-                        name === "entradas_projetadas"
-                          ? "Entradas"
-                          : name === "saidas_planejadas"
-                          ? "Saídas"
-                          : "Saldo acumulado";
-                      return [formatBRL(Math.abs(Number(value ?? 0))), label];
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar
-                    yAxisId="left"
-                    dataKey="entradas_projetadas"
-                    fill="hsl(142 71% 45%)"
-                    name="Entradas"
-                    radius={[2, 2, 0, 0]}
-                  />
-                  <Bar
-                    yAxisId="left"
-                    dataKey="saidas_planejadas"
-                    fill="hsl(0 84% 60%)"
-                    name="Saídas"
-                    radius={[0, 0, 2, 2]}
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="saldo_acumulado"
-                    stroke="hsl(217 91% 60%)"
-                    strokeWidth={2}
-                    dot={false}
-                    name="Saldo acumulado"
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-      </section>
-
-      {/* Linha 5 — próximos vencimentos */}
-      <section>
-        <Card className="overflow-hidden">
-          <div className="p-6 pb-3">
-            <h2 className="font-semibold">Próximos vencimentos · 30 dias</h2>
-            <p className="text-xs text-muted-foreground">
-              Contas a pagar em aberto/parcial nos próximos 30 dias.
-            </p>
-          </div>
-          {loadingProx ? (
-            <div className="p-12 text-center text-muted-foreground">Carregando…</div>
-          ) : proximos.length === 0 ? (
-            <div className="p-12 text-center text-muted-foreground">
-              Nenhum vencimento nos próximos 30 dias.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr className="text-left text-xs uppercase text-muted-foreground">
-                    <th className="px-4 py-3 font-medium">Vencimento</th>
-                    <th className="px-4 py-3 font-medium">Fornecedor</th>
-                    <th className="px-4 py-3 font-medium">Documento</th>
-                    <th className="px-4 py-3 font-medium">Descrição</th>
-                    <th className="px-4 py-3 font-medium text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proximos.map((c) => {
-                    const dias = differenceInCalendarDays(
-                      parseISO(c.data_vencimento),
-                      new Date(),
-                    );
+      {carregando ? (
+        <Skeleton className="h-72 w-full" />
+      ) : (
+        <Card className="p-5">
+          <p className="text-[14.5px] font-semibold tracking-[-0.015em] mb-3">Entradas × Saídas × Saldo projetado</p>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} stackOffset="sign">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                <XAxis dataKey="dia" tickFormatter={(v) => format(parseISO(v), "dd/MM")}
+                  stroke="var(--color-muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`}
+                  stroke="var(--color-muted-foreground)" fontSize={10} tickLine={false} axisLine={false} width={44} />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const row = (payload[0]?.payload ?? {}) as (typeof chartData)[number];
                     return (
-                      <tr key={c.id} className="border-t hover:bg-muted/30">
-                        <td className="px-4 py-2.5">
-                          <div>{format(parseISO(c.data_vencimento), "dd/MM", { locale: ptBR })}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {dias === 0 ? "hoje" : `em ${dias}d`}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 max-w-[240px] truncate">
-                          {c.fornecedor_nome ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-xs">
-                          {c.numero_documento ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5 max-w-[300px] truncate text-muted-foreground">
-                          {c.descricao ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-destructive">
-                          {formatBRL(c.valor_total)}
-                        </td>
-                      </tr>
+                      <div style={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 10, fontSize: 12, padding: "8px 12px" }}>
+                        <p style={{ fontWeight: 600, marginBottom: 4 }}>{format(parseISO(String(label)), "dd 'de' MMM", { locale: ptBR })}</p>
+                        <p style={{ color: "#0E8A5F" }}>Entrada real: {formatBRL(row.entradaReal)}</p>
+                        <p style={{ color: "#7A5CC7" }}>Entrada estimada: {formatBRL(row.entradaEstimada)}</p>
+                        <p style={{ color: "#C9432F" }}>Saídas: {formatBRL(Math.abs(row.saida))}</p>
+                        <p style={{ fontWeight: 600 }}>Saldo projetado: {formatBRL(row.saldoProjetado)}</p>
+                      </div>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  }}
+                />
+                <ReferenceLine y={0} stroke="var(--color-border)" />
+                <Bar dataKey="entradaReal" name="Entrada real" stackId="f" fill="#0E8A5F" />
+                <Bar dataKey="entradaEstimada" name="Entrada estimada" stackId="f" fill="#7A5CC7" />
+                <Bar dataKey="saida" name="Saídas" stackId="f" fill="#C9432F" />
+                <Line type="monotone" dataKey="saldoProjetado" name="Saldo projetado" stroke="#B7791F" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         </Card>
-      </section>
+      )}
+
+      {/* Tabela por dia com drill de eventos */}
+      <Card className="p-4">
+        <p className="text-[14.5px] font-semibold tracking-[-0.015em] mb-2">Dia a dia</p>
+        <table className="w-full text-sm">
+          <thead className="text-[10.5px] uppercase text-muted-foreground">
+            <tr className="border-b">
+              <th className="w-7"></th>
+              <th className="text-left py-1.5 pr-2 font-medium">Dia</th>
+              <th className="text-right py-1.5 pr-2 font-medium">Entradas</th>
+              <th className="text-right py-1.5 pr-2 font-medium">Saídas</th>
+              <th className="text-right py-1.5 pr-2 font-medium">Líquido</th>
+              <th className="text-right py-1.5 font-medium">Saldo projetado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dias.map((d) => {
+              const aberto = expandido.has(d.dia);
+              const eventos = eventosPorDia.get(d.dia) ?? [];
+              const saldo = saldoInicial + n(d.acumulado);
+              return [
+                <tr key={d.dia} className="border-b last:border-0 cursor-pointer hover:bg-muted/40" onClick={() => toggle(d.dia)}>
+                  <td className="py-1.5">{aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</td>
+                  <td className="py-1.5 pr-2 font-medium whitespace-nowrap">
+                    {format(parseISO(d.dia), "EEE dd/MM", { locale: ptBR })}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums font-mono text-emerald-700 dark:text-emerald-400">
+                    {n(d.entradas) > 0 ? formatBRL(n(d.entradas)) : "—"}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums font-mono text-red-700 dark:text-red-400">
+                    {n(d.saidas) > 0 ? formatBRL(n(d.saidas)) : "—"}
+                  </td>
+                  <td className={cn("py-1.5 pr-2 text-right tabular-nums font-mono", n(d.liquido) < 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
+                    {formatBRL(n(d.liquido))}
+                  </td>
+                  <td className={cn("py-1.5 text-right tabular-nums font-mono font-semibold", saldo < 0 && "text-red-700 dark:text-red-400")}>
+                    {formatBRL(saldo)}
+                  </td>
+                </tr>,
+                aberto ? (
+                  <tr key={`${d.dia}-ev`}>
+                    <td></td>
+                    <td colSpan={5} className="pb-2">
+                      <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-muted ml-1">
+                        {eventos.map((e, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[12px] pl-2">
+                            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", e.fluxo === "entrada" ? "bg-emerald-500" : "bg-red-500")} />
+                            <span className="flex-1 min-w-0 truncate">{e.origem}</span>
+                            {e.confianca === "estimado" && (
+                              <span className="text-[10px] px-1 rounded bg-muted text-muted-foreground shrink-0">estimado</span>
+                            )}
+                            <span className="text-muted-foreground text-[11px] tabular-nums shrink-0">{e.itens}×</span>
+                            <span className={cn("tabular-nums font-mono w-[96px] text-right shrink-0", e.fluxo === "saida" && "text-red-700 dark:text-red-400")}>
+                              {e.fluxo === "saida" ? "−" : ""}{formatBRL(n(e.valor))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null,
+              ];
+            })}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }
 
-function SaldoCard({
-  label,
-  value,
-  loading,
-}: {
-  label: string;
-  value?: number | null;
-  loading: boolean;
+function CardKpi({ rotulo, valor, icone, hint, positivo, negativo }: {
+  rotulo: string; valor: number; icone: React.ReactNode; hint?: string;
+  positivo?: boolean; negativo?: boolean;
 }) {
-  const positive = (value ?? 0) >= 0;
   return (
-    <Card className="p-5">
-      <div
-        className={`h-9 w-9 rounded-lg flex items-center justify-center mb-3 ${
-          positive ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
-        }`}
-      >
-        <Wallet className="h-4 w-4" />
+    <Card className="p-4">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        {icone} {rotulo}
       </div>
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-      <p
-        className={`text-2xl font-semibold mt-1 tabular-nums ${
-          loading || value == null
-            ? "text-muted-foreground"
-            : positive
-            ? "text-success"
-            : "text-destructive"
-        }`}
-      >
-        {loading || value == null ? "—" : formatBRL(value, { compact: true })}
+      <p className={cn("text-xl font-semibold tabular-nums mt-1",
+        negativo ? "text-red-700 dark:text-red-400" : positivo ? "text-emerald-700 dark:text-emerald-400" : "")}>
+        {formatBRL(valor)}
       </p>
-    </Card>
-  );
-}
-
-function FlowCard({
-  icon: Icon,
-  label,
-  value,
-  accent,
-}: {
-  icon: typeof TrendingUp;
-  label: string;
-  value: string;
-  accent: "success" | "danger";
-}) {
-  const accentClasses = {
-    success: "bg-success/10 text-success",
-    danger: "bg-destructive/10 text-destructive",
-  } as const;
-  const valueClasses = {
-    success: "text-success",
-    danger: "text-destructive",
-  } as const;
-  return (
-    <Card className="p-5 flex items-center gap-4">
-      <div className={`h-11 w-11 rounded-lg flex items-center justify-center ${accentClasses[accent]}`}>
-        <Icon className="h-5 w-5" />
-      </div>
-      <div className="flex-1">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-        <p className={`text-2xl font-semibold mt-0.5 tabular-nums ${valueClasses[accent]}`}>{value}</p>
-      </div>
+      {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
     </Card>
   );
 }
