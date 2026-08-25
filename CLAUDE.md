@@ -423,6 +423,15 @@ pedido filtrado** — 968 mil execuções da subquery de kit. Reescrito com
 `LEFT JOIN LATERAL` parametrizado (`WHERE pi.pedido_id = p.id` dentro):
 **40.252ms → 1ms**, com resultado validado ao centavo.
 
+### `LATERAL` — caso 2: `view_tags_pedidos` (25/ago/2026)
+Mesmo padrão: CTE `itens_agg` agregava TODOS os ~63 mil pedidos de
+`pedido_itens_tiny` para juntar com meia dúzia de abertos — ~2s aquecida e
+**statement timeout sob carga**, derrubando o `processar-abertos` (cron 5 min +
+botão da Separação) com 500 intermitente. Reescrita com `CROSS JOIN LATERAL`
+parametrizado: **2.026ms → 2,6ms**, baseline md5 idêntico (22 linhas). O JOIN
+interno da versão antiga excluía pedido sem itens — o `ia.n_linhas > 0`
+preserva isso.
+
 ### Agregação + filtro do PostgREST = materialize
 `view_kpi_pedidos_dia` como view comum calculava tudo em 59ms, mas ao receber
 filtro de data o plano degradava e estourava o timeout (erro 500). Virou
