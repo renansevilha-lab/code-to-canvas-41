@@ -144,29 +144,27 @@ function CarteiraPage() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  const [saldoAtual, setSaldoAtual] = useState<{ valor: number | null; data: string | null }>({
-    valor: null,
-    data: null,
-  });
+  const [saldos, setSaldos] = useState<{ carteira: string; saldo: number; em: string | null }[]>([]);
 
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<"data" | "valor">("data");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  // Saldo atual (independente do período)
+  // Saldo por LOJA (view_carteira_saldo) — antes era um saldo só, misturando
+  // as duas carteiras Shopee (mostrava o da última transação de qualquer loja).
   useEffect(() => {
     (async () => {
       const { data, error } = await supabaseExternal
-        .from("view_carteira")
-        .select("saldo_apos, data")
-        .not("saldo_apos", "is", null)
-        .order("data", { ascending: false })
-        .limit(1);
+        .from("view_carteira_saldo")
+        .select("carteira, saldo_em_conta, saldo_em")
+        .eq("marketplace", "shopee")
+        .order("carteira", { ascending: false }); // Ottz antes de Bumi
       if (error) return;
-      const row = data?.[0];
-      if (row) {
-        setSaldoAtual({ valor: Number(row.saldo_apos), data: row.data as string });
-      }
+      setSaldos((data ?? []).map((r) => ({
+        carteira: String(r.carteira),
+        saldo: Number(r.saldo_em_conta ?? 0),
+        em: (r.saldo_em as string | null) ?? null,
+      })));
     })();
   }, []);
 
@@ -333,17 +331,20 @@ function CarteiraPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <KpiCard
-          label="Saldo atual"
-          value={saldoAtual.valor != null ? formatBRL(saldoAtual.valor) : "—"}
-          hint={
-            saldoAtual.data
-              ? `em ${format(new Date(saldoAtual.data), "dd/MM/yyyy HH:mm")}`
-              : "sem dados"
-          }
-          icon={<Wallet className="h-5 w-5" />}
-          accent="primary"
-        />
+        {saldos.length === 0 ? (
+          <KpiCard label="Saldo atual" value="—" hint="carregando…" icon={<Wallet className="h-5 w-5" />} accent="primary" />
+        ) : (
+          saldos.map((sdo) => (
+            <KpiCard
+              key={sdo.carteira}
+              label={`Saldo · ${sdo.carteira.replace("Shopee · ", "")}`}
+              value={formatBRL(sdo.saldo)}
+              hint={sdo.em ? `em ${format(new Date(sdo.em), "dd/MM/yyyy HH:mm")}` : "sem dados"}
+              icon={<Wallet className="h-5 w-5" />}
+              accent="primary"
+            />
+          ))
+        )}
         <KpiCard
           label="Total recebido"
           value={loading ? "…" : formatBRL(kpis.totalRecebido)}
