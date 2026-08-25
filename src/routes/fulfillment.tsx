@@ -1889,6 +1889,34 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     if (error) { toast.error("Falha ao mudar o tipo", { description: error.message }); return; }
     docsQ.refetch();
   }
+  const [imprimindoDoc, setImprimindoDoc] = useState<string | null>(null);
+  /**
+   * Imprime um documento PDF anexado direto na ZD220 (PrintNode, pdf_base64).
+   * Caso real: etiqueta de produtos da AMAZON só existe em PDF — o time abria
+   * o arquivo e imprimia na mão ("quebra um galho"); agora é um clique.
+   */
+  async function imprimirDoc(d: EnvioDoc) {
+    if (!printerId) { toast.warning("Escolha a impressora (no rodapé do envio)."); return; }
+    const imp = impressoras.find((p) => p.printer_id === printerId);
+    if (!window.confirm(`Imprimir "${d.nome ?? "documento"}" na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    setImprimindoDoc(d.id);
+    try {
+      const { data, error } = await supabaseExternal
+        .from("fulfillment_envio_docs").select("conteudo_base64").eq("id", d.id).single();
+      if (error || !data) throw error ?? new Error("documento não encontrado");
+      const { data: r, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+        body: { modulo: "imprimir", pdf_base64: data.conteudo_base64, printer_id: printerId, title: d.nome ?? "Documento" },
+      });
+      if (e2) throw new Error(e2.message);
+      if (!(r as { ok?: boolean })?.ok) throw new Error(JSON.stringify((r as { resposta?: unknown })?.resposta ?? r));
+      toast.success(`"${d.nome}" enviado à impressora`);
+    } catch (e) {
+      toast.error("Falha ao imprimir", { description: (e as Error).message });
+    } finally {
+      setImprimindoDoc(null);
+    }
+  }
+
   async function abrirDoc(d: EnvioDoc) {
     try {
       const { data, error } = await supabaseExternal
@@ -2274,6 +2302,15 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                 </select>
                 <span className="truncate flex-1">{d.nome ?? "documento"}</span>
                 <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{d.tamanho ? `${Math.round(d.tamanho / 1024)} KB` : ""}</span>
+                {(d.mime ?? "").includes("pdf") && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
+                    disabled={imprimindoDoc !== null}
+                    title="Imprimir este PDF direto na impressora selecionada"
+                    onClick={() => void imprimirDoc(d)}>
+                    {imprimindoDoc === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />}
+                    Imprimir
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void abrirDoc(d)}>Abrir</Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void excluirDoc(d)}><Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
@@ -2384,7 +2421,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                   <div key={d.id} className="flex items-center gap-2 text-sm">
                     <span className="truncate flex-1">{d.nome ?? "etiqueta.pdf"}</span>
                     <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{d.tamanho ? `${Math.round(d.tamanho / 1024)} KB` : ""}</span>
-                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => void abrirDoc(d)}><Printer className="h-3.5 w-3.5" /> Abrir / imprimir</Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={imprimindoDoc !== null} onClick={() => void imprimirDoc(d)}>{imprimindoDoc === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />} Imprimir</Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void abrirDoc(d)}>Abrir</Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void excluirDoc(d)}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 ))}
@@ -2588,7 +2626,9 @@ function CardItemPacking({
             size="sm"
             className="h-7 gap-1.5 text-xs"
             disabled={!temEtiqueta || imprimindo}
-            title={temEtiqueta ? "Imprimir etiquetas deste produto" : "Anexe o arquivo de etiquetas do envio"}
+            title={temEtiqueta
+              ? "Imprimir etiquetas deste produto"
+              : "Sem ZPL deste SKU. Amazon (PDF): use o botão Imprimir do arquivo em Documentos"}
             onClick={() => onImprimir(Math.max(1, parseInt(qtdImp, 10) || 0))}
           >
             {imprimindo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
