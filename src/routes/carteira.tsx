@@ -44,6 +44,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { KpiCard } from "@/components/KpiCard";
+import { AReceberEstagios } from "@/components/carteira/AReceberEstagios";
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
 
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -374,6 +375,9 @@ function CarteiraPage() {
           accent="warning"
         />
       </div>
+
+      {/* A receber por estágio (antessala do fluxo de caixa) */}
+      <AReceberEstagios />
 
       {/* Tabela */}
       <Card className="p-4">
