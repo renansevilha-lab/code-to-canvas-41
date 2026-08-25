@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { usePerfil } from "@/hooks/usePerfil";
+import { GastosRecorrentes } from "@/components/dre/GastosRecorrentes";
 import { cn } from "@/lib/utils";
 
 // Categorias válidas do bloco de despesas do DRE (para reclassificar 1 conta).
@@ -357,6 +358,7 @@ function DREPage() {
           Consolidado ACZ Pet + SVL Store · comparação com o mês anterior
         </p>
         <div className="flex items-center gap-2 flex-wrap">
+          <GastosRecorrentes onMudou={() => void carregar(true)} />
           <AvisosPopover />
           <Select value={empresaSel} onValueChange={(v) => setEmpresaSel(v as EmpresaFiltro)}>
             <SelectTrigger className="w-[160px]">

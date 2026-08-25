@@ -293,6 +293,15 @@ espaços), `Outras / a classificar`, `Pessoal/Creative (revisar)`, além de
 `Pessoal`, `Aluguel`, `Administrativas`, `Embalagem`, `Financeiras` e as que
 saem do DRE (`Mercadoria (ref)`, `Cartão/Financeiro (fora DRE)`, `Impostos`).
 
+**Gastos recorrentes (25/ago/2026):** tabela `dre_gastos_recorrentes`
+(descrição, categoria do DRE, valor/mês, `mes_inicio`→`mes_fim`; RLS
+authenticated, front escreve). As views `view_dre_despesas`/`_detalhe` expandem
+mês a mês até o mês corrente (nunca projetam futuro); no detalhe a linha vem
+com `tiny_id NULL` — o front já esconde o override nesse caso. Botão "Gastos
+recorrentes" no cabeçalho do `/dre`. **Encerrar** (preenche `mes_fim`) preserva
+o histórico; **excluir** apaga de todos os meses. Baseline md5 validado
+idêntico com a tabela vazia.
+
 **Override manual (28/jul/2026):** tabela `dre_conta_override` (PK `tiny_id`,
 campos `excluir`, `categoria_override`, `motivo`, `editado_por`, `editado_em`;
 GRANT anon+authenticated, sem RLS). Sobrevive ao sync porque a chave é o
