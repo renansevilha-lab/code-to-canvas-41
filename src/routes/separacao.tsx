@@ -659,7 +659,16 @@ function ProcessarAbertosButton() {
       const aprov = d.aprovados ?? 0;
       const tags = d.tags_aplicadas ?? 0;
       if (aprov === 0 && tags === 0) {
-        toast.info("Nenhum pedido em aberto para processar agora");
+        // "Em aberto" aqui = no NOSSO espelho. Pedido recem-feito percorre
+        // Shopee -> Tiny (importacao do proprio Tiny) -> espelho (sync 10 min)
+        // antes de aparecer para este botao; dizer so "nenhum em aberto"
+        // soava como defeito quando o pedido estava visivel no painel.
+        toast.info("Nenhum pedido em aberto no app agora", {
+          description:
+            "Pedido recém-feito leva ~5–15 min para chegar (Shopee → Tiny → app). " +
+            "O robô processa sozinho a cada 5 min — não precisa ficar clicando.",
+          duration: 9000,
+        });
       } else {
         toast.success(
           `${formatNumber(aprov)} pedido(s) aprovado(s) · ${formatNumber(tags)} tag(s)`,
