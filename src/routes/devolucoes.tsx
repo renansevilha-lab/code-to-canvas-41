@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DevolucoesRecebidas } from "@/components/DevolucoesRecebidas";
+import { DevolucoesShopeeAbertas } from "@/components/DevolucoesShopeeAbertas";
 import { rotuloCanal } from "@/lib/canais";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,13 +140,14 @@ export const Route = createFileRoute("/devolucoes")({
 
 function DevolucoesPage() {
   const { empresa } = Route.useSearch();
-  const [aba, setAba] = useState<"cancelados" | "recebidas">("cancelados");
+  const [aba, setAba] = useState<"cancelados" | "recebidas" | "shopee">("cancelados");
   return (
-    <Tabs value={aba} onValueChange={(v) => setAba(v as "cancelados" | "recebidas")} className="w-full">
+    <Tabs value={aba} onValueChange={(v) => setAba(v as "cancelados" | "recebidas" | "shopee")} className="w-full">
       <div className="px-6 pt-5 max-w-[1400px] mx-auto">
         <TabsList>
           <TabsTrigger value="cancelados">Cancelados (NF)</TabsTrigger>
           <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
+          <TabsTrigger value="shopee">Shopee (abertas)</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="cancelados" className="mt-0">
@@ -154,6 +156,11 @@ function DevolucoesPage() {
       <TabsContent value="recebidas" className="mt-0">
         <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
           <DevolucoesRecebidas />
+        </div>
+      </TabsContent>
+      <TabsContent value="shopee" className="mt-0">
+        <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
+          <DevolucoesShopeeAbertas />
         </div>
       </TabsContent>
     </Tabs>

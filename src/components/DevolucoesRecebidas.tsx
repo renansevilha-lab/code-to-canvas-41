@@ -72,7 +72,11 @@ interface Recebida {
   id: string; order_sn: string | null; tiny_numero: string | null; marca_canal: string | null;
   shopee_status: string | null; forma_envio: string | null; motivo_devolucao: string | null;
   status: string; recebido_em: string; recebido_por: string | null;
-  conferido_ok: boolean | null; observacao: string | null; devolucao_recebida_itens?: { sku: string | null }[];
+  conferido_ok: boolean | null; observacao: string | null;
+  devolucao_recebida_itens?: {
+    sku: string | null; estado?: string | null; observacao?: string | null;
+    qtd_esperada?: number | null; qtd_recebida?: number | null;
+  }[];
 }
 
 const num = (x: unknown) => { const n = Number(x ?? 0); return Number.isFinite(n) ? n : 0; };
@@ -157,7 +161,7 @@ export function DevolucoesRecebidas() {
     queryFn: async (): Promise<Recebida[]> => {
       const { data, error } = await supabaseExternal
         .from("devolucoes_recebidas")
-        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, forma_envio, motivo_devolucao, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku)")
+        .select("id, order_sn, tiny_numero, marca_canal, shopee_status, forma_envio, motivo_devolucao, status, recebido_em, recebido_por, conferido_ok, observacao, devolucao_recebida_itens(sku, estado, observacao, qtd_esperada, qtd_recebida)")
         .order("recebido_em", { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -579,7 +583,25 @@ export function DevolucoesRecebidas() {
                               ) : (
                                 <span className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0" style={{ background: "#B7791F1F", color: "#B7791F" }}>Com ressalva ⚠</span>
                               )}
-                              <span className="text-[12.5px] text-muted-foreground truncate">{r.observacao ?? ""}</span>
+                              {/* QUAL é a ressalva (pedido do dono, 25/ago): item
+                                  fora de "ok" e divergência de quantidade, com a
+                                  observação de quem conferiu. Sempre esteve no
+                                  banco — só não era exibido. */}
+                              <div className="flex flex-col gap-0.5 min-w-0">
+                                {!r.conferido_ok && (r.devolucao_recebida_itens ?? [])
+                                  .filter((it) => (it.estado && it.estado !== "ok") || (it.qtd_recebida != null && it.qtd_esperada != null && it.qtd_recebida !== it.qtd_esperada))
+                                  .map((it, i) => (
+                                    <span key={i} className="text-[11px] leading-tight" style={{ color: "#B7791F" }}>
+                                      <span className="font-mono font-semibold">{it.sku ?? "?"}</span>
+                                      {it.estado && it.estado !== "ok" && <> · {it.estado}</>}
+                                      {it.qtd_recebida != null && it.qtd_esperada != null && it.qtd_recebida !== it.qtd_esperada && (
+                                        <> · recebido {it.qtd_recebida}/{it.qtd_esperada}</>
+                                      )}
+                                      {it.observacao && <span className="text-muted-foreground"> — {it.observacao}</span>}
+                                    </span>
+                                  ))}
+                                <span className="text-[12.5px] text-muted-foreground truncate">{r.observacao ?? ""}</span>
+                              </div>
                             </div>
                           )}
                         </td>
