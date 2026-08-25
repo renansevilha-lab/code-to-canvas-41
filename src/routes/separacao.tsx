@@ -2327,6 +2327,52 @@ function FilaPriorizada() {
   );
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
   const [buscaSku, setBuscaSku] = useState("");
+  // ---- Busca por Nº DO PEDIDO (ML, Shopee, venda Tiny) ----
+  // A fila é agregada por SKU·envio·qtd: o número do pedido NÃO está nas
+  // linhas. Quando o texto parece um número de pedido (≥6 caracteres
+  // alfanuméricos, com dígito, sem espaço — ML "2000017…", Shopee
+  // "260814A9DYB4…", venda Tiny), consultamos a fila real
+  // (view_separacao_pedidos) e mapeamos cada pedido encontrado para a SUA
+  // linha (tag_sugerida / sku+envio). A regex também é o que torna o termo
+  // seguro para interpolar no .or() do PostgREST (só alnum e hífen).
+  const buscaTermo = buscaSku.trim();
+  const pareceNumPedido = /^[0-9A-Za-z-]{6,}$/.test(buscaTermo) && /\d/.test(buscaTermo);
+  const [buscaPedidoTermo, setBuscaPedidoTermo] = useState("");
+  useEffect(() => {
+    if (!pareceNumPedido) { setBuscaPedidoTermo(""); return; }
+    const t = setTimeout(() => setBuscaPedidoTermo(buscaTermo), 300);
+    return () => clearTimeout(t);
+  }, [buscaTermo, pareceNumPedido]);
+  const buscaPedidoQ = useQuery({
+    queryKey: ["separacao", "busca-pedido", buscaPedidoTermo],
+    enabled: buscaPedidoTermo.length >= 6,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("numero_ecommerce, venda_numero, sku_unico, tipo_envio, tag_sugerida, tag_lote, marca_canal, qtd_skus")
+        .or(`numero_ecommerce.ilike.%${buscaPedidoTermo}%,venda_numero.ilike.%${buscaPedidoTermo}%`)
+        .limit(30);
+      if (error) throw error;
+      return (data ?? []) as Array<{
+        numero_ecommerce: string | null; venda_numero: string | null;
+        sku_unico: string | null; tipo_envio: string | null;
+        tag_sugerida: string | null; tag_lote: string | null;
+        marca_canal: string | null; qtd_skus: number | null;
+      }>;
+    },
+  });
+  const pedidoHits = buscaPedidoTermo.length >= 6 ? (buscaPedidoQ.data ?? null) : null;
+  // Linhas da fila onde os pedidos encontrados moram. Pedido multi-SKU não tem
+  // linha própria (sku_unico null) — fica só no aviso, sem filtrar a lista.
+  const pedidoLinhas = useMemo(() => {
+    if (!pedidoHits) return null;
+    const set = new Set<string>();
+    for (const h of pedidoHits) {
+      if (h.tag_sugerida || h.sku_unico) set.add(linhaKeyDe(h));
+    }
+    return set;
+  }, [pedidoHits]);
   // filtro por prazo máximo de despacho: "todos" | "vencidos" | "0"(hoje) | "1" | "2" | "3" | "5" (dias)
   const [prazoFiltro, setPrazoFiltro] = useState<string>("todos");
   // Filtro "sem estoque": mostra so linhas com falta reportada (badge ambar).
@@ -2795,7 +2841,8 @@ function FilaPriorizada() {
       if (q) {
         const hit =
           (r.sku ?? "").toLowerCase().includes(q) ||
-          (r.nome_produto ?? "").toLowerCase().includes(q);
+          (r.nome_produto ?? "").toLowerCase().includes(q) ||
+          (pedidoLinhas?.has(linhaKeyDe(r)) ?? false);
         if (!hit) return false;
       }
       if (prazoFiltro !== "todos") {
@@ -2809,7 +2856,7 @@ function FilaPriorizada() {
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, tagsPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, tagsPorLinha, pedidoLinhas]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -2991,11 +3038,41 @@ function FilaPriorizada() {
           <Input
             value={buscaSku}
             onChange={(e) => setBuscaSku(e.target.value)}
-            placeholder="Buscar por SKU ou nome…"
+            placeholder="Buscar por SKU, nome ou nº do pedido…"
             className="pl-8 h-9 text-sm bg-card"
           />
         </div>
       </div>
+
+      {/* Resultado da busca por nº de pedido: diz ONDE o pedido está (linha/TAG). */}
+      {pedidoHits && pedidoHits.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-xs bg-card border rounded-lg px-3 py-2">
+          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          {pedidoHits.slice(0, 5).map((h) => (
+            <span key={`${h.numero_ecommerce}-${h.venda_numero}`} className="inline-flex items-center gap-1.5">
+              <span className="font-mono font-semibold">{h.numero_ecommerce ?? h.venda_numero}</span>
+              <span className="text-muted-foreground">· {rotuloCanal(h.marca_canal)} ·</span>
+              {h.tag_lote ? (
+                <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-foreground text-background">{h.tag_lote}</span>
+              ) : (
+                <span className="text-amber-600 font-medium">sem TAG</span>
+              )}
+              {(h.qtd_skus ?? 1) > 1 && (
+                <span className="text-muted-foreground">(multi-SKU — fora das linhas)</span>
+              )}
+            </span>
+          ))}
+          {pedidoHits.length > 5 && (
+            <span className="text-muted-foreground">+{pedidoHits.length - 5} pedido(s)</span>
+          )}
+        </div>
+      )}
+      {pedidoHits && pedidoHits.length === 0 && !buscaPedidoQ.isLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-card border border-dashed rounded-lg px-3 py-2">
+          <Search className="h-3.5 w-3.5 shrink-0" />
+          Nenhum pedido na fila com esse número — pode já ter sido separado (veja o Histórico de Separação) ou ainda não sincronizou do Tiny.
+        </div>
+      )}
 
       {/* Blocos unitários por envio */}
       {grupos.map((g) => {
