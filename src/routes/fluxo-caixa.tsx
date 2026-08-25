@@ -52,6 +52,7 @@ interface EventoRow {
   confianca: "real" | "estimado";
   valor: number;
   itens: number;
+  detalhe: string | null;
 }
 interface SaldoRow { carteira: string; saldo_em_conta: number; marketplace: string }
 
@@ -157,16 +158,8 @@ function FluxoCaixaPage() {
         />
       </div>
 
-      {/* Premissas do modelo */}
-      <div className="flex items-start gap-2 text-[12px] text-muted-foreground bg-muted/40 border rounded-md px-3 py-2">
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <span>
-          Só entram pedidos que <strong>já existem</strong>: as entradas Shopee se esgotam em ~10 dias
-          (o funil atual drena). Depois disso o saldo projetado é <strong>conservador</strong> — vendas
-          futuras não são inventadas. Saídas: contas a pagar em aberto (vencidas caem em hoje) +
-          gastos recorrentes no dia 5 de cada mês.
-        </span>
-      </div>
+      {/* Como a projeção é calculada — legenda completa, colapsável */}
+      <ComoCalculado />
 
       {carregando ? (
         <Skeleton className="h-72 w-full" />
@@ -253,7 +246,12 @@ function FluxoCaixaPage() {
                         {eventos.map((e, i) => (
                           <div key={i} className="flex items-center gap-2 text-[12px] pl-2">
                             <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", e.fluxo === "entrada" ? "bg-emerald-500" : "bg-red-500")} />
-                            <span className="flex-1 min-w-0 truncate">{e.origem}</span>
+                            <span className="flex-1 min-w-0 truncate">
+                              {e.origem}
+                              {e.detalhe && (
+                                <span className="text-muted-foreground text-[11px]"> — {e.detalhe}</span>
+                              )}
+                            </span>
                             {e.confianca === "estimado" && (
                               <span className="text-[10px] px-1 rounded bg-muted text-muted-foreground shrink-0">estimado</span>
                             )}
@@ -272,6 +270,30 @@ function FluxoCaixaPage() {
           </tbody>
         </table>
       </Card>
+    </div>
+  );
+}
+
+function ComoCalculado() {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="text-[12px] text-muted-foreground bg-muted/40 border rounded-md px-3 py-2">
+      <button type="button" onClick={() => setAberto((v) => !v)} className="flex items-center gap-2 w-full text-left">
+        <Info className="h-3.5 w-3.5 shrink-0" />
+        <span className="font-medium text-foreground">Como esta projeção é calculada</span>
+        {aberto ? <ChevronDown className="h-3.5 w-3.5 ml-auto" /> : <ChevronRight className="h-3.5 w-3.5 ml-auto" />}
+      </button>
+      {aberto && (
+        <ul className="mt-2 space-y-1 list-disc pl-5">
+          <li><strong className="text-foreground">Entradas ML</strong> — data <em>real</em> de liberação informada pelo Mercado Pago, pagamento a pagamento.</li>
+          <li><strong className="text-foreground">Entradas Shopee</strong> — estimadas por pedido: data do pedido + 8 dias (mediana medida em 12,7 mil créditos reais das duas lojas). Pedidos "atrasados" no funil são distribuídos na janela típica do estágio: liberação 1–2 dias, entregue 1–4, em trânsito 3–7, a enviar 6–11.</li>
+          <li><strong className="text-foreground">Contas a pagar</strong> — cada conta em aberto do Tiny, no vencimento; <em>vencida cai em HOJE</em>. Expanda o dia para ver fornecedor e categoria.</li>
+          <li><strong className="text-foreground">ADS</strong> — regra da casa: dia <strong>10</strong> paga o gasto de ADS do mês anterior (Shopee + ML). Competência em curso é extrapolada pro-rata.</li>
+          <li><strong className="text-foreground">Impostos</strong> — regra da casa: dia <strong>20</strong> paga o imposto sobre vendas do mês anterior. Competência em curso extrapolada pro-rata.</li>
+          <li><strong className="text-foreground">Gastos recorrentes</strong> — cadastrados no DRE, lançados no dia 5 de cada mês (premissa).</li>
+          <li><strong className="text-foreground">Limite do modelo</strong> — só entram pedidos que <em>já existem</em>: as entradas Shopee drenam em ~10 dias e, além disso, o saldo projetado é <em>conservador</em> (vendas futuras não são inventadas). Saldo inicial = carteiras Shopee (o ML não expõe saldo).</li>
+        </ul>
+      )}
     </div>
   );
 }
