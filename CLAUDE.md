@@ -313,7 +313,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 |---|---|---|
 | `shopee-sync-ads` | v54 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
-| `tiny-separacao` | v24 | Sync da fila, tags de lote, embalar |
+| `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v4 | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal estoque). `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila. Grava `separacao_tiny.falta_estoque_em/_por` (espelho p/ badge+filtro da tela). Separada da tiny-separacao de propósito |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |

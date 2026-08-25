@@ -654,21 +654,30 @@ function ProcessarAbertosButton() {
         `${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=processar-abertos&canal=shopee`,
         { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
       );
-      const d = (await resp.json().catch(() => ({}))) as { tags_aplicadas?: number; aprovados?: number; erro?: string; erros?: string[] };
+      const d = (await resp.json().catch(() => ({}))) as {
+        tags_aplicadas?: number; aprovados?: number; erro?: string; erros?: string[];
+        abertos_no_tiny_live?: number; espelhados_na_hora?: number;
+      };
       if (!resp.ok || d.erro) throw new Error(d.erro ?? `HTTP ${resp.status}`);
       const aprov = d.aprovados ?? 0;
       const tags = d.tags_aplicadas ?? 0;
       if (aprov === 0 && tags === 0) {
-        // "Em aberto" aqui = no NOSSO espelho. Pedido recem-feito percorre
-        // Shopee -> Tiny (importacao do proprio Tiny) -> espelho (sync 10 min)
-        // antes de aparecer para este botao; dizer so "nenhum em aberto"
-        // soava como defeito quando o pedido estava visivel no painel.
-        toast.info("Nenhum pedido em aberto no app agora", {
-          description:
-            "Pedido recém-feito leva ~5–15 min para chegar (Shopee → Tiny → app). " +
-            "O robô processa sozinho a cada 5 min — não precisa ficar clicando.",
-          duration: 9000,
-        });
+        // v33 da funcao: o botao agora CONFERE O TINY AO VIVO e espelha na hora
+        // o que faltar. Se abertos_no_tiny_live=0, e zero MESMO (nao e atraso
+        // do espelho). Se >0 e nada processou, sao pedidos que o proprio Tiny
+        // ainda nao deixou processar (sem itens/forma de envio definida).
+        const aoVivo = d.abertos_no_tiny_live;
+        if (aoVivo === 0) {
+          toast.info("Nenhum pedido em aberto no Tiny agora", {
+            description: "Conferido ao vivo na API do Tiny. Se o pedido acabou de cair na Shopee, o próprio Tiny ainda não o importou.",
+            duration: 8000,
+          });
+        } else {
+          toast.info(`${aoVivo ?? "?"} pedido(s) em aberto no Tiny, nenhum processável agora`, {
+            description: "Aguardando o Tiny completar os dados (itens/forma de envio). O robô tenta de novo a cada 5 min.",
+            duration: 9000,
+          });
+        }
       } else {
         toast.success(
           `${formatNumber(aprov)} pedido(s) aprovado(s) · ${formatNumber(tags)} tag(s)`,
