@@ -9,176 +9,42 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as VendasRouteImport } from './routes/vendas'
-import { Route as UsuariosRouteImport } from './routes/usuarios'
-import { Route as TendenciasRouteImport } from './routes/tendencias'
-import { Route as SeparacaoRouteImport } from './routes/separacao'
-import { Route as SaudeMlRouteImport } from './routes/saude-ml'
-import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
-import { Route as PromocoesMlRouteImport } from './routes/promocoes-ml'
-import { Route as PromocoesRouteImport } from './routes/promocoes'
-import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
-import { Route as ProdutosRouteImport } from './routes/produtos'
-import { Route as ProcessosRouteImport } from './routes/processos'
-import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
-import { Route as PedidosRouteImport } from './routes/pedidos'
-import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
-import { Route as MetasRouteImport } from './routes/metas'
-import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
-import { Route as HistoricoSeparacaoRouteImport } from './routes/historico-separacao'
-import { Route as FulfillmentRouteImport } from './routes/fulfillment'
-import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
-import { Route as DreRouteImport } from './routes/dre'
-import { Route as DevolucoesRouteImport } from './routes/devolucoes'
-import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
-import { Route as ComprasRouteImport } from './routes/compras'
-import { Route as CarteiraSaldosRouteImport } from './routes/carteira-saldos'
-import { Route as CarteiraRouteImport } from './routes/carteira'
-import { Route as AnomaliasRouteImport } from './routes/anomalias'
-import { Route as AmazonRouteImport } from './routes/amazon'
-import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
-import { Route as AdsMlRouteImport } from './routes/ads-ml'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdsMlRouteImport } from './routes/ads-ml'
+import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
+import { Route as AmazonRouteImport } from './routes/amazon'
+import { Route as AnomaliasRouteImport } from './routes/anomalias'
+import { Route as CarteiraRouteImport } from './routes/carteira'
+import { Route as CarteiraSaldosRouteImport } from './routes/carteira-saldos'
+import { Route as ComprasRouteImport } from './routes/compras'
+import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
+import { Route as DevolucoesRouteImport } from './routes/devolucoes'
+import { Route as DreRouteImport } from './routes/dre'
+import { Route as FlashSaleRouteImport } from './routes/flash-sale'
+import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
+import { Route as FulfillmentRouteImport } from './routes/fulfillment'
+import { Route as HistoricoSeparacaoRouteImport } from './routes/historico-separacao'
+import { Route as MapeamentoSkusRouteImport } from './routes/mapeamento-skus'
+import { Route as MetasRouteImport } from './routes/metas'
+import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
+import { Route as PedidosRouteImport } from './routes/pedidos'
+import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
+import { Route as ProcessosRouteImport } from './routes/processos'
+import { Route as ProdutosRouteImport } from './routes/produtos'
+import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
+import { Route as PromocoesRouteImport } from './routes/promocoes'
+import { Route as PromocoesMlRouteImport } from './routes/promocoes-ml'
+import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
+import { Route as SaudeMlRouteImport } from './routes/saude-ml'
+import { Route as SeparacaoRouteImport } from './routes/separacao'
+import { Route as TendenciasRouteImport } from './routes/tendencias'
+import { Route as UsuariosRouteImport } from './routes/usuarios'
+import { Route as VendasRouteImport } from './routes/vendas'
 import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
-const VendasRoute = VendasRouteImport.update({
-  id: '/vendas',
-  path: '/vendas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsuariosRoute = UsuariosRouteImport.update({
-  id: '/usuarios',
-  path: '/usuarios',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TendenciasRoute = TendenciasRouteImport.update({
-  id: '/tendencias',
-  path: '/tendencias',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SeparacaoRoute = SeparacaoRouteImport.update({
-  id: '/separacao',
-  path: '/separacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SaudeMlRoute = SaudeMlRouteImport.update({
-  id: '/saude-ml',
-  path: '/saude-ml',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ReprocessarCmvRoute = ReprocessarCmvRouteImport.update({
-  id: '/reprocessar-cmv',
-  path: '/reprocessar-cmv',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PromocoesMlRoute = PromocoesMlRouteImport.update({
-  id: '/promocoes-ml',
-  path: '/promocoes-ml',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PromocoesRoute = PromocoesRouteImport.update({
-  id: '/promocoes',
-  path: '/promocoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProdutosMargemRoute = ProdutosMargemRouteImport.update({
-  id: '/produtos-margem',
-  path: '/produtos-margem',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProdutosRoute = ProdutosRouteImport.update({
-  id: '/produtos',
-  path: '/produtos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProcessosRoute = ProcessosRouteImport.update({
-  id: '/processos',
-  path: '/processos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
-  id: '/pedidos-integrados',
-  path: '/pedidos-integrados',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PedidosRoute = PedidosRouteImport.update({
-  id: '/pedidos',
-  path: '/pedidos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MonitoramentoRoute = MonitoramentoRouteImport.update({
-  id: '/monitoramento',
-  path: '/monitoramento',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MetasRoute = MetasRouteImport.update({
-  id: '/metas',
-  path: '/metas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MapeamentoSkusRoute = MapeamentoSkusRouteImport.update({
-  id: '/mapeamento-skus',
-  path: '/mapeamento-skus',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HistoricoSeparacaoRoute = HistoricoSeparacaoRouteImport.update({
-  id: '/historico-separacao',
-  path: '/historico-separacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FulfillmentRoute = FulfillmentRouteImport.update({
-  id: '/fulfillment',
-  path: '/fulfillment',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
-  id: '/fluxo-caixa',
-  path: '/fluxo-caixa',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DreRoute = DreRouteImport.update({
-  id: '/dre',
-  path: '/dre',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DevolucoesRoute = DevolucoesRouteImport.update({
-  id: '/devolucoes',
-  path: '/devolucoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContasPagarRoute = ContasPagarRouteImport.update({
-  id: '/contas-pagar',
-  path: '/contas-pagar',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ComprasRoute = ComprasRouteImport.update({
-  id: '/compras',
-  path: '/compras',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CarteiraSaldosRoute = CarteiraSaldosRouteImport.update({
-  id: '/carteira-saldos',
-  path: '/carteira-saldos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CarteiraRoute = CarteiraRouteImport.update({
-  id: '/carteira',
-  path: '/carteira',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AnomaliasRoute = AnomaliasRouteImport.update({
-  id: '/anomalias',
-  path: '/anomalias',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AmazonRoute = AmazonRouteImport.update({
-  id: '/amazon',
-  path: '/amazon',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdsShopeeRoute = AdsShopeeRouteImport.update({
-  id: '/ads-shopee',
-  path: '/ads-shopee',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdsMlRoute = AdsMlRouteImport.update({
@@ -186,9 +52,149 @@ const AdsMlRoute = AdsMlRouteImport.update({
   path: '/ads-ml',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AdsShopeeRoute = AdsShopeeRouteImport.update({
+  id: '/ads-shopee',
+  path: '/ads-shopee',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AmazonRoute = AmazonRouteImport.update({
+  id: '/amazon',
+  path: '/amazon',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnomaliasRoute = AnomaliasRouteImport.update({
+  id: '/anomalias',
+  path: '/anomalias',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CarteiraRoute = CarteiraRouteImport.update({
+  id: '/carteira',
+  path: '/carteira',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CarteiraSaldosRoute = CarteiraSaldosRouteImport.update({
+  id: '/carteira-saldos',
+  path: '/carteira-saldos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ComprasRoute = ComprasRouteImport.update({
+  id: '/compras',
+  path: '/compras',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContasPagarRoute = ContasPagarRouteImport.update({
+  id: '/contas-pagar',
+  path: '/contas-pagar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevolucoesRoute = DevolucoesRouteImport.update({
+  id: '/devolucoes',
+  path: '/devolucoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DreRoute = DreRouteImport.update({
+  id: '/dre',
+  path: '/dre',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FlashSaleRoute = FlashSaleRouteImport.update({
+  id: '/flash-sale',
+  path: '/flash-sale',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FluxoCaixaRoute = FluxoCaixaRouteImport.update({
+  id: '/fluxo-caixa',
+  path: '/fluxo-caixa',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FulfillmentRoute = FulfillmentRouteImport.update({
+  id: '/fulfillment',
+  path: '/fulfillment',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoricoSeparacaoRoute = HistoricoSeparacaoRouteImport.update({
+  id: '/historico-separacao',
+  path: '/historico-separacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MapeamentoSkusRoute = MapeamentoSkusRouteImport.update({
+  id: '/mapeamento-skus',
+  path: '/mapeamento-skus',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetasRoute = MetasRouteImport.update({
+  id: '/metas',
+  path: '/metas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MonitoramentoRoute = MonitoramentoRouteImport.update({
+  id: '/monitoramento',
+  path: '/monitoramento',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidosRoute = PedidosRouteImport.update({
+  id: '/pedidos',
+  path: '/pedidos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
+  id: '/pedidos-integrados',
+  path: '/pedidos-integrados',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProcessosRoute = ProcessosRouteImport.update({
+  id: '/processos',
+  path: '/processos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProdutosRoute = ProdutosRouteImport.update({
+  id: '/produtos',
+  path: '/produtos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProdutosMargemRoute = ProdutosMargemRouteImport.update({
+  id: '/produtos-margem',
+  path: '/produtos-margem',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PromocoesRoute = PromocoesRouteImport.update({
+  id: '/promocoes',
+  path: '/promocoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PromocoesMlRoute = PromocoesMlRouteImport.update({
+  id: '/promocoes-ml',
+  path: '/promocoes-ml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReprocessarCmvRoute = ReprocessarCmvRouteImport.update({
+  id: '/reprocessar-cmv',
+  path: '/reprocessar-cmv',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SaudeMlRoute = SaudeMlRouteImport.update({
+  id: '/saude-ml',
+  path: '/saude-ml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SeparacaoRoute = SeparacaoRouteImport.update({
+  id: '/separacao',
+  path: '/separacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TendenciasRoute = TendenciasRouteImport.update({
+  id: '/tendencias',
+  path: '/tendencias',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsuariosRoute = UsuariosRouteImport.update({
+  id: '/usuarios',
+  path: '/usuarios',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VendasRoute = VendasRouteImport.update({
+  id: '/vendas',
+  path: '/vendas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
   '/historico-separacao': typeof HistoricoSeparacaoRoute
@@ -242,6 +249,7 @@ export interface FileRoutesByTo {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
   '/historico-separacao': typeof HistoricoSeparacaoRoute
@@ -276,6 +284,7 @@ export interface FileRoutesById {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
   '/historico-separacao': typeof HistoricoSeparacaoRoute
@@ -311,6 +320,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
     | '/historico-separacao'
@@ -344,6 +354,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
     | '/historico-separacao'
@@ -377,6 +388,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
     | '/historico-separacao'
@@ -411,6 +423,7 @@ export interface RootRouteChildren {
   ContasPagarRoute: typeof ContasPagarRoute
   DevolucoesRoute: typeof DevolucoesRoute
   DreRoute: typeof DreRoute
+  FlashSaleRoute: typeof FlashSaleRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   FulfillmentRoute: typeof FulfillmentRoute
   HistoricoSeparacaoRoute: typeof HistoricoSeparacaoRoute
@@ -435,200 +448,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/vendas': {
-      id: '/vendas'
-      path: '/vendas'
-      fullPath: '/vendas'
-      preLoaderRoute: typeof VendasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/usuarios': {
-      id: '/usuarios'
-      path: '/usuarios'
-      fullPath: '/usuarios'
-      preLoaderRoute: typeof UsuariosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tendencias': {
-      id: '/tendencias'
-      path: '/tendencias'
-      fullPath: '/tendencias'
-      preLoaderRoute: typeof TendenciasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/separacao': {
-      id: '/separacao'
-      path: '/separacao'
-      fullPath: '/separacao'
-      preLoaderRoute: typeof SeparacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/saude-ml': {
-      id: '/saude-ml'
-      path: '/saude-ml'
-      fullPath: '/saude-ml'
-      preLoaderRoute: typeof SaudeMlRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reprocessar-cmv': {
-      id: '/reprocessar-cmv'
-      path: '/reprocessar-cmv'
-      fullPath: '/reprocessar-cmv'
-      preLoaderRoute: typeof ReprocessarCmvRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/promocoes-ml': {
-      id: '/promocoes-ml'
-      path: '/promocoes-ml'
-      fullPath: '/promocoes-ml'
-      preLoaderRoute: typeof PromocoesMlRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/promocoes': {
-      id: '/promocoes'
-      path: '/promocoes'
-      fullPath: '/promocoes'
-      preLoaderRoute: typeof PromocoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/produtos-margem': {
-      id: '/produtos-margem'
-      path: '/produtos-margem'
-      fullPath: '/produtos-margem'
-      preLoaderRoute: typeof ProdutosMargemRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/produtos': {
-      id: '/produtos'
-      path: '/produtos'
-      fullPath: '/produtos'
-      preLoaderRoute: typeof ProdutosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/processos': {
-      id: '/processos'
-      path: '/processos'
-      fullPath: '/processos'
-      preLoaderRoute: typeof ProcessosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pedidos-integrados': {
-      id: '/pedidos-integrados'
-      path: '/pedidos-integrados'
-      fullPath: '/pedidos-integrados'
-      preLoaderRoute: typeof PedidosIntegradosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pedidos': {
-      id: '/pedidos'
-      path: '/pedidos'
-      fullPath: '/pedidos'
-      preLoaderRoute: typeof PedidosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/monitoramento': {
-      id: '/monitoramento'
-      path: '/monitoramento'
-      fullPath: '/monitoramento'
-      preLoaderRoute: typeof MonitoramentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/metas': {
-      id: '/metas'
-      path: '/metas'
-      fullPath: '/metas'
-      preLoaderRoute: typeof MetasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/mapeamento-skus': {
-      id: '/mapeamento-skus'
-      path: '/mapeamento-skus'
-      fullPath: '/mapeamento-skus'
-      preLoaderRoute: typeof MapeamentoSkusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/historico-separacao': {
-      id: '/historico-separacao'
-      path: '/historico-separacao'
-      fullPath: '/historico-separacao'
-      preLoaderRoute: typeof HistoricoSeparacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fulfillment': {
-      id: '/fulfillment'
-      path: '/fulfillment'
-      fullPath: '/fulfillment'
-      preLoaderRoute: typeof FulfillmentRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fluxo-caixa': {
-      id: '/fluxo-caixa'
-      path: '/fluxo-caixa'
-      fullPath: '/fluxo-caixa'
-      preLoaderRoute: typeof FluxoCaixaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dre': {
-      id: '/dre'
-      path: '/dre'
-      fullPath: '/dre'
-      preLoaderRoute: typeof DreRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/devolucoes': {
-      id: '/devolucoes'
-      path: '/devolucoes'
-      fullPath: '/devolucoes'
-      preLoaderRoute: typeof DevolucoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contas-pagar': {
-      id: '/contas-pagar'
-      path: '/contas-pagar'
-      fullPath: '/contas-pagar'
-      preLoaderRoute: typeof ContasPagarRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/compras': {
-      id: '/compras'
-      path: '/compras'
-      fullPath: '/compras'
-      preLoaderRoute: typeof ComprasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/carteira-saldos': {
-      id: '/carteira-saldos'
-      path: '/carteira-saldos'
-      fullPath: '/carteira-saldos'
-      preLoaderRoute: typeof CarteiraSaldosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/carteira': {
-      id: '/carteira'
-      path: '/carteira'
-      fullPath: '/carteira'
-      preLoaderRoute: typeof CarteiraRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/anomalias': {
-      id: '/anomalias'
-      path: '/anomalias'
-      fullPath: '/anomalias'
-      preLoaderRoute: typeof AnomaliasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/amazon': {
-      id: '/amazon'
-      path: '/amazon'
-      fullPath: '/amazon'
-      preLoaderRoute: typeof AmazonRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ads-shopee': {
-      id: '/ads-shopee'
-      path: '/ads-shopee'
-      fullPath: '/ads-shopee'
-      preLoaderRoute: typeof AdsShopeeRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ads-ml': {
@@ -638,11 +462,207 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdsMlRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/ads-shopee': {
+      id: '/ads-shopee'
+      path: '/ads-shopee'
+      fullPath: '/ads-shopee'
+      preLoaderRoute: typeof AdsShopeeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/amazon': {
+      id: '/amazon'
+      path: '/amazon'
+      fullPath: '/amazon'
+      preLoaderRoute: typeof AmazonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/anomalias': {
+      id: '/anomalias'
+      path: '/anomalias'
+      fullPath: '/anomalias'
+      preLoaderRoute: typeof AnomaliasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/carteira': {
+      id: '/carteira'
+      path: '/carteira'
+      fullPath: '/carteira'
+      preLoaderRoute: typeof CarteiraRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/carteira-saldos': {
+      id: '/carteira-saldos'
+      path: '/carteira-saldos'
+      fullPath: '/carteira-saldos'
+      preLoaderRoute: typeof CarteiraSaldosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/compras': {
+      id: '/compras'
+      path: '/compras'
+      fullPath: '/compras'
+      preLoaderRoute: typeof ComprasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contas-pagar': {
+      id: '/contas-pagar'
+      path: '/contas-pagar'
+      fullPath: '/contas-pagar'
+      preLoaderRoute: typeof ContasPagarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/devolucoes': {
+      id: '/devolucoes'
+      path: '/devolucoes'
+      fullPath: '/devolucoes'
+      preLoaderRoute: typeof DevolucoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dre': {
+      id: '/dre'
+      path: '/dre'
+      fullPath: '/dre'
+      preLoaderRoute: typeof DreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/flash-sale': {
+      id: '/flash-sale'
+      path: '/flash-sale'
+      fullPath: '/flash-sale'
+      preLoaderRoute: typeof FlashSaleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fluxo-caixa': {
+      id: '/fluxo-caixa'
+      path: '/fluxo-caixa'
+      fullPath: '/fluxo-caixa'
+      preLoaderRoute: typeof FluxoCaixaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fulfillment': {
+      id: '/fulfillment'
+      path: '/fulfillment'
+      fullPath: '/fulfillment'
+      preLoaderRoute: typeof FulfillmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/historico-separacao': {
+      id: '/historico-separacao'
+      path: '/historico-separacao'
+      fullPath: '/historico-separacao'
+      preLoaderRoute: typeof HistoricoSeparacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mapeamento-skus': {
+      id: '/mapeamento-skus'
+      path: '/mapeamento-skus'
+      fullPath: '/mapeamento-skus'
+      preLoaderRoute: typeof MapeamentoSkusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metas': {
+      id: '/metas'
+      path: '/metas'
+      fullPath: '/metas'
+      preLoaderRoute: typeof MetasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/monitoramento': {
+      id: '/monitoramento'
+      path: '/monitoramento'
+      fullPath: '/monitoramento'
+      preLoaderRoute: typeof MonitoramentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedidos': {
+      id: '/pedidos'
+      path: '/pedidos'
+      fullPath: '/pedidos'
+      preLoaderRoute: typeof PedidosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedidos-integrados': {
+      id: '/pedidos-integrados'
+      path: '/pedidos-integrados'
+      fullPath: '/pedidos-integrados'
+      preLoaderRoute: typeof PedidosIntegradosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/processos': {
+      id: '/processos'
+      path: '/processos'
+      fullPath: '/processos'
+      preLoaderRoute: typeof ProcessosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/produtos': {
+      id: '/produtos'
+      path: '/produtos'
+      fullPath: '/produtos'
+      preLoaderRoute: typeof ProdutosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/produtos-margem': {
+      id: '/produtos-margem'
+      path: '/produtos-margem'
+      fullPath: '/produtos-margem'
+      preLoaderRoute: typeof ProdutosMargemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/promocoes': {
+      id: '/promocoes'
+      path: '/promocoes'
+      fullPath: '/promocoes'
+      preLoaderRoute: typeof PromocoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/promocoes-ml': {
+      id: '/promocoes-ml'
+      path: '/promocoes-ml'
+      fullPath: '/promocoes-ml'
+      preLoaderRoute: typeof PromocoesMlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reprocessar-cmv': {
+      id: '/reprocessar-cmv'
+      path: '/reprocessar-cmv'
+      fullPath: '/reprocessar-cmv'
+      preLoaderRoute: typeof ReprocessarCmvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/saude-ml': {
+      id: '/saude-ml'
+      path: '/saude-ml'
+      fullPath: '/saude-ml'
+      preLoaderRoute: typeof SaudeMlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/separacao': {
+      id: '/separacao'
+      path: '/separacao'
+      fullPath: '/separacao'
+      preLoaderRoute: typeof SeparacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tendencias': {
+      id: '/tendencias'
+      path: '/tendencias'
+      fullPath: '/tendencias'
+      preLoaderRoute: typeof TendenciasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/usuarios': {
+      id: '/usuarios'
+      path: '/usuarios'
+      fullPath: '/usuarios'
+      preLoaderRoute: typeof UsuariosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vendas': {
+      id: '/vendas'
+      path: '/vendas'
+      fullPath: '/vendas'
+      preLoaderRoute: typeof VendasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/shopee/callback': {
@@ -667,6 +687,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContasPagarRoute: ContasPagarRoute,
   DevolucoesRoute: DevolucoesRoute,
   DreRoute: DreRoute,
+  FlashSaleRoute: FlashSaleRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   FulfillmentRoute: FulfillmentRoute,
   HistoricoSeparacaoRoute: HistoricoSeparacaoRoute,

@@ -324,6 +324,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 |---|---|---|
 | `shopee-sync-ads` | v54 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
+| `shopee-flashsale` | v2 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar`** (cria a flash sale de AMANHÃ com `flashsale_programacao`, ativa, registra em `flashsale_criadas` 1×/loja/dia, avisa Discord; `&auto=1` respeita `flashsale_config.automacao_ativa` — default OFF). Cron jobid 87 (21h UTC). Slots Shopee são DIÁRIOS (00:00→00:00); máx 50 itens; guarda de preço: pula promo ≥ original ou < 50% dele. Tela `/flash-sale` |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v4 | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal estoque). `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila. Grava `separacao_tiny.falta_estoque_em/_por` (espelho p/ badge+filtro da tela). Separada da tiny-separacao de propósito |
 | `shopee-sync` | v20 | Pedidos Shopee |
