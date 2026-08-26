@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Boxes, Check, CheckCircle2, Layers, Loader2, Package as PackageIcon,
-  PackagePlus, RefreshCw, Truck,
+  ArrowLeft, Boxes, Check, CheckCircle2, FileText, Layers, Loader2,
+  Package as PackageIcon, PackagePlus, RefreshCw, Truck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +47,7 @@ interface Ordem {
   recebido_por: string | null;
   arquivada_em: string | null;
   observacao_recebimento: string | null;
+  nf_numero: string | null;
 }
 
 interface ItemOrdem {
@@ -90,13 +91,14 @@ const SIT_TINY: Record<string, { label: string; cls: string }> = {
 
 // Colunas do RECEBIMENTO (mesmo desenho do quadro do Fulfillment).
 const STAGES: Array<{ id: string; label: string; curto: string; col: string; tint: string }> = [
+  { id: "orcamento", label: "Em orçamento", curto: "Orçamento", col: "#5C6470", tint: "#F2F3F5" },
   { id: "aguardando", label: "Aguardando chegada", curto: "Aguardando", col: "#B7791F", tint: "#FDF6EA" },
   { id: "conferencia", label: "Em conferência", curto: "Conferência", col: "#2F6FB0", tint: "#EEF5FC" },
   { id: "divergente", label: "Divergência", curto: "Divergência", col: "#C9432F", tint: "#FBEFED" },
   { id: "concluida", label: "Recebida", curto: "Recebida", col: "#0E8A5F", tint: "#EBF7F1" },
 ];
 const STAGE_MAP = Object.fromEntries(STAGES.map((s) => [s.id, s]));
-const stageDe = (status: string) => STAGE_MAP[status] ?? STAGES[0];
+const stageDe = (status: string) => STAGE_MAP[status] ?? STAGE_MAP["aguardando"];
 
 const EMB_TIPOS: Array<{ id: string; label: string }> = [
   { id: "caixa", label: "Caixa" },
@@ -175,6 +177,9 @@ function ComprasPage() {
 
 function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
+  // Valor da compra e informacao de gestao: so ADM (modulo "todos") ve R$.
+  const ehAdm = !!perfil?.modulos.includes("todos");
   const [dragId, setDragId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
@@ -265,7 +270,11 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
   }
 
   const hoje = new Date().toISOString().slice(0, 10);
-  const abertas = ordens.filter((o) => o.kanban_status !== "concluida");
+  // "Em aberto" = aguardando chegada ou em conferencia; orcamento ainda nao conta.
+  const orcamentos = ordens.filter((o) => o.kanban_status === "orcamento");
+  const abertas = ordens.filter(
+    (o) => o.kanban_status !== "concluida" && o.kanban_status !== "orcamento",
+  );
   const totalUn = abertas.reduce((s, o) => s + num(o.itens_qtd), 0);
 
   return (
@@ -289,9 +298,9 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
       {/* Contadores */}
       <div className="flex items-center gap-2.5 flex-wrap">
         {[
-          { label: "Ordens em aberto", value: abertas.length },
+          { label: "Em orçamento", value: orcamentos.length },
+          { label: "Aguardando / conferindo", value: abertas.length },
           { label: "Unidades a receber", value: formatNumber(totalUn) },
-          { label: "No quadro", value: ordens.length },
         ].map((c) => (
           <Card key={c.label} className="px-4 py-2.5 flex flex-col gap-0.5 min-w-[110px]">
             <span className="text-xl font-extrabold tabular-nums leading-none">{c.value}</span>
@@ -309,7 +318,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
       {!ordensQ.isLoading && (
         <div
           className="grid gap-3.5 overflow-x-auto pb-1.5 items-start"
-          style={{ gridTemplateColumns: "repeat(4, minmax(220px, 1fr))" }}
+          style={{ gridTemplateColumns: "repeat(5, minmax(200px, 1fr))" }}
         >
           {STAGES.map((stage) => {
             const doStage = ordens.filter((o) => stageDe(o.kanban_status).id === stage.id);
@@ -379,7 +388,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="font-mono font-bold">{formatNumber(rec)} / {formatNumber(ped)} un</span>
-                          <span className="text-muted-foreground">{formatBRL(num(o.total_pedido))}</span>
+                          {ehAdm && <span className="text-muted-foreground">{formatBRL(num(o.total_pedido))}</span>}
                         </div>
                         <div className="h-1.5 rounded bg-muted overflow-hidden">
                           <div className="h-full rounded" style={{ width: `${pct}%`, background: stage.col }} />
@@ -412,6 +421,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
 function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () => void }) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
+  const ehAdm = !!perfil?.modulos.includes("todos");
   const [salvandoFim, setSalvandoFim] = useState(false);
 
   const ordemQ = useQuery({
@@ -484,30 +494,39 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
     }
   }
 
-  // Embalagem/amarração: grava no item E no cadastro por SKU (pré-preenche a próxima)
+  // Embalagem/amarração desta CHEGADA: grava só no item. O cadastro do SKU
+  // (que pré-preenche as próximas compras) é salvo pelo botão explícito —
+  // padrão errado se propagaria em silêncio.
   async function salvarEmbalagem(item: ItemOrdem, patch: Partial<ItemOrdem>) {
     patchLocal(item.id, patch);
     const { error } = await supabaseExternal
       .from("compra_ordem_itens")
       .update({ ...patch, atualizado_em: new Date().toISOString() })
       .eq("id", item.id);
-    if (error) {
-      toast.error("Falha ao salvar embalagem", { description: error.message });
-      return;
-    }
-    if (item.sku) {
-      const atual = { ...(embQ.data?.[item.sku] ?? {}), ...(patch as Record<string, unknown>) };
-      await supabaseExternal.from("produto_embalagem").upsert({
-        sku: item.sku,
-        emb_tipo: (atual as EmbalagemSku).emb_tipo ?? null,
-        emb_unidades: (atual as EmbalagemSku).emb_unidades ?? null,
-        pallet_lastro: (atual as EmbalagemSku).pallet_lastro ?? null,
-        pallet_altura: (atual as EmbalagemSku).pallet_altura ?? null,
-        atualizado_em: new Date().toISOString(),
-        atualizado_por: perfil?.nome ?? null,
-      }, { onConflict: "sku" });
-      void qc.invalidateQueries({ queryKey: ["compras", "embalagem"] });
-    }
+    if (error) toast.error("Falha ao salvar embalagem", { description: error.message });
+  }
+
+  // Salva o MODELO de encaixotamento do SKU para as futuras compras.
+  async function salvarPadrao(item: ItemOrdem, padrao: Omit<EmbalagemSku, "sku">) {
+    if (!item.sku) { toast.error("Item sem SKU — não dá para salvar modelo"); return; }
+    const { error } = await supabaseExternal.from("produto_embalagem").upsert({
+      sku: item.sku, ...padrao,
+      atualizado_em: new Date().toISOString(),
+      atualizado_por: perfil?.nome ?? null,
+    }, { onConflict: "sku" });
+    if (error) { toast.error("Falha ao salvar modelo", { description: error.message }); return; }
+    toast.success(`Modelo de encaixotamento salvo — SKU ${item.sku}`, {
+      description: "As próximas compras deste produto virão pré-preenchidas.",
+    });
+    void qc.invalidateQueries({ queryKey: ["compras", "embalagem"] });
+  }
+
+  // NF vinculada / observação do recebimento (cabeçalho da ordem).
+  async function salvarOrdem(patch: Partial<Ordem>) {
+    qc.setQueryData<Ordem | null>(["compras", "ordem", tinyId], (old) => (old ? { ...old, ...patch } : old));
+    const { error } = await supabaseExternal
+      .from("compras_ordens").update(patch).eq("tiny_id", tinyId);
+    if (error) toast.error("Falha ao salvar", { description: error.message });
   }
 
   async function concluir() {
@@ -569,7 +588,8 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             </div>
             <span className="text-sm text-muted-foreground">
               {fornecedorDe(ordem)} · pedido {dataBR(ordem.data_pedido)}
-              {ordem.data_prevista ? ` · previsto ${dataBR(ordem.data_prevista)}` : ""} · {formatBRL(num(ordem.total_pedido))}
+              {ordem.data_prevista ? ` · previsto ${dataBR(ordem.data_prevista)}` : ""}
+              {ehAdm ? ` · ${formatBRL(num(ordem.total_pedido))}` : ""}
             </span>
           </div>
         </div>
@@ -589,6 +609,29 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
         </div>
       </div>
 
+      {/* NF vinculada + observação do recebimento */}
+      <Card className="p-3 flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground whitespace-nowrap">NF vinculada</span>
+          <CampoTexto
+            valor={ordem.nf_numero}
+            placeholder="nº ou chave da nota…"
+            onCommit={(v) => void salvarOrdem({ nf_numero: v })}
+            className="w-[300px]"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground whitespace-nowrap">Observação</span>
+          <CampoTexto
+            valor={ordem.observacao_recebimento}
+            placeholder="ex.: chegou em 2 entregas, caixa amassada…"
+            onCommit={(v) => void salvarOrdem({ observacao_recebimento: v })}
+            className="flex-1"
+          />
+        </div>
+      </Card>
+
       {/* Itens */}
       <div className="flex flex-col gap-3">
         {itens.map((it) => (
@@ -599,6 +642,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             lembrada={it.sku ? embQ.data?.[it.sku] : undefined}
             onQtd={(q) => void setRecebida(it, q)}
             onEmb={(patch) => void salvarEmbalagem(it, patch)}
+            onSalvarPadrao={(padrao) => void salvarPadrao(it, padrao)}
           />
         ))}
         {itens.length === 0 && (
@@ -611,16 +655,17 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
   );
 }
 
-// ---- linha de item: contagem + encaixotamento + amarração --------------------
+// ---- linha de item: entrada unitária + entrada por encaixotamento -----------
 
 function ItemConferencia({
-  item, foto, lembrada, onQtd, onEmb,
+  item, foto, lembrada, onQtd, onEmb, onSalvarPadrao,
 }: {
   item: ItemOrdem;
   foto?: string;
   lembrada?: EmbalagemSku;
   onQtd: (qtd: number) => void;
   onEmb: (patch: Partial<ItemOrdem>) => void;
+  onSalvarPadrao: (padrao: Omit<EmbalagemSku, "sku">) => void;
 }) {
   // efetivo = o que está no item; se vazio, o lembrado do SKU (pré-preenchido)
   const embTipo = item.emb_tipo ?? lembrada?.emb_tipo ?? null;
@@ -629,16 +674,38 @@ function ItemConferencia({
   const altura = item.pallet_altura ?? lembrada?.pallet_altura ?? null;
 
   const ok = num(item.qtd_recebida) === num(item.quantidade) && item.conferido;
-  const caixas = embUnid && embUnid > 0 ? Math.ceil(num(item.qtd_recebida) / embUnid) : null;
   const caixasPorPallet = lastro && altura ? lastro * altura : null;
+  const rotuloEmb = embTipo === "fardo" ? "fardo" : "caixa";
+
+  // entrada por encaixotamento: caixas <-> unidades (a fonte é sempre qtd_recebida)
+  const podeCaixa = !!embUnid && embUnid > 0 && embTipo !== "unidade";
+  const caixasAtuais = podeCaixa ? num(item.qtd_recebida) / (embUnid as number) : 0;
+  const caixasFmt = podeCaixa
+    ? String(Number.isInteger(caixasAtuais) ? caixasAtuais : Number(caixasAtuais.toFixed(2)))
+    : "";
+
+  // modelo já salvo no cadastro do SKU e igual ao apontado aqui?
+  const padraoIgual = !!lembrada &&
+    (lembrada.emb_tipo ?? null) === embTipo &&
+    (lembrada.emb_unidades ?? null) === embUnid &&
+    (lembrada.pallet_lastro ?? null) === lastro &&
+    (lembrada.pallet_altura ?? null) === altura;
 
   const [txt, setTxt] = useState<string | null>(null);
   const mostra = txt ?? String(num(item.qtd_recebida));
-
   function commit(v: string) {
     setTxt(null);
     const n = Number(v.replace(",", "."));
     if (Number.isFinite(n) && n >= 0) onQtd(n);
+  }
+
+  const [txtCx, setTxtCx] = useState<string | null>(null);
+  const mostraCx = txtCx ?? caixasFmt;
+  function commitCx(v: string) {
+    setTxtCx(null);
+    if (!podeCaixa) return;
+    const n = Number(v.replace(",", "."));
+    if (Number.isFinite(n) && n >= 0) onQtd(Math.round(n * (embUnid as number)));
   }
 
   return (
@@ -652,33 +719,36 @@ function ItemConferencia({
           </span>
         </div>
 
-        {/* contagem */}
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-9 w-9 p-0 text-base font-bold"
-            onClick={() => onQtd(num(item.qtd_recebida) - 1)} disabled={num(item.qtd_recebida) <= 0}>−</Button>
-          <Input
-            value={mostra}
-            onChange={(e) => setTxt(e.target.value)}
-            onBlur={(e) => commit(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            className="h-9 w-[74px] text-center font-mono font-bold tabular-nums"
-            inputMode="numeric"
-          />
-          <Button variant="outline" size="sm" className="h-9 w-9 p-0 text-base font-bold"
-            onClick={() => onQtd(num(item.qtd_recebida) + 1)}>+</Button>
-          <span className="text-[12px] text-muted-foreground font-mono whitespace-nowrap">/ {formatNumber(num(item.quantidade))} un</span>
-          <Button
-            variant={ok ? "default" : "outline"} size="sm" className="h-9 gap-1.5"
-            onClick={() => onQtd(num(item.quantidade))}
-            title="Recebeu tudo — marca a quantidade pedida"
-          >
-            <Check className="h-3.5 w-3.5" /> Tudo
-          </Button>
+        {/* ENTRADA UNITÁRIA */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">Entrada unitária</span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-9 w-9 p-0 text-base font-bold"
+              onClick={() => onQtd(num(item.qtd_recebida) - 1)} disabled={num(item.qtd_recebida) <= 0}>−</Button>
+            <Input
+              value={mostra}
+              onChange={(e) => setTxt(e.target.value)}
+              onBlur={(e) => commit(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              className="h-9 w-[74px] text-center font-mono font-bold tabular-nums"
+              inputMode="numeric"
+            />
+            <Button variant="outline" size="sm" className="h-9 w-9 p-0 text-base font-bold"
+              onClick={() => onQtd(num(item.qtd_recebida) + 1)}>+</Button>
+            <span className="text-[12px] text-muted-foreground font-mono whitespace-nowrap">/ {formatNumber(num(item.quantidade))} un</span>
+            <Button
+              variant={ok ? "default" : "outline"} size="sm" className="h-9 gap-1.5"
+              onClick={() => onQtd(num(item.quantidade))}
+              title="Recebeu tudo — marca a quantidade pedida"
+            >
+              <Check className="h-3.5 w-3.5" /> Tudo
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* encaixotamento + amarração */}
-      <div className="flex items-end gap-4 flex-wrap rounded-lg bg-muted/50 px-3 py-2.5">
+      {/* encaixotamento + entrada por caixa + amarração */}
+      <div className="flex items-end gap-x-5 gap-y-2.5 flex-wrap rounded-lg bg-muted/50 px-3 py-2.5">
         <div className="flex flex-col gap-1">
           <span className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
             <Boxes className="h-3 w-3" /> Encaixotamento
@@ -700,10 +770,39 @@ function ItemConferencia({
                 <span className="text-xs text-muted-foreground">un</span>
               </>
             )}
-            {caixas !== null && embTipo !== "unidade" && (
-              <span className="text-[11px] font-bold font-mono px-2 py-1 rounded bg-card border whitespace-nowrap">
-                = {formatNumber(caixas)} {embTipo === "fardo" ? "fardo(s)" : "caixa(s)"}
+          </div>
+        </div>
+
+        {/* ENTRADA POR ENCAIXOTAMENTO: digitou 3 caixas de 8 = 24 un recebidas */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+            Entrada por {rotuloEmb}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 w-8 p-0 text-sm font-bold"
+              disabled={!podeCaixa || num(item.qtd_recebida) <= 0}
+              onClick={() => onQtd(Math.max(0, num(item.qtd_recebida) - (embUnid as number)))}
+              title={`− 1 ${rotuloEmb} (${embUnid ?? "?"} un)`}>−</Button>
+            <Input
+              value={mostraCx}
+              disabled={!podeCaixa}
+              placeholder="cx"
+              onChange={(e) => setTxtCx(e.target.value)}
+              onBlur={(e) => commitCx(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              className="h-8 w-[64px] text-center font-mono font-bold tabular-nums bg-card"
+              inputMode="numeric"
+            />
+            <Button variant="outline" size="sm" className="h-8 w-8 p-0 text-sm font-bold"
+              disabled={!podeCaixa}
+              onClick={() => onQtd(num(item.qtd_recebida) + (embUnid as number))}
+              title={`+ 1 ${rotuloEmb} (${embUnid ?? "?"} un)`}>+</Button>
+            {podeCaixa ? (
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                × {embUnid} un = <b className="font-mono">{formatNumber(num(item.qtd_recebida))}</b> un
               </span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground italic">defina o tipo e "com N un"</span>
             )}
           </div>
         </div>
@@ -726,13 +825,57 @@ function ItemConferencia({
           </div>
         </div>
 
-        {lembrada && item.emb_tipo === null && (
-          <span className="text-[10.5px] text-muted-foreground italic pb-1">
-            pré-preenchido do cadastro do SKU — confirme ou ajuste
-          </span>
-        )}
+        {/* modelo do SKU para futuras compras */}
+        <div className="flex items-center gap-2 pb-0.5 ml-auto">
+          {padraoIgual ? (
+            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1 whitespace-nowrap">
+              <Check className="h-3.5 w-3.5" /> modelo do SKU salvo
+            </span>
+          ) : (
+            <Button
+              variant="outline" size="sm" className="h-8 text-xs gap-1.5"
+              disabled={!item.sku || (!embTipo && !embUnid && !lastro && !altura)}
+              onClick={() => onSalvarPadrao({
+                emb_tipo: embTipo, emb_unidades: embUnid,
+                pallet_lastro: lastro, pallet_altura: altura,
+              })}
+              title="Grava este encaixotamento como modelo do SKU — as próximas compras vêm pré-preenchidas"
+            >
+              Salvar modelo p/ futuras compras
+            </Button>
+          )}
+        </div>
       </div>
     </Card>
+  );
+}
+
+// input de texto com commit no blur/Enter
+function CampoTexto({
+  valor, onCommit, placeholder, className,
+}: {
+  valor: string | null;
+  onCommit: (v: string | null) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [txt, setTxt] = useState<string | null>(null);
+  const mostra = txt ?? (valor ?? "");
+  function commit(v: string) {
+    setTxt(null);
+    const limpo = v.trim();
+    if (limpo === (valor ?? "")) return;
+    onCommit(limpo === "" ? null : limpo);
+  }
+  return (
+    <Input
+      value={mostra}
+      placeholder={placeholder}
+      onChange={(e) => setTxt(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      className={cn("h-8 text-xs bg-card", className)}
+    />
   );
 }
 
