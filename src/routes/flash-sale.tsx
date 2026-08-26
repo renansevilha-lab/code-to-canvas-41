@@ -205,10 +205,12 @@ function FlashSalePage() {
     try {
       const r = await chamarFn(`modulo=programar&shop_id=${shopId}&confirmar=1`);
       const res = (r.resultados ?? [])[0] ?? {};
+      const motivos = ((res.problemas ?? []) as { sku: string; motivo: string }[])
+        .slice(0, 4).map((x) => `${x.sku}: ${x.motivo}`).join("\n") || undefined;
       if (res.status === "ok") toast.success(`+${res.itens_ok} item(ns) na relâmpago de ${r.dia}${res.ja_na_promo ? ` (${res.ja_na_promo} já estavam)` : ""}`);
       else if (res.status === "em_dia") toast.info(`Tudo em dia — os itens programados já estão na promoção de ${r.dia}.`);
-      else if (res.status === "parcial") toast.warning(`${res.itens_ok} ok e ${res.itens_falha} falha(s) — conferir no Seller Center`, { duration: 9000 });
-      else toast.error(`Falhou: ${res.erro ?? res.message ?? res.status}`, { duration: 9000 });
+      else if (res.status === "parcial") toast.warning(`${res.itens_ok} ok e ${res.itens_falha} falha(s)`, { description: motivos, duration: 12000 });
+      else toast.error(`Falhou: ${res.erro ?? res.message ?? res.status}`, { description: motivos, duration: 12000 });
       setDlgPrev(null);
       void qc.invalidateQueries({ queryKey: ["flashsale", "hist", shopId] });
     } catch (e) {
