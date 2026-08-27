@@ -1,9 +1,9 @@
 # Handoff — estado atual e próximos passos
 
-> Atualizado **25/ago/2026** (HEAD `86725d2`). Este doc viaja no `git` — leia ao
-> continuar de outra máquina. **Ao começar: `git pull --ff-only`.** Backend
-> (Supabase: migrations, edge functions, crons) é compartilhado e **já está
-> aplicado** — não precisa reaplicar nada.
+> Atualizado **27/ago/2026** (HEAD `19c31ff` + este commit). Este doc viaja no
+> `git` — leia ao continuar de outra máquina. **Ao começar: `git pull --ff-only`.**
+> Backend (Supabase: migrations, edge functions, crons) é compartilhado e **já
+> está aplicado** — não precisa reaplicar nada.
 
 ---
 
@@ -100,6 +100,56 @@ regerada sob demanda). Também `cron.job_run_details` (42 MB → 856 kB) e
 
 ---
 
+## Feito na sessão de 26–27/ago (este PC)
+
+### Relâmpago Shopee — automação diária (`/flash-sale`, NOVA)
+Pedido do dono: parar de criar promoção relâmpago na mão todo dia.
+- **Tabelas:** `flashsale_programacao` (lista fixa de produtos+preços por loja),
+  `flashsale_config` (`automacao_ativa` default **OFF** + `max_itens_bloco`
+  default **10**), `flashsale_criadas` (log por loja/dia).
+- **`shopee-flashsale` v4** (deploy = versão 9 no Supabase): `programar` é
+  **RECONCILIAÇÃO** — compara a programação com o que JÁ existe no slot de
+  amanhã na Shopee e adiciona só o que falta; completa blocos existentes e cria
+  blocos novos de até `max_itens_bloco`, ativando só os novos. **Armadilhas
+  descobertas ao vivo:** (a) `get_time_slot_id` ESCONDE slot que já tem sale —
+  o timeslot vem das sales existentes primeiro; (b) **auto-correção** no add:
+  erro de estoque (capa pelo disponível ao vivo) e de variação (casa o model
+  pelo SKU e conserta a programação); (c) o mesmo produto tem **item_id
+  diferente em cada loja** (Dedeira 15819: Ottz 49065516262 × Bumi 46514960728)
+  — guard "anúncio não é desta loja". Motivos legíveis em `problemas`
+  (toast + Discord + `flashsale_criadas.detalhe`).
+- **Tela `/flash-sale`** (menu Mídia & Canais): busca server-side no espelho
+  `shopee_anuncios` (nome/SKU/SKU de variação), coluna **MC promo %** por preço
+  digitado (RPC `flashsale_mc_base` = comissão+imposto efetivos 60d + CMV
+  kit-aware; grant só authenticated), toggle de automação e "produtos por
+  bloco" por loja, botão "Programar amanhã agora" (dry → prévia → confirmar),
+  histórico. Cron **jobid 87** (21h UTC = 18h BRT), inofensivo com automação OFF.
+- **Write E2E validado pelo dono** (criou a relâmpago de 27/08 pela tela).
+
+### Fulfillment — re-upload de PDF atualiza o envio (sem duplicar)
+- RPC **`fulfillment_atualizar_envio(envio_id, itens jsonb, editado_por)`**:
+  merge no banco — qtd_planejada nova por SKU **preservando `qtd_separada`**;
+  item novo entra com 0; item que saiu do plano com separação fica com
+  planejado 0 (visível p/ retirar da caixa), sem separação é deletado; match
+  por `sku` **e por `sku_origem`** (SKU cru do PDF ↔ linha corrigida pelo
+  operador — validado FBA-15102→15102). Avisa no Discord (canal fulfilment,
+  marca Nikolas/Vinicius) com o **diff por SKU**; `TESTE-%` silencia. Validado
+  com envios de teste, ao item.
+- **Front:** botão **"Atualizar por PDF"** dentro do envio (PackingEnvio, ao
+  lado de Excluir) — parse → confirmação (avisa se o nº do PDF difere) → RPC;
+  e o "Novo envio" com nº repetido também oferece atualizar em vez de duplicar.
+- Aviso de CRIAÇÃO continua no trigger `notificar_envio_fulfillment` — padrão:
+  **avisos de fulfillment saem do banco**, não do front.
+
+### ⚠️ PENDENTE DE PUBLISH (Lovable)
+Todo o front acima está no git mas **não publicado**: `/flash-sale` (tela nova,
+menu, MC%), botão "Atualizar por PDF" no envio, detecção de nº repetido no
+"Novo envio", toasts com motivos da flash sale. O dono tentou o re-upload e
+"não funcionou" **porque a versão publicada é a antiga** — nada quebrou, nada
+duplicou (conferido no banco).
+
+---
+
 ## Estado do backend (Supabase — já aplicado)
 
 | Edge function | Versão | Nota |
@@ -109,6 +159,7 @@ regerada sob demanda). Também `cron.job_run_details` (42 MB → 856 kB) e
 | `shopee-sync-ads` | v54 | aceita as duas grafias do canal SVL no `imprimir` |
 | `discord-notify` | v2 | `marcar`/`conteudo` no content + `allowed_mentions` |
 | `discord-avisos` | v2 | cobra checklist (turno `inicio`/`fim`), `dry=1`, `sempre=1` |
+| `shopee-flashsale` | v4 | reconciliação diária + auto-correção; módulo debug `modelos` |
 
 > Versões conferidas em 25/ago (número do cabeçalho do arquivo, não o do
 > Supabase). Outra sessão pode ter avançado alguma — confira o cabeçalho
@@ -123,6 +174,9 @@ regerada sob demanda). Também `cron.job_run_details` (42 MB → 856 kB) e
 
 ## Próximos passos (pendentes)
 
+0. **Publish no Lovable** (ver seção acima) e, depois do publish: dono testa o
+   "Atualizar por PDF" no envio real e o "Programar amanhã agora" — quando a
+   rotina estiver redonda, **ligar o toggle de automação** da flash sale por loja.
 1. **Conferir a etiqueta ML no papel.** O ZPL foi validado tecnicamente (2 blocos
    `^XA`, mesmo padrão da Shopee), mas **ninguém viu sair impressa** depois da
    troca. Se vier com 2 partes e a segunda for supérflua, dá para imprimir só a
