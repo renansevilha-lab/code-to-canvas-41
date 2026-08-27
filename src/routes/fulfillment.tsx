@@ -1553,6 +1553,49 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
     }
     setSalvando(true);
     try {
+      // Re-upload do MESMO envio (nº já existe e não foi arquivado): em vez de
+      // duplicar, atualiza produtos/quantidades pela RPC — que preserva a
+      // qtd_separada e avisa no Discord o que mudou (lógica no banco).
+      if (numero.trim()) {
+        const { data: existentes } = await supabaseExternal
+          .from("fulfillment_envios")
+          .select("id, status, total_unidades")
+          .eq("marketplace", marketplace)
+          .eq("numero", numero.trim())
+          .is("arquivado_em", null)
+          .order("criado_em", { ascending: false })
+          .limit(1);
+        const existente = (existentes ?? [])[0] as { id: string; status: string; total_unidades: number } | undefined;
+        if (existente) {
+          const atualizar = window.confirm(
+            `O envio ${numero.trim()} já existe (${existente.status}, ${existente.total_unidades} un planejadas).\n\n` +
+            `OK = ATUALIZAR o envio existente com esta lista (o que já foi separado é preservado; a equipe é avisada no Discord do que mudou).\n` +
+            `Cancelar = voltar sem salvar.`,
+          );
+          if (!atualizar) { setSalvando(false); return; }
+          const { data: diff, error } = await supabaseExternal.rpc("fulfillment_atualizar_envio", {
+            p_envio_id: existente.id,
+            p_itens: itens.map((it, i) => ({
+              sku: (it.sku ?? "").trim() || null,
+              sku_origem: it.sku_origem ?? null,
+              ean: it.ean ?? null,
+              titulo: it.titulo ?? it.titulo_pdf ?? null,
+              qtd: Number(it.qtd) || 0,
+              ordem: it.ordem ?? i,
+            })),
+            p_editado_por: perfil?.nome ?? null,
+          });
+          if (error) throw error;
+          const d = diff as { alterados: unknown[]; adicionados: unknown[]; removidos: unknown[]; total_unidades: number };
+          const mudou = (d.alterados?.length ?? 0) + (d.adicionados?.length ?? 0) + (d.removidos?.length ?? 0);
+          toast.success(mudou === 0
+            ? "Nada mudou — o envio já estava igual à lista."
+            : `Envio atualizado: ${d.alterados?.length ?? 0} qtd alterada(s), ${d.adicionados?.length ?? 0} novo(s), ${d.removidos?.length ?? 0} removido(s) · ${d.total_unidades} un. Separação preservada; aviso enviado no Discord.`,
+            { duration: 9000 });
+          onCriado(existente.id);
+          return;
+        }
+      }
       const { data: env, error: e1 } = await supabaseExternal
         .from("fulfillment_envios")
         .insert({
