@@ -473,6 +473,11 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e
   preserva grants/PK, diferente de dropar e recriar). Foi assim com
   `etiquetas_cache` e `cron.job_run_details` (42 MB → 856 kB).
+- **Função SQL chamada por VIEW que um CRON refresca precisa de
+  `set search_path = public` e tabela schema-qualificada.** O pg_cron roda com
+  search_path próprio: a `cmv_manual_vigente` sem isso derrubou o
+  `refresh-kpi-pedidos-dia` ("relation cmv_manual does not exist") e o KPI do
+  Pedidos Integrados congelou por ~30 min (27/ago) enquanto a lista seguia viva.
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
   transaction block"). `TRUNCATE` libera espaço na hora.
 
