@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { rangeToSPIso } from "@/lib/date";
+import { usePerfil } from "@/hooks/usePerfil";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
   resolveRange,
@@ -1371,21 +1372,106 @@ function PuxarCustoTiny({ pedido }: { pedido: PedidoIntegrado }) {
   };
 
   return (
-    <div className="mt-4 rounded-md border border-border p-3">
-      <p className="text-xs text-muted-foreground mb-2">
-        Pedido sem custo (CMV). Se o produto já tem custo cadastrado no Tiny, puxe agora para
-        recalcular a margem.
+    <div className="mt-4 rounded-md border border-border p-3 flex flex-col gap-3">
+      <div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Pedido sem custo (CMV). Se o produto já tem custo cadastrado no Tiny, puxe agora para
+          recalcular a margem.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full gap-2"
+          onClick={puxar}
+          disabled={busy || skus.length === 0}
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Puxar custo do Tiny
+        </Button>
+      </div>
+      <CustoManual pedido={pedido} skus={skus} />
+    </div>
+  );
+}
+
+/**
+ * Custo MANUAL com vigência por data (tabela cmv_manual). Vale para todos os
+ * pedidos do SKU a partir da data escolhida — precedência no cálculo:
+ * congelado do pedido (Reprocessar CMV) > manual vigente > cadastro do Tiny.
+ * Default da vigência = data DESTE pedido, para que ele já seja recalculado.
+ */
+function CustoManual({ pedido, skus }: { pedido: PedidoIntegrado; skus: string[] }) {
+  const queryClient = useQueryClient();
+  const { perfil } = usePerfil();
+  const [salvando, setSalvando] = useState<string | null>(null);
+  const [valores, setValores] = useState<Record<string, string>>({});
+  const dataPedido = (pedido.data_pedido ?? new Date().toISOString()).slice(0, 10);
+  const [desde, setDesde] = useState(dataPedido);
+
+  const salvar = async (sku: string) => {
+    const custo = Number((valores[sku] ?? "").replace(",", "."));
+    if (!Number.isFinite(custo) || custo <= 0) {
+      toast.error("Informe um custo válido (ex.: 14,40)");
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
+      toast.error("Informe a data de início da vigência");
+      return;
+    }
+    setSalvando(sku);
+    try {
+      const { error } = await supabaseExternal.from("cmv_manual").upsert({
+        sku,
+        vigente_desde: desde,
+        custo,
+        criado_por: perfil?.nome ?? null,
+        observacao: `definido no pedido ${pedido.order_sn}`,
+      }, { onConflict: "sku,vigente_desde" });
+      if (error) throw error;
+      toast.success(`Custo manual salvo — SKU ${sku}`, {
+        description: `R$ ${custo.toFixed(2).replace(".", ",")} a partir de ${desde.split("-").reverse().join("/")} (pedidos anteriores não mudam).`,
+        duration: 8000,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["pi-list"] });
+      await queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia"] });
+    } catch (e) {
+      toast.error("Falha ao salvar custo manual", { description: (e as Error).message });
+    } finally {
+      setSalvando(null);
+    }
+  };
+
+  if (skus.length === 0) return null;
+  return (
+    <div className="border-t border-border pt-3 flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">
+        Ou preencha o custo <b>manualmente</b> — vale para os pedidos do SKU a partir da data
+        (os anteriores mantêm o custo antigo):
       </p>
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full gap-2"
-        onClick={puxar}
-        disabled={busy || skus.length === 0}
-      >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-        Puxar custo do Tiny
-      </Button>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap">Vale desde</span>
+        <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-8 w-[150px] text-xs" />
+      </div>
+      {skus.map((sku) => (
+        <div key={sku} className="flex items-center gap-2">
+          <span className="text-[11.5px] font-mono font-semibold w-[64px] shrink-0">{sku}</span>
+          <span className="text-[11px] text-muted-foreground">R$</span>
+          <Input
+            value={valores[sku] ?? ""}
+            onChange={(e) => setValores((v) => ({ ...v, [sku]: e.target.value }))}
+            placeholder="custo un."
+            inputMode="decimal"
+            className="h-8 w-[100px] text-xs font-mono"
+          />
+          <Button
+            variant="outline" size="sm" className="h-8 text-xs"
+            disabled={salvando === sku || !(valores[sku] ?? "").trim()}
+            onClick={() => void salvar(sku)}
+          >
+            {salvando === sku ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar"}
+          </Button>
+        </div>
+      ))}
     </div>
   );
 }

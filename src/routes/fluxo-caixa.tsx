@@ -56,6 +56,9 @@ interface DiaAgg {
   acumulado: number;
 }
 interface SaldoRow { carteira: string; saldo_em_conta: number; marketplace: string }
+interface PrazoRow { marketplace: string; creditos_60d: number; media_dias: number; mediana_dias: number; p90_dias: number }
+interface FonteRow { fonte: string; frequencia: string; atualizado_em: string | null }
+interface PrevRealRow { dia: string; entradas_previstas: number; entradas_reais: number | null; desvio: number; saidas_previstas: number }
 
 const n = (v: unknown): number => Number(v ?? 0) || 0;
 
@@ -160,6 +163,33 @@ function FluxoCaixaPage() {
     return nx;
   });
 
+  // ---- saúde do modelo: prazos reais, fontes/frescor e previsto×realizado ----
+  const prazosQ = useQuery({
+    queryKey: ["fluxo", "prazos"],
+    queryFn: async (): Promise<PrazoRow[]> => {
+      const { data, error } = await supabaseExternal.from("view_fluxo_caixa_prazos").select("*");
+      if (error) throw error;
+      return (data ?? []) as PrazoRow[];
+    },
+  });
+  const fontesQ = useQuery({
+    queryKey: ["fluxo", "fontes"],
+    queryFn: async (): Promise<FonteRow[]> => {
+      const { data, error } = await supabaseExternal.from("view_fluxo_caixa_fontes").select("*");
+      if (error) throw error;
+      return (data ?? []) as FonteRow[];
+    },
+  });
+  const prevRealQ = useQuery({
+    queryKey: ["fluxo", "prev-real"],
+    queryFn: async (): Promise<PrevRealRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_fluxo_caixa_previsto_realizado").select("*").limit(14);
+      if (error) throw error;
+      return (data ?? []) as PrevRealRow[];
+    },
+  });
+
   const carregando = eventosQ.isLoading || saldosQ.isLoading;
 
   return (
@@ -194,6 +224,84 @@ function FluxoCaixaPage() {
       </div>
 
       {/* Como a projeção é calculada — legenda completa, colapsável */}
+      {/* Saúde do modelo: prazo real de recebimento · previsto×realizado · fontes */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+            Prazo de recebimento (pedido → dinheiro liberado)
+          </div>
+          {(prazosQ.data ?? []).map((pz) => (
+            <div key={pz.marketplace} className="flex items-baseline justify-between py-1 border-b border-border/60 last:border-0">
+              <span className="text-[13px] font-medium capitalize">
+                {pz.marketplace === "mercadolivre" ? "Mercado Livre" : "Shopee"}
+              </span>
+              <span className="text-[13px] tabular-nums">
+                <b>{n(pz.mediana_dias)} dias</b>
+                <span className="text-muted-foreground"> · média {n(pz.media_dias).toFixed(1)} · p90 {n(pz.p90_dias)}d</span>
+              </span>
+            </div>
+          ))}
+          <p className="text-[11px] text-muted-foreground mt-2">
+            Medido nos créditos reais dos últimos 60 dias ({(prazosQ.data ?? []).reduce((a, b) => a + n(b.creditos_60d), 0).toLocaleString("pt-BR")} créditos).
+            ML conta até a <em>liberação</em> do Mercado Pago.
+          </p>
+        </Card>
+
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+            Previsto × realizado (entradas do dia)
+          </div>
+          {(prevRealQ.data ?? []).length === 0 ? (
+            <p className="text-[12px] text-muted-foreground">
+              O histórico começou a ser gravado hoje — a cada manhã (6h15) tiramos uma foto da
+              projeção e, no fim do dia, comparamos com o que realmente entrou. Volte amanhã.
+            </p>
+          ) : (
+            <div className="flex flex-col">
+              {(prevRealQ.data ?? []).slice(0, 7).map((r) => {
+                const real = r.entradas_reais;
+                const prev = n(r.entradas_previstas);
+                const pct = prev > 0 && real != null ? (n(real) / prev) * 100 : null;
+                return (
+                  <div key={r.dia} className="flex items-baseline justify-between py-1 border-b border-border/60 last:border-0 text-[12.5px] tabular-nums">
+                    <span className="text-muted-foreground">{r.dia.split("-").reverse().slice(0, 2).join("/")}</span>
+                    <span>
+                      prev. <b>{formatBRL(prev)}</b>
+                      <span className="text-muted-foreground"> · real </span>
+                      <b className={cn(real != null && n(real) >= prev ? "text-emerald-700 dark:text-emerald-400" : "")}>
+                        {real != null ? formatBRL(n(real)) : "—"}
+                      </b>
+                      {pct != null && <span className="text-muted-foreground"> ({pct.toFixed(0)}%)</span>}
+                    </span>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Foto da projeção tirada na manhã do próprio dia · saídas realizadas ainda não são medidas.
+              </p>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+            Fontes e atualização dos parâmetros
+          </div>
+          <div className="flex flex-col">
+            {(fontesQ.data ?? []).map((f) => {
+              const min = f.atualizado_em ? Math.max(0, Math.round((Date.now() - new Date(f.atualizado_em).getTime()) / 60000)) : null;
+              const ha = min == null ? "—" : min < 60 ? `há ${min} min` : min < 2880 ? `há ${Math.round(min / 60)} h` : `há ${Math.round(min / 1440)} d`;
+              return (
+                <div key={f.fonte} className="flex items-baseline justify-between gap-3 py-1 border-b border-border/60 last:border-0 text-[12px]">
+                  <span className="min-w-0 truncate">{f.fonte}</span>
+                  <span className="text-muted-foreground whitespace-nowrap">{f.frequencia} · <b className="text-foreground">{ha}</b></span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
+
       <ComoCalculado />
 
       {carregando ? (
