@@ -1797,9 +1797,13 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
 
 function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => void }) {
   const qc = useQueryClient();
+  const { perfil } = usePerfil();
   const [enviando, setEnviando] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
   const zplRef = useRef<HTMLInputElement>(null);
+  // "Atualizar por PDF": re-upload da lista de preparação DENTRO do envio.
+  const pdfAtualizarRef = useRef<HTMLInputElement>(null);
+  const [atualizandoPdf, setAtualizandoPdf] = useState(false);
 
   const { data: impressoras = [] } = useImpressorasFF(true);
   const [printerId, setPrinterId] = useState<number>(() => {
@@ -2219,6 +2223,65 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const temEtiquetas = !!envio?.etiquetas_zpl;
   const st = envio ? stageDe(envio.status) : null;
 
+  /**
+   * Atualiza ESTE envio com um novo PDF de preparação (o marketplace mudou o
+   * plano). O merge roda no banco (RPC fulfillment_atualizar_envio): qtd nova
+   * por SKU preservando o que já foi separado; item novo entra; item que saiu
+   * do plano fica com planejado 0 se já tinha separação. A própria RPC avisa
+   * no Discord o diff, marcando a equipe.
+   */
+  async function atualizarPorPdf(file: File) {
+    setAtualizandoPdf(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
+        body: { pdf_base64: b64 },
+      });
+      if (error) throw new Error(error.message);
+      if ((data as { erro?: string })?.erro) throw new Error((data as { erro?: string }).erro);
+      const d = data as { itens?: ParsedItem[]; total?: number; numero?: string };
+      const parsed = d.itens ?? [];
+      if (parsed.length === 0) throw new Error("O PDF não trouxe itens.");
+      const numPdf = d.numero ? String(d.numero) : null;
+      const avisoNumero = numPdf && envio?.numero && numPdf !== envio.numero
+        ? `\n\nATENÇÃO: o PDF é do envio ${numPdf}, mas você está no ${envio.numero}. Confirme se é o arquivo certo.`
+        : "";
+      const ok = window.confirm(
+        `Atualizar o envio ${envio?.numero ? `#${envio.numero}` : ""} com este PDF?\n\n` +
+        `${parsed.length} itens · ${d.total ?? "?"} unidades planejadas.\n` +
+        `O que já foi separado é preservado; a equipe recebe no Discord o que mudou.${avisoNumero}`,
+      );
+      if (!ok) return;
+      const { data: diff, error: e2 } = await supabaseExternal.rpc("fulfillment_atualizar_envio", {
+        p_envio_id: envioId,
+        p_itens: parsed.map((it, i) => ({
+          sku: (it.sku ?? "").trim() || null,
+          sku_origem: it.sku_origem ?? it.sku ?? null,
+          ean: it.ean ?? null,
+          titulo: it.titulo ?? it.titulo_pdf ?? null,
+          qtd: Number(it.qtd) || 0,
+          ordem: it.ordem ?? i,
+        })),
+        p_editado_por: perfil?.nome ?? null,
+      });
+      if (e2) throw e2;
+      const r = diff as { alterados: unknown[]; adicionados: unknown[]; removidos: unknown[]; total_unidades: number };
+      const mudou = (r.alterados?.length ?? 0) + (r.adicionados?.length ?? 0) + (r.removidos?.length ?? 0);
+      toast.success(mudou === 0
+        ? "Nada mudou — o envio já estava igual ao PDF."
+        : `Envio atualizado: ${r.alterados?.length ?? 0} qtd alterada(s), ${r.adicionados?.length ?? 0} novo(s), ${r.removidos?.length ?? 0} fora do plano · ${r.total_unidades} un planejadas`,
+        { duration: 9000 });
+      envioQ.refetch();
+      itensQ.refetch();
+      qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+      qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
+    } catch (e) {
+      toast.error("Falha ao atualizar pelo PDF", { description: (e as Error).message });
+    } finally {
+      setAtualizandoPdf(false);
+    }
+  }
+
   async function excluirEnvio() {
     const rotulo = envio?.numero ? `#${envio.numero}` : "";
     if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
@@ -2253,10 +2316,28 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
             </span>
           </div>
         )}
+        <input
+          ref={pdfAtualizarRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void atualizarPorPdf(f); }}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 ml-auto"
+          disabled={atualizandoPdf}
+          title="O marketplace mudou o envio? Suba o novo PDF de preparação: produtos e quantidades são atualizados, a separação já feita é preservada e a equipe é avisada no Discord do que mudou."
+          onClick={() => pdfAtualizarRef.current?.click()}
+        >
+          {atualizandoPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Atualizar por PDF
+        </Button>
         <Button
           variant="ghost"
           size="sm"
-          className="gap-1.5 ml-auto text-muted-foreground hover:text-destructive"
+          className="gap-1.5 text-muted-foreground hover:text-destructive"
           onClick={() => void excluirEnvio()}
         >
           <Trash2 className="h-4 w-4" /> Excluir envio
