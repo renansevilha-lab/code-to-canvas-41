@@ -90,6 +90,7 @@ interface ReposicaoRow {
   unidades_30d: number | string | null;
   estoque_full: number | string | null;
   em_transito: number | string | null;
+  em_envio_aberto?: number | string | null;
   cobertura_atual_dias: number | string | null;
   cobertura_alvo_dias: number | string | null;
   estoque_empresa: number | string | null;
@@ -244,7 +245,7 @@ function FulfillmentPage() {
       let query = supabaseExternal
         .from("view_reposicao_full")
         .select(
-          "marketplace,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em",
+          "marketplace,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,em_envio_aberto,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em",
         )
         .order("sugestao_envio", { ascending: false });
       if (mkt !== "todos") query = query.eq("marketplace", mkt);
@@ -462,6 +463,8 @@ function ReposicaoTab({
                 <th className="text-left font-semibold px-3 py-3">Canal</th>
                 <th className="text-right font-semibold px-3 py-3">Estoque CD</th>
                 <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
+                <th className="text-right font-semibold px-3 py-3"
+                  title="Unidades planejadas nos envios ABERTOS da aba Envios (separando/embalar/etiquetas/pronto) — já descontadas da necessidade e da sugestão. Envio marcado como enviado sai daqui e vira Em trânsito no sync.">Em envio</th>
                 <th className="text-right font-semibold px-3 py-3">Cobertura</th>
                 <th className="text-right font-semibold px-3 py-3">Necessidade</th>
                 <th className="text-right font-semibold px-3 py-3">Sugestão</th>
@@ -473,14 +476,14 @@ function ReposicaoTab({
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    <td colSpan={10} className="px-3 py-3">
+                    <td colSpan={11} className="px-3 py-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))
               ) : filtradas.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">
                     Nenhum item para reposição com os filtros atuais
                   </td>
                 </tr>
@@ -525,6 +528,9 @@ function ReposicaoTab({
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.estoque_full))}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
                         {formatNumber(num(r.em_transito))}
+                      </td>
+                      <td className={cn("px-3 py-2.5 text-right tabular-nums font-mono text-[13px]", num(r.em_envio_aberto) > 0 ? "text-[#7A5CC7] font-semibold" : "text-muted-foreground")}>
+                        {formatNumber(num(r.em_envio_aberto))}
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <CoberturaPill dias={num(r.cobertura_atual_dias)} alvo={num(r.cobertura_alvo_dias)} />
