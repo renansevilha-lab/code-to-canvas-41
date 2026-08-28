@@ -156,15 +156,19 @@ que parece):**
 **Fluxo:** Tiny fatura NF → Shopee READY_TO_SHIP → (Tiny confirma envio) →
 PROCESSED + rastreio → `pregerar` salva a etiqueta.
 
-**Estado de impressão (`impressao_etiquetas`) — v55 (28/ago):** job vai ao
-PrintNode como `sent` e um cron (`confirmar-impressao`, 10 min) consulta o
-PrintNode e move para `done`/`error`. O dedup do `imprimir` por TAG pula
-`done`/`forcado` sempre e `sent` só se enviado há **menos de 20 min** — `sent`
-velho sem confirmação = job preso/perdido (impressora offline) e o lote
-REIMPRIME. Antes, `sent` era eterno: na instabilidade de 28/ago, 4 pedidos Bumi
-ficaram invisíveis para a TAG para sempre (só a impressão individual saía, pois
-o dedup é só do fluxo por tag). Risco residual conhecido: se o job preso sair
-da fila quando a impressora voltar, pode haver etiqueta duplicada.
+**Estado de impressão (`impressao_etiquetas`) — v56 (28/ago):** job vai ao
+PrintNode como `sent`; o cron `confirmar-impressao` (10 min) consulta o
+PrintNode e move para `done`/`error`. **Regra de ouro do dono: etiqueta já
+impressa NUNCA pode sair de novo** — o dedup do `imprimir` por TAG bloqueia
+`done`/`forcado`/`sent`/`preso` SEMPRE (zero reimpressão automática). Job
+PRESO (`sent` 25+ min sem confirmação, ex.: impressora offline) é tratado pelo
+cron em camadas: (1) tenta **cancelar o job no PrintNode** (`DELETE
+/printjobs/{id}` — **funciona**, validado 28/ago cancelando 4 presos reais);
+cancelou → `error` e o lote volta a incluir o pedido com segurança; (2) não
+cancelou → `preso` + **remove a TAG do pedido só no app** (marcador do Tiny
+fica) → o pedido sai do fluxo em massa e volta à fila para decisão humana, com
+aviso no Discord (canal pedidos). A impressão individual nunca teve dedup — é
+a via consciente do operador, que vê na bancada se o papel saiu.
 
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
