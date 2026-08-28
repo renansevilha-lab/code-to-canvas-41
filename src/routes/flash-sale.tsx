@@ -161,7 +161,6 @@ function FlashSalePage() {
   const ativos = prog.filter((p) => p.ativo);
   const cfg = (cfgQ.data ?? []).find((c) => Number(c.shop_id) === shopId);
   const automacao = cfg?.automacao_ativa ?? false;
-  const maxBloco = cfg?.max_itens_bloco ?? 10;
   const mcMap = mcQ.data ?? new Map<string, McBase>();
   const recarregarProg = () => {
     void qc.invalidateQueries({ queryKey: ["flashsale", "prog", shopId] });
@@ -257,12 +256,10 @@ function FlashSalePage() {
             onCheckedChange={(v) => void salvarConfig({ automacao_ativa: v },
               v ? "Automação LIGADA — o cron das 18h assume" : "Automação desligada — só pelo botão manual")} />
         </div>
-        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground"
-          title="Máximo de produtos por bloco (cada bloco é uma promoção relâmpago no Seller Center). Passou disso, o sistema cria outro bloco no mesmo dia.">
-          <span>Produtos por bloco</span>
-          <CampoNum valor={maxBloco} largura="w-[52px]" decimais={0}
-            onSalvar={(v) => void salvarConfig({ max_itens_bloco: Math.max(1, Math.min(50, Math.round(v))) }, "Limite por bloco salvo")} />
-        </div>
+        <span className="text-[12px] text-muted-foreground"
+          title="Limite real da Shopee, medido em produção: o create numa data que já tem promoção volta 'already exist', e a promoção aceita dezenas de produtos.">
+          1 promoção por dia · até 50 produtos
+        </span>
         <div className="flex-1" />
         <Button size="sm" variant="outline" className="h-8 gap-1.5"
           disabled={programando || ativos.length === 0} onClick={() => void abrirPrevia()}>
@@ -332,8 +329,11 @@ function FlashSalePage() {
                     </div>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums font-mono"
-                    style={{ color: desc != null && desc > 0 ? GREEN : RED }}>
-                    {desc != null ? `${(desc * 100).toFixed(0)}%` : "—"}
+                    title={desc != null && desc > 0 && desc < 0.01
+                      ? "Desconto abaixo de 1% — a Shopee costuma RECUSAR pelo critério de preço da promoção (foi o motivo da maioria das falhas). Dê ao menos 1% de desconto."
+                      : undefined}
+                    style={{ color: desc == null || desc <= 0 ? RED : desc < 0.01 ? AMBER : GREEN }}>
+                    {desc != null ? `${(desc * 100).toFixed(desc < 0.01 ? 2 : 0)}%${desc > 0 && desc < 0.01 ? " ⚠" : ""}` : "—"}
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums font-mono"
                     style={{ color: mc ? corMc(mc.pct) : undefined }}
@@ -366,8 +366,9 @@ function FlashSalePage() {
       </div>
       {prog.length > 0 && (
         <p className="text-[11.5px] text-muted-foreground -mt-2">
-          {ativos.length} de {prog.length} item(ns) ativos · blocos de até {maxBloco} produtos (limite do Seller Center) ·
-          estoque promo: 1–1000 · limite 0 = sem limite por comprador · MC estimada com taxas reais dos últimos 60 dias.
+          {ativos.length} de {prog.length} item(ns) ativos · 1 promoção por dia com até 50 produtos (limite Shopee) ·
+          desconto mínimo do critério: ~1% (1 centavo é recusado) · estoque promo precisa existir no anúncio ·
+          MC estimada com taxas reais dos últimos 60 dias.
         </p>
       )}
 
@@ -381,7 +382,8 @@ function FlashSalePage() {
         ) : (
           <div className="rounded-lg border divide-y">
             {(histQ.data ?? []).map((c) => (
-              <div key={c.id} className="flex items-center gap-3 px-3 py-2 text-[12.5px]">
+              <div key={c.id}>
+              <div className="flex items-center gap-3 px-3 py-2 text-[12.5px]">
                 <span className="tabular-nums font-mono w-[86px]">{c.dia.split("-").reverse().join("/")}</span>
                 <span className="px-1.5 py-0.5 rounded text-[11px] font-medium"
                   style={{
@@ -393,6 +395,17 @@ function FlashSalePage() {
                 <span className="text-muted-foreground">{c.itens_ok} adicionado(s){c.itens_falha ? ` · ${c.itens_falha} falha(s)` : ""}</span>
                 <span className="flex-1" />
                 {c.flash_sale_id && <span className="text-[11px] text-muted-foreground font-mono">#{c.flash_sale_id}</span>}
+              </div>
+              {Array.isArray((c.detalhe as { problemas?: { sku: string; motivo: string }[] })?.problemas)
+                && ((c.detalhe as { problemas: { sku: string; motivo: string }[] }).problemas.length > 0) && (
+                <div className="px-3 pb-2 -mt-1 space-y-0.5">
+                  {(c.detalhe as { problemas: { sku: string; motivo: string }[] }).problemas.slice(0, 8).map((p, i) => (
+                    <p key={i} className="text-[11px] leading-snug" style={{ color: AMBER }}>
+                      <span className="font-mono font-semibold">{p.sku}</span>: {p.motivo}
+                    </p>
+                  ))}
+                </div>
+              )}
               </div>
             ))}
           </div>
@@ -407,7 +420,8 @@ function FlashSalePage() {
         <ul className="mt-2 space-y-1 list-disc pl-5">
           <li>A Shopee abre <b>um slot por dia</b> (00:00 → 00:00). O sistema sempre programa o dia de <b>amanhã</b>.</li>
           <li>Às <b>18h</b> (ou pelo botão), ele compara esta lista com a promoção de amanhã na Shopee e adiciona <b>só o que falta</b> — se você incluir um produto depois, a próxima rodada completa a promoção, sem duplicar.</li>
-          <li>Cada promoção relâmpago aceita até <b>{maxBloco} produtos</b> (o limite que aparece no Seller Center). Passou disso, o sistema cria <b>outro bloco</b> no mesmo dia e ativa os dois.</li>
+          <li>A Shopee permite <b>1 promoção relâmpago por dia</b>, com até <b>50 produtos</b> — o sistema completa a existente; o que não couber é reportado.</li>
+          <li><b>Desconto mínimo ~1%</b>: promo "1 centavo abaixo" é recusada pelo critério de preço da Shopee (foi a causa da maioria das falhas). E a promo não pode ficar acima do <b>menor preço dos últimos 7 dias</b> do item.</li>
           <li>Blocos que você desativar no Seller Center continuam desativados — o sistema não religa promoção desligada na mão.</li>
           <li>Proteção de preço: item com promo <b>maior/igual ao preço atual</b> ou <b>abaixo de 50%</b> dele é pulado e reportado no Discord.</li>
           <li><b>MC promo</b> é estimada: comissão e imposto <b>efetivos</b> medidos nos seus pedidos dos últimos 60 dias (por SKU; sem histórico, média da loja) + CMV atual do cadastro. Passe o mouse para ver a conta.</li>
@@ -429,10 +443,11 @@ function FlashSalePage() {
               {r.status === "dry" ? (
                 <>
                   <p>
-                    {r.itens_ja_na_promo > 0 && <><b>{r.itens_ja_na_promo}</b> produto(s) já estão na promoção de amanhã{r.sales_existentes ? ` (${r.sales_existentes} bloco(s))` : ""}. </>}
-                    Faltam <b>{r.faltam}</b>: {r.cabem_nas_existentes > 0 && <>{r.cabem_nas_existentes} entram no(s) bloco(s) existente(s)</>}
-                    {r.cabem_nas_existentes > 0 && r.blocos_novos > 0 && " e "}
-                    {r.blocos_novos > 0 && <>{r.blocos_novos} bloco(s) novo(s) serão criados e ativados</>}.
+                    {r.itens_ja_na_promo > 0 && <><b>{r.itens_ja_na_promo}</b> produto(s) já estão na promoção de amanhã. </>}
+                    Faltam <b>{r.faltam}</b>{r.sales_existentes > 0
+                      ? <> — entram na promoção existente</>
+                      : <> — a promoção do dia será criada e ativada</>}.
+                    {r.nao_cabem > 0 && <> <span style={{ color: AMBER }}>{r.nao_cabem} não cabem (limite Shopee: 1 promoção/dia, 50 produtos).</span></>}
                   </p>
                   {(r.pulados ?? []).length > 0 && (
                     <p className="text-[12px]" style={{ color: AMBER }}>
