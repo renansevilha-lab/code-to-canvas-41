@@ -4,8 +4,14 @@
 // Mostra o que o Seller Center mostra: motivo (+ texto do comprador), fotos,
 // itens, valor e o PRAZO do vendedor (due_date — depois dele a Shopee finaliza
 // sozinha a favor do comprador). E deixa RESPONDER pelo app:
-//   · Reembolsar  = v2.returns.confirm  ("finalizar sem disputa")
-//   · Disputar    = v2.returns.dispute  (vai a julgamento; exige justificativa)
+//   · Aceitar reembolso  = v2.returns.confirm  ("finalizar sem disputa")
+//   · Negar / Disputar   = v2.returns.dispute  (vai a julgamento)
+// Regras REAIS da Shopee (descobertas ao vivo, 27/ago):
+//   - Os motivos de disputa são POR SOLICITAÇÃO (get_return_dispute_reason).
+//     Caso "não recebi o pedido" volta VAZIO = não há contestação via API (a
+//     Shopee decide pelo rastreio) — o diálogo explica e aponta o Seller Center.
+//   - Motivos com produto (53/55...) EXIGEM evidência anexada: as fotos sobem
+//     via convert_image e vão no image_list do dispute.
 // As duas ações são IRREVERSÍVEIS e mexem com dinheiro — cada uma passa por
 // diálogo próprio, por solicitação, e o backend só age com &confirmar=1.
 // ============================================================================
@@ -90,16 +96,38 @@ function prazoTexto(iso: string | null): { txt: string; urgente: boolean } | nul
   return { txt: `vence em ${Math.floor(h / 24)}d`, urgente: false };
 }
 
-async function chamarResponder(qs: string): Promise<{ ok?: boolean; erro?: string; resposta?: unknown }> {
+async function chamarResponder(qs: string, body?: unknown): Promise<Record<string, unknown>> {
   const resp = await fetch(
     `${EXTERNAL_URL}/functions/v1/shopee-devolucao-probe?${qs}`,
-    { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+    {
+      method: body ? "POST" : "GET",
+      headers: {
+        Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    },
   );
-  const d = (await resp.json().catch(() => ({}))) as { ok?: boolean; erro?: string; resposta?: { message?: string } };
+  const d = (await resp.json().catch(() => ({}))) as { ok?: boolean; erro?: string; resposta?: { message?: string }; message?: string };
   if (!resp.ok || d.ok === false) {
-    throw new Error(d.erro ?? d.resposta?.message ?? `HTTP ${resp.status}`);
+    throw new Error(d.erro ?? d.resposta?.message ?? d.message ?? `HTTP ${resp.status}`);
   }
-  return d;
+  return d as Record<string, unknown>;
+}
+
+interface MotivoDisputa {
+  dispute_reason: number;
+  dispute_requirement: string | null;
+  evidence_module_list?: { module_index: number; requirement: string; is_required: boolean }[];
+}
+
+function arquivoParaBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).replace(/^data:[^,]+,/, ""));
+    r.onerror = () => reject(new Error("falha ao ler o arquivo"));
+    r.readAsDataURL(file);
+  });
 }
 
 export function DevolucoesShopeeAbertas() {
@@ -110,7 +138,23 @@ export function DevolucoesShopeeAbertas() {
   const [dispEmail, setDispEmail] = useState<string>(() => {
     try { return localStorage.getItem("devol_disputa_email") ?? ""; } catch { return ""; }
   });
-  const [dispMotivo, setDispMotivo] = useState("2");
+  const [dispMotivo, setDispMotivo] = useState<string>("");
+  const [dispFotos, setDispFotos] = useState<File[]>([]);
+
+  // Motivos de disputa REAIS da solicitação aberta no diálogo (variam por caso;
+  // vazio = a Shopee não aceita contestação via API para ela).
+  const motivosQ = useQuery({
+    queryKey: ["devolucoes", "motivos_disputa", disputa?.return_sn ?? ""],
+    enabled: disputa !== null,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<MotivoDisputa[]> => {
+      const d = await chamarResponder(`modulo=motivos-disputa&return_sn=${encodeURIComponent(disputa!.return_sn)}`);
+      return (d.motivos ?? []) as MotivoDisputa[];
+    },
+  });
+  const motivos = motivosQ.data ?? [];
+  const motivoSel = motivos.find((m) => String(m.dispute_reason) === dispMotivo) ?? motivos[0];
+  const evidenciaObrigatoria = (motivoSel?.evidence_module_list ?? []).some((m) => m.is_required);
 
   const abertasQ = useQuery({
     queryKey: ["devolucoes", "shopee_abertas"],
@@ -151,21 +195,40 @@ export function DevolucoesShopeeAbertas() {
   }
 
   async function enviarDisputa() {
-    if (!disputa) return;
+    if (!disputa || !motivoSel) return;
     const texto = dispTexto.trim();
     const email = dispEmail.trim();
     if (texto.length < 10) { toast.warning("Escreva a justificativa (mín. 10 caracteres)."); return; }
     if (!email.includes("@")) { toast.warning("Informe um e-mail de contato válido."); return; }
+    if (evidenciaObrigatoria && dispFotos.length === 0) {
+      toast.warning("Este motivo EXIGE evidência — anexe ao menos 1 foto.");
+      return;
+    }
     setAgindo(disputa.return_sn);
     try {
       try { localStorage.setItem("devol_disputa_email", email); } catch { /* noop */ }
+      // 1) sobe as fotos (convert_image) e vira URLs de evidência da Shopee
+      const urls: string[] = [];
+      for (const f of dispFotos) {
+        const b64 = await arquivoParaBase64(f);
+        const r = await chamarResponder(`modulo=converter-imagem`, {
+          return_sn: disputa.return_sn, imagem_base64: b64, mime: f.type || "image/jpeg",
+        });
+        if (r.url) urls.push(String(r.url));
+      }
+      // 2) abre a disputa com o motivo real + evidências por módulo exigido
+      const imageList = (motivoSel.evidence_module_list ?? [])
+        .map((m) => ({ module_index: m.module_index, requirement: m.requirement, image_url: urls }))
+        .filter((m) => m.image_url.length > 0);
       await chamarResponder(
-        `modulo=responder-disputar&return_sn=${encodeURIComponent(disputa.return_sn)}` +
-        `&motivo=${encodeURIComponent(dispMotivo)}&email=${encodeURIComponent(email)}` +
-        `&texto=${encodeURIComponent(texto)}&confirmar=1`,
+        `modulo=responder-disputar&return_sn=${encodeURIComponent(disputa.return_sn)}&confirmar=1`,
+        {
+          motivo: motivoSel.dispute_reason, email, texto,
+          image_list: imageList,
+        },
       );
-      toast.success(`Disputa aberta — ${disputa.return_sn}`, { description: "A Shopee vai julgar. Acompanhe pelo Seller Center." });
-      setDisputa(null); setDispTexto("");
+      toast.success(`Disputa aberta — ${disputa.return_sn}`, { description: "A Shopee vai julgar. Acompanhe por aqui e pelo Seller Center." });
+      setDisputa(null); setDispTexto(""); setDispFotos([]);
       void qc.invalidateQueries({ queryKey: ["devolucoes", "shopee_abertas"] });
     } catch (e) {
       toast.error("Falha ao abrir disputa", { description: (e as Error).message });
@@ -198,7 +261,8 @@ export function DevolucoesShopeeAbertas() {
           {lista.map((d) => {
             const st = STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
             const prazo = prazoTexto(d.due_date);
-            const podeResponder = d.status === "ACCEPTED" && prazo && prazo.txt !== "prazo venceu";
+            const podeResponder = ["REQUESTED", "PROCESSING", "ACCEPTED"].includes(d.status ?? "")
+              && prazo && prazo.txt !== "prazo venceu";
             const busy = agindo === d.return_sn;
             return (
               <Card key={d.return_sn} className="p-3.5">
@@ -283,14 +347,14 @@ export function DevolucoesShopeeAbertas() {
                     <div className="flex flex-col gap-1.5 shrink-0">
                       <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
                         disabled={busy || agindo !== null}
-                        onClick={() => { setDisputa(d); setDispTexto(""); }}>
+                        onClick={() => { setDisputa(d); setDispTexto(""); setDispFotos([]); setDispMotivo(""); }}>
                         {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
-                        Disputar…
+                        Negar / Disputar…
                       </Button>
                       <Button size="sm" variant="ghost" className="h-7 gap-1.5 text-xs text-muted-foreground"
                         disabled={busy || agindo !== null}
                         onClick={() => void reembolsar(d)}>
-                        <Undo2 className="h-3 w-3" /> Reembolsar
+                        <Undo2 className="h-3 w-3" /> Aceitar reembolso
                       </Button>
                     </div>
                   )}
@@ -306,34 +370,77 @@ export function DevolucoesShopeeAbertas() {
         Casos com evidência (foto/vídeo do seu lado) são melhor conduzidos pelo Seller Center — a API não anexa arquivos.
       </p>
 
-      {/* Diálogo de disputa — justificativa obrigatória */}
+      {/* Diálogo de disputa — motivos REAIS da Shopee para a solicitação */}
       <Dialog open={disputa !== null} onOpenChange={(o) => { if (!o) setDisputa(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Disputar {disputa?.return_sn}</DialogTitle>
+            <DialogTitle>Negar / Disputar {disputa?.return_sn}</DialogTitle>
             <DialogDescription>
-              A solicitação vai para julgamento da Shopee. Ação irreversível — explique
-              por que o reembolso de R$ {Number(disputa?.refund_amount ?? 0).toFixed(2)} não é devido.
+              A solicitação vai para julgamento da Shopee. Ação irreversível — em jogo o
+              reembolso de R$ {Number(disputa?.refund_amount ?? 0).toFixed(2)}.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2.5">
-            <select
-              className="w-full h-9 rounded-md border bg-card px-2 text-sm"
-              value={dispMotivo}
-              onChange={(e) => setDispMotivo(e.target.value)}
-            >
-              <option value="1">Não recebi o produto de volta</option>
-              <option value="2">Produto voltou danificado / diferente do enviado</option>
-              <option value="3">Outro motivo</option>
-            </select>
-            <Textarea rows={4} placeholder="Justificativa que a Shopee vai ler…"
-              value={dispTexto} onChange={(e) => setDispTexto(e.target.value)} />
-            <Input type="email" placeholder="E-mail de contato (a Shopee responde nele)"
-              value={dispEmail} onChange={(e) => setDispEmail(e.target.value)} />
-          </div>
+
+          {motivosQ.isLoading ? (
+            <p className="text-sm text-muted-foreground py-3 text-center">
+              <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
+              Perguntando à Shopee quais contestações valem para este caso…
+            </p>
+          ) : motivos.length === 0 ? (
+            <div className="rounded-md border p-3 text-[13px] space-y-1.5" style={{ borderColor: "#B7791F55", background: "#B7791F0F" }}>
+              <p className="font-medium" style={{ color: "#B7791F" }}>
+                A Shopee não aceita contestação via API para esta solicitação.
+              </p>
+              <p className="text-muted-foreground">
+                É o padrão dos casos <b>"não recebi o pedido"</b>: a própria Shopee decide
+                pelo rastreio da entrega. Se você tem comprovante de entrega, conteste pelo
+                <b> Seller Center</b> (Pedidos › Devolução/Reembolso). Se a entrega falhou
+                mesmo, use "Aceitar reembolso".
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="space-y-1">
+                <label className="text-[11.5px] text-muted-foreground">Motivo da contestação (opções da Shopee para este caso)</label>
+                <select
+                  className="w-full h-9 rounded-md border bg-card px-2 text-sm"
+                  value={String(motivoSel?.dispute_reason ?? "")}
+                  onChange={(e) => setDispMotivo(e.target.value)}
+                >
+                  {motivos.map((m) => (
+                    <option key={m.dispute_reason} value={String(m.dispute_reason)}>
+                      {(m.dispute_requirement ?? `Motivo ${m.dispute_reason}`).split("\n")[0].slice(0, 90)}
+                    </option>
+                  ))}
+                </select>
+                {motivoSel?.dispute_requirement && (
+                  <p className="text-[11px] text-muted-foreground whitespace-pre-line">{motivoSel.dispute_requirement.trim()}</p>
+                )}
+              </div>
+              {(motivoSel?.evidence_module_list ?? []).map((m) => (
+                <div key={m.module_index} className="space-y-1">
+                  <label className="text-[11.5px] font-medium" style={{ color: m.is_required ? "#C9432F" : undefined }}>
+                    Evidência{m.is_required ? " (obrigatória)" : ""}: <span className="font-normal text-muted-foreground">{m.requirement}</span>
+                  </label>
+                  <Input type="file" accept="image/jpeg,image/png,image/jpg" multiple className="h-9 text-xs"
+                    onChange={(e) => setDispFotos(Array.from(e.target.files ?? []))} />
+                  {dispFotos.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground">{dispFotos.length} foto(s) selecionada(s) — sobem como evidência oficial</p>
+                  )}
+                </div>
+              ))}
+              <Textarea rows={4} placeholder="Justificativa que a Shopee vai ler…"
+                value={dispTexto} onChange={(e) => setDispTexto(e.target.value)} />
+              <Input type="email" placeholder="E-mail de contato (a Shopee responde nele)"
+                value={dispEmail} onChange={(e) => setDispEmail(e.target.value)} />
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDisputa(null)}>Cancelar</Button>
-            <Button variant="destructive" disabled={agindo !== null} onClick={() => void enviarDisputa()}>
+            <Button variant="destructive"
+              disabled={agindo !== null || motivosQ.isLoading || motivos.length === 0}
+              onClick={() => void enviarDisputa()}>
               {agindo ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
               Abrir disputa
             </Button>
