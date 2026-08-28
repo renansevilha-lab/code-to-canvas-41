@@ -156,6 +156,16 @@ que parece):**
 **Fluxo:** Tiny fatura NF → Shopee READY_TO_SHIP → (Tiny confirma envio) →
 PROCESSED + rastreio → `pregerar` salva a etiqueta.
 
+**Estado de impressão (`impressao_etiquetas`) — v55 (28/ago):** job vai ao
+PrintNode como `sent` e um cron (`confirmar-impressao`, 10 min) consulta o
+PrintNode e move para `done`/`error`. O dedup do `imprimir` por TAG pula
+`done`/`forcado` sempre e `sent` só se enviado há **menos de 20 min** — `sent`
+velho sem confirmação = job preso/perdido (impressora offline) e o lote
+REIMPRIME. Antes, `sent` era eterno: na instabilidade de 28/ago, 4 pedidos Bumi
+ficaram invisíveis para a TAG para sempre (só a impressão individual saía, pois
+o dedup é só do fluxo por tag). Risco residual conhecido: se o job preso sair
+da fila quando a impressora voltar, pode haver etiqueta duplicada.
+
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
@@ -322,7 +332,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v54 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v55 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
