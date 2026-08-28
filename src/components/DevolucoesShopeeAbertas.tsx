@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
-import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Undo2 } from "lucide-react";
+import { AlertTriangle, Clock, Loader2, Package as PackageIcon, RefreshCw, ShieldAlert, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import {
   supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
+import { cn } from "@/lib/utils";
 
 interface DevAberta {
   return_sn: string;
@@ -173,7 +174,52 @@ export function DevolucoesShopeeAbertas() {
   });
 
   const lista = abertasQ.data ?? [];
-  const pendentes = useMemo(() => lista.filter((d) => d.status === "ACCEPTED").length, [lista]);
+
+  // ---- filtros do quadro ----
+  const [filtroLoja, setFiltroLoja] = useState<"todas" | "ottz" | "bumi">("todas");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "validar" | "disputa">("todos");
+  const listaFiltrada = useMemo(() => lista.filter((d) => {
+    if (filtroLoja === "ottz" && d.shop_id !== 522186766) return false;
+    if (filtroLoja === "bumi" && d.shop_id !== 759046323) return false;
+    if (filtroStatus === "validar" && d.status !== "ACCEPTED") return false;
+    if (filtroStatus === "disputa" && d.status !== "JUDGING") return false;
+    return true;
+  }), [lista, filtroLoja, filtroStatus]);
+
+  const resumo = useMemo(() => {
+    const validar = lista.filter((d) => d.status === "ACCEPTED");
+    const disputa = lista.filter((d) => d.status === "JUDGING");
+    const soma = (xs: DevAberta[]) => xs.reduce((a, b) => a + Number(b.refund_amount ?? 0), 0);
+    return {
+      validar: validar.length, validarValor: soma(validar),
+      disputa: disputa.length,
+      outras: lista.length - validar.length - disputa.length,
+      totalValor: soma(lista),
+    };
+  }, [lista]);
+  const pendentes = resumo.validar;
+
+  // Foto do PRODUTO (primeiro SKU de cada solicitação) — contexto visual rápido.
+  const skusFoto = useMemo(
+    () => Array.from(new Set(lista.map((d) => d.itens?.[0]?.sku).filter((x): x is string => !!x))).sort(),
+    [lista],
+  );
+  const fotosQ = useQuery({
+    queryKey: ["devolucoes", "fotos_produto", skusFoto],
+    enabled: skusFoto.length > 0,
+    staleTime: 30 * 60_000,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const map: Record<string, string> = {};
+      for (let i = 0; i < skusFoto.length; i += 300) {
+        const { data } = await supabaseExternal
+          .from("produtos").select("sku, foto_capa").in("sku", skusFoto.slice(i, i + 300));
+        for (const r of (data ?? []) as { sku: string; foto_capa: string | null }[]) {
+          if (r.foto_capa) map[r.sku] = r.foto_capa;
+        }
+      }
+      return map;
+    },
+  });
 
   async function reembolsar(d: DevAberta) {
     const valor = d.refund_amount != null ? `R$ ${Number(d.refund_amount).toFixed(2)}` : "o valor da solicitação";
@@ -238,66 +284,139 @@ export function DevolucoesShopeeAbertas() {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12.5px] text-muted-foreground">
-          {lista.length} solicitação(ões) aberta(s) na Shopee
-          {pendentes > 0 && <> · <span className="font-semibold text-destructive">{pendentes} aguardando sua validação</span></>}
-          {" "}— dados do espelho (sync a cada 30 min)
-        </p>
-        <Button size="sm" variant="outline" className="gap-1.5 h-8" disabled={abertasQ.isFetching}
-          onClick={() => void abertasQ.refetch()}>
-          {abertasQ.isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Atualizar
-        </Button>
+    <div className="space-y-4">
+      {/* Resumo + filtros */}
+      <div className="flex flex-wrap items-stretch gap-2.5">
+        <button
+          onClick={() => setFiltroStatus(filtroStatus === "validar" ? "todos" : "validar")}
+          className={cn(
+            "text-left rounded-xl border px-4 py-2.5 min-w-[170px] transition-colors",
+            filtroStatus === "validar" ? "border-red-400 bg-red-50 dark:bg-red-950/30" : "bg-card hover:bg-muted/50",
+          )}
+        >
+          <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: "#C9432F" }}>
+            <ShieldAlert className="h-3.5 w-3.5" /> Aguardando sua validação
+          </div>
+          <div className="text-xl font-extrabold tabular-nums leading-tight">{resumo.validar}</div>
+          <div className="text-[11px] text-muted-foreground">R$ {resumo.validarValor.toFixed(2).replace(".", ",")} em jogo</div>
+        </button>
+        <button
+          onClick={() => setFiltroStatus(filtroStatus === "disputa" ? "todos" : "disputa")}
+          className={cn(
+            "text-left rounded-xl border px-4 py-2.5 min-w-[150px] transition-colors",
+            filtroStatus === "disputa" ? "border-violet-400 bg-violet-50 dark:bg-violet-950/30" : "bg-card hover:bg-muted/50",
+          )}
+        >
+          <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#7A5CC7" }}>Em disputa</div>
+          <div className="text-xl font-extrabold tabular-nums leading-tight">{resumo.disputa}</div>
+          <div className="text-[11px] text-muted-foreground">aguardando julgamento</div>
+        </button>
+        <div className="rounded-xl border bg-card px-4 py-2.5 min-w-[140px]">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Outras abertas</div>
+          <div className="text-xl font-extrabold tabular-nums leading-tight">{resumo.outras}</div>
+          <div className="text-[11px] text-muted-foreground">com a Shopee</div>
+        </div>
+        <div className="rounded-xl border bg-card px-4 py-2.5 min-w-[150px]">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Total em aberto</div>
+          <div className="text-xl font-extrabold tabular-nums leading-tight">R$ {resumo.totalValor.toFixed(2).replace(".", ",")}</div>
+          <div className="text-[11px] text-muted-foreground">{lista.length} solicitação(ões)</div>
+        </div>
+
+        <div className="flex items-end gap-2 ml-auto pb-0.5">
+          <div className="inline-flex rounded-lg border bg-card p-0.5">
+            {([["todas", "Todas"], ["ottz", "Ottz"], ["bumi", "Bumi"]] as const).map(([id, rot]) => (
+              <button key={id} onClick={() => setFiltroLoja(id)}
+                className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition",
+                  filtroLoja === id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}>
+                {rot}
+              </button>
+            ))}
+          </div>
+          <Button size="sm" variant="outline" className="gap-1.5 h-8" disabled={abertasQ.isFetching}
+            onClick={() => void abertasQ.refetch()}>
+            {abertasQ.isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Atualizar
+          </Button>
+        </div>
       </div>
 
       {abertasQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
-      ) : lista.length === 0 ? (
-        <Card className="p-10 text-center text-sm text-muted-foreground">Nenhuma solicitação aberta. 🎉</Card>
+      ) : listaFiltrada.length === 0 ? (
+        <Card className="p-10 text-center text-sm text-muted-foreground">
+          {lista.length === 0 ? "Nenhuma solicitação aberta. 🎉" : "Nada com esses filtros."}
+        </Card>
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {lista.map((d) => {
+        <div className="flex flex-col gap-3">
+          {listaFiltrada.map((d) => {
             const st = STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
             const prazo = prazoTexto(d.due_date);
             const podeResponder = ["REQUESTED", "PROCESSING", "ACCEPTED"].includes(d.status ?? "")
               && prazo && prazo.txt !== "prazo venceu";
             const busy = agindo === d.return_sn;
+            const fotoProduto = d.itens?.[0]?.sku ? fotosQ.data?.[d.itens[0].sku!] : undefined;
             return (
-              <Card key={d.return_sn} className="p-3.5">
-                <div className="flex flex-wrap items-start gap-3">
-                  {(d.images ?? []).slice(0, 2).map((img, i) => (
-                    <a key={i} href={img} target="_blank" rel="noreferrer" title="Foto enviada pelo comprador">
-                      <img src={img} alt="foto do comprador" className="w-[64px] h-[64px] rounded-lg object-cover border" loading="lazy" />
-                    </a>
-                  ))}
-                  <div className="flex-1 min-w-[220px] space-y-1">
+              <Card key={d.return_sn} className="p-0 overflow-hidden" style={{ borderLeft: `4px solid ${st.cor}` }}>
+                <div className="flex flex-wrap items-stretch gap-4 p-4">
+                  {/* produto + fotos do comprador */}
+                  <div className="flex flex-col gap-2 shrink-0">
+                    {fotoProduto ? (
+                      <img src={fotoProduto} alt="" loading="lazy"
+                        className="w-[76px] h-[76px] rounded-xl object-cover bg-muted border" />
+                    ) : (
+                      <div className="w-[76px] h-[76px] rounded-xl bg-muted flex items-center justify-center">
+                        <PackageIcon className="h-6 w-6 text-muted-foreground" />
+                      </div>
+                    )}
+                    {(d.images ?? []).length > 0 && (
+                      <div className="flex gap-1">
+                        {(d.images ?? []).slice(0, 3).map((img, i) => (
+                          <a key={i} href={img} target="_blank" rel="noreferrer" title="Foto enviada pelo comprador">
+                            <img src={img} alt="" loading="lazy" className="w-[24px] h-[24px] rounded object-cover border" />
+                          </a>
+                        ))}
+                        {(d.images ?? []).length > 3 && (
+                          <span className="w-[24px] h-[24px] rounded border bg-muted text-[9px] font-bold flex items-center justify-center text-muted-foreground">
+                            +{(d.images ?? []).length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* miolo */}
+                  <div className="flex-1 min-w-[240px] space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[12.5px] font-semibold">{d.return_sn}</span>
+                      <span className="font-mono text-[13px] font-bold">{d.return_sn}</span>
                       <span className="text-[11px] text-muted-foreground font-mono">pedido {d.order_sn ?? "—"}</span>
-                      <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{lojaDe(d.shop_id)}</span>
-                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full" style={{ background: `${st.cor}1F`, color: st.cor }}>{st.rotulo}</span>
-                      {prazo && (
-                        <span className={`text-[11px] font-semibold ${prazo.urgente ? "text-destructive" : "text-muted-foreground"}`}>
-                          ⏳ {prazo.txt}{d.due_date ? ` (${format(parseISO(d.due_date), "dd/MM HH:mm")})` : ""}
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{lojaDe(d.shop_id)}</span>
+                      <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${st.cor}1F`, color: st.cor }}>{st.rotulo}</span>
+                    </div>
+                    <div className="text-[13px]">
+                      <span className="font-bold px-2 py-0.5 rounded" style={{ background: "#B7791F1A", color: "#B7791F" }}>
+                        {MOTIVO_PT[d.reason ?? ""] ?? d.reason ?? "—"}
+                      </span>
+                      {d.needs_logistics && (
+                        <span className="text-[11px] text-muted-foreground ml-2">
+                          📦 comprador devolve o produto{d.tracking_number ? ` · ${d.tracking_number}` : ""}
                         </span>
                       )}
                     </div>
-                    <div className="text-[12.5px]">
-                      <span className="font-semibold" style={{ color: "#B7791F" }}>{MOTIVO_PT[d.reason ?? ""] ?? d.reason ?? "—"}</span>
-                      {d.text_reason && <span className="text-muted-foreground"> — “{d.text_reason}”</span>}
-                    </div>
+                    {d.text_reason && (
+                      <blockquote className="text-[12px] text-muted-foreground border-l-2 pl-2 italic">
+                        “{d.text_reason}”
+                      </blockquote>
+                    )}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted-foreground">
                       {(d.itens ?? []).map((it, i) => (
-                        <span key={i} className="font-mono">{it.sku ?? "?"} ×{it.qtd ?? 1}</span>
+                        <span key={i}>
+                          <span className="font-mono font-semibold text-foreground">{it.sku ?? "?"}</span>
+                          {it.nome ? ` ${String(it.nome).slice(0, 44)}${String(it.nome).length > 44 ? "…" : ""}` : ""} ×{it.qtd ?? 1}
+                        </span>
                       ))}
-                      {d.refund_amount != null && <span className="font-semibold text-foreground">R$ {Number(d.refund_amount).toFixed(2)}</span>}
-                      {d.needs_logistics && <span title="O comprador devolve o produto">📦 devolve o produto{d.tracking_number ? ` · ${d.tracking_number}` : ""}</span>}
                     </div>
-                    {/* Cruzamento com o ESTOQUE (bipagem): é o dado que orienta a
-                        resposta — voltou com ressalva = base para disputar;
-                        voltou "tudo certo" = reembolsa tranquilo. */}
+                    {/* Cruzamento com o ESTOQUE (bipagem): orienta a resposta —
+                        ressalva = base p/ disputar; "tudo certo" = reembolsa tranquilo. */}
                     {(() => {
                       if (!d.recebida_id) {
                         if (!d.needs_logistics) return null;
@@ -324,51 +443,69 @@ export function DevolucoesShopeeAbertas() {
                         );
                       }
                       return (
-                        <div className="flex flex-col gap-0.5">
-                          <div className="text-[11.5px] font-semibold" style={{ color: "#C9432F" }}>
+                        <div className="rounded-md px-2.5 py-1.5" style={{ background: "#C9432F0D", border: "1px solid #C9432F33" }}>
+                          <div className="text-[11.5px] font-bold" style={{ color: "#C9432F" }}>
                             📦 Recebida {quando}{quem ? ` por ${quem}` : ""} — COM RESSALVA (base para disputa):
                           </div>
                           {(d.itens_problema ?? []).map((it, i) => (
-                            <span key={i} className="text-[11px] leading-tight" style={{ color: "#B7791F" }}>
+                            <div key={i} className="text-[11px] leading-snug" style={{ color: "#B7791F" }}>
                               <span className="font-mono font-semibold">{it.sku ?? "?"}</span>
                               {it.estado && it.estado !== "ok" && <> · {it.estado}</>}
                               {it.qtd_recebida != null && it.qtd_esperada != null && it.qtd_recebida !== it.qtd_esperada && (
                                 <> · recebido {it.qtd_recebida}/{it.qtd_esperada}</>
                               )}
                               {it.obs && <span className="text-muted-foreground"> — {it.obs}</span>}
-                            </span>
+                            </div>
                           ))}
-                          {d.recebida_obs && <span className="text-[11px] text-muted-foreground">{d.recebida_obs}</span>}
+                          {d.recebida_obs && <div className="text-[11px] text-muted-foreground">{d.recebida_obs}</div>}
                         </div>
                       );
                     })()}
                   </div>
-                  {podeResponder && (
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
-                        disabled={busy || agindo !== null}
-                        onClick={() => { setDisputa(d); setDispTexto(""); setDispFotos([]); setDispMotivo(""); }}>
-                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
-                        Negar / Disputar…
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 gap-1.5 text-xs text-muted-foreground"
-                        disabled={busy || agindo !== null}
-                        onClick={() => void reembolsar(d)}>
-                        <Undo2 className="h-3 w-3" /> Aceitar reembolso
-                      </Button>
+
+                  {/* valor + prazo + ações */}
+                  <div className="flex flex-col items-end justify-between gap-2 shrink-0 min-w-[168px]">
+                    <div className="flex flex-col items-end">
+                      {d.refund_amount != null && (
+                        <span className="text-lg font-extrabold tabular-nums leading-tight">
+                          R$ {Number(d.refund_amount).toFixed(2).replace(".", ",")}
+                        </span>
+                      )}
+                      {prazo && (
+                        <span className={cn(
+                          "text-[11px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 mt-1",
+                          prazo.urgente ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300" : "bg-muted text-muted-foreground",
+                        )}>
+                          <Clock className="h-3 w-3" />
+                          {prazo.txt}{d.due_date ? ` · ${format(parseISO(d.due_date), "dd/MM HH:mm")}` : ""}
+                        </span>
+                      )}
                     </div>
-                  )}
+                    {podeResponder && (
+                      <div className="flex flex-col gap-1.5 w-full">
+                        <Button size="sm" variant="outline"
+                          className="h-8 gap-1.5 text-xs w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                          disabled={busy || agindo !== null}
+                          onClick={() => void reembolsar(d)}>
+                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
+                          Aprovar reembolso
+                        </Button>
+                        <Button size="sm" variant="outline"
+                          className="h-8 gap-1.5 text-xs w-full border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
+                          disabled={busy || agindo !== null}
+                          onClick={() => { setDisputa(d); setDispTexto(""); setDispFotos([]); setDispMotivo(""); }}>
+                          <AlertTriangle className="h-3 w-3" />
+                          Recusar / Disputar…
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Card>
             );
           })}
         </div>
       )}
-
-      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-        <ExternalLink className="h-3 w-3" />
-        Casos com evidência (foto/vídeo do seu lado) são melhor conduzidos pelo Seller Center — a API não anexa arquivos.
-      </p>
 
       {/* Diálogo de disputa — motivos REAIS da Shopee para a solicitação */}
       <Dialog open={disputa !== null} onOpenChange={(o) => { if (!o) setDisputa(null); }}>
