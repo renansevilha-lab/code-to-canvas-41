@@ -196,7 +196,7 @@ function FluxoCaixaPage() {
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
-          Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee estimada (ciclo mediano de 8 dias)
+          Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee Ottz estimada (ciclo ~8 dias) e Bumi antecipada pelo Shopee Acelera (~2 dias)
         </p>
         <label className="flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
           <input type="checkbox" className="h-4 w-4 accent-primary"
@@ -436,12 +436,13 @@ function ComoCalculado() {
       {aberto && (
         <ul className="mt-2 space-y-1 list-disc pl-5">
           <li><strong className="text-foreground">Entradas ML</strong> — data <em>real</em> de liberação informada pelo Mercado Pago, pagamento a pagamento.</li>
-          <li><strong className="text-foreground">Entradas Shopee</strong> — estimadas por pedido: data do pedido + 8 dias (mediana medida em 12,7 mil créditos reais das duas lojas). Pedidos "atrasados" no funil são distribuídos na janela típica do estágio: liberação 1–2 dias, entregue 1–4, em trânsito 3–7, a enviar 6–11.</li>
+          <li><strong className="text-foreground">Entradas Shopee</strong> — estimadas por pedido. <strong>Ottz</strong>: data do pedido + 8 dias (mediana medida em 12,7 mil créditos reais), com janelas por estágio (liberação 1–2d, entregue 1–4, em trânsito 3–7, a enviar 6–11). <strong>Bumi</strong>: aderiu ao <strong>Shopee Acelera</strong> (antecipação de repasse) em 28/08/2026 — o repasse cai ~1–2 dias após o envio; o lote da adesão (R$ 60,6 mil) pagou o acumulado antigo, então pedidos anteriores a 28/08 não aparecem mais como "a receber".</li>
+          <li><strong className="text-foreground">Shopee Acelera — ajustes</strong> — saída diária estimada (média móvel de 7 dias dos débitos reais de reconciliação da antecipação: pedido devolvido ou com valor final menor que o antecipado). Não é taxa — o programa está com 0% de custo; é acerto de contas da antecipação.</li>
           <li><strong className="text-foreground">Contas a pagar</strong> — cada conta em aberto do Tiny, no vencimento; <em>vencida cai em HOJE</em>. Expanda o dia para ver fornecedor e categoria.</li>
           <li><strong className="text-foreground">ADS</strong> — regra da casa: dia <strong>10</strong> paga o gasto de ADS do mês anterior (Shopee + ML). Competência em curso é extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Impostos</strong> — regra da casa: dia <strong>20</strong> paga o imposto sobre vendas do mês anterior. Competência em curso extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Gastos recorrentes</strong> — cadastrados no DRE, lançados no dia 5 de cada mês (premissa).</li>
-          <li><strong className="text-foreground">Vendas projetadas</strong> — média de venda líquida por dia-da-semana das últimas 4 semanas (qui vende ~35% mais que sex — o padrão importa). A venda projetada de um dia vira caixa com o ciclo do marketplace: Shopee +8 dias, ML +10 (medianas medidas). Sempre em <span style={{ color: "#2F6FB0" }} className="font-semibold">azul</span> e desligável no topo — projeção nunca se mistura com caixa contratado.</li>
+          <li><strong className="text-foreground">Vendas projetadas</strong> — média de venda líquida por dia-da-semana das últimas 4 semanas (qui vende ~35% mais que sex — o padrão importa). A venda projetada de um dia vira caixa com o ciclo do marketplace: Shopee +5 dias (ponderado: Bumi antecipada ~2d pelo Acelera, Ottz ~8d), ML +10. Sempre em <span style={{ color: "#2F6FB0" }} className="font-semibold">azul</span> e desligável no topo — projeção nunca se mistura com caixa contratado.</li>
           <li><strong className="text-foreground">Limite do modelo</strong> — só entram pedidos que <em>já existem</em>: as entradas Shopee drenam em ~10 dias e, além disso, o saldo projetado é <em>conservador</em> (vendas futuras não são inventadas). Saldo inicial = carteiras Shopee (o ML não expõe saldo).</li>
         </ul>
       )}
