@@ -109,6 +109,16 @@ Fonte da verdade: `produtos.tipo = 'K'` → somar `produto_kits` × `produtos.cu
 A tabela `kits_composicao` é concorrente e **incompleta** — não usar. O campo
 `produtos.custo` para kits é lixo vindo do Tiny.
 
+### Amazon: ItemTax separado (margem esmagada em ~29%)
+A SP-API do **Brasil desagrega o imposto embutido no preço**: `ItemPrice`/
+`Principal` vêm SEM imposto e o `ItemTax`/charge `"Tax"` vêm separados (ex.:
+preço 16,90 = 12,30 + 4,60; ~29,25% = ICMS 20 + PIS/COFINS 9,25, varia por UF).
+A Amazon **repassa** o Tax ao vendedor (`ItemTaxWithheld = null`) e a comissão
+real incide sobre o preço CHEIO (12% de 16,90). Receita/margem devem usar o
+cheio: `amazon-sync-pedidos` v14 soma ItemPrice+ItemTax−Promo; `amazon-sync-
+financas` v13 soma TODOS os charges. Antes disso, TODA margem Amazon parecia
+negativa ("comissão em dobro" era na verdade imposto subtraído da receita).
+
 ### Pedido válido
 Use a view `pedidos_validos`. É lista **branca** de status por canal, nunca
 filtro por exclusão — cada marketplace usa nomenclatura própria, e filtrar por
