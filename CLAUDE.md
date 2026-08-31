@@ -79,6 +79,18 @@ Regras ao mexer em função que usa token ML/Amazon:
 - Função que processa várias contas precisa de **orçamento de tempo por conta**:
   com limite global, a primeira consome os 50s e a segunda fica sem nada
   (aconteceu na `amazon-sync-pedidos`; corrigido na v16).
+- **Nunca consultar o banco por item dentro de laço de sync.** A
+  `amazon-sync-pedidos` fazia 2 consultas por pedido só para saber se já o
+  conhecia; como a SP-API devolve do mais ANTIGO para o mais recente, o
+  orçamento acabava no meio e **o resto do período nunca era alcançado** — a
+  conta nova ficou com 16 dias vazios no meio de agosto e o sync **reportava
+  sucesso**. v18 faz a checagem em LOTE (2 consultas por página de 50): a
+  chamada do cron caiu de estourar 50s para 24s com 129 pedidos.
+  Auditar cobertura com **`?debug=contar&de=YYYY-MM-DD`** (compara quantos a
+  Amazon diz existir × quantos há no banco) e preencher buraco com
+  `?modulo=pedidos&conta=<seller|cnpj>&de=...&ate=...`. Atenção: no timeout
+  interno o `nextToken` é zerado, então `faltou_pagina:false` **não** prova que
+  terminou — olhe o array `erros`.
 
 ## 3. Objetos do banco que o front usa
 
