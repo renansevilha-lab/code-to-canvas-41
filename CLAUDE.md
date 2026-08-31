@@ -63,9 +63,22 @@ Regras ao mexer em função que usa token ML/Amazon:
   `amazon-oauth`/`ml-oauth` (callbacks de navegador): depois de qualquer deploy,
   desligar "Enforce JWT verification" no painel.
 - Conexão de conta nova: ML = `ml-oauth?help=1` (upsert por user_id; trigger
-  `trg_loja_ml_nova` cria a loja p/ user_id ≠ Ottz). Amazon =
-  `amazon-oauth?help=1&conta=svl` (exige secret `AMAZON_APP_ID` + redirect URI
-  cadastrado no app SP-API + verify_jwt desligado).
+  `trg_loja_ml_nova` cria a loja p/ user_id ≠ Ottz). Amazon = autoautorização no
+  Portal do provedor de soluções (menu ˅ do app → token de atualização) e
+  inserção manual em `oauth_tokens_amazon`.
+- **Amazon: o `refresh_token` só funciona no aplicativo SP-API que o emitiu.**
+  Token de um app + credencial de outro = LWA `unauthorized_client` (≠
+  `invalid_grant`, que é token corrompido). Cada empresa tem seu app — Ottz
+  "Ottz Analytics", SVL "SISTEMINHA I". Por isso a conta guarda o rótulo
+  **`oauth_tokens_amazon.lwa_app_ref`** (ex.: `SVL`) e as credenciais ficam em
+  secrets **`AMAZON_LWA_CLIENT_ID_<REF>` / `AMAZON_LWA_CLIENT_SECRET_<REF>`**
+  (sem rótulo = secrets globais). **Nunca guardar client_secret no banco**: com
+  ele fora, vazar a tabela não basta para usar o refresh_token.
+- Alíquota de imposto vem de **`lojas.aliquota_imposto`** (crons 46 e 57), não
+  mais escrita na mão por shop_id/CNPJ — conta nova nasce com o imposto certo.
+- Função que processa várias contas precisa de **orçamento de tempo por conta**:
+  com limite global, a primeira consome os 50s e a segunda fica sem nada
+  (aconteceu na `amazon-sync-pedidos`; corrigido na v16).
 
 ## 3. Objetos do banco que o front usa
 
