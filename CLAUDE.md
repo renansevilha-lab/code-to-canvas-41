@@ -43,6 +43,30 @@ agendamentos via `pg_cron`.
 
 ---
 
+## 2.1 Multi-conta ML/Amazon (31/ago/2026)
+
+A tabela **`lojas`** é a fonte de canal/empresa/alíquota por `shop_id`. ML usa o
+próprio `user_id` como shop_id (Ottz 1107117809). Amazon usa shop_id
+**sintético** (seller_id é alfanumérico): **900001 = Amazon (ACZ Pet)**,
+**900002 = Amazon (SVL Store)** — a verdade da conta segue em
+`oauth_tokens_amazon.seller_id` e `pedidos.fonte='amazon:{cnpj}'`.
+
+Regras ao mexer em função que usa token ML/Amazon:
+- **NUNCA "pegar o token mais recente"** — com 2+ contas é roleta (mesma
+  armadilha da regressão do Tiny multi-conta). Ou a função **loopa todas as
+  contas** (ml-sync, ml-sync-wallet, fulfillment-sync, amazon-sync-*), ou
+  escolhe o token pelo **`pedidos.shop_id`** (ml-etiqueta), ou **pina** na
+  Ottz com `OTTZ_USER_ID = 1107117809` (ml-sync-ads, ml-sync-anuncios,
+  ml-promocoes — tabelas deles não têm coluna de conta).
+- `ml-notificacoes` é webhook PÚBLICO (verify_jwt=false): **não redeployar via
+  MCP** (o deploy religa verify_jwt e derruba os webhooks do ML). Idem
+  `amazon-oauth`/`ml-oauth` (callbacks de navegador): depois de qualquer deploy,
+  desligar "Enforce JWT verification" no painel.
+- Conexão de conta nova: ML = `ml-oauth?help=1` (upsert por user_id; trigger
+  `trg_loja_ml_nova` cria a loja p/ user_id ≠ Ottz). Amazon =
+  `amazon-oauth?help=1&conta=svl` (exige secret `AMAZON_APP_ID` + redirect URI
+  cadastrado no app SP-API + verify_jwt desligado).
+
 ## 3. Objetos do banco que o front usa
 
 ### Existem e devem ser usados
