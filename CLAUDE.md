@@ -358,7 +358,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
 | `ml-sync-ads` | v3 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario`) |
-| `ml-etiqueta` | v4 | Etiqueta de envio do ML (PDF via PrintNode), pedido a pedido — ver seção 6.2 |
+| `ml-etiqueta` | v14 | Etiqueta ML (ZPL via PrintNode) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `compras-sync` | v1 | Espelha ordens de compra do Tiny (`GET /ordem-compra` — atenção: singular) p/ o módulo Compras & Recebimento; cron 30 min; sync NÃO toca campos de conferência do app |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
