@@ -92,6 +92,24 @@ Regras ao mexer em função que usa token ML/Amazon:
   interno o `nextToken` é zerado, então `faltou_pagina:false` **não** prova que
   terminou — olhe o array `erros`.
 
+## 2.2 Receita fantasma — cancelamento que não chega ao espelho
+
+O sync de rotina do ML roda com `dias=2` (custo). Pedido **cancelado depois
+disso** nunca era reconferido e seguia contando como venda válida para sempre.
+Revarrer por data de **criação** é caro e nunca cobre o período todo.
+
+A forma certa é pedir ao marketplace os pedidos **atualizados**, não os criados:
+`ml-sync?modulo=status&dias=N[&dry=1]` usa
+`/orders/search?order.date_last_updated.from=<iso>`. Ele corrige **apenas
+campos de estado** (`status_pedido`, `valido`, `motivo_cancelamento`) — não
+encosta em valor, frete ou escrow — e faz a checagem em lote.
+
+Validação de que o filtro vale: em `dry=1` o campo `mais_antigo_criado` deve
+vir **antes** da janela (medido: janela de 30 dias devolveu pedido criado em
+05/abr). Achado em 31/ago: **30 pedidos da Ottz corrigidos, R$ 1.270 de receita
+fantasma** (motivos `buyer_cancel_express`, `mediations`,
+`shipment_not_delivered`). Rode `dry=1` antes de aplicar.
+
 ## 3. Objetos do banco que o front usa
 
 ### Existem e devem ser usados
