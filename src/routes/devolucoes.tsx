@@ -509,19 +509,23 @@ function OttzDevolucoes() {
           </h1>
           <EmpresaToggle />
         </div>
-        <p className="text-sm text-muted-foreground mt-1">
-          Fluxo: <strong>marque</strong> o pedido → <strong>gere a nota</strong> de devolução →{" "}
-          <strong>emita</strong> a NF na SEFAZ (card "Pendentes de emissão").
-        </p>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <FilePlus2 className="h-3 w-3" /> Gerar nota = cria no Tiny (Pendente)
+        {/* Fluxo em 3 passos — cada passo tem a MESMA cor do estado na tabela,
+            pra ligar o passo ao botao/selo correspondente da coluna Devolucao. */}
+        <div className="flex flex-wrap items-center gap-2 mt-2.5 text-[12px]">
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300">
+            <span className="font-bold">1</span> Marque "Devolver?"
           </span>
-          <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400">
-            <Clock className="h-3 w-3" /> Nota gerada = aguardando emissão
+          <span className="text-muted-foreground">→</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 bg-muted/60 text-foreground/80">
+            <FilePlus2 className="h-3 w-3" /> <span className="font-bold">2</span> Gerar nota (cria no Tiny)
           </span>
-          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="h-3 w-3" /> NF autorizada = concluída na SEFAZ
+          <span className="text-muted-foreground">→</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-300">
+            <Send className="h-3 w-3" /> <span className="font-bold">3</span> Emitir NF (SEFAZ, definitivo)
+          </span>
+          <span className="text-muted-foreground">→</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="h-3 w-3" /> Concluída
           </span>
         </div>
       </header>
@@ -716,7 +720,7 @@ function OttzDevolucoes() {
                             ) : (
                               <Send className="h-3.5 w-3.5" />
                             )}
-                            Emitir NF
+                            3 · Emitir NF
                           </Button>
                         ) : r.precisa_devolucao ? (
                           <Button
@@ -732,10 +736,10 @@ function OttzDevolucoes() {
                             ) : (
                               <FilePlus2 className="h-3.5 w-3.5" />
                             )}
-                            Gerar nota de devolução
+                            2 · Gerar nota
                           </Button>
                         ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
+                          <span className="text-muted-foreground/70 text-[11px]">marque "Devolver?" p/ liberar</span>
                         )}
                       </td>
                     </tr>
@@ -770,8 +774,9 @@ function OttzDevolucoes() {
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <ExternalLink className="h-3 w-3" />
-        Fase 1: identificação e marcação. A emissão da nota de devolução é feita no Tiny (fases
-        seguintes).
+        Nota antiga (&gt;30 dias) não emite direto — a SEFAZ recusa pela data; o sistema
+        reclona com data de hoje automaticamente (madrugada). Se um "Emitir" falhar por
+        idade, é só aguardar o reclone.
       </p>
     </div>
   );
@@ -1360,7 +1365,7 @@ function SvlDevolucoes() {
                             onClick={() => void emitir(r)}
                           >
                             {emitindoId === r.id_nota ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                            Emitir NF
+                            3 · Emitir NF
                           </Button>
                         )}
                       </td>

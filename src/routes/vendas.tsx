@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useMemo, useState, type CSSProperties } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Pencil } from "lucide-react";
+import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { resolveRange, type PeriodPreset } from "@/lib/dashboard/period";
 
@@ -94,6 +95,28 @@ function VendasPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const range = resolveRange(search.period, search.from, search.to);
   const patch = (p: Partial<SearchP>) => navigate({ search: (prev) => ({ ...prev, ...p }), replace: true });
+  const qc = useQueryClient();
+
+  // Marca editavel: grava via RPC definir_marca_manual (produtos.marca_manual).
+  // Um trigger no banco reaplica o override em cima de qualquer sync do Tiny —
+  // a marca escolhida aqui NAO retrocede. Vazio = volta ao Tiny no proximo sync.
+  async function editarMarca(r: SkuRow) {
+    const atual = r.marca && r.marca !== "(sem marca)" ? r.marca : "";
+    const novo = window.prompt(
+      `Marca do SKU ${r.sku}
+
+Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
+      atual,
+    );
+    if (novo === null) return;
+    const valor = novo.trim();
+    const { error } = await supabaseExternal.rpc("definir_marca_manual", {
+      p_sku: r.sku, p_marca: valor || null,
+    });
+    if (error) { toast.error("Falha ao salvar a marca", { description: error.message }); return; }
+    toast.success(valor ? `${r.sku} agora e "${valor}"` : `${r.sku} volta a marca do Tiny no proximo sync`);
+    void qc.invalidateQueries({ queryKey: ["vendas"] });
+  }
 
   const skuQ = useQuery({
     queryKey: ["vendas", "sku", range.from, range.to, search.mk ?? ""],
@@ -288,7 +311,7 @@ function VendasPage() {
               Mostrando {isSku ? skuRows.length : marcaRows.length} de {totalCount} {isSku ? "SKUs" : "marcas"} do período
             </span>
             {isSku
-              ? <SkuTable rows={skuRows} totalReceita={totalReceita} maxPartic={maxParticSku} corMarca={corMarca} />
+              ? <SkuTable rows={skuRows} totalReceita={totalReceita} maxPartic={maxParticSku} corMarca={corMarca} onEditarMarca={editarMarca} />
               : <MarcaTable rows={marcaRows} totalReceita={totalReceita} maxPartic={maxParticMarca} corMarca={corMarca} />}
           </>
         )}
@@ -323,8 +346,9 @@ function ProdImg({ foto, label, cor }: { foto: string | null; label: string; cor
 
 // ---------------------------------------------------------------- tabela SKU
 const SKU_COLS = "52px minmax(230px,1.3fr) 130px 108px 128px 96px 118px 176px";
-function SkuTable({ rows, totalReceita, maxPartic, corMarca }: {
+function SkuTable({ rows, totalReceita, maxPartic, corMarca, onEditarMarca }: {
   rows: SkuRow[]; totalReceita: number; maxPartic: number; corMarca: (m: string | null) => string;
+  onEditarMarca: (r: SkuRow) => void;
 }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #E6E8EC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(16,20,26,.04)", overflow: "hidden" }}>
@@ -352,9 +376,18 @@ function SkuTable({ rows, totalReceita, maxPartic, corMarca }: {
               <span style={{ fontSize: "13px", fontWeight: 500, color: "#0F1216", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.nome ?? r.sku}>{r.nome ?? r.sku}</span>
               <span style={{ fontSize: "11px", color: "#9BA2AE", fontFamily: MONO }}>{r.sku}</span>
             </div>
-            <div style={{ padding: "10px 8px", display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+            <div className="group" style={{ padding: "10px 8px", display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
               <span style={{ width: "7px", height: "7px", borderRadius: "50%", flex: "0 0 7px", background: cor }} />
               <span style={{ fontSize: "12px", color: "#4B5462", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.marca}</span>
+              <button
+                type="button"
+                onClick={() => onEditarMarca(r)}
+                title="Editar marca (nao retrocede no sync do Tiny)"
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ border: "none", background: "transparent", cursor: "pointer", color: "#8B93A1", padding: "2px", lineHeight: 0, flexShrink: 0 }}
+              >
+                <Pencil size={12} />
+              </button>
             </div>
             <div style={{ padding: "10px 8px" }}>
               <span style={{ fontSize: "11.5px", fontWeight: 500, padding: "4px 9px", borderRadius: "6px", background: cm.cor + "18", color: cm.cor }}>{cm.nome}</span>

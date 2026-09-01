@@ -80,6 +80,9 @@ const STATUS_PT: Record<string, { rotulo: string; cor: string }> = {
   JUDGING: { rotulo: "Em disputa (julgamento)", cor: "#7A5CC7" },
 };
 
+// Status em que a Shopee costuma aceitar resposta do vendedor.
+const RESPONDIVEIS = ["REQUESTED", "PROCESSING", "ACCEPTED"];
+
 function lojaDe(shopId: number | null): string {
   if (shopId === 522186766) return "Ottz Pet";
   if (shopId === 759046323) return "Bumi Pet";
@@ -184,6 +187,11 @@ export function DevolucoesShopeeAbertas() {
     if (filtroStatus === "validar" && d.status !== "ACCEPTED") return false;
     if (filtroStatus === "disputa" && d.status !== "JUDGING") return false;
     return true;
+  }).sort((a, b) => {
+    // Acionaveis no topo (da pra aprovar/disputar), depois prazo mais apertado.
+    const peso = (d: DevAberta) => (RESPONDIVEIS.includes(d.status ?? "") ? 0 : 1);
+    if (peso(a) !== peso(b)) return peso(a) - peso(b);
+    return (a.due_date ?? "9999") < (b.due_date ?? "9999") ? -1 : 1;
   }), [lista, filtroLoja, filtroStatus]);
 
   const resumo = useMemo(() => {
@@ -351,8 +359,12 @@ export function DevolucoesShopeeAbertas() {
           {listaFiltrada.map((d) => {
             const st = STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
             const prazo = prazoTexto(d.due_date);
-            const podeResponder = ["REQUESTED", "PROCESSING", "ACCEPTED"].includes(d.status ?? "")
-              && prazo && prazo.txt !== "prazo venceu";
+            // Quem decide se ainda da pra responder e a SHOPEE, nao o nosso
+            // relogio: o due_date do espelho vence e a solicitacao segue aberta
+            // (visto ao vivo 31/ago — TODOS os cards com "prazo venceu" e sem
+            // botao nenhum). Mostramos as acoes sempre que o status permite; se
+            // a Shopee nao aceitar mais, o backend devolve o erro dela.
+            const podeResponder = RESPONDIVEIS.includes(d.status ?? "");
             const busy = agindo === d.return_sn;
             const fotoProduto = d.itens?.[0]?.sku ? fotosQ.data?.[d.itens[0].sku!] : undefined;
             return (
@@ -483,15 +495,15 @@ export function DevolucoesShopeeAbertas() {
                     </div>
                     {podeResponder && (
                       <div className="flex flex-col gap-1.5 w-full">
-                        <Button size="sm" variant="outline"
-                          className="h-8 gap-1.5 text-xs w-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                        <Button size="sm"
+                          className="h-8 gap-1.5 text-xs w-full bg-emerald-600 hover:bg-emerald-700 text-white"
                           disabled={busy || agindo !== null}
                           onClick={() => void reembolsar(d)}>
                           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
                           Aprovar reembolso
                         </Button>
-                        <Button size="sm" variant="outline"
-                          className="h-8 gap-1.5 text-xs w-full border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
+                        <Button size="sm" variant="destructive"
+                          className="h-8 gap-1.5 text-xs w-full"
                           disabled={busy || agindo !== null}
                           onClick={() => { setDisputa(d); setDispTexto(""); setDispFotos([]); setDispMotivo(""); }}>
                           <AlertTriangle className="h-3 w-3" />
