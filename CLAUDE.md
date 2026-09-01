@@ -372,6 +372,16 @@ sem devolução. Rate-limit da **API v2**: 60 req/min nesta conta (header
 
 ---
 
+**Fila SVL sem fantasmas (31/ago/2026):** `devolucoes_svl` é uma **VIEW** sobre
+`devolucoes_svl_base` que esconde as órfãs já resolvidas por clone
+(`devolucao_clonadas.id_novo IS NOT NULL`). O front lê/ATUALIZA pela view
+(auto-atualizável); **UPSERT não atravessa view** — a `devolucoes-svl-sync`
+grava na `_base`. Nota com data de emissão >~30 dias é recusada pela SEFAZ na
+emissão direta: o caminho é o clone com data de hoje (`clonar-lote`). Excesso
+de emissões num dia dispara **SEFAZ 656 "Consumo Indevido"** — parar sem retry
+e espalhar no tempo (cron temporário jobid 98 drena o backlog; remover quando
+`recriados=0`).
+
 ## 5.3 DRE — categorização de despesas e camada de override
 
 **Fonte das despesas:** `contas_pagar` é **espelho do Tiny**, re-sincronizado
