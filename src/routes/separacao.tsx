@@ -786,6 +786,73 @@ function ProcessarAbertosButton() {
   );
 }
 
+// Saúde do pipeline de etiquetas (salvaguarda pós-colapso do 9.9): quantos
+// pedidos a despachar hoje, quantos já têm etiqueta pré-gerada no cache e
+// quantos estão em erro. Fonte: view_etiquetas_saude (mesma do Discord).
+interface SaudeEtiquetasRow {
+  loja: string;
+  a_despachar_hoje: number;
+  elegiveis_total: number;
+  com_etiqueta: number;
+  aguardando_geracao: number;
+  em_erro: number;
+  geradas_30min: number;
+}
+
+function SaudeEtiquetasFaixa() {
+  const { data } = useQuery({
+    queryKey: ["separacao", "saude-etiquetas"],
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    queryFn: async (): Promise<SaudeEtiquetasRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_etiquetas_saude").select("*").order("shop_id");
+      if (error) throw error;
+      return (data ?? []) as SaudeEtiquetasRow[];
+    },
+  });
+  const linhas = data ?? [];
+  if (linhas.length === 0) return null;
+  const ritmo = linhas.reduce((a, b) => a + Number(b.geradas_30min), 0);
+  const totalErro = linhas.reduce((a, b) => a + Number(b.em_erro), 0);
+  const totalFila = linhas.reduce((a, b) => a + Number(b.aguardando_geracao) + Number(b.em_erro), 0);
+  const parado = totalFila >= 25 && ritmo === 0;
+  return (
+    <Card className={cn("px-4 py-2.5", parado && "border-destructive")}>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+          Etiquetas do dia
+        </span>
+        {linhas.map((l) => {
+          const pct = l.elegiveis_total > 0 ? Math.round((Number(l.com_etiqueta) / Number(l.elegiveis_total)) * 100) : 100;
+          return (
+            <span key={l.loja} className="text-[12.5px] tabular-nums">
+              <b>{l.loja}</b>: {formatNumber(l.a_despachar_hoje)} a despachar ·{" "}
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                {formatNumber(l.com_etiqueta)} prontas ({pct}%)
+              </span>
+              {" "}· <span className="text-amber-700 dark:text-amber-400">{formatNumber(l.aguardando_geracao)} gerando</span>
+              {Number(l.em_erro) > 0 && (
+                <> · <span className="font-semibold text-destructive">{formatNumber(l.em_erro)} em erro</span></>
+              )}
+            </span>
+          );
+        })}
+        <span className={cn("text-[11.5px] ml-auto", parado ? "font-bold text-destructive" : "text-muted-foreground")}>
+          {parado
+            ? "⚠️ geração PARADA há 30 min — avise o financeiro/TI"
+            : `ritmo: ${formatNumber(ritmo)} geradas/30min`}
+        </span>
+        {totalErro > 0 && !parado && (
+          <span className="text-[11px] text-muted-foreground">
+            (erros são retentados sozinhos; o watchdog avisa no Discord se travar)
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function SeparacaoTotaisCards() {
   const { data, isLoading, error } = useSeparacaoTotais();
 
@@ -3042,6 +3109,7 @@ function FilaPriorizada() {
         </div>
       )}
       <SeparacaoTotaisCards />
+      <SaudeEtiquetasFaixa />
       <LotesDoDia
         printerId={printerId}
         setPrinterId={setPrinterId}

@@ -261,6 +261,17 @@ download acontece na REVISITA do pedido, então em pico vale rodar o `pregerar`
 com `&backoff_min=5` para revisitar mais cedo (o cron usa o default 20). Para
 zerar o backoff e retrabalhar já: `delete from etiqueta_pregerar_estado`.
 
+**Salvaguardas de saúde (10/set/2026):** `view_etiquetas_saude` (por loja: a
+despachar hoje via `ship_by_date`, com etiqueta no cache, aguardando geração,
+em erro = já falhou 1x no `etiqueta_pregerar_estado`, ritmo `geradas_30min`).
+Consumida por: faixa "Etiquetas do dia" no topo da Separação (refetch 60s;
+fica vermelha se fila ≥25 e ritmo 0), quadro no Discord canal pedidos 2×/dia
+(cron `etiquetas-saude-quadro`, 8h/13h BRT) e **watchdog** `etiquetas-saude?
+modulo=verificar` (cron 20 min): alerta no canal erros se a geração PAROU
+(fila ≥25 e zero geradas em 30 min — o modo de falha do 9.9) ou fila REPRESADA
+(≥100 sem etiqueta, mais antigo >6h), com cooldown de 2h
+(`etiquetas_saude_alerta`). Silêncio é bom: saudável não posta.
+
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
