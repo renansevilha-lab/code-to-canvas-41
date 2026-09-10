@@ -2686,7 +2686,7 @@ function FilaPriorizada() {
     }
   }
 
-  async function imprimirTudoEmMassa(linhasPedidas: PriorizadaRow[]) {
+  async function imprimirTudoEmMassa(linhasPedidas: PriorizadaRow[], opts?: { forcar?: boolean }) {
     if (massa || linhasPedidas.length === 0) return;
     if (impressoraSelecionada?.estado === "offline") {
       toast.error("Impressora offline", { description: "Escolha uma impressora online antes de imprimir em massa." });
@@ -2707,11 +2707,16 @@ function FilaPriorizada() {
       return !info || info.estado !== "com_tag";
     }).length;
     if (!window.confirm(
-      `Imprimir TODOS os lotes do filtro atual?\n\n` +
+      (opts?.forcar
+        ? `ATENÇÃO — REIMPRESSÃO FORÇADA EM MASSA\n` +
+          `Vai sair DE NOVO toda etiqueta JÁ IMPRESSA dessas linhas. Se as anteriores ainda existirem, ` +
+          `os pacotes podem receber duas etiquetas (risco de extravio/devolução). ` +
+          `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.\n\n`
+        : `Imprimir TODOS os lotes do filtro atual?\n\n`) +
       `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.\n` +
       (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — as TAGs serão aplicadas antes de imprimir.\n` : "") +
       (multis > 0 ? `${multis} combinação(ões) multi-SKU ficam de fora (fluxo próprio).\n` : "") +
-      `Etiquetas já impressas NÃO saem de novo (proteção automática).`,
+      (opts?.forcar ? `Confirmar a REIMPRESSÃO de tudo isso?` : `Etiquetas já impressas NÃO saem de novo (proteção automática).`),
     )) return;
     cancelarMassaRef.current = false;
     pausaMassaRef.current = false;
@@ -2731,7 +2736,7 @@ function FilaPriorizada() {
           if ((!info || info.estado !== "com_tag") && item.tag_sugerida) {
             await aplicarTag(item.tag_sugerida);
           }
-          await imprimirPorSku(item, { emMassa: true });
+          await imprimirPorSku(item, { emMassa: true, forcar: !!opts?.forcar });
           feitas++;
         } catch {
           comErro++;
@@ -2754,7 +2759,7 @@ function FilaPriorizada() {
     }
     void registrarSeparacaoLog({
       evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
-      detalhe: { via: "massa", linhas: linhas.length, feitas, com_erro: comErro, multis_pulados: multis },
+      detalhe: { via: "massa", linhas: linhas.length, feitas, com_erro: comErro, multis_pulados: multis, forcar: !!opts?.forcar },
     });
   }
 
@@ -3292,6 +3297,12 @@ function FilaPriorizada() {
             onClick={() => void imprimirTudoEmMassa((rows ?? []).filter((r) => r.tag_sugerida && selGrupos.has(r.tag_sugerida)))}
             title="Aplica TAG (se faltar) e imprime só os blocos selecionados, na ordem de prioridade">
             <Printer className="h-4 w-4" /> Imprimir selecionados
+          </Button>
+          <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:text-destructive"
+            disabled={massa !== null}
+            onClick={() => void imprimirTudoEmMassa((rows ?? []).filter((r) => r.tag_sugerida && selGrupos.has(r.tag_sugerida)), { forcar: true })}
+            title="Reimprime as etiquetas dos blocos selecionados MESMO que já tenham saído (aviso antes)">
+            <AlertTriangle className="h-4 w-4" /> Reimprimir selecionados (forçar)
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelGrupos(new Set())}>Limpar</Button>
         </div>
