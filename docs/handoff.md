@@ -213,10 +213,7 @@ duplicou (conferido no banco).
    login: fazer **fora do horário de operação**.
 
 **Ambiente para validar o front (este PC não tem Node no PATH):** há um Node
-portátil em `%LOCALAPPDATA%\Temp\claude\C--Users-Renan-code-to-canvas-413113138b-…\scratchpad
-odejs
-ode-v24.19.0-win-x64
-ode.exe` (pasta de sessão;
+portátil em `%LOCALAPPDATA%/Temp/claude/C--Users-Renan-code-to-canvas-41/3113138b-…/scratchpad/nodejs/node-v24.19.0-win-x64/node.exe` (pasta de sessão;
 pode sumir). Em outro PC: instale o Node ou baixe o zip portátil de nodejs.org
 e rode `node node_modules/typescript/bin/tsc --noEmit && node
 node_modules/vite/bin/vite.js build`. O build reordena `src/routeTree.gen.ts`
