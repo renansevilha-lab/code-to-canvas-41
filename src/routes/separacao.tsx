@@ -3743,6 +3743,40 @@ function FilaPriorizada() {
                             </>
                           )}
                         </Button>
+                        {/* Reimpressão FORÇADA visível (o item do menu ⋮ não era
+                            encontrado pela operação). Só em linha que já tem TAG. */}
+                        {(() => {
+                          const estTag = tagsPorLinha?.get(linhaKeyDe(item))?.estado ?? "sem_tag";
+                          if (estTag === "sem_tag") return null;
+                          return (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="w-36 text-destructive hover:text-destructive text-xs h-7"
+                              disabled={busyImprimir || imprimindoKey !== null}
+                              title="Imprime DE NOVO etiquetas já impressas desta linha (fura a proteção contra duplicata)"
+                              onClick={() => {
+                                if (!window.confirm(
+                                  `ATENÇÃO — reimprimir ${item.sku ?? ""} · ${item.tipo_envio ?? ""}
+
+` +
+                                  `Vai sair DE NOVO etiqueta que JÁ FOI IMPRESSA. Se a anterior ainda existir, ` +
+                                  `o pacote pode receber duas etiquetas (risco de extravio/devolução).
+
+` +
+                                  `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.
+
+` +
+                                  `Confirmar a reimpressão?`,
+                                )) return;
+                                void imprimirPorSku(item, { forcar: true });
+                              }}
+                            >
+                              <Printer className="h-3 w-3 mr-1" />
+                              Reimprimir (forçar)
+                            </Button>
+                          );
+                        })()}
                         {(() => {
                           const linhaKey = linhaKeyDe(item);
                           const agg = impressaoEstados?.porLinha.get(linhaKey);
