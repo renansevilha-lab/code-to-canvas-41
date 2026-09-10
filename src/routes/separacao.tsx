@@ -1171,10 +1171,12 @@ async function imprimirLoteApi(
   tag: string,
   printerId: number,
   printerNome?: string,
+  forcar = false,
 ): Promise<{ enviadas: number; jaPulados: number }> {
   const url =
     `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
-    `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}`;
+    `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}` +
+    (forcar ? "&forcar=1" : "");
   const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
   });
@@ -2756,7 +2758,7 @@ function FilaPriorizada() {
     });
   }
 
-  async function imprimirPorSku(item: PriorizadaRow, opts?: { emMassa?: boolean }) {
+  async function imprimirPorSku(item: PriorizadaRow, opts?: { emMassa?: boolean; forcar?: boolean }) {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (!opts?.emMassa && imprimindoKey) return;
     if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
@@ -2810,10 +2812,10 @@ function FilaPriorizada() {
       for (const g of groups.values()) {
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
-        const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome);
+        const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
         void registrarSeparacaoLog({
           evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
-          tag: g.tag, sku: item.sku, detalhe: { loja: g.loja, enviadas, jaPulados, via: "sku" },
+          tag: g.tag, sku: item.sku, detalhe: { loja: g.loja, enviadas, jaPulados, via: "sku", forcar: !!opts?.forcar },
         });
         // identificadora por lote (impresso agora OU já estava todo impresso).
         // AWAIT (não void): sai DEPOIS das etiquetas de envio deste lote e antes
@@ -3519,6 +3521,31 @@ function FilaPriorizada() {
                         >
                           <StickyNote className="h-4 w-4 mr-2" />
                           {obsSepQ.data?.get(`linha|${linhaKeyDe(item)}`) ? "Editar observação…" : "Adicionar observação…"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          disabled={imprimindoKey !== null}
+                          onClick={() => {
+                            // Reimpressão FORÇADA: ignora a proteção contra etiqueta
+                            // em dobro. Só para etiqueta perdida/rasgada.
+                            if (!window.confirm(
+                              `ATENÇÃO — reimprimir ${item.sku ?? ""} · ${item.tipo_envio ?? ""}
+
+` +
+                              `Vai sair DE NOVO etiqueta que JÁ FOI IMPRESSA. Se a anterior ainda existir, ` +
+                              `o pacote pode receber duas etiquetas (risco de extravio/devolução).
+
+` +
+                              `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.
+
+` +
+                              `Confirmar a reimpressão?`,
+                            )) return;
+                            void imprimirPorSku(item, { forcar: true });
+                          }}
+                        >
+                          <Printer className="h-4 w-4 mr-2" />
+                          Reimprimir etiquetas (forçar)…
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
