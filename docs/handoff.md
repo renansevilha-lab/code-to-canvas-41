@@ -347,3 +347,25 @@ resta grande é dado real (`escrow_componentes` 113 MB, `pedidos` 49 MB).
    (`view_monitoramento_lotes.prazo`). Estado só na tela (painel fica aberto).
    `separacao.tsx` ainda tem as cópias locais das faixas — dá para trocar pelo
    import quando for mexer lá.
+
+### Pedidos do dono (10/set, fim de tarde) — FEITO, front aguarda Publish
+1. **Fulfillment › Novo envio** ganhou o campo "Data do envio (coleta)" →
+   `fulfillment_envios.data_envio_agendada` já na criação (antes só dentro do
+   envio). Front only.
+2. **Pedidos Integrados — filtros e colunas:** filtro **Envio** (modo de envio,
+   na URL `modos`) + menu **Colunas** (escolha persistida em localStorage
+   `pedidos-integrados.colunas`): Nº pedido, Data, Empresa, Canal, **Envio**,
+   UF, Itens, Receita, CMV, Comissões, Imposto, Recebido, Margem, MC%.
+   Backend: coluna `modo_envio` na `view_margem_pedido_v2` (Full/Flex/Agência/
+   Coleta no ML; opção de envio crua na Shopee; baseline ago/26 md5 idêntico).
+3. **Reprocessar CMV por período (drawer do pedido):** "De/até" + custo por
+   SKU → RPC `reprocessar_cmv_periodo` ("Salvar e reprocessar" grava
+   `cmv_manual` com vigência e recongela; "Reprocessar pelo cadastro" só
+   recongela). Reflete no DRE na hora (mesma view). Testado num pedido real de
+   09/set: valor igual, origem `auto`→`reprocesso`. Descoberta: `cmv_manual`
+   estava VAZIA e, sozinha, não mudava nada já congelado — ver CLAUDE.md §3.
+4. **Custos do Full/ML: dá para puxar** pela API de faturamento (detalhes por
+   cobrança, com sub-tipos CFWA/CFCBE/CFBA/CFPB e order_id nas tarifas por
+   venda). Ver CLAUDE.md §2.1.2 com os valores de agosto. **Próximo passo
+   (não feito):** `ml-sync-billing` + tabela `ml_billing_detalhes` + linha no
+   DRE. Token ML usado só em leitura para a sondagem.

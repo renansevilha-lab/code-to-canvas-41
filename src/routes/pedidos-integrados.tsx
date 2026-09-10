@@ -103,6 +103,9 @@ interface PedidoIntegrado {
   primeiro_produto_foto: string | null;
   primeira_marca: string | null;
   primeira_categoria: string | null;
+  /** modo de envio: Shopee = opção de envio (Entrega Rápida, Shopee Xpress, Full…);
+   *  ML = Full / Flex / Agência / Coleta (de logistica_tipo) */
+  modo_envio: string | null;
 }
 
 interface KpiDiaRow {
@@ -124,7 +127,59 @@ interface KpiDiaRow {
 
 // Colunas retornadas na listagem — apenas o que a tabela + drawer usam.
 const LIST_COLUMNS =
-  "order_sn,marketplace,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto";
+  "order_sn,marketplace,empresa,canal,data_pedido,status_pedido,uf,cidade,venda,custo_prod,comissao_total,taxa_comissao,taxa_servico,ajuste_acao_comercial,comissao_afiliados,recebido_estimado,imposto,margem,mc_pct,qtd_itens,cobertura_cmv,skus,itens_sem_cmv,primeiro_produto_nome,primeiro_produto_foto,modo_envio";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Colunas da tabela — o operador escolhe o que ver (menu "Colunas"); a escolha
+// fica no localStorage. "produto" e "status" são fixas.
+
+type ColunaId =
+  | "pedido" | "data" | "empresa" | "canal" | "modo" | "uf" | "itens"
+  | "receita" | "cmv" | "comissao" | "imposto" | "recebido" | "margem" | "mc";
+
+const COLUNAS: Array<{ id: ColunaId; label: string; padrao: boolean }> = [
+  { id: "pedido", label: "Nº do pedido", padrao: true },
+  { id: "data", label: "Data", padrao: true },
+  { id: "empresa", label: "Empresa", padrao: true },
+  { id: "canal", label: "Canal", padrao: true },
+  { id: "modo", label: "Modo de envio", padrao: true },
+  { id: "uf", label: "UF", padrao: false },
+  { id: "itens", label: "Itens", padrao: false },
+  { id: "receita", label: "Receita", padrao: true },
+  { id: "cmv", label: "CMV", padrao: true },
+  { id: "comissao", label: "Comissões + frete", padrao: false },
+  { id: "imposto", label: "Imposto", padrao: false },
+  { id: "recebido", label: "Recebido (escrow)", padrao: false },
+  { id: "margem", label: "Margem", padrao: true },
+  { id: "mc", label: "MC%", padrao: true },
+];
+const COLUNAS_PADRAO: ColunaId[] = COLUNAS.filter((c) => c.padrao).map((c) => c.id);
+const STORAGE_COLUNAS = "pedidos-integrados.colunas";
+
+function lerColunasSalvas(): ColunaId[] {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_COLUNAS);
+    if (!raw) return COLUNAS_PADRAO;
+    const ids = new Set(COLUNAS.map((c) => c.id as string));
+    const lidas = (JSON.parse(raw) as string[]).filter((x) => ids.has(x)) as ColunaId[];
+    return lidas.length ? lidas : COLUNAS_PADRAO;
+  } catch {
+    return COLUNAS_PADRAO;
+  }
+}
+
+// Modos de envio conhecidos, por marketplace (o filtro também aceita o que
+// vier na URL). Shopee: `shipping_carrier` cru; ML: rótulo de logistica_tipo.
+const MODO_OPTIONS: Array<{ value: string; marketplace: "shopee" | "mercadolivre" }> = [
+  { value: "Entrega Rápida", marketplace: "shopee" },
+  { value: "Shopee Xpress", marketplace: "shopee" },
+  { value: "Full", marketplace: "shopee" },
+  { value: "Retirada pelo Comprador", marketplace: "shopee" },
+  { value: "Turbo", marketplace: "shopee" },
+  { value: "Flex", marketplace: "mercadolivre" },
+  { value: "Agência", marketplace: "mercadolivre" },
+  { value: "Coleta", marketplace: "mercadolivre" },
+];
 
 
 
@@ -141,6 +196,7 @@ type SearchParams = {
   empresas: string[];
   canais: string[];
   statuses: string[];
+  modos: string[];
   cobertura: CoberturaFilter;
   q: string;
   sort: SortKey;
@@ -169,6 +225,7 @@ export const Route = createFileRoute("/pedidos-integrados")({
     empresas: stringArraySearch(s.empresas),
     canais: stringArraySearch(s.canais),
     statuses: stringArraySearch(s.statuses).length ? stringArraySearch(s.statuses) : [...DEFAULT_STATUSES],
+    modos: stringArraySearch(s.modos),
     cobertura: ["todos", "completo", "incompletos"].includes(s.cobertura as string)
       ? (s.cobertura as CoberturaFilter)
       : "todos",
@@ -259,6 +316,7 @@ function PedidosIntegradosPage() {
   const empresas = search.empresas as string[];
   const canais = search.canais as string[];
   const statuses = search.statuses as string[];
+  const modos = search.modos as string[];
   const cobertura = search.cobertura as CoberturaFilter;
   const searchText = search.q as string;
   const sortKey = search.sort as SortKey;
@@ -275,6 +333,15 @@ function PedidosIntegradosPage() {
 
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [colunas, setColunas] = useState<ColunaId[]>(() =>
+    typeof window === "undefined" ? COLUNAS_PADRAO : lerColunasSalvas(),
+  );
+  useEffect(() => {
+    try { window.localStorage.setItem(STORAGE_COLUNAS, JSON.stringify(colunas)); } catch { /* noop */ }
+  }, [colunas]);
+  const visiveis = useMemo(() => new Set<ColunaId>(colunas), [colunas]);
+  // 1 (chevron) + produto + colunas escolhidas + status
+  const nCols = 3 + visiveis.size;
 
   const updateSearch = (next: Partial<SearchParams>) => {
     navigate({ search: { ...search, ...next }, replace: true });
@@ -383,6 +450,7 @@ function PedidosIntegradosPage() {
       empresasKey,
       canaisKey,
       statusesKey,
+      modos.join("|"),
       cobertura,
       searchText,
     ],
@@ -399,6 +467,7 @@ function PedidosIntegradosPage() {
       if (statuses.length && statuses.length !== DEFAULT_STATUSES.length) {
         q = q.in("status_pedido", statuses);
       }
+      if (modos.length) q = q.in("modo_envio", modos);
       if (cobertura === "completo") q = q.eq("cobertura_cmv", "completo");
       else if (cobertura === "incompletos") q = q.neq("cobertura_cmv", "completo");
       if (searchText) {
@@ -469,6 +538,10 @@ function PedidosIntegradosPage() {
     updateSearch({ canais: next, pagina: 1 });
   };
 
+  const updateModos = (next: string[]) => {
+    updateSearch({ modos: next, pagina: 1 });
+  };
+
   const updateStatuses = (next: string[]) => {
     updateSearch({ statuses: next, pagina: 1 });
   };
@@ -499,19 +572,21 @@ function PedidosIntegradosPage() {
             <EmpresaFilter value={empresas} options={empresasOptions} onChange={updateEmpresas} />
             <CanalFilter value={canais} options={canaisOptions} onChange={updateCanais} />
             <StatusFilter value={statuses} onChange={updateStatuses} marketplaces={selectedMarketplaces} />
-            {(empresas.length > 0 || canais.length > 0) && (
+            <ModoFilter value={modos} onChange={updateModos} marketplaces={selectedMarketplaces} />
+            {(empresas.length > 0 || canais.length > 0 || modos.length > 0) && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-9 px-2 text-xs text-muted-foreground"
                 onClick={() => {
-                  updateSearch({ empresas: [], canais: [], pagina: 1 });
+                  updateSearch({ empresas: [], canais: [], modos: [], pagina: 1 });
                 }}
               >
                 Limpar filtros
               </Button>
             )}
             <CoberturaSegment value={cobertura} onChange={updateCobertura} />
+            <ColunasMenu value={colunas} onChange={setColunas} />
 
             <div className="relative ml-auto w-full max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -528,7 +603,7 @@ function PedidosIntegradosPage() {
           </div>
 
 
-          {(empresas.length > 0 || canais.length > 0) && (
+          {(empresas.length > 0 || canais.length > 0 || modos.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
               {empresas.map((e) => (
                 <Badge key={`e-${e}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
@@ -551,6 +626,19 @@ function PedidosIntegradosPage() {
                     onClick={() => updateCanais(canais.filter((x) => x !== c))}
                     className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
                     aria-label={`Remover ${c}`}
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+              {modos.map((m) => (
+                <Badge key={`m-${m}`} variant="secondary" className="gap-1 pl-2 pr-1 py-0.5 text-[11px]">
+                  <span className="text-muted-foreground">Envio:</span>
+                  <span className="font-medium">{m}</span>
+                  <button
+                    onClick={() => updateModos(modos.filter((x) => x !== m))}
+                    className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 px-1"
+                    aria-label={`Remover ${m}`}
                   >
                     ×
                   </button>
@@ -723,14 +811,20 @@ function PedidosIntegradosPage() {
                 <tr>
                   <th className="w-10 px-3 py-3" />
                   <th className="text-left font-semibold px-3 py-3">Produto</th>
-                  <th className="text-left font-semibold px-3 py-3">Pedido</th>
-                  <Th label="Data" k="data_pedido" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  <th className="text-left font-semibold px-3 py-3">Empresa</th>
-                  <th className="text-left font-semibold px-3 py-3">Canal</th>
-                  <Th label="Receita" k="venda" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="CMV" k="custo_prod" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="Margem" k="margem" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
-                  <Th label="MC%" k="mc_pct" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
+                  {visiveis.has("pedido") && <th className="text-left font-semibold px-3 py-3">Pedido</th>}
+                  {visiveis.has("data") && <Th label="Data" k="data_pedido" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />}
+                  {visiveis.has("empresa") && <th className="text-left font-semibold px-3 py-3">Empresa</th>}
+                  {visiveis.has("canal") && <th className="text-left font-semibold px-3 py-3">Canal</th>}
+                  {visiveis.has("modo") && <th className="text-left font-semibold px-3 py-3">Envio</th>}
+                  {visiveis.has("uf") && <th className="text-left font-semibold px-3 py-3">UF</th>}
+                  {visiveis.has("itens") && <th className="text-right font-semibold px-3 py-3">Itens</th>}
+                  {visiveis.has("receita") && <Th label="Receita" k="venda" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
+                  {visiveis.has("cmv") && <Th label="CMV" k="custo_prod" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
+                  {visiveis.has("comissao") && <Th label="Comissões" k="comissao_total" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
+                  {visiveis.has("imposto") && <Th label="Imposto" k="imposto" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
+                  {visiveis.has("recebido") && <th className="text-right font-semibold px-3 py-3">Recebido</th>}
+                  {visiveis.has("margem") && <Th label="Margem" k="margem" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
+                  {visiveis.has("mc") && <Th label="MC%" k="mc_pct" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />}
                   <th className="text-left font-semibold px-3 py-3">Status</th>
                 </tr>
               </thead>
@@ -738,14 +832,14 @@ function PedidosIntegradosPage() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-t border-border">
-                      <td colSpan={11} className="px-3 py-3">
+                      <td colSpan={nCols} className="px-3 py-3">
                         <Skeleton className="h-6 w-full" />
                       </td>
                     </tr>
                   ))
                 ) : paged.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={nCols} className="px-3 py-12 text-center text-sm text-muted-foreground">
                       Nenhum pedido encontrado com os filtros selecionados
                     </td>
                   </tr>
@@ -754,6 +848,8 @@ function PedidosIntegradosPage() {
                     <PedidoRow
                       key={p.order_sn}
                       p={p}
+                      visiveis={visiveis}
+                      nCols={nCols}
                       expanded={expandedId === p.order_sn}
                       onToggle={() =>
                         setExpandedId((id) => (id === p.order_sn ? null : p.order_sn))
@@ -798,6 +894,121 @@ function MarketplaceDot({ canal, marketplace, size = 10 }: { canal?: string | nu
       className="inline-block rounded-full shrink-0"
       style={{ width: size, height: size, backgroundColor: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.08) inset" }}
     />
+  );
+}
+
+// Cores por modo de envio — Full/Flex/coleta são o que muda a operação.
+const MODO_ESTILO: Record<string, string> = {
+  "Full": "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  "Flex": "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+  "Entrega Rápida": "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30",
+  "Shopee Xpress": "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30",
+  "Agência": "bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30",
+  "Coleta": "bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30",
+  "Retirada pelo Comprador": "bg-pink-500/15 text-pink-700 dark:text-pink-300 border-pink-500/30",
+};
+
+function ModoEnvioPill({ modo }: { modo: string | null }) {
+  if (!modo) return <span className="text-muted-foreground text-[12px]">—</span>;
+  return (
+    <span
+      className={cn(
+        "text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap border",
+        MODO_ESTILO[modo] ?? "border-border text-muted-foreground",
+      )}
+    >
+      {modo}
+    </span>
+  );
+}
+
+function ModoFilter({
+  value,
+  onChange,
+  marketplaces,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  marketplaces: string[];
+}) {
+  const visible = MODO_OPTIONS.filter(
+    (m) => marketplaces.length === 0 || marketplaces.includes(m.marketplace),
+  );
+  // valores vindos da URL que não estão na lista fixa continuam marcáveis
+  const extras = value.filter((v) => !MODO_OPTIONS.some((m) => m.value === v));
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 bg-card">
+          <span className="font-medium">Envio</span>
+          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+            {value.length === 0 ? "Todos" : value.length}
+          </Badge>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel>Modo de envio</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {visible.map((m) => (
+          <DropdownMenuCheckboxItem
+            key={m.value}
+            checked={value.includes(m.value)}
+            onCheckedChange={(c) => onChange(c ? [...value, m.value] : value.filter((x) => x !== m.value))}
+          >
+            <span className="inline-flex items-center gap-2">
+              <ModoEnvioPill modo={m.value} />
+              <span className="text-[11px] text-muted-foreground">
+                {m.marketplace === "shopee" ? "Shopee" : "Mercado Livre"}
+              </span>
+            </span>
+          </DropdownMenuCheckboxItem>
+        ))}
+        {extras.map((m) => (
+          <DropdownMenuCheckboxItem
+            key={m}
+            checked
+            onCheckedChange={() => onChange(value.filter((x) => x !== m))}
+          >
+            {m}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ColunasMenu({ value, onChange }: { value: ColunaId[]; onChange: (v: ColunaId[]) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 bg-card" title="Escolher as colunas da tabela">
+          <span className="font-medium">Colunas</span>
+          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{value.length}</Badge>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-60">
+        <DropdownMenuLabel>Colunas visíveis</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {COLUNAS.map((c) => (
+          <DropdownMenuCheckboxItem
+            key={c.id}
+            checked={value.includes(c.id)}
+            onSelect={(e) => e.preventDefault()}
+            onCheckedChange={(on) =>
+              onChange(on ? COLUNAS.filter((x) => x.id === c.id || value.includes(x.id)).map((x) => x.id) : value.filter((x) => x !== c.id))
+            }
+          >
+            {c.label}
+          </DropdownMenuCheckboxItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem checked={false} onSelect={(e) => e.preventDefault()} onCheckedChange={() => onChange(COLUNAS_PADRAO)}>
+          Restaurar padrão
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1060,10 +1271,14 @@ function Th({
 
 function PedidoRow({
   p,
+  visiveis,
+  nCols,
   expanded,
   onToggle,
 }: {
   p: PedidoIntegrado;
+  visiveis: Set<ColunaId>;
+  nCols: number;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -1096,48 +1311,90 @@ function PedidoRow({
             </div>
           </div>
         </td>
-        <td className="px-3 py-2.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="font-mono text-[12px] text-muted-foreground">{p.order_sn.slice(0, 10)}…</span>
-            </TooltipTrigger>
-            <TooltipContent>{p.order_sn}</TooltipContent>
-          </Tooltip>
-        </td>
-        <td className="px-3 py-2.5 text-[12px] whitespace-nowrap text-muted-foreground">
-          {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
-        </td>
-        <td className="px-3 py-2.5 text-[12.5px] whitespace-nowrap">{p.empresa ?? "—"}</td>
-        <td className="px-3 py-2.5 text-[12.5px]">
-          <span className="inline-flex items-center gap-1.5">
-            <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
-            <span className="whitespace-nowrap">{p.canal ?? p.marketplace}</span>
-          </span>
-        </td>
-        <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px]">{formatBRL(p.venda ?? 0)}</td>
-        <td
-          className={cn(
-            "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground",
-            cmvMissing && "italic",
-          )}
-        >
-          {p.custo_prod != null ? formatBRL(p.custo_prod) : "—"}
-        </td>
-        <td
-          className={cn(
-            "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] font-semibold",
-            p.margem == null
-              ? "text-muted-foreground"
-              : p.margem >= 0
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-red-600 dark:text-red-400",
-          )}
-        >
-          {p.margem != null ? formatBRL(p.margem) : "—"}
-        </td>
-        <td className="px-3 py-2.5 text-right">
-          {p.mc_pct != null ? <McPill mc={p.mc_pct} /> : <span className="text-muted-foreground">—</span>}
-        </td>
+        {visiveis.has("pedido") && (
+          <td className="px-3 py-2.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="font-mono text-[12px] text-muted-foreground">{p.order_sn.slice(0, 10)}…</span>
+              </TooltipTrigger>
+              <TooltipContent>{p.order_sn}</TooltipContent>
+            </Tooltip>
+          </td>
+        )}
+        {visiveis.has("data") && (
+          <td className="px-3 py-2.5 text-[12px] whitespace-nowrap text-muted-foreground">
+            {p.data_pedido ? format(parseISO(p.data_pedido), "dd/MM HH:mm") : "—"}
+          </td>
+        )}
+        {visiveis.has("empresa") && (
+          <td className="px-3 py-2.5 text-[12.5px] whitespace-nowrap">{p.empresa ?? "—"}</td>
+        )}
+        {visiveis.has("canal") && (
+          <td className="px-3 py-2.5 text-[12.5px]">
+            <span className="inline-flex items-center gap-1.5">
+              <MarketplaceDot canal={p.canal} marketplace={p.marketplace} />
+              <span className="whitespace-nowrap">{p.canal ?? p.marketplace}</span>
+            </span>
+          </td>
+        )}
+        {visiveis.has("modo") && (
+          <td className="px-3 py-2.5">
+            <ModoEnvioPill modo={p.modo_envio} />
+          </td>
+        )}
+        {visiveis.has("uf") && (
+          <td className="px-3 py-2.5 text-[12px] text-muted-foreground">{p.uf ?? "—"}</td>
+        )}
+        {visiveis.has("itens") && (
+          <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground">{p.qtd_itens ?? "—"}</td>
+        )}
+        {visiveis.has("receita") && (
+          <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px]">{formatBRL(p.venda ?? 0)}</td>
+        )}
+        {visiveis.has("cmv") && (
+          <td
+            className={cn(
+              "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground",
+              cmvMissing && "italic",
+            )}
+          >
+            {p.custo_prod != null ? formatBRL(p.custo_prod) : "—"}
+          </td>
+        )}
+        {visiveis.has("comissao") && (
+          <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground">
+            {p.comissao_total != null ? formatBRL(p.comissao_total) : "—"}
+          </td>
+        )}
+        {visiveis.has("imposto") && (
+          <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] text-muted-foreground">
+            {p.imposto != null ? formatBRL(p.imposto) : "—"}
+          </td>
+        )}
+        {visiveis.has("recebido") && (
+          <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px]">
+            {p.recebido_estimado != null ? formatBRL(p.recebido_estimado) : "—"}
+          </td>
+        )}
+        {visiveis.has("margem") && (
+          <td
+            className={cn(
+              "px-3 py-2.5 text-right tabular-nums font-mono text-[12.5px] font-semibold",
+              p.margem == null
+                ? "text-muted-foreground"
+                : p.margem >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-red-600 dark:text-red-400",
+            )}
+          >
+            {p.margem != null ? formatBRL(p.margem) : "—"}
+          </td>
+        )}
+        {visiveis.has("mc") && (
+          <td className="px-3 py-2.5 text-right">
+            {p.mc_pct != null ? <McPill mc={p.mc_pct} /> : <span className="text-muted-foreground">—</span>}
+          </td>
+        )}
         <td className="px-3 py-2.5">
           <div className="flex items-center gap-1.5">
             <span
@@ -1154,7 +1411,7 @@ function PedidoRow({
       </tr>
       {expanded && (
         <tr className="bg-muted/25 border-t border-border">
-          <td colSpan={11} className="px-6 py-5">
+          <td colSpan={nCols} className="px-6 py-5">
             <PedidoExpandido p={p} />
           </td>
         </tr>
@@ -1395,49 +1652,63 @@ function PuxarCustoTiny({ pedido }: { pedido: PedidoIntegrado }) {
 }
 
 /**
- * Custo MANUAL com vigência por data (tabela cmv_manual). Vale para todos os
- * pedidos do SKU a partir da data escolhida — precedência no cálculo:
- * congelado do pedido (Reprocessar CMV) > manual vigente > cadastro do Tiny.
- * Default da vigência = data DESTE pedido, para que ele já seja recalculado.
+ * Custo por PERÍODO (10/set/2026). Antes, o custo manual (cmv_manual) só valia
+ * para pedidos ainda NÃO congelados — e o cron congela todo pedido em 15 min,
+ * então na prática o manual não mudava nada já lançado. Agora a RPC
+ * `reprocessar_cmv_periodo` grava o custo com vigência (opcional) E recongela
+ * o CMV dos pedidos do SKU (e dos kits que o contêm) entre as duas datas, com
+ * o custo vigente NA DATA de cada pedido. Como o DRE lê a mesma view de
+ * margem, ele muda junto; o KPI do topo (materializado) acompanha em ≤20 min.
  */
 function CustoManual({ pedido, skus }: { pedido: PedidoIntegrado; skus: string[] }) {
   const queryClient = useQueryClient();
   const { perfil } = usePerfil();
-  const [salvando, setSalvando] = useState<string | null>(null);
+  const [rodando, setRodando] = useState<string | null>(null);
   const [valores, setValores] = useState<Record<string, string>>({});
   const dataPedido = (pedido.data_pedido ?? new Date().toISOString()).slice(0, 10);
+  const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
   const [desde, setDesde] = useState(dataPedido);
+  const [ate, setAte] = useState(hoje);
 
-  const salvar = async (sku: string) => {
-    const custo = Number((valores[sku] ?? "").replace(",", "."));
-    if (!Number.isFinite(custo) || custo <= 0) {
-      toast.error("Informe um custo válido (ex.: 14,40)");
+  const reprocessar = async (sku: string, comCusto: boolean) => {
+    let custo: number | null = null;
+    if (comCusto) {
+      custo = Number((valores[sku] ?? "").replace(",", "."));
+      if (!Number.isFinite(custo) || custo <= 0) {
+        toast.error("Informe um custo válido (ex.: 14,40)");
+        return;
+      }
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || ate < desde) {
+      toast.error("Informe o período (data final ≥ inicial)");
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
-      toast.error("Informe a data de início da vigência");
-      return;
-    }
-    setSalvando(sku);
+    setRodando(sku + (comCusto ? ":custo" : ":cadastro"));
     try {
-      const { error } = await supabaseExternal.from("cmv_manual").upsert({
-        sku,
-        vigente_desde: desde,
-        custo,
-        criado_por: perfil?.nome ?? null,
-        observacao: `definido no pedido ${pedido.order_sn}`,
-      }, { onConflict: "sku,vigente_desde" });
-      if (error) throw error;
-      toast.success(`Custo manual salvo — SKU ${sku}`, {
-        description: `R$ ${custo.toFixed(2).replace(".", ",")} a partir de ${desde.split("-").reverse().join("/")} (pedidos anteriores não mudam).`,
-        duration: 8000,
+      const { data, error } = await supabaseExternal.rpc("reprocessar_cmv_periodo", {
+        p_sku: sku, p_de: desde, p_ate: ate, p_custo: custo,
+        p_por: perfil?.nome ?? null, p_obs: `definido no pedido ${pedido.order_sn}`,
       });
-      await queryClient.invalidateQueries({ queryKey: ["pi-list"] });
-      await queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia"] });
+      if (error) throw error;
+      const r = (Array.isArray(data) ? data[0] : data) as
+        { pares: number; pedidos: number; sem_custo: number; custo_manual_gravado: boolean } | undefined;
+      const periodo = `${desde.split("-").reverse().join("/")} a ${ate.split("-").reverse().join("/")}`;
+      toast.success(`CMV do SKU ${sku} reprocessado — ${r?.pedidos ?? 0} pedido(s) em ${periodo}`, {
+        description: (comCusto
+          ? `Custo R$ ${custo!.toFixed(2).replace(".", ",")} gravado com vigência desde ${desde.split("-").reverse().join("/")}. `
+          : "Recalculado pelo custo do cadastro (ou manual vigente na data). ") +
+          (r?.sem_custo ? `${r.sem_custo} item(ns) ficaram sem custo. ` : "") +
+          "DRE e lista já refletem; o KPI do topo atualiza em até 20 min.",
+        duration: 10000,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["pi-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia"] });
+      void queryClient.invalidateQueries({ queryKey: ["pi-kpi-dia-prev"] });
+      void queryClient.invalidateQueries({ queryKey: ["dre"] });
     } catch (e) {
-      toast.error("Falha ao salvar custo manual", { description: (e as Error).message });
+      toast.error("Falha ao reprocessar o CMV", { description: (e as Error).message });
     } finally {
-      setSalvando(null);
+      setRodando(null);
     }
   };
 
@@ -1445,15 +1716,17 @@ function CustoManual({ pedido, skus }: { pedido: PedidoIntegrado; skus: string[]
   return (
     <div className="border-t border-border pt-3 flex flex-col gap-2">
       <p className="text-xs text-muted-foreground">
-        Ou preencha o custo <b>manualmente</b> — vale para os pedidos do SKU a partir da data
-        (os anteriores mantêm o custo antigo):
+        <b>Reprocessar o CMV por período:</b> informe um custo novo (vale a partir da data inicial,
+        para todos os pedidos do SKU) ou recalcule pelo custo do cadastro. Pedidos fora do período não mudam.
       </p>
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-muted-foreground whitespace-nowrap">Vale desde</span>
-        <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-8 w-[150px] text-xs" />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap">De</span>
+        <Input type="date" value={desde} max={ate} onChange={(e) => setDesde(e.target.value)} className="h-8 w-[150px] text-xs" />
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap">até</span>
+        <Input type="date" value={ate} min={desde} onChange={(e) => setAte(e.target.value)} className="h-8 w-[150px] text-xs" />
       </div>
       {skus.map((sku) => (
-        <div key={sku} className="flex items-center gap-2">
+        <div key={sku} className="flex flex-wrap items-center gap-2">
           <span className="text-[11.5px] font-mono font-semibold w-[64px] shrink-0">{sku}</span>
           <span className="text-[11px] text-muted-foreground">R$</span>
           <Input
@@ -1465,10 +1738,19 @@ function CustoManual({ pedido, skus }: { pedido: PedidoIntegrado; skus: string[]
           />
           <Button
             variant="outline" size="sm" className="h-8 text-xs"
-            disabled={salvando === sku || !(valores[sku] ?? "").trim()}
-            onClick={() => void salvar(sku)}
+            disabled={rodando != null || !(valores[sku] ?? "").trim()}
+            onClick={() => void reprocessar(sku, true)}
+            title="Grava o custo com vigência desde a data inicial e recongela o CMV dos pedidos do período"
           >
-            {salvando === sku ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar"}
+            {rodando === sku + ":custo" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar e reprocessar"}
+          </Button>
+          <Button
+            variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground"
+            disabled={rodando != null}
+            onClick={() => void reprocessar(sku, false)}
+            title="Recalcula o período com o custo do cadastro do Tiny (ou manual já vigente na data), sem gravar custo novo"
+          >
+            {rodando === sku + ":cadastro" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Reprocessar pelo cadastro"}
           </Button>
         </div>
       ))}

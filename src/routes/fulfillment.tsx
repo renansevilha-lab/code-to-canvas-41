@@ -1491,6 +1491,9 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
   const [empresa, setEmpresa] = useState<string>("");
   const [numero, setNumero] = useState("");
   const [centro, setCentro] = useState("");
+  // data agendada da coleta/entrega no CD — opcional na criação (antes só
+  // dava para preencher depois, dentro do envio)
+  const [dataAgendada, setDataAgendada] = useState("");
   const [itens, setItens] = useState<ParsedItem[]>([]);
   const [totalPdf, setTotalPdf] = useState<number | null>(null);
   const [etiquetasZpl, setEtiquetasZpl] = useState<string | null>(null);
@@ -1609,6 +1612,7 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
           empresa: empresa || null,
           numero: numero || null,
           centro: centro || null,
+          data_envio_agendada: dataAgendada || null,
           status: "separando",
           total_unidades: somaQtd,
           etiquetas_zpl: etiquetasZpl,
@@ -1649,7 +1653,7 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       </div>
 
       <Card className="p-4 space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Marketplace</label>
             <Select value={marketplace} onValueChange={setMarketplace}>
@@ -1679,6 +1683,10 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Centro (CD)</label>
             <Input value={centro} onChange={(e) => setCentro(e.target.value)} placeholder="ex: Perus - BRRC01" className="h-9" />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Data do envio (coleta)</label>
+            <Input type="date" value={dataAgendada} onChange={(e) => setDataAgendada(e.target.value)} className="h-9" />
           </div>
         </div>
 

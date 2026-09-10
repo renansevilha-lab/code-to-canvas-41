@@ -106,6 +106,24 @@ vigiada pelo watchdog `etiquetas-saude?modulo=verificar` (20 min) com alerta
 no canal erros e cooldown de 2h. Diagnóstico rápido: `select * from
 view_tokens_saude`; cura: `ml-refresh-token?force=1` (ou `?user_id=`).
 
+## 2.1.2 Custos do Full/ML pela API de faturamento (verificado 10/set/2026)
+
+`GET /billing/integration/monthly/periods?group=ML&document_type=BILL` lista os
+períodos (13 disponíveis); `GET /billing/integration/periods/key/{YYYY-MM-01}/
+group/ML/details?document_type=BILL&limit=150&offset=N` devolve **cada
+cobrança** com `charge_info.detail_sub_type`/`transaction_detail`, valor e, nas
+tarifas por venda, `sales_info[].order_id`. Agosto/2026 (5.154 lançamentos):
+CFFE envio extra R$ 10.076 · CVVML custo por vender R$ 4.869 · PADS Product Ads
+R$ 4.059 · CXDE R$ 1.709 · **CFCBE coleta Full R$ 842** · **CFWA armazenamento
+Full R$ 340 (892 lançamentos, sem order_id — custo do período)** · CFBA estoque
+antigo Full R$ 75 · CFPB inconformidade Full R$ 48; BONUS (B*) são estornos.
+Rate limit: 429 fácil — paginar com pausa (~0,6 s) e retry. Não há endpoint de
+summary. `GET /shipments/{id}/costs` dá o custo do envio por pedido
+(`senders[].cost`, com desconto obrigatório). **Ainda NÃO sincronizado** —
+proposta: edge fn `ml-sync-billing` → tabela `ml_billing_detalhes` (period_key,
+detail_id PK, sub_type, descricao, valor, order_id, data) → DRE (armazenamento/
+coleta como despesa do mês; tarifas por pedido conciliam com `pedidos`).
+
 ## 2.2 Receita fantasma — cancelamento que não chega ao espelho
 
 O sync de rotina do ML roda com `dias=2` (custo). Pedido **cancelado depois
@@ -146,6 +164,8 @@ fantasma** (motivos `buyer_cancel_express`, `mediations`,
 | `compras_ordens` + `compra_ordem_itens` | Espelho das ordens de compra do Tiny + conferência física (qtd_recebida, encaixotamento `emb_tipo`/`emb_unidades`, amarração `pallet_lastro`×`pallet_altura`, `pallets`). `kanban_status` (aguardando/conferencia/divergente/concluida) é do APP — sync não toca. Tela `/compras` (módulo galpao) |
 | `produto_embalagem` | Cadastro recorrente de embalagem por SKU — pré-preenche a conferência da próxima compra |
 | `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (varredura por cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL` (**situação 3 = NF cancelada, não precisa devolução**; 6/7 = viva). Campos: `precisa_devolucao` (marcação), `devolucao_emitida`+`id_nota_devolucao` (preenchidos pelo módulo `emitir`). GRANT select/update p/ anon+authenticated |
+| `view_margem_pedido_v2.modo_envio` | **10/set:** coluna nova (baseline md5 idêntico). Shopee = `opcao_envio` cru (Entrega Rápida, Shopee Xpress, Full, Retirada pelo Comprador, Turbo); ML = rótulo de `logistica_tipo` (fulfillment→**Full**, self_service→**Flex**, xd_drop_off/drop_off→**Agência**, cross_docking→**Coleta**); Amazon = Standard/Expedited (velocidade, não modo). Filtro "Envio" e coluna em Pedidos Integrados |
+| `reprocessar_cmv_periodo(sku, de, ate, custo?, por?, obs?)` | **10/set:** reprocesso de CMV por período honrando `cmv_manual` (vigência). Se `custo` vier, grava em `cmv_manual` desde `de`; recongela `pedido_item_cmv` do SKU (e kits que o contêm) entre as datas com `cmv_na_data(sku, data_pedido)` = manual vigente > cadastro (kit-aware). **Por que existe:** o congelado vence o manual e o cron `cmv-congelar-novos` (15 min) congela tudo — então `cmv_manual` sozinho NUNCA mudava pedido já lançado (a tabela estava vazia, ninguém usava). `fn_cmv_congelar_novos` também passou a usar `cmv_na_data`. DRE/PI mudam na hora (leem a view); `view_kpi_pedidos_dia` (matview) em ≤20 min. A antiga `reprocessar_cmv` (tela `/reprocessar-cmv`) segue ignorando o manual |
 | `view_entrega_rapida_pendentes` | Pedidos Shopee "Entrega Rápida" ainda não coletados (1 linha/pedido: loja, status Shopee, situação Tiny, `dias_ate_prazo`, TAG, etiqueta impressa/no cache). Fonte do aviso das 12h10 |
 | `view_monitoramento_lotes` | Cards do `/monitoramento` (hoje, Shopee, single-SKU). **10/set:** ganhou `prazo` (min `ship_by_date` da TAG) e `pedidos_com_prazo`. O peso do produto NÃO existe no cadastro — o front extrai do nome (`src/lib/prazo.ts` → `extrairPeso`, última ocorrência de número+kg/g/ml/l) |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
