@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PackageCheck,
@@ -1057,7 +1057,7 @@ function ChipEnvio({
   textColor?: string;
   active: boolean;
   isER?: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   const bg = color ?? "#0E1114";
   const fg = textColor ?? "#FFFFFF";
@@ -2577,6 +2577,10 @@ function FilaPriorizada() {
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
   const [aplicandoLote, setAplicandoLote] = useState(false);
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
+  // impressão em massa: aplica TAG + imprime cada linha filtrada, na ordem de
+  // prioridade da fila. Sequencial de propósito (uma impressora, um fluxo).
+  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string } | null>(null);
+  const cancelarMassaRef = useRef(false);
   const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
   const [forcarSku, setForcarSku] = useState<PriorizadaRow | null>(null);
@@ -2644,10 +2648,63 @@ function FilaPriorizada() {
     }
   }
 
-  async function imprimirPorSku(item: PriorizadaRow) {
-    const key = `sku:${item.sku}:${item.tipo_envio}`;
-    if (imprimindoKey) return;
+  async function imprimirTudoEmMassa(linhas: PriorizadaRow[]) {
+    if (massa || linhas.length === 0) return;
     if (impressoraSelecionada?.estado === "offline") {
+      toast.error("Impressora offline", { description: "Escolha uma impressora online antes de imprimir em massa." });
+      return;
+    }
+    const totalPedidos = linhas.reduce((s2, r) => s2 + (r.qtd_pedidos ?? 0), 0);
+    const semTag = linhas.filter((r) => {
+      const info = tagsPorLinha?.get(linhaKeyDe(r));
+      return !info || info.estado !== "com_tag";
+    }).length;
+    if (!window.confirm(
+      `Imprimir TODOS os lotes do filtro atual?\n\n` +
+      `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.\n` +
+      (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — as TAGs serão aplicadas antes de imprimir.\n` : "") +
+      `Etiquetas já impressas NÃO saem de novo (proteção automática).`,
+    )) return;
+    cancelarMassaRef.current = false;
+    let feitas = 0, comErro = 0;
+    try {
+      for (let i = 0; i < linhas.length; i++) {
+        if (cancelarMassaRef.current) break;
+        const item = linhas[i];
+        setMassa({ atual: i + 1, total: linhas.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}` });
+        try {
+          const info = tagsPorLinha?.get(linhaKeyDe(item));
+          if ((!info || info.estado !== "com_tag") && item.tag_sugerida) {
+            await aplicarTag(item.tag_sugerida);
+          }
+          await imprimirPorSku(item, { emMassa: true });
+          feitas++;
+        } catch {
+          comErro++;
+        }
+      }
+    } finally {
+      setMassa(null);
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
+    }
+    if (cancelarMassaRef.current) {
+      toast.info(`Impressão em massa cancelada — ${feitas} linha(s) processadas antes de parar.`);
+    } else {
+      toast.success(`Impressão em massa concluída: ${feitas} de ${linhas.length} linha(s)`, {
+        description: comErro > 0 ? `${comErro} linha(s) com erro — confira os avisos acima.` : "Tudo processado na ordem de prioridade.",
+        duration: 10000,
+      });
+    }
+    void registrarSeparacaoLog({
+      evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+      detalhe: { via: "massa", linhas: linhas.length, feitas, com_erro: comErro },
+    });
+  }
+
+  async function imprimirPorSku(item: PriorizadaRow, opts?: { emMassa?: boolean }) {
+    const key = `sku:${item.sku}:${item.tipo_envio}`;
+    if (!opts?.emMassa && imprimindoKey) return;
+    if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
       if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
     }
     setImprimindoKey(key);
@@ -3022,12 +3079,18 @@ function FilaPriorizada() {
   const enviosAtivos = selectedEnvios ?? enviosDisponiveis;
   const enviosAtivosSet = useMemo(() => new Set(enviosAtivos), [enviosAtivos]);
 
-  function toggleEnvio(env: string) {
-    const base = selectedEnvios ?? enviosDisponiveis;
-    if (base.includes(env)) {
-      setSelectedEnvios(base.filter((e) => e !== env));
+  function toggleEnvio(env: string, aditivo = false) {
+    if (aditivo) {
+      // Ctrl/Cmd+clique: liga/desliga o canal mantendo os demais (multi)
+      const base = selectedEnvios ?? enviosDisponiveis;
+      setSelectedEnvios(base.includes(env) ? base.filter((e) => e !== env) : [...base, env]);
+      return;
+    }
+    // clique normal ISOLA o canal (mostra só ele); clicar de novo volta a todos
+    if (selectedEnvios && selectedEnvios.length === 1 && selectedEnvios[0] === env) {
+      setSelectedEnvios(null);
     } else {
-      setSelectedEnvios([...base, env]);
+      setSelectedEnvios([env]);
     }
   }
 
@@ -3115,6 +3178,17 @@ function FilaPriorizada() {
 
   return (
     <div className="space-y-5">
+      {massa && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span className="text-sm font-medium tabular-nums">
+            Imprimindo lote {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
+          </span>
+          <Button size="sm" variant="destructive" onClick={() => { cancelarMassaRef.current = true; }}>
+            Parar após esta linha
+          </Button>
+        </div>
+      )}
       {selGrupos.size > 0 && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           <span className="text-sm font-medium">{selGrupos.size} bloco(s) selecionado(s)</span>
@@ -3157,7 +3231,7 @@ function FilaPriorizada() {
               textColor={cfg?.text}
               active={enviosAtivosSet.has(env)}
               isER={env === "ER"}
-              onClick={() => toggleEnvio(env)}
+              onClick={(e) => toggleEnvio(env, e.ctrlKey || e.metaKey)}
             />
           );
         })}
@@ -3208,6 +3282,17 @@ function FilaPriorizada() {
           </span>
         )}
         <div className="flex-1" />
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 gap-1.5"
+          disabled={massa !== null || filteredRows.length === 0}
+          onClick={() => void imprimirTudoEmMassa(filteredRows)}
+          title="Aplica as TAGs que faltam e imprime todos os lotes do filtro atual, na ordem de prioridade"
+        >
+          {massa ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+          Imprimir tudo ({formatNumber(totais.pedidos)})
+        </Button>
         <span className="text-[12px] text-muted-foreground tabular-nums hidden md:inline">
           {formatNumber(totais.tags)} TAGs · {formatNumber(totais.pedidos)} pedidos · {formatNumber(totais.unidades)} un.
         </span>
@@ -3894,12 +3979,18 @@ function SeparacaoPage() {
     });
   }, [filtered, busca]);
 
-  function toggleEnvio(env: string) {
-    const base = selectedEnvios ?? enviosDisponiveis;
-    if (base.includes(env)) {
-      setSelectedEnvios(base.filter((e) => e !== env));
+  function toggleEnvio(env: string, aditivo = false) {
+    if (aditivo) {
+      // Ctrl/Cmd+clique: liga/desliga o canal mantendo os demais (multi)
+      const base = selectedEnvios ?? enviosDisponiveis;
+      setSelectedEnvios(base.includes(env) ? base.filter((e) => e !== env) : [...base, env]);
+      return;
+    }
+    // clique normal ISOLA o canal (mostra só ele); clicar de novo volta a todos
+    if (selectedEnvios && selectedEnvios.length === 1 && selectedEnvios[0] === env) {
+      setSelectedEnvios(null);
     } else {
-      setSelectedEnvios([...base, env]);
+      setSelectedEnvios([env]);
     }
   }
 
@@ -4019,7 +4110,7 @@ function SeparacaoPage() {
               key={env}
               size="sm"
               variant={active ? (isER ? "destructive" : "default") : "outline"}
-              onClick={() => toggleEnvio(env)}
+              onClick={(e) => toggleEnvio(env, e.ctrlKey || e.metaKey)}
               className={cn(isER && !active && "border-destructive/50 text-destructive hover:bg-destructive/10")}
             >
               {isER && <Zap className="h-3 w-3 mr-1" />}
