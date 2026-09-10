@@ -65,6 +65,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { rotuloCanal } from "@/lib/canais";
 
@@ -980,6 +981,25 @@ function UnBadge({ n, className }: { n: number; className?: string }) {
 // ============ Prazo de despacho (ship_by_date) ============
 // Diferença em DIAS (por data em São Paulo) entre o prazo de despacho e hoje.
 // O ship_by_date é o fim do dia-limite (23:59 SP), então comparamos por DIA.
+// Faixas EXCLUSIVAS do filtro de prazo (cada linha cai numa só).
+const FAIXAS_PRAZO: Array<{ id: string; label: string; curto: string }> = [
+  { id: "vencidos", label: "⚠ Vencidos", curto: "Vencidos" },
+  { id: "0", label: "Vence hoje", curto: "Hoje" },
+  { id: "1", label: "Amanhã", curto: "Amanhã" },
+  { id: "2", label: "Em 2 dias", curto: "2d" },
+  { id: "3", label: "Em 3 dias", curto: "3d" },
+  { id: "5", label: "4 a 5 dias", curto: "4-5d" },
+  { id: "mais", label: "6+ dias", curto: "6d+" },
+  { id: "sem", label: "Sem prazo", curto: "s/ prazo" },
+];
+function faixaPrazo(dias: number | null): string {
+  if (dias === null) return "sem";
+  if (dias < 0) return "vencidos";
+  if (dias <= 3) return String(dias);
+  if (dias <= 5) return "5";
+  return "mais";
+}
+
 function diasAtePrazo(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const diaSP = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); // yyyy-mm-dd
@@ -2605,7 +2625,9 @@ function FilaPriorizada() {
     return set;
   }, [pedidoHits]);
   // filtro por prazo máximo de despacho: "todos" | "vencidos" | "0"(hoje) | "1" | "2" | "3" | "5" (dias)
-  const [prazoFiltro, setPrazoFiltro] = useState<string>("todos");
+  // Prazo: multi-seleção de FAIXAS exclusivas (vazio = todos). Ex.: marcar
+  // "Vencidos" + "Vence hoje" mostra só o que precisa sair hoje.
+  const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);
   // Filtro "sem estoque": mostra so linhas com falta reportada (badge ambar).
   const [soSemEstoque, setSoSemEstoque] = useState(false);
   const [aplicando, setAplicando] = useState<string | null>(null);
@@ -2615,7 +2637,7 @@ function FilaPriorizada() {
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   // impressão em massa: aplica TAG + imprime cada linha filtrada, na ordem de
   // prioridade da fila. Sequencial de propósito (uma impressora, um fluxo).
-  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string } | null>(null);
+  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string; modo?: "embalar" } | null>(null);
   const cancelarMassaRef = useRef(false);
   const pausaMassaRef = useRef(false);
   const [massaPausada, setMassaPausada] = useState(false);
@@ -2684,6 +2706,61 @@ function FilaPriorizada() {
     } finally {
       setReportandoLinha(null);
     }
+  }
+
+  // Conta, por linha, os pedidos com impressão CONFIRMADA (done/forcado) — a
+  // mesma regra do botão "Embalar N/M" da linha (embalarPorSku sem forçar).
+  function pedidosImpressosDaLinha(item: PriorizadaRow): number {
+    const agg = impressaoEstados?.porLinha.get(linhaKeyDe(item));
+    return (agg?.seps ?? []).filter((id) => {
+      const e = impressaoEstados?.porSep.get(id) ?? "ausente";
+      return e === "done" || e === "forcado";
+    }).length;
+  }
+
+  // "Embalar todos os impressos": marca embalado no Tiny, linha a linha (ordem
+  // de prioridade), SÓ os pedidos com impressão confirmada. Quem não tem
+  // etiqueta confirmada não é tocado — para isso existe o "Forçar restante".
+  async function embalarTodosImpressos() {
+    if (massa) return;
+    const alvo = filteredRows.filter((r) => pedidosImpressosDaLinha(r) > 0);
+    const totalPed = alvo.reduce((s2, r) => s2 + pedidosImpressosDaLinha(r), 0);
+    if (alvo.length === 0) {
+      toast.info("Nenhum pedido com impressão confirmada no filtro atual");
+      return;
+    }
+    if (!window.confirm(
+      `Marcar como EMBALADOS no Tiny todos os pedidos com etiqueta impressa e confirmada?\n\n` +
+      `${alvo.length} linha(s) · ${totalPed} pedido(s) do filtro atual, na ordem de prioridade.\n` +
+      `Pedidos sem impressão confirmada NÃO são tocados.`,
+    )) return;
+    cancelarMassaRef.current = false;
+    pausaMassaRef.current = false;
+    setMassaPausada(false);
+    let feitas = 0;
+    try {
+      for (let i = 0; i < alvo.length; i++) {
+        while (pausaMassaRef.current && !cancelarMassaRef.current) {
+          await new Promise((r) => setTimeout(r, 400));
+        }
+        if (cancelarMassaRef.current) break;
+        const item = alvo[i];
+        setMassa({ atual: i + 1, total: alvo.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}`, modo: "embalar" });
+        try { await embalarPorSku(item); feitas++; } catch { /* embalarPorSku já avisa */ }
+      }
+    } finally {
+      setMassa(null);
+      setMassaPausada(false);
+      pausaMassaRef.current = false;
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
+    }
+    toast.success(cancelarMassaRef.current
+      ? `Embalagem em massa interrompida — ${feitas} linha(s) processadas.`
+      : `Embalagem em massa concluída: ${feitas} de ${alvo.length} linha(s) (${totalPed} pedidos).`);
+    void registrarSeparacaoLog({
+      evento: "embalado", usuario: perfil?.nome ?? null,
+      detalhe: { via: "massa", linhas: alvo.length, feitas, pedidos: totalPed },
+    });
   }
 
   async function imprimirTudoEmMassa(linhasPedidas: PriorizadaRow[], opts?: { forcar?: boolean }) {
@@ -3198,14 +3275,9 @@ function FilaPriorizada() {
           (pedidoLinhas?.has(linhaKeyDe(r)) ?? false);
         if (!hit) return false;
       }
-      if (prazoFiltro !== "todos") {
+      if (prazoFiltro.length > 0) {
         const dias = diasAtePrazo(prazosPorLinha?.get(linhaKeyDe(r)) ?? null);
-        if (dias === null) return false; // sem prazo não entra num filtro por prazo
-        if (prazoFiltro === "vencidos") {
-          if (dias >= 0) return false;
-        } else if (dias > Number(prazoFiltro)) {
-          return false;
-        }
+        if (!prazoFiltro.includes(faixaPrazo(dias))) return false;
       }
       return true;
     });
@@ -3274,7 +3346,7 @@ function FilaPriorizada() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span className="text-sm font-medium tabular-nums">
-            {massaPausada ? "PAUSADO em" : "Imprimindo lote"} {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
+            {massaPausada ? "PAUSADO em" : massa.modo === "embalar" ? "Embalando linha" : "Imprimindo lote"} {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
           </span>
           <Button size="sm" variant={massaPausada ? "default" : "secondary"}
             onClick={() => { pausaMassaRef.current = !pausaMassaRef.current; setMassaPausada(pausaMassaRef.current); }}>
@@ -3401,30 +3473,63 @@ function FilaPriorizada() {
           {massa ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
           Imprimir tudo ({formatNumber(totais.pedidos)})
         </Button>
+        {(() => {
+          const n = filteredRows.reduce((s2, r) => s2 + pedidosImpressosDaLinha(r), 0);
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5"
+              disabled={massa !== null || n === 0}
+              onClick={() => void embalarTodosImpressos()}
+              title="Marca como embalado no Tiny todos os pedidos do filtro com etiqueta impressa e confirmada"
+            >
+              <Package className="h-3.5 w-3.5" />
+              Embalar impressos ({formatNumber(n)})
+            </Button>
+          );
+        })()}
         <span className="text-[12px] text-muted-foreground tabular-nums hidden md:inline">
           {formatNumber(totais.tags)} TAGs · {formatNumber(totais.pedidos)} pedidos · {formatNumber(totais.unidades)} un.
         </span>
-        <Select value={prazoFiltro} onValueChange={setPrazoFiltro}>
-          <SelectTrigger
-            className={cn(
-              "h-9 w-[168px] text-sm bg-card",
-              prazoFiltro !== "todos" && "border-primary text-primary font-medium",
-            )}
-            title="Filtra os SKUs pelo prazo de despacho mais próximo do grupo"
-          >
-            <Hourglass className="h-3.5 w-3.5 mr-1 shrink-0" />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Prazo: todos</SelectItem>
-            <SelectItem value="vencidos">⚠ Vencidos</SelectItem>
-            <SelectItem value="0">Vence hoje</SelectItem>
-            <SelectItem value="1">Até amanhã</SelectItem>
-            <SelectItem value="2">Até 2 dias</SelectItem>
-            <SelectItem value="3">Até 3 dias</SelectItem>
-            <SelectItem value="5">Até 5 dias</SelectItem>
-          </SelectContent>
-        </Select>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className={cn(
+                "h-9 min-w-[168px] justify-start text-sm bg-card font-normal",
+                prazoFiltro.length > 0 && "border-primary text-primary font-medium",
+              )}
+              title="Filtra os SKUs pelo prazo de despacho mais próximo do grupo — pode marcar mais de uma faixa"
+            >
+              <Hourglass className="h-3.5 w-3.5 mr-1 shrink-0" />
+              {prazoFiltro.length === 0
+                ? "Prazo: todos"
+                : FAIXAS_PRAZO.filter((f) => prazoFiltro.includes(f.id)).map((f) => f.curto).join(" + ")}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuCheckboxItem
+              checked={prazoFiltro.length === 0}
+              onCheckedChange={() => setPrazoFiltro([])}
+              onSelect={(e) => e.preventDefault()}
+            >
+              Todos os prazos
+            </DropdownMenuCheckboxItem>
+            {FAIXAS_PRAZO.map((f) => (
+              <DropdownMenuCheckboxItem
+                key={f.id}
+                checked={prazoFiltro.includes(f.id)}
+                onCheckedChange={(on) =>
+                  setPrazoFiltro((prev) => (on ? [...prev, f.id] : prev.filter((x) => x !== f.id)))
+                }
+                onSelect={(e) => e.preventDefault()}
+              >
+                {f.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div className="relative w-full sm:w-auto sm:min-w-[240px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
