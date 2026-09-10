@@ -146,6 +146,8 @@ fantasma** (motivos `buyer_cancel_express`, `mediations`,
 | `compras_ordens` + `compra_ordem_itens` | Espelho das ordens de compra do Tiny + conferência física (qtd_recebida, encaixotamento `emb_tipo`/`emb_unidades`, amarração `pallet_lastro`×`pallet_altura`, `pallets`). `kanban_status` (aguardando/conferencia/divergente/concluida) é do APP — sync não toca. Tela `/compras` (módulo galpao) |
 | `produto_embalagem` | Cadastro recorrente de embalagem por SKU — pré-preenche a conferência da próxima compra |
 | `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (varredura por cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL` (**situação 3 = NF cancelada, não precisa devolução**; 6/7 = viva). Campos: `precisa_devolucao` (marcação), `devolucao_emitida`+`id_nota_devolucao` (preenchidos pelo módulo `emitir`). GRANT select/update p/ anon+authenticated |
+| `view_entrega_rapida_pendentes` | Pedidos Shopee "Entrega Rápida" ainda não coletados (1 linha/pedido: loja, status Shopee, situação Tiny, `dias_ate_prazo`, TAG, etiqueta impressa/no cache). Fonte do aviso das 12h10 |
+| `view_monitoramento_lotes` | Cards do `/monitoramento` (hoje, Shopee, single-SKU). **10/set:** ganhou `prazo` (min `ship_by_date` da TAG) e `pedidos_com_prazo`. O peso do produto NÃO existe no cadastro — o front extrai do nome (`src/lib/prazo.ts` → `extrairPeso`, última ocorrência de número+kg/g/ml/l) |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
 | `classificar_roas(numeric)` | excelente / bom / ok / ruim / sem_dado. **Fonte única da regra** |
 | `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, acos_alvo 20 |
@@ -479,6 +481,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 | `compras-sync` | v1 | Espelha ordens de compra do Tiny (`GET /ordem-compra` — atenção: singular) p/ o módulo Compras & Recebimento; cron 30 min; sync NÃO toca campos de conferência do app |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
+| `etiquetas-saude` | v3 | `resumo` / `discord` (quadro 2×/dia) / `verificar` (watchdog 20 min) / **`entrega-rapida`** (cron jobid 103, 12h10 BRT): lista pedidos Shopee **Entrega Rápida** ainda não entregues ao motorista com prazo hoje/vencido, via `view_entrega_rapida_pendentes` (status Shopee pré-envio E situação Tiny não enviada, janela 10 dias — o espelho da Shopee tem 1.204 fantasmas em PROCESSED de mai–jul). Silêncio se não há pendente; `&sempre=1` força |
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
 | `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |
 | `resumo-operacao` | v3 | Resumos de abertura/fechamento/fulfillment no Discord |
@@ -606,8 +609,11 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   pesado). Em 21/ago o banco bateu **527 MB** (teto 500 MB) e o Supabase passou
   a limitar a performance. Limpeza feita mantendo só os **últimos 5 dias** (a
   janela do `pregerar`): 144 MB → 23 MB. Etiqueta fora do cache **não se perde**
-  — o `imprimir` regenera sob demanda. Sem cron de retenção ainda: **conferir
-  o tamanho de tempos em tempos**.
+  — o `imprimir` regenera sob demanda. **10/set/2026:** voltou a 117 MB (banco em
+  659 MB); limpo de novo e criado o cron `limpar-etiquetas-cache` (jobid 102,
+  03:30 UTC) que chama `limpar_etiquetas_cache(5)` — copia 5 dias, TRUNCATE,
+  reinsere. O `limpar-logs` (jobid 47) passou a fazer **TRUNCATE** em
+  `net._http_response` (o DELETE deixava 90 MB de espaço morto p/ 1 mil linhas).
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e

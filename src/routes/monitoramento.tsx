@@ -1,13 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, Hourglass, Loader2, PackageX,
+  AlertTriangle, Check, ChevronDown, ChevronRight, Hourglass, Loader2, PackageX, SearchX, Weight,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import {
+  FAIXAS_PRAZO, PRAZO_ESTILO, diasAtePrazo, extrairPeso, faixaPrazo, fmtPrazoData, nivelPrazo,
+} from "@/lib/prazo";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
@@ -51,6 +61,9 @@ interface Lote {
   etiquetas_impressas: number | string;
   etiquetas_confirmadas: number | string;
   sequencia: number | string;
+  /** prazo de despacho MAIS PRÓXIMO entre os pedidos da TAG (min ship_by_date) */
+  prazo: string | null;
+  pedidos_com_prazo: number | string | null;
 }
 
 const num = (x: unknown): number => {
@@ -246,6 +259,79 @@ function tipoStyle(t: string | null) {
   return TIPO_STYLE[(t ?? "").toUpperCase()] ?? TIPO_STYLE.ER;
 }
 
+// Selo do prazo de despacho — mesmos rótulos e cores da aba Separação.
+function PrazoBadge({ iso, className }: { iso: string | null | undefined; className?: string }) {
+  const dias = diasAtePrazo(iso);
+  const nivel = nivelPrazo(dias);
+  if (!iso || nivel === null) {
+    return <span className={cn("text-[10px] text-muted-foreground", className)}>sem prazo</span>;
+  }
+  const rotulo =
+    nivel === "vencido" ? `Vencido · ${fmtPrazoData(iso)}`
+    : nivel === "hoje" ? `Hoje · ${fmtPrazoData(iso)}`
+    : nivel === "amanha" ? `Amanhã · ${fmtPrazoData(iso)}`
+    : fmtPrazoData(iso);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold tabular-nums whitespace-nowrap",
+        PRAZO_ESTILO[nivel],
+        className,
+      )}
+      title={`Prazo de despacho mais próximo da TAG: ${new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`}
+    >
+      {(nivel === "vencido" || nivel === "hoje") && <AlertTriangle className="h-3 w-3" />}
+      {rotulo}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PESO em destaque. Produtos que só diferem no peso ("Areia ... 4kg" × "10kg")
+// têm foto e nome quase iguais — na bancada isso vira troca de produto. O peso
+// sai do NOME (não há coluna de peso no cadastro) e ganha um selo grande ao
+// lado da foto; no nome, o trecho do peso fica marcado.
+// ---------------------------------------------------------------------------
+function PesoDestaque({ nome }: { nome: string | null }) {
+  const peso = extrairPeso(nome);
+  if (!peso) {
+    return (
+      <div
+        className="w-[72px] h-[72px] rounded-[14px] shrink-0 flex flex-col items-center justify-center border border-dashed text-muted-foreground"
+        title="Peso não identificado no nome do produto"
+      >
+        <Weight className="h-5 w-5" />
+        <span className="text-[9px] font-semibold uppercase mt-1">s/ peso</span>
+      </div>
+    );
+  }
+  const grande = peso.valor.length + peso.unidade.length > 5;
+  return (
+    <div
+      className="w-[72px] h-[72px] rounded-[14px] shrink-0 flex flex-col items-center justify-center bg-violet-600 text-white shadow-sm"
+      title={`Peso/volume lido do nome: ${peso.rotulo}`}
+    >
+      <span className={cn("font-black leading-none tabular-nums", grande ? "text-[20px]" : "text-[26px]")}>{peso.valor}</span>
+      <span className="text-[13px] font-extrabold uppercase leading-none mt-1">{peso.unidade}</span>
+    </div>
+  );
+}
+
+function NomeComPeso({ nome }: { nome: string | null }) {
+  const peso = extrairPeso(nome);
+  if (!nome) return <>—</>;
+  if (!peso) return <>{nome}</>;
+  return (
+    <>
+      {nome.slice(0, peso.inicio)}
+      <mark className="rounded px-1 bg-violet-200 text-violet-950 font-extrabold dark:bg-violet-700 dark:text-white">
+        {nome.slice(peso.inicio, peso.fim)}
+      </mark>
+      {nome.slice(peso.fim)}
+    </>
+  );
+}
+
 function FotoProduto({ url, nome, tipo }: { url: string | null; nome: string | null; tipo: string | null }) {
   const [erro, setErro] = useState(false);
   const ts = tipoStyle(tipo);
@@ -305,7 +391,28 @@ function MonitoramentoPage() {
   });
 
   const totais = totaisQ.data ?? null;
-  const lotes = lotesQ.data ?? [];
+  const todosLotes = lotesQ.data ?? [];
+
+  // ---- Filtros: modo de envio (ER/SPX/ML) e faixa de prazo (multi-seleção;
+  // vazio = todos). Só no estado da tela: o painel fica aberto na bancada.
+  const [tipoFiltro, setTipoFiltro] = useState<string[]>([]);
+  const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);
+  const tiposDisponiveis = useMemo(() => {
+    const set = new Map<string, number>();
+    for (const l of todosLotes) {
+      const t = (l.tipo_envio ?? "—").toUpperCase();
+      set.set(t, (set.get(t) ?? 0) + 1);
+    }
+    return Array.from(set.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [todosLotes]);
+  const lotes = useMemo(() => {
+    return todosLotes.filter((l) => {
+      if (tipoFiltro.length > 0 && !tipoFiltro.includes((l.tipo_envio ?? "—").toUpperCase())) return false;
+      if (prazoFiltro.length > 0 && !prazoFiltro.includes(faixaPrazo(diasAtePrazo(l.prazo)))) return false;
+      return true;
+    });
+  }, [todosLotes, tipoFiltro, prazoFiltro]);
+  const filtrando = tipoFiltro.length > 0 || prazoFiltro.length > 0;
 
   // Funil do dia (ordem do fluxo). Cores de acento do design.
   const funil = [
@@ -365,7 +472,8 @@ function MonitoramentoPage() {
   const agoLabel = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}min`;
 
   const carregando = totaisQ.isLoading || lotesQ.isLoading;
-  const semLotes = !carregando && lotes.length === 0;
+  const semLotes = !carregando && todosLotes.length === 0;
+  const semResultado = !carregando && todosLotes.length > 0 && lotes.length === 0;
 
   return (
     <div className="flex flex-col gap-5 p-1">
@@ -401,10 +509,81 @@ function MonitoramentoPage() {
         </Card>
       </div>
 
-      {/* Sub-título */}
-      <div className="flex items-center gap-2">
+      {/* Sub-título + filtros */}
+      <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">Lotes na tela</span>
-        <span className="text-sm text-muted-foreground">· {lotes.length} etiquetas impressas aguardando bipagem</span>
+        <span className="text-sm text-muted-foreground">
+          · {filtrando ? `${lotes.length} de ${todosLotes.length}` : todosLotes.length} etiquetas impressas aguardando bipagem
+        </span>
+        <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+          {/* Modo de envio: clique = alterna a faixa; vazio = todos */}
+          {tiposDisponiveis.map(([t, n]) => {
+            const ts = tipoStyle(t);
+            const ativo = tipoFiltro.includes(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() =>
+                  setTipoFiltro((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+                }
+                className={cn(
+                  "text-[12px] font-extrabold tracking-wide px-2.5 py-1 rounded-[8px] border-2 transition-opacity",
+                  !ativo && tipoFiltro.length > 0 && "opacity-40",
+                )}
+                style={{ background: ts.bg, color: ts.fg, borderColor: ativo ? ts.fg : "transparent" }}
+                title={ativo ? `Só ${t} — clique para tirar do filtro` : `Filtrar por ${t}`}
+              >
+                {t} <span className="font-mono font-semibold opacity-80">{n}</span>
+              </button>
+            );
+          })}
+          {tipoFiltro.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTipoFiltro([])}
+              className="text-[11px] text-muted-foreground underline-offset-2 hover:underline px-1"
+            >
+              todos os envios
+            </button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-8 min-w-[150px] justify-start text-xs bg-card font-normal", prazoFiltro.length > 0 && "border-primary text-primary font-medium")}
+                title="Filtra os lotes pelo prazo de despacho mais próximo da TAG — pode marcar mais de uma faixa"
+              >
+                <Hourglass className="h-3.5 w-3.5 mr-1 shrink-0" />
+                {prazoFiltro.length === 0
+                  ? "Prazo: todos"
+                  : FAIXAS_PRAZO.filter((f) => prazoFiltro.includes(f.id)).map((f) => f.curto).join(" + ")}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuCheckboxItem
+                checked={prazoFiltro.length === 0}
+                onCheckedChange={() => setPrazoFiltro([])}
+                onSelect={(e) => e.preventDefault()}
+              >
+                Todos os prazos
+              </DropdownMenuCheckboxItem>
+              {FAIXAS_PRAZO.map((f) => (
+                <DropdownMenuCheckboxItem
+                  key={f.id}
+                  checked={prazoFiltro.includes(f.id)}
+                  onCheckedChange={(on) =>
+                    setPrazoFiltro((prev) => (on ? [...prev, f.id] : prev.filter((x) => x !== f.id)))
+                  }
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  {f.label}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {carregando && (
@@ -418,6 +597,23 @@ function MonitoramentoPage() {
           <PackageX className="h-9 w-9 text-muted-foreground" />
           <span className="text-lg font-bold">Nenhum lote na tela — tudo finalizado 🎉</span>
           <span className="text-sm text-muted-foreground">Novos lotes aparecem aqui assim que a etiqueta for impressa.</span>
+        </Card>
+      )}
+
+      {semResultado && (
+        <Card className="border-dashed py-12 px-10 flex flex-col items-center gap-3 text-center">
+          <SearchX className="h-8 w-8 text-muted-foreground" />
+          <span className="text-base font-bold">Nenhum lote nesse filtro</span>
+          <span className="text-sm text-muted-foreground">
+            {todosLotes.length} lote(s) na tela ficaram de fora do filtro de envio/prazo.
+          </span>
+          <button
+            type="button"
+            onClick={() => { setTipoFiltro([]); setPrazoFiltro([]); }}
+            className="text-sm text-primary underline-offset-2 hover:underline"
+          >
+            Limpar filtros
+          </button>
         </Card>
       )}
 
@@ -459,19 +655,25 @@ function MonitoramentoPage() {
                     )}
                     <span className="text-3xl font-extrabold tracking-tight font-mono">{c.tag}</span>
                   </button>
-                  <span
-                    className="text-[13px] font-extrabold tracking-wide px-3 py-1.5 rounded-[9px]"
-                    style={{ background: ts.bg, color: ts.fg }}
-                  >
-                    {(c.tipo_envio ?? "—").toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <PrazoBadge iso={c.prazo} />
+                    <span
+                      className="text-[13px] font-extrabold tracking-wide px-3 py-1.5 rounded-[9px]"
+                      style={{ background: ts.bg, color: ts.fg }}
+                    >
+                      {(c.tipo_envio ?? "—").toUpperCase()}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Foto + produto */}
-                <div className="flex gap-3.5 items-center">
+                <div className="flex gap-3 items-center">
                   <FotoProduto url={c.foto} nome={c.produto_nome} tipo={c.tipo_envio} />
+                  <PesoDestaque nome={c.produto_nome} />
                   <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className="text-sm font-medium leading-snug line-clamp-2">{c.produto_nome ?? "—"}</span>
+                    <span className="text-sm font-medium leading-snug line-clamp-3">
+                      <NomeComPeso nome={c.produto_nome} />
+                    </span>
                     <span className="text-[11px] text-muted-foreground font-mono">SKU {c.sku ?? "—"}</span>
                   </div>
                 </div>

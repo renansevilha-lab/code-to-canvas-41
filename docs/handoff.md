@@ -249,3 +249,78 @@ duplicou (conferido no banco).
 - Decidir: identificadora ligada por padrão em máquina nova; salvaguardas
   A (auto-recuperação do pregerar), B (retenção do cache), C (sonda diária),
   D (alerta de prazo às 15h); seletor de impressora só com Zebras online.
+
+---
+
+## Sessão de 10/set/2026 (tarde) — conferências pós-handoff
+
+Só leitura; nada foi alterado no banco nem nas funções.
+
+### Resolvido: as 3 etiquetas ML dos lotes 1009-69/70/71
+- Saíram às **15:01 BRT** (18:01 UTC) na Zebra **`ZDesigner ZD220-203dpi ZPL`
+  do computador RENANPC** (PrintNode `printer_id=75043468`), não na da bancada.
+  Os lotes Shopee 1009-98/99, disparados 1 min antes e depois, foram para a
+  `\jussarapc\ZDesigner ZD220-203dpi ZPL (Copiar 1)` (`75573931`, via
+  DESKTOP-SEPARACAO). Mesmo IP e user-agent nos dois → duas máquinas da rede,
+  cada uma com seu `localStorage` (`separacao.printerId`). O front tem UM só
+  `printerId` para Shopee e ML (conferido em `separacao.tsx`), sem valor fixo.
+- PrintNode confirmou as 3 como `done` em 15:02. `impressao_etiquetas` **não
+  guarda `printer_id`** — a impressora só aparece na URL dos edge logs
+  (`function_edge_logs`, `event_message like '%printer_id=%'`).
+- Na mesma rajada, 2 pedidos ML (`2000018131091072`, `2000018175396332`, lote
+  1009-48) foram chamados e NÃO viraram job: `ml-etiqueta?modulo=ensaio` (só
+  leitura) mostra `status=pending / substatus=buffered` — o ML segura o envio.
+  Estado normal, sem etiqueta ainda.
+
+### ⚠️ Banco em 659 MB (teto do plano 500 MB) — voltou a estourar
+| Objeto | Tamanho | Observação |
+|---|---|---|
+| `etiquetas_cache` | 117 MB | 6.181 linhas com >5 dias (79 MB de ZPL) × 1.983 recentes (25 MB). Mais antiga 16/ago |
+| `net._http_response` | 90 MB | só **1.033 linhas** (desde 12:40 UTC de hoje) — é espaço morto; o `limpar-logs` (jobid 47) faz DELETE, que não devolve espaço |
+| `escrow_componentes` | 113 MB | dado real, não é lixo |
+| `cron.job_run_details` | 20 MB | ok (retenção 7 dias) |
+
+**FEITO (com OK do dono, 10/set ~15:50 BRT):** (1) `etiquetas_cache` copiar
+5 dias → TRUNCATE → reinserir, num bloco `DO` com checagem de contagem
+(8.164 → 1.988 linhas, 117 MB → 28 MB); (2) `TRUNCATE net._http_response`
+(90 MB → 32 kB); (3) função `limpar_etiquetas_cache(p_dias)` + cron
+**`limpar-etiquetas-cache` jobid 102** (03:30 UTC, retenção 5 dias) —
+**salvaguarda B**; (4) `limpar-logs` (jobid 47) agora faz TRUNCATE em
+`net._http_response`. **Banco: 659 MB → 480 MB.** Fora dessa dieta, o que
+resta grande é dado real (`escrow_componentes` 113 MB, `pedidos` 49 MB).
+
+### Outras conferências
+- **Crons 54 e 90 NÃO são duplicados**: 54 (`confirmar_impressoes_pendentes()`,
+  2 min) dispara o `confirmar-impressao` por TAG com job `sent` há >20 s;
+  90 (10 min) é a varredura global. Complementares.
+- **Cron 98 `svl-clonar-backlog-TEMP`**: última clonagem em **02/set**; roda a
+  cada 15 min sem trabalho há 8 dias → candidato a remover (`cron.unschedule(98)`).
+- Saúde: tokens todos `ok`; etiquetas — Ottz 342/382 com etiqueta, Bumi 282/314,
+  fila `aguardando_geracao=0`, sem impressão presa. `etiqueta_pregerar_estado`
+  tem 310 `falha` + 23 `package_can_not_print` de hoje (o backoff cuida).
+- Impressoras no PrintNode: 25 "online" mas só **6 são Zebra** (RENANPC,
+  JUSSARAPC ×2, nikolaspc, renanphilco, GKTECH) — resto é OneNote/XPS/Fax.
+  "Online" no PrintNode é o computador, não a impressora.
+
+### Pedidos do dono (10/set, tarde) — FEITO, front aguarda Publish
+1. **Aviso 12h10 "Entrega Direta"** — implementado sobre `opcao_envio =
+   'Entrega Rápida'` (é o único rótulo de coleta que a Shopee devolve em
+   `shipping_carrier`; não existe "Entrega Direta" literal nos dados — **confirmar
+   com o dono que é isso mesmo**). `view_entrega_rapida_pendentes` +
+   `etiquetas-saude` v3 `?modulo=entrega-rapida` + cron **jobid 103** (`10 15 * *
+   *`, todo dia). Posta no canal pedidos só se houver pendente com prazo hoje ou
+   vencido; lista pedido, TAG, situação Tiny e se a etiqueta foi impressa, e
+   soma os que ainda estão no prazo. Teste ao vivo 15:56: 1 pendente hoje
+   (`260910MCRP433H`), 39 no prazo.
+2. **Monitoramento — peso em destaque**: `produtos` não tem peso; o front lê do
+   NOME (última ocorrência de número+kg/g/ml/l, porque a variação vem no fim:
+   "2,5 a 15kg - Pêssego l 5 kg" → **5 kg**). Selo roxo 72px ao lado da foto +
+   trecho marcado no nome; "s/ peso" quando não acha (helper em
+   `src/lib/prazo.ts`). Follow-up possível: sincronizar `pesoBruto` do Tiny
+   para `produtos` e usar o campo real.
+3. **Monitoramento — filtros**: chips de modo de envio (ER/SPX/ML, com contagem;
+   clique alterna) + dropdown de faixas de prazo (mesmas faixas da Separação,
+   agora compartilhadas em `src/lib/prazo.ts`); selo de prazo no card
+   (`view_monitoramento_lotes.prazo`). Estado só na tela (painel fica aberto).
+   `separacao.tsx` ainda tem as cópias locais das faixas — dá para trocar pelo
+   import quando for mexer lá.
