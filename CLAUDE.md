@@ -698,6 +698,18 @@ preserva isso.
 filtro de data o plano degradava e estourava o timeout (erro 500). Virou
 MATERIALIZED VIEW com índice único + cron de refresh: **1ms**.
 
+### DRE materializado (10/set/2026) — "canceling statement due to statement timeout"
+A aba do DRE quebrou com timeout: `view_dre_operacional` e
+`view_dre_deducoes_marketplace` recalculavam a margem de ~40 mil pedidos
+(LATERAL de CMV da `view_margem_pedido_v2`) a cada abertura — 1 a 3 s cada,
+**seis consultas em paralelo**, limite de **8 s** do role `authenticated`.
+Cura igual à do Dashboard: matview **`mv_dre_pedidos_mes`** (mês × empresa ×
+canal × marketplace, só `cobertura_cmv='completo'`, somas cruas; o `round`
+fica nas views → saída idêntica, md5 das 3 views validado igual ao baseline).
+`view_dre_mensal` caiu de **1.004 ms para 88 ms**. Refresh junto com a kpi no
+cron **62** (a cada 20 min). Se criar outra view de pedidos para o DRE, leia
+daqui — nunca da `view_margem_pedido_v2` direto.
+
 ### Ao mexer em view de cálculo, capture baseline antes
 Rode os totais de um período conhecido **antes** da alteração e compare depois,
 ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
