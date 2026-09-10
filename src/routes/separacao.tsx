@@ -3082,8 +3082,19 @@ function FilaPriorizada() {
   // Aplica TAG em vários blocos selecionados de uma vez (loop no tag-lote) — pra
   // não perder tempo aplicando TAG a TAG no início do dia.
   async function aplicarTagVarios() {
-    const grupos = [...selGrupos].filter((g) => g && !bloqueados.has(g));
-    if (grupos.length === 0 || aplicandoLote) return;
+    // linhas já tagueadas podem ser selecionadas (para "Imprimir selecionados"),
+    // mas não precisam de nova TAG — ficam de fora aqui.
+    const jaComTag = new Set(
+      (rows ?? [])
+        .filter((r) => r.tag_sugerida && tagsPorLinha?.get(linhaKeyDe(r))?.estado === "com_tag")
+        .map((r) => r.tag_sugerida as string),
+    );
+    const grupos = [...selGrupos].filter((g) => g && !bloqueados.has(g) && !jaComTag.has(g));
+    if (aplicandoLote) return;
+    if (grupos.length === 0) {
+      if (selGrupos.size > 0) toast.info("Os blocos selecionados já têm TAG", { description: "Use \"Imprimir selecionados\"." });
+      return;
+    }
     setAplicandoLote(true);
     let okTags = 0, totalPed = 0;
     const comErro: string[] = [];
@@ -3523,9 +3534,9 @@ function FilaPriorizada() {
                           type="checkbox"
                           className="h-4 w-4 accent-primary shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
                           checked={selGrupos.has(grupoSel)}
-                          disabled={!grupoSel || bloqueados.has(grupoSel) || jaTemTag}
+                          disabled={!grupoSel || bloqueados.has(grupoSel)}
                           onChange={(ev) => toggleGrupo(grupoSel, ev.target.checked)}
-                          title={jaTemTag ? "Linha já tem TAG" : "Marcar p/ TAG em massa"}
+                          title={jaTemTag ? "Já tem TAG — selecione para imprimir" : "Marcar p/ TAG em massa ou imprimir"}
                         />
                       );
                     })()}
