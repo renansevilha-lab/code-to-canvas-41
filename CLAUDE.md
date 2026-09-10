@@ -247,6 +247,20 @@ fica) → o pedido sai do fluxo em massa e volta à fila para decisão humana, c
 aviso no Discord (canal pedidos). A impressão individual nunca teve dedup — é
 a via consciente do operador, que vê na bancada se o papel saiu.
 
+**Pico de campanha derruba a geração de etiquetas (9.9, 10/set/2026 — v57/v58):**
+com ~500 pedidos do pico na fila, o `pregerar` tentava 40 e gerava **zero** em
+27s, e a fila nunca andava. Três causas empilhadas: (1) a busca de tracking do
+two-pass era 1 a 1 com `sleep(120)` e teto de 60% do orçamento — no pico a
+maioria nem chegava ao segundo `create` (**v57: lotes de 8 em paralelo**; o
+download idem, lotes de 5); (2) a Shopee, sobrecarregada, respondia o download
+do documento READY com **200 + `application/force-download` e CORPO VAZIO (0
+bytes)** na 1ª tentativa e o arquivo real na 2ª — provado ao vivo (0 → 9.415
+bytes no mesmo pedido); baixávamos 1× e desistíamos (**v58: até 3 tentativas,
+400ms**); (3) o documento recém-criado demora minutos para ficar READY — o
+download acontece na REVISITA do pedido, então em pico vale rodar o `pregerar`
+com `&backoff_min=5` para revisitar mais cedo (o cron usa o default 20). Para
+zerar o backoff e retrabalhar já: `delete from etiqueta_pregerar_estado`.
+
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
@@ -423,7 +437,7 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v55 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v58 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
