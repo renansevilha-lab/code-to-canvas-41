@@ -22,12 +22,12 @@ import {
   AlertTriangle,
   MoreVertical,
   PackageX,
-  StickyNote,
-} from "lucide-react";
+  StickyNote, MessageSquare } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MensagemLoteDialog } from "@/components/separacao/MensagemLoteDialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -1896,6 +1896,8 @@ function LotesDoDia({
 
   // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
   // -> PrintNode). No modo automático pula lote de 1 pedido (não faz sentido).
+  const [msgLote, setMsgLote] = useState<string | null>(null);
+
   async function imprimirIdentificador(lote: TagLoteRow, opts?: { auto?: boolean }) {
     if (opts?.auto && lote.qtd_pedidos < 2) return; // evita piscar o spinner à toa
     setImprimindoIdent(lote.tag);
@@ -2126,6 +2128,7 @@ function LotesDoDia({
           <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", !corpoAberto && "-rotate-90")} />
           <TagIcon className="h-4 w-4 text-primary" />
           <h2 className="font-semibold text-sm">Lotes do dia</h2>
+          <MensagemLoteDialog tag={msgLote} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
           {lotes && lotes.length > 0 && (
             <Badge variant="secondary">{lotes.length}</Badge>
           )}
@@ -2313,6 +2316,10 @@ function LotesDoDia({
                           >
                             <TagIcon className="h-3.5 w-3.5 mr-2" />
                             Imprimir etiqueta identificadora
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setMsgLote(l.tag)}>
+                            <MessageSquare className="h-3.5 w-3.5 mr-2" />
+                            Mensagem aos clientes (Shopee)
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem

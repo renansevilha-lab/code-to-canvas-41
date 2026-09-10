@@ -52,6 +52,10 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
   const [historico, setHistorico] = useState("");
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [salvando, setSalvando] = useState(false);
+  // Recorrencia (10/set): cria N contas no Tiny, uma por mes a partir do
+  // vencimento (mesmo dia; mes curto cai no ultimo dia). Backend: repetir_meses.
+  const [repetir, setRepetir] = useState(false);
+  const [meses, setMeses] = useState("12");
   const fileRef = useRef<HTMLInputElement>(null);
 
   // busca de contato no Tiny (debounce 350 ms)
@@ -79,7 +83,7 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
   }, [busca, aberto, contato]);
 
   function limpar() {
-    setBusca(""); setContatos([]); setContato(null); setValor(""); setVencimento(hoje()); setEmissao(hoje());
+    setBusca(""); setContatos([]); setContato(null); setValor(""); setVencimento(hoje()); setEmissao(hoje()); setRepetir(false); setMeses("12");
     setDocumento(""); setTipoDoc("boleto"); setHistorico(""); setArquivo(null);
   }
 
@@ -88,6 +92,16 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
     if (!contato) { toast.error("Escolha o fornecedor (contato do Tiny)"); return; }
     if (!Number.isFinite(v) || v <= 0) { toast.error("Informe um valor válido"); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimento)) { toast.error("Informe o vencimento"); return; }
+    const nMeses = repetir ? Math.min(36, Math.max(2, parseInt(meses, 10) || 0)) : 1;
+    if (repetir && nMeses < 2) { toast.error("Informe quantos meses (2 a 36)"); return; }
+    if (nMeses > 1 && !window.confirm(
+      `Criar ${nMeses} contas a pagar no Tiny para ${contato.nome}?
+
+` +
+      `R$ ${v.toFixed(2).replace(".", ",")} por mes, todo dia ${vencimento.slice(8, 10)}, a partir de ${vencimento.split("-").reverse().join("/")}.
+` +
+      `Total: R$ ${(v * nMeses).toFixed(2).replace(".", ",")}. Cada conta e um lancamento REAL no Tiny.`,
+    )) return;
     setSalvando(true);
     try {
       const r = await fetch(`${EXTERNAL_URL}/functions/v1/tiny-contas-pagar?modulo=criar`, {
@@ -102,12 +116,23 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
           numero_documento: documento || null,
           historico: historico || (tipoDoc === "boleto" ? "Boleto" : tipoDoc === "nf" ? "NF" : null),
           criado_por: perfil?.nome ?? null,
+          repetir_meses: nMeses,
         }),
       });
       const d = (await r.json().catch(() => ({}))) as {
         ok?: boolean; tiny_id?: number | null; espelhado?: boolean; erro?: string;
         validacao?: Array<{ campo: string; mensagem: string }> | unknown;
+        recorrente?: boolean; criadas?: number; repetir_meses?: number;
+        falha?: { venc?: string; erro?: string; validacao?: unknown } | null;
       };
+      // Recorrencia parcial: algumas entraram no Tiny e uma falhou (HTTP 207).
+      if (d.recorrente && !d.ok && (d.criadas ?? 0) > 0) {
+        toast.warning(`Criadas ${d.criadas} de ${d.repetir_meses} contas no Tiny`, {
+          description: `Parou em ${d.falha?.venc ?? "?"}: ${d.falha?.erro ?? "validacao do Tiny"}. As ja criadas ficam.`,
+          duration: 12000,
+        });
+        setAberto(false); onCriada(); return;
+      }
       if (!r.ok || !d.ok) {
         const det = Array.isArray(d.validacao)
           ? (d.validacao as Array<{ campo: string; mensagem: string }>).map((x) => `${x.campo}: ${x.mensagem}`).join(" · ")
@@ -135,7 +160,7 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
         }
       }
 
-      toast.success(`Conta a pagar criada no Tiny${tinyId ? ` (id ${tinyId})` : ""}`, {
+      toast.success(d.recorrente ? `${d.criadas} contas a pagar criadas no Tiny (recorrencia)` : `Conta a pagar criada no Tiny${tinyId ? ` (id ${tinyId})` : ""}`, {
         description: `${contato.nome} · R$ ${v.toFixed(2).replace(".", ",")} · vence ${vencimento.split("-").reverse().join("/")}${d.espelhado ? "" : " · espelho atualiza no próximo sync"}`,
         duration: 8000,
       });
@@ -235,6 +260,21 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
             <Input value={historico} onChange={(e) => setHistorico(e.target.value)} placeholder="ex.: NF 12345 areia — parcela 1/3" className="h-9" />
           </div>
 
+          <div className="rounded-md border px-3 py-2 space-y-1.5">
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={repetir} onChange={(e) => setRepetir(e.target.checked)} className="h-3.5 w-3.5" />
+              <span className="font-medium">Repetir mensalmente</span>
+              <span className="text-muted-foreground">(ex.: mensalidade do Tiny, aluguel)</span>
+            </label>
+            {repetir && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">por</span>
+                <Input type="number" min={2} max={36} value={meses} onChange={(e) => setMeses(e.target.value)} className="h-8 w-20 font-mono" />
+                <span className="text-muted-foreground">meses, sempre no dia {vencimento ? vencimento.slice(8, 10) : "--"} — cada mes vira uma conta no Tiny</span>
+              </div>
+            )}
+          </div>
+
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Anexo (boleto / NF em PDF, opcional)</label>
             <input
@@ -261,7 +301,7 @@ export function NovaContaDialog({ onCriada }: { onCriada: () => void }) {
           <Button variant="ghost" onClick={() => setAberto(false)} disabled={salvando}>Cancelar</Button>
           <Button onClick={() => void salvar()} disabled={salvando || !contato}>
             {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
-            Criar no Tiny
+            {repetir ? `Criar ${Math.min(36, Math.max(2, parseInt(meses, 10) || 0)) || "N"} contas no Tiny` : "Criar no Tiny"}
           </Button>
         </DialogFooter>
       </DialogContent>

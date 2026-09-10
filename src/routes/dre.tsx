@@ -306,6 +306,40 @@ function DREPage() {
     [perfil, carregar, expanded, mesSel, fetchDetalhe],
   );
 
+  // Item 4 (10/set, noite): "ignorar fornecedor SEMPRE" — contas irrelevantes que o
+  // Tiny re-importa a cada 15 min. Diferente do excluir (por lançamento, só DRE):
+  // grava a regra em contas_pagar_ignorar, apaga o que já entrou e um trigger no
+  // espelho descarta as próximas — somem do DRE, de /contas-pagar e do fluxo.
+  const ignorarFornecedor = useCallback(
+    async (fornecedorNome: string) => {
+      if (!window.confirm(
+        `Ignorar SEMPRE o fornecedor "${fornecedorNome}"?
+
+` +
+        `Todas as contas dele (passadas e futuras importadas do Tiny) somem do DRE, ` +
+        `do Contas a Pagar e do fluxo de caixa. Dá para reativar depois.`,
+      )) return;
+      try {
+        const { data, error } = await supabaseExternal.rpc("ignorar_fornecedor_contas_pagar", {
+          p_fornecedor: fornecedorNome, p_motivo: "ignorado no DRE",
+        });
+        if (error) throw error;
+        const removidas = Array.isArray(data) ? Number((data[0] as { removidas?: number })?.removidas ?? 0) : 0;
+        await carregar(true);
+        const abertos = [...expanded].filter((k) => k.startsWith(`${mesSel}::`));
+        setDetalhes({});
+        for (const k of abertos) {
+          const label = k.slice(`${mesSel}::`.length);
+          if (DESPESA_CATEGORIAS[label]) await fetchDetalhe(label);
+        }
+        toast.success(`"${fornecedorNome}" ignorado`, { description: `${removidas} lançamento(s) removido(s); os próximos do Tiny serão descartados.` });
+      } catch (e) {
+        toast.error("Falha ao ignorar fornecedor", { description: (e as Error).message });
+      }
+    },
+    [carregar, expanded, mesSel, fetchDetalhe],
+  );
+
   // Item 6 (10/set): "agrupar como" — apelido do fornecedor em dre_fornecedor_grupo
   // (ex.: 33 diárias do Kevin viram uma linha "Salário Kevin"). Sobrevive ao
   // re-sync do Tiny porque a chave é o nome do fornecedor no espelho.
@@ -475,6 +509,7 @@ function DREPage() {
             onToggle={toggleDespesa}
             onOverride={aplicarOverride}
             onAgrupar={agruparFornecedor}
+            onIgnorar={ignorarFornecedor}
             mesSel={mesSel!}
           />
         </>
@@ -659,6 +694,7 @@ function DreDetalhado({
   onToggle,
   onOverride,
   onAgrupar,
+  onIgnorar,
   mesSel,
 }: {
   row: DreRow;
@@ -674,12 +710,15 @@ function DreDetalhado({
   onToggle: (label: string) => void;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
   onAgrupar: (fornecedorNome: string, grupo: string) => void;
+  onIgnorar: (fornecedorNome: string) => void;
   mesSel: string;
 }) {
   const receita = row.receita_liquida ?? 0;
 
+  // ADS fica FORA deste bloco: o dono quer ver o custo fixo sem ADS primeiro e
+  // so depois o total com ADS (10/set/2026). A view continua a mesma
+  // (total_despesas ja inclui ads); aqui e so apresentacao.
   const opex: { label: string; val: number | null; prev: number | null | undefined }[] = [
-    { label: "Marketing / ADS", val: row.ads, prev: prev?.ads },
     { label: "Custos Full (ML / Shopee)", val: row.custos_full, prev: prev?.custos_full },
     { label: "Antecipação Shopee Acelera", val: row.acelera, prev: prev?.acelera },
     { label: "Pessoal", val: row.pessoal, prev: prev?.pessoal },
@@ -711,7 +750,14 @@ function DreDetalhado({
           : d.label === "Antecipação Shopee Acelera" ? "acelera"
           : "categoria",
       })),
-    { label: "Custo fixo total", val: row.total_despesas ?? 0, prevVal: prev?.total_despesas, kind: "h", drill: null },
+    {
+      label: "Custo fixo (sem ADS)",
+      val: (row.total_despesas ?? 0) - (row.ads ?? 0),
+      prevVal: prev ? (prev.total_despesas ?? 0) - (prev.ads ?? 0) : undefined,
+      kind: "h", drill: null,
+    },
+    { label: "Marketing / ADS", val: row.ads ?? 0, prevVal: prev?.ads, kind: "s", drill: "ads" },
+    { label: "Custo fixo total (com ADS)", val: row.total_despesas ?? 0, prevVal: prev?.total_despesas, kind: "h", drill: null },
     { label: "Lucro líquido", val: row.lucro_liquido ?? 0, prevVal: prev?.lucro_liquido, kind: "h", drill: null },
   ];
 
@@ -821,7 +867,7 @@ function DreDetalhado({
                       ) : l.drill === "acelera" ? (
                         <DrillAcelera itens={aceleraMes} />
                       ) : (
-                        <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} onAgrupar={onAgrupar} />
+                        <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} onAgrupar={onAgrupar} onIgnorar={onIgnorar} />
                       )}
                     </div>
                   </div>
@@ -843,11 +889,13 @@ function DrillCategoria({
   loading,
   onOverride,
   onAgrupar,
+  onIgnorar,
 }: {
   itens: DespesaDetalheRow[] | undefined;
   loading: boolean;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
   onAgrupar: (fornecedorNome: string, grupo: string) => void;
+  onIgnorar: (fornecedorNome: string) => void;
 }) {
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   if (loading) {
@@ -879,7 +927,7 @@ function DrillCategoria({
       {lista.map(({ grupo, rows, total }) => {
         // fornecedor único com 1 lançamento: mostra direto (sem cabeçalho)
         if (rows.length === 1) {
-          return <ItemDespesa key={rows[0].tiny_id ?? grupo} it={rows[0]} onOverride={onOverride} onAgrupar={onAgrupar} />;
+          return <ItemDespesa key={rows[0].tiny_id ?? grupo} it={rows[0]} onOverride={onOverride} onAgrupar={onAgrupar} onIgnorar={onIgnorar} />;
         }
         const aberto = abertos.has(grupo);
         return (
@@ -905,7 +953,7 @@ function DrillCategoria({
             {aberto && (
               <div className="ml-4 border-l border-border/60 pl-3 my-0.5">
                 {rows.map((it, i) => (
-                  <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} onAgrupar={onAgrupar} />
+                  <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} onAgrupar={onAgrupar} onIgnorar={onIgnorar} />
                 ))}
               </div>
             )}
@@ -1082,10 +1130,12 @@ function ItemDespesa({
   it,
   onOverride,
   onAgrupar,
+  onIgnorar,
 }: {
   it: DespesaDetalheRow;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
   onAgrupar: (fornecedorNome: string, grupo: string) => void;
+  onIgnorar: (fornecedorNome: string) => void;
 }) {
   const excl = !!it.excluida;
   const tid = it.tiny_id;
@@ -1115,6 +1165,16 @@ function ItemDespesa({
                 </Button>
               </div>
               <p className="text-[10px] text-muted-foreground">Vale para todos os meses; os lançamentos continuam individuais no Tiny.</p>
+              <div className="border-t pt-2">
+                <button
+                  type="button"
+                  className="text-[11px] text-destructive hover:underline"
+                  onClick={() => onIgnorar(it.fornecedor_nome!)}
+                  title="Apaga as contas deste fornecedor e descarta as próximas importadas do Tiny"
+                >
+                  Ignorar este fornecedor SEMPRE (some do DRE, contas a pagar e fluxo)
+                </button>
+              </div>
             </PopoverContent>
           </Popover>
         )}

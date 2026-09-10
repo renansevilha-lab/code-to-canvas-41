@@ -197,6 +197,36 @@ vir **antes** da janela (medido: janela de 30 dias devolveu pedido criado em
 fantasma** (motivos `buyer_cancel_express`, `mediations`,
 `shipment_not_delivered`). Rode `dry=1` antes de aplicar.
 
+## 2.1.4 Itens do dono (10/set/2026, noite — 2ª leva)
+
+- **Mensagem em massa aos compradores Shopee por TAG de lote:** edge fn
+  `shopee-chat` (`probe` = o app tem escopo `sellerchat` nas DUAS lojas —
+  confirmado; `preview&tag=` lista os pedidos Shopee do lote com
+  `buyer_user_id` via `get_order_detail?response_optional_fields=buyer_user_id`
+  — o id do comprador NÃO está no espelho; `enviar&tag=&confirmar=1` com body
+  `{texto}` → `sellerchat/send_message` 1×/pedido). Dedupe em
+  `shopee_mensagens(order_sn, texto_hash)`; para no 1º erro de escopo/rate.
+  Front: menu ⋮ do lote em Separação › "Mensagem aos clientes (Shopee)"
+  (`MensagemLoteDialog`, modelos + confirmação com contagem). ML fica de fora
+  (não há chat vendedor→comprador na API).
+- **Conta a pagar recorrente:** `tiny-contas-pagar` v2 aceita `repetir_meses`
+  (2–36) → N POSTs `/contas-pagar` no Tiny, um por mês, mesmo dia (mês curto =
+  último dia), histórico "(n/N)"; para no 1º erro e devolve 207 com as já
+  criadas. A v3 do Tiny **não tem recorrência nativa**. Checkbox "Repetir
+  mensalmente" no diálogo "Nova conta a pagar". Nunca testado ponta a ponta
+  com conta real (o `criar` simples também não).
+- **DRE: custo fixo sem ADS → ADS → custo fixo total (com ADS).** Só
+  apresentação em `dre.tsx` (`total_despesas` da view já inclui ADS).
+- **"Apagar definitivamente" contas irrelevantes do Tiny:** tabela
+  `contas_pagar_ignorar(fornecedor_nome)` + **trigger BEFORE INSERT em
+  `contas_pagar`** que descarta a linha (RETURN NULL) — o sync de 15 min não
+  precisa mudar e a conta some de tudo que lê o espelho (DRE, /contas-pagar,
+  fluxo). RPCs `ignorar_fornecedor_contas_pagar(nome, motivo)` (grava a regra
+  + apaga o que já entrou) e `reativar_fornecedor_contas_pagar(nome)` (o
+  próximo sync traz de volta). Ação no popover "agrupar" do lançamento no
+  drill do `/dre`. Diferente do `dre_conta_override.excluir` (1 lançamento, só
+  DRE).
+
 ## 3. Objetos do banco que o front usa
 
 ### Existem e devem ser usados
