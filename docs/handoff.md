@@ -1,9 +1,15 @@
 # Handoff — estado atual e próximos passos
 
-> Atualizado **27/ago/2026** (HEAD `19c31ff` + este commit). Este doc viaja no
-> `git` — leia ao continuar de outra máquina. **Ao começar: `git pull --ff-only`.**
-> Backend (Supabase: migrations, edge functions, crons) é compartilhado e **já
-> está aplicado** — não precisa reaplicar nada.
+> Atualizado **10/set/2026 ~16h10 BRT** (HEAD `ac5bd70` + este commit). Este
+> doc viaja no `git` — leia ao continuar de outra máquina. **Ao começar:
+> `git pull --ff-only`.** Backend (Supabase: migrations, views, edge functions,
+> crons) é compartilhado e **já está aplicado** — não precisa reaplicar nada.
+>
+> **Onde parou (10/set):** a seção "Sessão de 10/set/2026" no fim deste doc é
+> o estado atual. Resumo de 1 linha: banco limpo (480 MB) com retenção
+> automática; aviso Discord 12h10 de Entrega Rápida no ar (cron 103);
+> `/monitoramento` com peso em destaque + filtros — **front no git, falta o
+> Publish no Lovable**. Pendências decididas/abertas: ver "Próximos passos".
 
 ---
 
@@ -172,29 +178,49 @@ duplicou (conferido no banco).
 
 ---
 
-## Próximos passos (pendentes)
+## Próximos passos (pendentes) — ordem sugerida
 
-0. **Publish no Lovable** (ver seção acima) e, depois do publish: dono testa o
-   "Atualizar por PDF" no envio real e o "Programar amanhã agora" — quando a
-   rotina estiver redonda, **ligar o toggle de automação** da flash sale por loja.
-1. **Conferir a etiqueta ML no papel.** O ZPL foi validado tecnicamente (2 blocos
-   `^XA`, mesmo padrão da Shopee), mas **ninguém viu sair impressa** depois da
-   troca. Se vier com 2 partes e a segunda for supérflua, dá para imprimir só a
-   primeira.
-2. **Retenção do `etiquetas_cache`** — não existe cron de limpeza; volta a
-   crescer (~30 MB/mês). Vale criar um cron mantendo 5 dias.
-3. **Amazon** — `subtotal_produtos = 0` em pedido `Pending` (a Amazon não devolve
-   `ItemPrice` nesse status) e a trava incremental nunca rebusca: ~146 pedidos,
-   R$ 7,6 mil presos. Fix: rebuscar enquanto `subtotal_produtos` for null/0 +
+0. **Publish no Lovable** (pré-requisito para a bancada ver): `/monitoramento`
+   (peso, prazo, filtros), tudo da Separação de 10/set (faixa "Etiquetas do
+   dia", impressão em massa, reimprimir forçado, filtro de prazo), `/flash-sale`,
+   "Atualizar por PDF" no Fulfillment. Depois do Publish: conferir na bancada.
+1. **Confirmar com o dono o que é "Entrega Direta"** — o aviso das 12h10 foi
+   feito sobre `opcao_envio = 'Entrega Rápida'` (único rótulo de coleta que a
+   Shopee devolve). Se for outro canal, ajustar o WHERE de
+   `view_entrega_rapida_pendentes`. Ver a 1ª mensagem real do cron (12h10 de
+   11/set) no canal pedidos e calibrar (ex.: incluir prazo amanhã, dias úteis).
+2. **Decisões ainda abertas do dono (10/set):** seletor de impressora só com
+   Zebras online (hoje o PrintNode lista 25, só 6 são Zebra — "online" é o PC);
+   identificadora ligada por padrão em máquina nova; salvaguardas A
+   (auto-recuperação do pregerar) e C (sonda diária) — provavelmente
+   redundantes com o watchdog de 20 min.
+3. **Cron 98 `svl-clonar-backlog-TEMP`** — sem trabalho desde 02/set; remover
+   com `select cron.unschedule(98)` (com OK do dono).
+4. **Peso real do produto**: sincronizar `pesoBruto`/`pesoLiquido` do Tiny para
+   `produtos` (mexe em `tiny-sync-produtos`) e trocar `extrairPeso` do nome pelo
+   campo. Enquanto isso, o front lê do nome (funciona para areia/ração/líquidos).
+5. **Deduplicar faixas de prazo** em `separacao.tsx` (ainda tem cópia local de
+   `FAIXAS_PRAZO`/`diasAtePrazo`; o Monitoramento já importa de
+   `src/lib/prazo.ts`). Fazer quando for mexer na Separação — mudança mecânica.
+6. **Conferir a etiqueta ML no papel** (ZPL validado, ninguém viu sair após a
+   troca de formato). As 3 de 10/set saíram na Zebra do RENANPC, não da bancada.
+7. **Amazon** — `subtotal_produtos = 0` em pedido `Pending` (~146 pedidos,
+   R$ 7,6 mil presos). Fix: rebuscar enquanto `subtotal_produtos` for null/0 +
    backfill. Depois, juntar a Amazon ao Pedidos Integrados.
-4. **ML — sync de Claims** (`GET /post-purchase/v1/claims/{id}` → `reason_id`)
-   para o motivo de DEVOLUÇÃO do ML (mesmo padrão do Shopee Returns).
-5. **Full Meli:** puxar `logistic_type` para distinguir Full do normal.
-6. **Devoluções Fase B:** botão "Emitir NF de devolução" no registro recebido.
-7. **AuthProvider único** — `useAuth` é hook com estado local em 4 lugares (4
-   subscriptions). Mexe em login: fazer **fora do horário de operação**.
+8. **ML — sync de Claims** (motivo de devolução) · **Full Meli** (`logistic_type`)
+   · **Devoluções Fase B** (botão "Emitir NF de devolução" no recebido).
+9. **AuthProvider único** — `useAuth` em 4 lugares (4 subscriptions). Mexe em
+   login: fazer **fora do horário de operação**.
 
----
+**Ambiente para validar o front (este PC não tem Node no PATH):** há um Node
+portátil em `%LOCALAPPDATA%\Temp\claude\C--Users-Renan-code-to-canvas-413113138b-…\scratchpad
+odejs
+ode-v24.19.0-win-x64
+ode.exe` (pasta de sessão;
+pode sumir). Em outro PC: instale o Node ou baixe o zip portátil de nodejs.org
+e rode `node node_modules/typescript/bin/tsc --noEmit && node
+node_modules/vite/bin/vite.js build`. O build reordena `src/routeTree.gen.ts`
+sem mudança real — descarte com `git checkout -- src/routeTree.gen.ts`.
 
 ## Avisos / gotchas
 
