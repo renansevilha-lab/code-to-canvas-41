@@ -1685,6 +1685,21 @@ function gerarZplIdentificador(o: {
 // Imprime a etiqueta identificadora de UM lote (ZPL cru via fulfillment-inbound
 // -> PrintNode). Reutilizada pelos dois fluxos de impressão: por lote ("Lotes do
 // dia") e por SKU (fila priorizada). No modo automático pula lote de 1 pedido.
+// A lista "lotes de hoje" atualiza a cada 30s — uma TAG recém-criada (aplicar
+// TAG + imprimir na mesma tacada) ainda não está no cache e a identificadora
+// era pulada EM SILÊNCIO (caso real: TAG 1009-35 do ML, 10/set). Fallback: se
+// não achar no cache, busca a TAG direto do banco.
+async function acharLoteDaTag(
+  tag: string,
+  lotesHoje: TagLoteRow[] | undefined,
+): Promise<TagLoteRow | null> {
+  const local = (lotesHoje ?? []).find((l) => l.tag === tag);
+  if (local) return local;
+  const { data } = await supabaseExternal
+    .from("tags_lote").select("*").eq("tag", tag).maybeSingle();
+  return (data as TagLoteRow | null) ?? null;
+}
+
 async function imprimirIdentificadorApi(
   lote: TagLoteRow,
   printerId: number,
@@ -2692,8 +2707,9 @@ function FilaPriorizada() {
         // AWAIT (não void): sai DEPOIS das etiquetas de envio deste lote e antes
         // do próximo lote (não intercala no PrintNode). Conta pela TAG.
         if (identOn && (enviadas > 0 || jaPulados > 0)) {
-          const loteRow = (lotesHoje ?? []).find((l) => l.tag === g.tag);
+          const loteRow = await acharLoteDaTag(g.tag, lotesHoje);
           if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+          else toast.warning(`Identificadora da TAG ${g.tag} não saiu`, { description: "Lote não encontrado — imprima pelo painel Lotes do dia." });
         }
       }
       // Mercado Livre: uma etiqueta por pedido. A identificadora do lote sai
@@ -2707,8 +2723,9 @@ function FilaPriorizada() {
             detalhe: { canal: "mercadolivre", enviadas: ok, via: "sku-ml" },
           });
           if (identOn && tag) {
-            const loteRow = (lotesHoje ?? []).find((l) => l.tag === tag);
+            const loteRow = await acharLoteDaTag(tag, lotesHoje);
             if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+            else toast.warning(`Identificadora da TAG ${tag} não saiu`, { description: "Lote não encontrado — imprima pelo painel Lotes do dia." });
           }
         }
         if (semConta > 0) {
