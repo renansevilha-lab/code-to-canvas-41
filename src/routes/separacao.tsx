@@ -2828,7 +2828,26 @@ function FilaPriorizada() {
       }
       // Mercado Livre: uma etiqueta por pedido. A identificadora do lote sai
       // depois, igual ao fluxo Shopee (o lote físico é o mesmo).
-      for (const [tag, pedidos] of mlPorTag.entries()) {
+      for (const [tag, pedidosTag] of mlPorTag.entries()) {
+        // Mesma regra de ouro da Shopee: etiqueta ML já impressa NÃO sai de
+        // novo (o ML não tem lote nem dedup no servidor — a trava é aqui).
+        // Só a ação "Reimprimir (forçar)" passa por cima, com aviso.
+        let pedidos = pedidosTag;
+        if (!opts?.forcar) {
+          const sns = pedidos.map((p) => p.numero_ecommerce);
+          const { data: ja } = await supabaseExternal
+            .from("impressao_etiquetas").select("order_sn")
+            .in("order_sn", sns).in("estado", ["done", "sent", "forcado", "preso"]);
+          const jaSet = new Set(((ja ?? []) as { order_sn: string }[]).map((r) => r.order_sn));
+          const pulados = pedidos.filter((p) => jaSet.has(p.numero_ecommerce)).length;
+          pedidos = pedidos.filter((p) => !jaSet.has(p.numero_ecommerce));
+          if (pulados > 0) {
+            toast.info(`${pulados} pedido(s) ML já impresso(s) — pulados`, {
+              description: "Para sair de novo, use ⋮ → Reimprimir etiquetas (forçar).",
+            });
+          }
+          if (pedidos.length === 0) continue;
+        }
         const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
         if (ok > 0) {
           void registrarSeparacaoLog({
