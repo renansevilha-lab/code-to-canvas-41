@@ -19,6 +19,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { usePerfil } from "@/hooks/usePerfil";
 import { GastosRecorrentes } from "@/components/dre/GastosRecorrentes";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,26 @@ interface DreRow {
   total_despesas: number | null;
   lucro_liquido: number | null;
   margem_liquida_pct: number | null;
+  /** 10/set: custos do Full (ML via faturamento + Shopee SBS via carteira) e taxa do Shopee Acelera */
+  custos_full: number | null;
+  acelera: number | null;
+}
+
+interface CustoFullRow {
+  mes: string;
+  marketplace: string;
+  canal: string;
+  tipo: string;
+  valor: number | null;
+  lancamentos: number | null;
+}
+
+interface AceleraRow {
+  mes: string;
+  canal: string;
+  taxa: number | null;
+  lancamentos: number | null;
+  valor_antecipado: number | null;
 }
 
 interface DreOperacionalRow {
@@ -89,6 +110,8 @@ interface DespesaDetalheRow {
   status: string | null;
   tiny_id: number | null;
   excluida: boolean | null;
+  /** apelido do fornecedor (dre_fornecedor_grupo) — default = o próprio nome */
+  grupo: string | null;
 }
 
 interface DeducaoMktRow {
@@ -181,6 +204,8 @@ function DREPage() {
   const [operacional, setOperacional] = useState<DreOperacionalRow[]>([]);
   const [deducoes, setDeducoes] = useState<DeducaoMktRow[]>([]);
   const [adsDet, setAdsDet] = useState<AdsMktRow[]>([]);
+  const [fullDet, setFullDet] = useState<CustoFullRow[]>([]);
+  const [aceleraDet, setAceleraDet] = useState<AceleraRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesSel, setMesSel] = useState<string | undefined>();
   const [empresaSel, setEmpresaSel] = useState<EmpresaFiltro>("consolidado");
@@ -194,11 +219,13 @@ function DREPage() {
   const carregar = useCallback(async (silent?: boolean) => {
     if (!silent) setLoading(true);
     try {
-      const [r1, r2, r3, r4] = await Promise.all([
+      const [r1, r2, r3, r4, r5, r6] = await Promise.all([
         supabaseExternal.from("view_dre_mensal").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
         supabaseExternal.from("view_dre_operacional").select("*").gte("mes", "2026-05").order("mes", { ascending: true }),
         supabaseExternal.from("view_dre_deducoes_marketplace").select("*").gte("mes", "2026-05"),
         supabaseExternal.from("view_dre_ads_marketplace").select("mes,canal,gasto").gte("mes", "2026-05"),
+        supabaseExternal.from("view_dre_custos_full").select("*").gte("mes", "2026-05"),
+        supabaseExternal.from("view_dre_acelera").select("*").gte("mes", "2026-05"),
       ]);
       if (r1.error) throw r1.error;
       if (r2.error) throw r2.error;
@@ -207,6 +234,8 @@ function DREPage() {
       setOperacional((r2.data ?? []) as DreOperacionalRow[]);
       if (!r3.error) setDeducoes((r3.data ?? []) as DeducaoMktRow[]);
       if (!r4.error) setAdsDet((r4.data ?? []) as AdsMktRow[]);
+      if (!r5.error) setFullDet((r5.data ?? []) as CustoFullRow[]);
+      if (!r6.error) setAceleraDet((r6.data ?? []) as AceleraRow[]);
       setMesSel((prev) => prev ?? (rows.length ? rows[rows.length - 1].mes : undefined));
     } catch (e) {
       console.error(e);
@@ -277,6 +306,37 @@ function DREPage() {
     [perfil, carregar, expanded, mesSel, fetchDetalhe],
   );
 
+  // Item 6 (10/set): "agrupar como" — apelido do fornecedor em dre_fornecedor_grupo
+  // (ex.: 33 diárias do Kevin viram uma linha "Salário Kevin"). Sobrevive ao
+  // re-sync do Tiny porque a chave é o nome do fornecedor no espelho.
+  const agruparFornecedor = useCallback(
+    async (fornecedorNome: string, grupo: string) => {
+      try {
+        const g = grupo.trim();
+        if (g) {
+          const { error } = await supabaseExternal.from("dre_fornecedor_grupo").upsert(
+            { fornecedor_nome: fornecedorNome, grupo: g, editado_por: perfil?.nome ?? null, editado_em: new Date().toISOString() },
+            { onConflict: "fornecedor_nome" },
+          );
+          if (error) throw error;
+        } else {
+          const { error } = await supabaseExternal.from("dre_fornecedor_grupo").delete().eq("fornecedor_nome", fornecedorNome);
+          if (error) throw error;
+        }
+        const abertos = [...expanded].filter((k) => k.startsWith(`${mesSel}::`));
+        setDetalhes({});
+        for (const k of abertos) {
+          const label = k.slice(`${mesSel}::`.length);
+          if (DESPESA_CATEGORIAS[label]) await fetchDetalhe(label);
+        }
+        toast.success(g ? `"${fornecedorNome}" agrupado como "${g}"` : `"${fornecedorNome}" desagrupado`);
+      } catch (e) {
+        toast.error("Falha ao agrupar fornecedor", { description: (e as Error).message });
+      }
+    },
+    [perfil, expanded, mesSel, fetchDetalhe],
+  );
+
   // Ao mudar mês, reseta expansões
   useEffect(() => {
     setExpanded(new Set());
@@ -333,6 +393,14 @@ function DREPage() {
         .filter((r) => r.mes === mesSel)
         .sort((a, b) => Number(b.gasto ?? 0) - Number(a.gasto ?? 0)),
     [adsDet, mesSel],
+  );
+  const fullMes = useMemo(
+    () => fullDet.filter((r) => r.mes === mesSel).sort((a, b) => Number(b.valor ?? 0) - Number(a.valor ?? 0)),
+    [fullDet, mesSel],
+  );
+  const aceleraMes = useMemo(
+    () => aceleraDet.filter((r) => r.mes === mesSel).sort((a, b) => Number(b.taxa ?? 0) - Number(a.taxa ?? 0)),
+    [aceleraDet, mesSel],
   );
 
   const toggleDespesa = (label: string) => {
@@ -399,11 +467,14 @@ function DREPage() {
             porEmpresa={porEmpresaMes}
             deducoesMes={deducoesMes}
             adsMes={adsMes}
+            fullMes={fullMes}
+            aceleraMes={aceleraMes}
             expanded={expanded}
             detalhes={detalhes}
             loadingDet={loadingDet}
             onToggle={toggleDespesa}
             onOverride={aplicarOverride}
+            onAgrupar={agruparFornecedor}
             mesSel={mesSel!}
           />
         </>
@@ -510,7 +581,7 @@ function DestinoDaReceita({ row }: { row: DreRow }) {
     { label: "Pessoal", val: (row.pessoal ?? 0) + (row.creative_revisar ?? 0), color: "#2E9E8F" },
     {
       label: "Outras fixas",
-      val: (row.aluguel ?? 0) + (row.administrativas ?? 0) + (row.embalagem ?? 0) + (row.frete_logistica ?? 0) + (row.financeiras ?? 0) + (row.outras ?? 0),
+      val: (row.aluguel ?? 0) + (row.administrativas ?? 0) + (row.embalagem ?? 0) + (row.frete_logistica ?? 0) + (row.financeiras ?? 0) + (row.outras ?? 0) + (row.custos_full ?? 0) + (row.acelera ?? 0),
       color: "#4A7BD9",
     },
     { label: "Lucro líquido", val: lucro, color: "#0E8A5F" },
@@ -571,7 +642,7 @@ type LinhaDre = {
   val: number;
   prevVal: number | null | undefined;
   kind: "h" | "s";
-  drill: "empresa" | "categoria" | "marketplace" | "ads" | null;
+  drill: "empresa" | "categoria" | "marketplace" | "ads" | "full" | "acelera" | null;
 };
 
 function DreDetalhado({
@@ -580,11 +651,14 @@ function DreDetalhado({
   porEmpresa,
   deducoesMes,
   adsMes,
+  fullMes,
+  aceleraMes,
   expanded,
   detalhes,
   loadingDet,
   onToggle,
   onOverride,
+  onAgrupar,
   mesSel,
 }: {
   row: DreRow;
@@ -592,17 +666,22 @@ function DreDetalhado({
   porEmpresa: { acz?: DreOperacionalRow; svl?: DreOperacionalRow };
   deducoesMes: DeducaoMktRow[];
   adsMes: AdsMktRow[];
+  fullMes: CustoFullRow[];
+  aceleraMes: AceleraRow[];
   expanded: Set<string>;
   detalhes: Record<string, DespesaDetalheRow[]>;
   loadingDet: Set<string>;
   onToggle: (label: string) => void;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
+  onAgrupar: (fornecedorNome: string, grupo: string) => void;
   mesSel: string;
 }) {
   const receita = row.receita_liquida ?? 0;
 
   const opex: { label: string; val: number | null; prev: number | null | undefined }[] = [
     { label: "Marketing / ADS", val: row.ads, prev: prev?.ads },
+    { label: "Custos Full (ML / Shopee)", val: row.custos_full, prev: prev?.custos_full },
+    { label: "Antecipação Shopee Acelera", val: row.acelera, prev: prev?.acelera },
     { label: "Pessoal", val: row.pessoal, prev: prev?.pessoal },
     { label: "Aluguel", val: row.aluguel, prev: prev?.aluguel },
     { label: "Administrativas", val: row.administrativas, prev: prev?.administrativas },
@@ -626,7 +705,11 @@ function DreDetalhado({
         val: d.val ?? 0,
         prevVal: d.prev,
         kind: "s",
-        drill: d.label === "Marketing / ADS" ? "ads" : "categoria",
+        drill:
+          d.label === "Marketing / ADS" ? "ads"
+          : d.label === "Custos Full (ML / Shopee)" ? "full"
+          : d.label === "Antecipação Shopee Acelera" ? "acelera"
+          : "categoria",
       })),
     { label: "Custo fixo total", val: row.total_despesas ?? 0, prevVal: prev?.total_despesas, kind: "h", drill: null },
     { label: "Lucro líquido", val: row.lucro_liquido ?? 0, prevVal: prev?.lucro_liquido, kind: "h", drill: null },
@@ -661,6 +744,8 @@ function DreDetalhado({
               l.drill === "empresa" ||
               l.drill === "marketplace" ||
               l.drill === "ads" ||
+              l.drill === "full" ||
+              l.drill === "acelera" ||
               (l.drill === "categoria" && DESPESA_CATEGORIAS[l.label] != null);
             const delta = pctVar(l.val, l.prevVal);
             const bom = isH ? (delta ?? 0) >= 0 : (delta ?? 0) <= 0;
@@ -731,8 +816,12 @@ function DreDetalhado({
                         <DrillDeducoes itens={deducoesMes} />
                       ) : l.drill === "ads" ? (
                         <DrillAds itens={adsMes} total={l.val} />
+                      ) : l.drill === "full" ? (
+                        <DrillFull itens={fullMes} />
+                      ) : l.drill === "acelera" ? (
+                        <DrillAcelera itens={aceleraMes} />
                       ) : (
-                        <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} />
+                        <DrillCategoria itens={detalhes[drillKey]} loading={loadingDet.has(drillKey)} onOverride={onOverride} onAgrupar={onAgrupar} />
                       )}
                     </div>
                   </div>
@@ -746,15 +835,21 @@ function DreDetalhado({
   );
 }
 
+// Drill de categoria AGRUPADO por fornecedor (item 6, 10/set): fornecedor com
+// vários lançamentos no mês (ex.: diárias do Kevin) vira UMA linha com total e
+// contagem; clique abre os lançamentos. O apelido vem de dre_fornecedor_grupo.
 function DrillCategoria({
   itens,
   loading,
   onOverride,
+  onAgrupar,
 }: {
   itens: DespesaDetalheRow[] | undefined;
   loading: boolean;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
+  onAgrupar: (fornecedorNome: string, grupo: string) => void;
 }) {
+  const [abertos, setAbertos] = useState<Set<string>>(new Set());
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -765,12 +860,102 @@ function DrillCategoria({
   if (!itens || itens.length === 0) {
     return <p className="text-xs text-muted-foreground py-2">Sem itens detalhados.</p>;
   }
+  const grupos = new Map<string, DespesaDetalheRow[]>();
+  for (const it of itens) {
+    const g = (it.grupo ?? it.fornecedor_nome ?? "—").trim() || "—";
+    const arr = grupos.get(g) ?? [];
+    arr.push(it);
+    grupos.set(g, arr);
+  }
+  const lista = [...grupos.entries()]
+    .map(([grupo, rows]) => ({
+      grupo,
+      rows,
+      total: rows.filter((r) => !r.excluida).reduce((s, r) => s + Number(r.valor_total ?? 0), 0),
+    }))
+    .sort((a, b) => b.total - a.total);
   return (
     <>
-      {itens.map((it, i) => (
-        <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} />
-      ))}
+      {lista.map(({ grupo, rows, total }) => {
+        // fornecedor único com 1 lançamento: mostra direto (sem cabeçalho)
+        if (rows.length === 1) {
+          return <ItemDespesa key={rows[0].tiny_id ?? grupo} it={rows[0]} onOverride={onOverride} onAgrupar={onAgrupar} />;
+        }
+        const aberto = abertos.has(grupo);
+        return (
+          <div key={grupo}>
+            <button
+              type="button"
+              onClick={() =>
+                setAbertos((prev) => {
+                  const n = new Set(prev);
+                  if (n.has(grupo)) n.delete(grupo); else n.add(grupo);
+                  return n;
+                })
+              }
+              className="w-full flex items-center justify-between gap-2 py-1 text-xs hover:bg-muted/60 rounded px-1 -mx-1"
+            >
+              <span className="flex items-center gap-1 min-w-0">
+                {aberto ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                <span className="font-medium text-foreground truncate">{grupo}</span>
+                <span className="text-muted-foreground shrink-0">· {rows.length} lançamentos</span>
+              </span>
+              <span className="tabular-nums font-mono font-semibold shrink-0">{brlFull(total)}</span>
+            </button>
+            {aberto && (
+              <div className="ml-4 border-l border-border/60 pl-3 my-0.5">
+                {rows.map((it, i) => (
+                  <ItemDespesa key={it.tiny_id ?? i} it={it} onOverride={onOverride} onAgrupar={onAgrupar} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
+  );
+}
+
+function DrillFull({ itens }: { itens: CustoFullRow[] }) {
+  if (itens.length === 0) return <p className="text-xs text-muted-foreground py-2">Sem custo de Full no mês.</p>;
+  return (
+    <div className="py-1 space-y-0.5">
+      {itens.map((r) => (
+        <div key={`${r.canal}-${r.tipo}`} className="flex items-center justify-between gap-4 py-0.5 text-xs">
+          <span className="text-muted-foreground min-w-0 truncate">
+            <span className="text-foreground/80">{r.canal}</span> — {r.tipo}
+            <span className="text-muted-foreground/70"> · {r.lancamentos ?? 0} lanç.</span>
+          </span>
+          <span className="tabular-nums font-mono text-foreground/80 shrink-0">{brlFull(r.valor)}</span>
+        </div>
+      ))}
+      <p className="text-[11px] text-muted-foreground border-t border-border/50 pt-1.5">
+        Mercado Livre: armazenamento, coleta, estoque antigo e inconformidade do Full, lidos do faturamento do ML
+        (ml_billing_detalhes). Shopee: ajustes do programa Estoque na Shopee (SBS) e do Full, lidos da carteira.
+      </p>
+    </div>
+  );
+}
+
+function DrillAcelera({ itens }: { itens: AceleraRow[] }) {
+  if (itens.length === 0) return <p className="text-xs text-muted-foreground py-2">Sem antecipação no mês.</p>;
+  return (
+    <div className="py-1 space-y-0.5">
+      {itens.map((r) => (
+        <div key={r.canal} className="flex items-center justify-between gap-4 py-0.5 text-xs">
+          <span className="text-muted-foreground min-w-0 truncate">
+            <span className="text-foreground/80">{r.canal}</span>
+            <span className="text-muted-foreground/70"> · {r.lancamentos ?? 0} pedidos antecipados
+              {r.valor_antecipado ? ` · ${brlFull(r.valor_antecipado)} adiantados` : ""}</span>
+          </span>
+          <span className="tabular-nums font-mono text-foreground/80 shrink-0">{brlFull(r.taxa)}</span>
+        </div>
+      ))}
+      <p className="text-[11px] text-muted-foreground border-t border-border/50 pt-1.5">
+        Taxa cobrada pelo Shopee Acelera (antecipação do repasse), descontada na carteira depois do escrow — por isso
+        não aparece nas deduções do pedido e entra aqui como despesa financeira.
+      </p>
+    </div>
   );
 }
 
@@ -896,17 +1081,43 @@ function SubEmpresa({
 function ItemDespesa({
   it,
   onOverride,
+  onAgrupar,
 }: {
   it: DespesaDetalheRow;
   onOverride: (tinyId: number, patch: { categoria_override?: string | null; excluir?: boolean }) => void;
+  onAgrupar: (fornecedorNome: string, grupo: string) => void;
 }) {
   const excl = !!it.excluida;
   const tid = it.tiny_id;
+  const [grupoDraft, setGrupoDraft] = useState(it.grupo ?? "");
   return (
     <div className={cn("flex items-center justify-between gap-2 py-0.5 text-xs", excl && "opacity-60")}>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 flex items-center gap-1">
         <span className={cn("text-foreground", excl && "line-through")}>{it.fornecedor_nome ?? "—"}</span>
-        {it.descricao && <span className="text-muted-foreground"> — {it.descricao}</span>}
+        {it.descricao && <span className="text-muted-foreground truncate"> — {it.descricao}</span>}
+        {it.data_vencimento && <span className="text-muted-foreground/70 shrink-0">· {it.data_vencimento.slice(8, 10)}/{it.data_vencimento.slice(5, 7)}</span>}
+        {tid != null && it.fornecedor_nome && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline shrink-0" title="Agrupar todos os lançamentos deste fornecedor sob um nome">
+                agrupar
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-3 space-y-2">
+              <p className="text-xs font-medium">Agrupar "{it.fornecedor_nome}" como</p>
+              <Input value={grupoDraft} onChange={(e) => setGrupoDraft(e.target.value)} placeholder="ex.: Salário Kevin" className="h-8 text-xs" />
+              <div className="flex items-center justify-between gap-2">
+                <button type="button" className="text-[11px] text-muted-foreground hover:underline" onClick={() => { setGrupoDraft(""); onAgrupar(it.fornecedor_nome!, ""); }}>
+                  desagrupar
+                </button>
+                <Button size="sm" className="h-7 text-xs" onClick={() => onAgrupar(it.fornecedor_nome!, grupoDraft)} disabled={!grupoDraft.trim()}>
+                  Salvar
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Vale para todos os meses; os lançamentos continuam individuais no Tiny.</p>
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
       <span className={cn("tabular-nums font-mono text-foreground/80 shrink-0", excl && "line-through")}>
         {brlFull(it.valor_total)}

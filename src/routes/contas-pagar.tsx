@@ -1,4 +1,5 @@
 import { BotaoSincronizar } from "@/components/BotaoSincronizar";
+import { NovaContaDialog } from "@/components/contas-pagar/NovaContaDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -278,12 +279,15 @@ function ContasPagarPage() {
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SyncStatusFooter area="contas_pagar" />
+        <div className="flex items-center gap-2">
+          <NovaContaDialog onCriada={() => setRecarga((n) => n + 1)} />
         <BotaoSincronizar
           rotulo="Sincronizar contas"
           titulo="Puxa as contas a pagar do Tiny agora. O cron faz isso 1x por dia (madrugada)."
           rotas={["tiny-sync-contas-pagar?modulo=contas&limite=5000"]}
           onConcluido={() => setRecarga((n) => n + 1)}
         />
+        </div>
       </div>
 
       {/* KPIs */}

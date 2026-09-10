@@ -369,3 +369,34 @@ resta grande é dado real (`escrow_componentes` 113 MB, `pedidos` 49 MB).
    venda). Ver CLAUDE.md §2.1.2 com os valores de agosto. **Próximo passo
    (não feito):** `ml-sync-billing` + tabela `ml_billing_detalhes` + linha no
    DRE. Token ML usado só em leitura para a sondagem.
+
+### Pedidos do dono (10/set, noite) — 7 itens financeiros
+Backend valendo; front aguarda Publish. Detalhe em CLAUDE.md §2.1.3.
+1. **OC × NF do fornecedor** — FEITO (sync `compras-sync?modulo=nf` + cron
+   :12/:42, views `view_compras_conciliacao(_itens)`, painel em `/compras`).
+   A carga inicial (274 NF de entrada em 75 dias, 216 ignoradas = retorno do
+   Full/PF) detalha ~15 NF por rodada; a conciliação automática só casa depois
+   dos itens. Conferir amanhã quantas casaram (`select match_metodo, count(*)
+   from compras_nf_entrada group by 1`).
+2. **Conta a pagar com boleto/NF refletindo no Tiny** — FEITO (`tiny-contas-
+   pagar` + diálogo "Nova conta a pagar" + bucket `contas-pagar-docs`). Ainda
+   NÃO testado de ponta a ponta com uma conta real (cria de verdade no Tiny);
+   validado só o esquema do POST (400 com campos obrigatórios) e a busca de
+   contatos. Primeiro uso: criar uma conta pequena e conferir no Tiny.
+3. **Custos Full ML no DRE** — FEITO (`ml-sync-billing`, cron 104). Carga
+   histórica em andamento (5.626 lançamentos do período aberto, 450 por
+   rodada de 10 min → ~2 h); `periodos=2` cobre aberto + anterior. Para
+   histórico maior: `?modulo=sync&periodos=6`.
+4. **Full Shopee/Amazon** — Shopee FEITO via carteira (SBS). Amazon: taxa por
+   unidade já está na dedução do pedido; armazenamento mensal PENDENTE
+   (ServiceFeeEventList da Finances API).
+5. **Shopee Acelera no DRE** — FEITO (`view_dre_acelera`, linha própria).
+6. **Fornecedor unificado** — FEITO (`dre_fornecedor_grupo` + drill agrupado +
+   "agrupar" por lançamento; Kevin e Renan pré-cadastrados).
+7. **Conciliação de reembolsos/devoluções** — VIÁVEL, view criada
+   (`view_conciliacao_devolucoes`), sem tela. Números de 180 dias: ML 617
+   cancelados conciliados com a carteira e 46 sem movimento; Shopee 3.563
+   devoluções sem movimento na carteira (reembolso é no escrow — precisa
+   cruzar com `escrow_reembolso`/escrow_componentes.return_order_sn_list, que a
+   view só usa parcialmente) e 203 com valor divergente. Próximo passo: tela
+   `/conciliacao` e refinar a regra Shopee com `escrow_componentes`.

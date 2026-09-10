@@ -19,6 +19,7 @@ import {
   supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { ConciliacaoNf } from "@/components/compras/ConciliacaoNf";
 
 // ============================================================================
 // Compras & Recebimento de Mercadorias — kanban integrado às ORDENS DE COMPRA
@@ -258,8 +259,18 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
         inseridas?: number; atualizadas?: number; erro?: string;
       };
       if (!resp.ok || d.erro) throw new Error(d.erro ?? `HTTP ${resp.status}`);
+      // NF de entrada + conciliação com a OC (item 1) — mesma função, módulo `nf`
+      let nfTxt = "";
+      try {
+        const rn = await fetch(
+          `${EXTERNAL_URL}/functions/v1/compras-sync?modulo=nf&dias=60&max=12`,
+          { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+        );
+        const dn = (await rn.json().catch(() => ({}))) as { inseridas?: number; conciliadas?: number; erro?: string };
+        if (rn.ok && !dn.erro) nfTxt = ` · NFs: ${dn.inseridas ?? 0} nova(s), ${dn.conciliadas ?? 0} conciliada(s)`;
+      } catch { /* a conciliação também roda por cron */ }
       toast.success(`Sincronizado com o Tiny`, {
-        description: `${d.inseridas ?? 0} nova(s) · ${d.atualizadas ?? 0} atualizada(s)`,
+        description: `${d.inseridas ?? 0} nova(s) · ${d.atualizadas ?? 0} atualizada(s)${nfTxt}`,
       });
       await qc.invalidateQueries({ queryKey: ["compras"] });
     } catch (e) {
@@ -631,6 +642,9 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
           />
         </div>
       </Card>
+
+      {/* NF do fornecedor × OC (conciliação) */}
+      <ConciliacaoNf ordemTinyId={tinyId} />
 
       {/* Itens */}
       <div className="flex flex-col gap-3">

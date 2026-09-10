@@ -124,6 +124,61 @@ proposta: edge fn `ml-sync-billing` → tabela `ml_billing_detalhes` (period_key
 detail_id PK, sub_type, descricao, valor, order_id, data) → DRE (armazenamento/
 coleta como despesa do mês; tarifas por pedido conciliam com `pedidos`).
 
+## 2.1.3 Financeiro — o que foi ligado em 10/set/2026 (itens do dono)
+
+- **Custos do Full no DRE (ML + Shopee):** `ml-sync-billing` (cron jobid 104,
+  a cada 10 min) espelha o faturamento do ML em `ml_billing_detalhes` (PK
+  `detail_id`; estado por conta/período em `ml_billing_sync_estado`; período
+  ABERTO é relido a cada rodada, fechado é definitivo). `view_dre_custos_full`
+  = ML sub-tipos CFWA/CFCBE/CFBA/CFPB (armazenamento, coleta, estoque antigo,
+  inconformidade; B* = estorno) + Shopee `transacoes_carteira.tipo='taxa_servico'`
+  com "relacionado ao Full"/"Estoque na Shopee" (SBS). Linha "Custos Full (ML /
+  Shopee)" na `view_dre_mensal` (`custos_full`) e no `/dre`, com drill.
+- **Shopee Acelera:** taxa da antecipação (`tipo='antecipacao_taxa'`,
+  FAST_ESCROW_DEDUCT) é descontada na carteira DEPOIS do escrow — não está no
+  `recebido_estimado`, logo não estava em lugar nenhum do DRE (jul/26: R$ 4,5 mil;
+  set/26 até dia 10: R$ 5,8 mil). `view_dre_acelera` → coluna `acelera` e linha
+  "Antecipação Shopee Acelera". Baseline: total_despesas novo = antigo +
+  custos_full + acelera, ao centavo.
+- **Amazon FBA:** a taxa por unidade (FBAPerUnitFulfillmentFee) já entra em
+  `pedidos.taxa_servico` via `amazon-sync-financas` (dedução do pedido). Taxa de
+  ARMAZENAMENTO mensal (ServiceFee "FBAStorageFee") não é capturada — está na
+  Finances API `listFinancialEvents` (ServiceFeeEventList) e não no evento do
+  pedido. Pendente.
+- **Fornecedor agrupado no DRE:** `dre_fornecedor_grupo(fornecedor_nome PK,
+  grupo)`; `view_dre_despesas_detalhe.grupo` = coalesce(grupo, btrim(nome)). O
+  drill do `/dre` agrupa por `grupo` (uma linha com total e contagem, expansível)
+  e cada lançamento tem "agrupar". Kevin (33 diárias/mês) virou "Salário Kevin
+  (diárias)" e passou a `Pessoal` na `categoria_despesa_dre` (era "a
+  classificar"); "Renan Sevilha" ≡ "Renan Sevilha Marangoni".
+- **Conta a pagar criada pelo app (com boleto/NF):** `tiny-contas-pagar`
+  (`modulo=contatos&q=` busca contato; `modulo=criar` POST → `POST
+  /contas-pagar` do Tiny, que exige `contato.id`, `valor>0`, `dataVencimento`;
+  400 do Tiny volta em `validacao`) e espelha em `contas_pagar` na hora
+  (`fonte='app'`). Anexo vai ao Storage bucket `contas-pagar-docs` (policy
+  anon/authenticated) + `contas_pagar_anexos(tiny_id, tipo boleto|nf|outro,
+  storage_path)`. Botão "Nova conta a pagar" em `/contas-pagar`. **Não** existe
+  upload de anexo para o Tiny pela API (o PDF fica só no app).
+- **OC × NF do fornecedor:** `compras-sync?modulo=nf` (cron `compras-sync-nf`,
+  :12/:42) espelha `GET /notas?tipo=E` em `compras_nf_entrada` + `compras_nf_itens`
+  (o `codigo` do item da NF é o nosso SKU quando o produto está mapeado no
+  Tiny; NF de retorno do Full — EBAZAR/MERCADO LIVRE — e de pessoa física entram
+  com `ignorar=true`). Conciliação automática: OCs do mesmo `fornecedor_id`
+  (contato) até 90 dias antes; score = fração dos SKUs da NF na OC (≥0,5 →
+  `auto_sku`; senão OC única → `auto_fornecedor`). `view_compras_conciliacao`
+  (NF × OC, Δ valor, itens divergentes) e `_itens` (qtd/preço OC × NF por SKU).
+  Painel "NF do fornecedor × ordem de compra" em `/compras` com vincular/
+  desvincular manual (`match_metodo='manual'`). **Escrita em LOTE** nos
+  cabeçalhos (a v3 fazia 1 update por NF: 274 NFs = 74 s sem chegar aos itens).
+- **Conciliação de devoluções/reembolsos:** `view_conciliacao_devolucoes`
+  (Shopee `shopee_devolucoes` + ML cancelados/parcialmente reembolsados ×
+  carteira por `pedido_id` × `devolucoes_recebidas` × `notas_cancelados`).
+  Só view, sem tela ainda. Semântica: na Shopee o reembolso antes da liberação
+  é descontado no próprio escrow (`pedidos.escrow_reembolso`) e NÃO passa pela
+  carteira; ML `REFUND_MP`/`CANCELLED_MP` têm `pedido_id` (397+82 em 90 dias),
+  Shopee `ressarcimento`/`estorno_credito` NÃO têm (48+29) — são créditos por
+  item perdido no armazém, sem pedido.
+
 ## 2.2 Receita fantasma — cancelamento que não chega ao espelho
 
 O sync de rotina do ML roda com `dias=2` (custo). Pedido **cancelado depois
