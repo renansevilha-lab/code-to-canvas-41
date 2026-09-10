@@ -1744,7 +1744,8 @@ async function imprimirIdentificadorApi(
   // NÃO usar a contagem de etiquetas enviadas: a etiqueta Shopee tem ~2 blocos
   // ^XA por pedido, então "enviadas" dava ~2x (8 pedidos apareciam como 14/16).
   const pedidosReal = lote.qtd_pedidos;
-  if (opts?.auto && pedidosReal < 2) return;
+  // Sai para TODO lote, inclusive de 1 pedido (10/set: a bancada recebeu 3
+  // etiquetas ML de lotes unitários sem identificadora e não soube a TAG).
   if (!printerId) {
     if (!opts?.auto) toast.warning("Escolha a impressora primeiro.");
     return;
