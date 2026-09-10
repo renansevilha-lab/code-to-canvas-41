@@ -1651,6 +1651,7 @@ function gerarZplIdentificador(o: {
   pedidos: number;
   produtos: number | null;
   envio: string;
+  prazo?: string | null;
 }): string {
   const tag = zplSan(o.tag);
   const grupo = zplSan(o.grupo);
@@ -1678,6 +1679,18 @@ function gerarZplIdentificador(o: {
     `^FO422,790^A0N,80,80^FB350,1,0,C,0^FD${prod}^FS`,
     "^FO40,910^GB732,90,90^FS",
     `^FO40,930^A0N,50,50^FB732,1,0,C,0^FR^FDENVIO: ${envio}^FS`,
+    // prazo de despacho mais próximo do lote (min ship_by_date dos pedidos)
+    ...(o.prazo ? [`^FO40,1012^A0N,44,44^FB732,1,0,C,0^FDPRAZO: ${zplSan(o.prazo)}^FS`] : []),
+    // faixa "ETIQUETAS ABAIXO" com setas para baixo: na tira que pende da
+    // impressora a identificadora sai POR ÚLTIMO e fica em cima; as etiquetas
+    // do lote ficam penduradas ABAIXO dela — a seta evita pegar as de cima.
+    "^FO40,1068^GB732,132,3^FS",
+    "^FO130,1112^A0N,40,40^FB552,1,0,C,0^FDETIQUETAS DESTE LOTE^FS",
+    "^FO130,1156^A0N,34,34^FB552,1,0,C,0^FDESTAO ABAIXO^FS",
+    // seta esquerda (haste + chevron "V" desenhado com diagonais)
+    "^FO86,1082^GB8,52,8^FS", "^FO60,1130^GD30,42,8,B,L^FS", "^FO90,1130^GD30,42,8,B,R^FS",
+    // seta direita
+    "^FO718,1082^GB8,52,8^FS", "^FO692,1130^GD30,42,8,B,L^FS", "^FO722,1130^GD30,42,8,B,R^FS",
     "^XZ",
   ].join("");
 }
@@ -1730,6 +1743,26 @@ async function imprimirIdentificadorApi(
     const mUn = /(\d+)\s*un\s*$/i.exec(lote.grupo_origem ?? "");
     const unPorPedido = mUn ? Number(mUn[1]) : null;
     const produtos = unPorPedido != null ? unPorPedido * pedidosReal : null;
+    // prazo de despacho mais próximo entre os pedidos da TAG (separacao_tiny
+    // cobre todas as situações — a view de fila só mostra situação 1)
+    let prazo: string | null = null;
+    try {
+      const { data: sep } = await supabaseExternal
+        .from("separacao_tiny").select("numero_ecommerce").eq("tag_lote", lote.tag).limit(500);
+      const sns = ((sep ?? []) as { numero_ecommerce: string | null }[])
+        .map((r) => r.numero_ecommerce).filter((x): x is string => !!x);
+      if (sns.length > 0) {
+        const { data: pz } = await supabaseExternal
+          .from("pedidos").select("ship_by_date").in("id", sns)
+          .not("ship_by_date", "is", null).order("ship_by_date", { ascending: true }).limit(1);
+        const iso = (pz?.[0] as { ship_by_date?: string } | undefined)?.ship_by_date ?? null;
+        const dias = diasAtePrazo(iso);
+        if (iso && dias != null) {
+          const ddmm = new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
+          prazo = dias < 0 ? `VENCIDO ${ddmm}` : dias === 0 ? `HOJE ${ddmm}` : dias === 1 ? `AMANHA ${ddmm}` : `${ddmm} (${dias} dias)`;
+        }
+      }
+    } catch { /* sem prazo não impede a identificadora */ }
     const zpl = gerarZplIdentificador({
       tag: lote.tag,
       grupo: lote.grupo_origem ?? "",
@@ -1737,6 +1770,7 @@ async function imprimirIdentificadorApi(
       pedidos: pedidosReal,
       produtos,
       envio: lote.tipo_envio ?? "-",
+      prazo,
     });
     const { data: res, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
       body: { modulo: "imprimir", zpl, printer_id: printerId, title: `Identificador ${lote.tag}` },
@@ -2581,6 +2615,8 @@ function FilaPriorizada() {
   // prioridade da fila. Sequencial de propósito (uma impressora, um fluxo).
   const [massa, setMassa] = useState<{ atual: number; total: number; linha: string } | null>(null);
   const cancelarMassaRef = useRef(false);
+  const pausaMassaRef = useRef(false);
+  const [massaPausada, setMassaPausada] = useState(false);
   const [embalandoKey, setEmbalandoKey] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
   const [forcarSku, setForcarSku] = useState<PriorizadaRow | null>(null);
@@ -2648,10 +2684,19 @@ function FilaPriorizada() {
     }
   }
 
-  async function imprimirTudoEmMassa(linhas: PriorizadaRow[]) {
-    if (massa || linhas.length === 0) return;
+  async function imprimirTudoEmMassa(linhasPedidas: PriorizadaRow[]) {
+    if (massa || linhasPedidas.length === 0) return;
     if (impressoraSelecionada?.estado === "offline") {
       toast.error("Impressora offline", { description: "Escolha uma impressora online antes de imprimir em massa." });
+      return;
+    }
+    // Combinações multi-SKU não têm TAG por bloco (o tag-lote só resolve linha
+    // de SKU único — a tag_sugerida delas é o genérico "MULTI SKU"): ficam de
+    // fora do modo em massa e seguem pelo fluxo próprio.
+    const multis = linhasPedidas.filter((r) => r.tipo_grupo === "multi").length;
+    const linhas = linhasPedidas.filter((r) => r.tipo_grupo !== "multi");
+    if (linhas.length === 0) {
+      toast.warning("Só combinações multi-SKU no filtro", { description: "Elas não entram no modo em massa — use o fluxo normal." });
       return;
     }
     const totalPedidos = linhas.reduce((s2, r) => s2 + (r.qtd_pedidos ?? 0), 0);
@@ -2663,12 +2708,19 @@ function FilaPriorizada() {
       `Imprimir TODOS os lotes do filtro atual?\n\n` +
       `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.\n` +
       (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — as TAGs serão aplicadas antes de imprimir.\n` : "") +
+      (multis > 0 ? `${multis} combinação(ões) multi-SKU ficam de fora (fluxo próprio).\n` : "") +
       `Etiquetas já impressas NÃO saem de novo (proteção automática).`,
     )) return;
     cancelarMassaRef.current = false;
+    pausaMassaRef.current = false;
+    setMassaPausada(false);
     let feitas = 0, comErro = 0;
     try {
       for (let i = 0; i < linhas.length; i++) {
+        // pausa: segura ANTES de começar a próxima linha (nunca no meio de uma)
+        while (pausaMassaRef.current && !cancelarMassaRef.current) {
+          await new Promise((r) => setTimeout(r, 400));
+        }
         if (cancelarMassaRef.current) break;
         const item = linhas[i];
         setMassa({ atual: i + 1, total: linhas.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}` });
@@ -2685,19 +2737,22 @@ function FilaPriorizada() {
       }
     } finally {
       setMassa(null);
+      setMassaPausada(false);
+      pausaMassaRef.current = false;
       void qc.invalidateQueries({ queryKey: ["separacao"] });
     }
     if (cancelarMassaRef.current) {
       toast.info(`Impressão em massa cancelada — ${feitas} linha(s) processadas antes de parar.`);
     } else {
       toast.success(`Impressão em massa concluída: ${feitas} de ${linhas.length} linha(s)`, {
-        description: comErro > 0 ? `${comErro} linha(s) com erro — confira os avisos acima.` : "Tudo processado na ordem de prioridade.",
+        description: (comErro > 0 ? `${comErro} linha(s) com erro — confira os avisos acima. ` : "")
+          + (multis > 0 ? `${multis} multi-SKU ficaram de fora.` : "Tudo processado na ordem de prioridade."),
         duration: 10000,
       });
     }
     void registrarSeparacaoLog({
       evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
-      detalhe: { via: "massa", linhas: linhas.length, feitas, com_erro: comErro },
+      detalhe: { via: "massa", linhas: linhas.length, feitas, com_erro: comErro, multis_pulados: multis },
     });
   }
 
@@ -3182,9 +3237,13 @@ function FilaPriorizada() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span className="text-sm font-medium tabular-nums">
-            Imprimindo lote {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
+            {massaPausada ? "PAUSADO em" : "Imprimindo lote"} {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
           </span>
-          <Button size="sm" variant="destructive" onClick={() => { cancelarMassaRef.current = true; }}>
+          <Button size="sm" variant={massaPausada ? "default" : "secondary"}
+            onClick={() => { pausaMassaRef.current = !pausaMassaRef.current; setMassaPausada(pausaMassaRef.current); }}>
+            {massaPausada ? "Retomar" : "Pausar"}
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => { cancelarMassaRef.current = true; pausaMassaRef.current = false; }}>
             Parar após esta linha
           </Button>
         </div>
@@ -3195,6 +3254,12 @@ function FilaPriorizada() {
           <Button size="sm" onClick={() => void aplicarTagVarios()} disabled={aplicandoLote} className="gap-1.5">
             {aplicandoLote ? <Loader2 className="h-4 w-4 animate-spin" /> : <TagIcon className="h-4 w-4" />}
             Aplicar TAG em massa
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5"
+            disabled={massa !== null}
+            onClick={() => void imprimirTudoEmMassa((rows ?? []).filter((r) => r.tag_sugerida && selGrupos.has(r.tag_sugerida)))}
+            title="Aplica TAG (se faltar) e imprime só os blocos selecionados, na ordem de prioridade">
+            <Printer className="h-4 w-4" /> Imprimir selecionados
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelGrupos(new Set())}>Limpar</Button>
         </div>
