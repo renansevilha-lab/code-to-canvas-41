@@ -92,6 +92,20 @@ Regras ao mexer em função que usa token ML/Amazon:
   interno o `nextToken` é zerado, então `faltou_pagina:false` **não** prova que
   terminou — olhe o array `erros`.
 
+## 2.1.1 Token vencido em silêncio (10/set/2026)
+
+`ml-refresh-token` **devolve 200 mesmo quando o refresh falha** (o resultado
+vai só no corpo: `falhas`/`resultados`), então o cron marca "succeeded" e
+ninguém vê. Uma falha transitória do ML às 16:00 deixou o token da Ottz
+**vencido por ~1h**: `ml-etiqueta` respondia "conta NÃO conectada (contas:
+1299638625)" — só a Bumi sobrava na lista de válidos — e a bancada achou que a
+impressão em massa "não funcionou". Defesas: cron `ml-refresh-token` passou de
+2h para **30 min** (retenta sozinho; só renova quem vence em <60 min), e a
+`view_tokens_saude` (ML/Shopee/Tiny/Amazon: `situacao` vencido/vencendo/ok) é
+vigiada pelo watchdog `etiquetas-saude?modulo=verificar` (20 min) com alerta
+no canal erros e cooldown de 2h. Diagnóstico rápido: `select * from
+view_tokens_saude`; cura: `ml-refresh-token?force=1` (ou `?user_id=`).
+
 ## 2.2 Receita fantasma — cancelamento que não chega ao espelho
 
 O sync de rotina do ML roda com `dias=2` (custo). Pedido **cancelado depois
