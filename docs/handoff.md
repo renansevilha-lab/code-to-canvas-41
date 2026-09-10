@@ -210,3 +210,42 @@ duplicou (conferido no banco).
 - **Não deixar query pesada travar o banco** — se o app parar de carregar dado,
   cheque `pg_stat_activity` / logs do Postgres (procure "statement timeout").
 - Tokens Shopee em `oauth_tokens_shopee`; Returns API: janela máx **15 dias**.
+
+---
+
+## Sessão de 10/set/2026 (pós-campanha 9.9) — estado e pendências
+
+**Publicar (Publish no Lovable) é pré-requisito para a bancada ver:** tudo de
+`src/routes/separacao.tsx` desta sessão só vale depois do Publish.
+
+### Feito (backend, já valendo)
+- `shopee-sync-ads` v57/v58: geração de etiquetas em paralelo + retry do
+  download (a Shopee devolvia 0 bytes na 1ª tentativa). Fila de ~600 → ~70.
+- `etiquetas-saude` v2: `view_etiquetas_saude` + `view_tokens_saude`; quadro
+  no Discord 2×/dia; watchdog 20 min (geração parada / fila represada / token
+  vencido). Cron `ml-refresh-token` de 2h → 30 min (falhava em silêncio).
+- Resíduo antigo de `ml_nf_estado` limpo.
+
+### Feito (front — aguarda Publish)
+- Faixa "Etiquetas do dia" no topo da Separação.
+- Chips de canal ISOLAM (clique = só aquele; Ctrl+clique soma).
+- "Imprimir tudo (N)" / "Imprimir selecionados" / "Reimprimir selecionados
+  (forçar)" na barra de seleção; barra de progresso com Pausar/Retomar e
+  "Parar após esta linha"; combinações multi-SKU ficam de fora (tag-lote não
+  resolve "MULTI: a+b").
+- "Reimprimir (forçar)" visível na coluna de ações da linha (e no menu ⋮),
+  com aviso de etiqueta em dobro. Checkbox aceita linha já tagueada.
+- Fluxo ML por SKU pula pedido já impresso (regra de ouro), salvo forçar.
+- Identificadora: faixa "ETIQUETAS DESTE LOTE ESTÃO ABAIXO" com setas + linha
+  PRAZO; sai também em lote de 1 pedido; busca a TAG no banco quando ainda
+  não está no cache (race de 30 s).
+- Filtro de prazo multi-seleção (faixas exclusivas); "Embalar impressos (N)".
+
+### Pendências / próximos passos
+- Conector Supabase do app Claude ficou "invalidated" no fim da sessão —
+  abrir conversa nova (a reconexão não vale para sessão já aberta).
+- Conferir em qual Zebra saíram as 3 etiquetas dos lotes ML 1009-69/70/71
+  (18:01) — `impressao_etiquetas` + logs `printer_id=` da `ml-etiqueta`.
+- Decidir: identificadora ligada por padrão em máquina nova; salvaguardas
+  A (auto-recuperação do pregerar), B (retenção do cache), C (sonda diária),
+  D (alerta de prazo às 15h); seletor de impressora só com Zebras online.
