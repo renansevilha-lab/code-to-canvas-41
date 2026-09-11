@@ -27,7 +27,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MensagemLoteDialog } from "@/components/separacao/MensagemLoteDialog";
+import { MensagemLoteDialog, type AlvoMensagem } from "@/components/separacao/MensagemLoteDialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -2133,7 +2133,7 @@ function LotesDoDia({
           )}
         </button>
         {/* fora do <button> do cabecalho: clique dentro do dialogo borbulhava e recolhia o painel */}
-        <MensagemLoteDialog tag={msgLote} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
+        <MensagemLoteDialog alvo={msgLote ? { tipo: "tag", tag: msgLote, rotulo: `lote ${msgLote}` } : null} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
         <Button
           variant="ghost"
           size="sm"
@@ -2664,6 +2664,8 @@ function FilaPriorizada() {
   }
 
   const [reportandoLinha, setReportandoLinha] = useState<string | null>(null);
+
+  const [msgLinha, setMsgLinha] = useState<AlvoMensagem | null>(null);
   const obsSepQ = useObsSeparacao();
 
   /**
@@ -3390,6 +3392,7 @@ function FilaPriorizada() {
       )}
       <SeparacaoTotaisCards />
       <SaudeEtiquetasFaixa />
+      <MensagemLoteDialog alvo={msgLinha} onClose={() => setMsgLinha(null)} enviadoPor={perfil?.nome ?? null} />
       <LotesDoDia
         printerId={printerId}
         setPrinterId={setPrinterId}
@@ -3647,6 +3650,18 @@ function FilaPriorizada() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-64">
+                        <DropdownMenuItem
+                          onClick={() => setMsgLinha({
+                            tipo: "linha",
+                            sku: item.sku ?? null,
+                            tipoEnvio: item.tipo_envio ?? null,
+                            tagSugerida: item.tag_sugerida ?? null,
+                            rotulo: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""} (${formatNumber(item.qtd_pedidos ?? 0)} pedidos)`,
+                          })}
+                        >
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          Mensagem aos clientes (Shopee)
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           disabled={reportandoLinha !== null}
                           onClick={() => void reportarFaltaLinha(item)}
