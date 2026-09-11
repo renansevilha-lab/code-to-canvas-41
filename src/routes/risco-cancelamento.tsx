@@ -17,7 +17,7 @@ import {
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
-import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
+import { acharLoteDaTag, imprimirIdentificadorApi, type TagLoteRow } from "@/lib/identificador";
 import { Package as PackageIcon } from "lucide-react";
 
 // ============================================================================
@@ -236,6 +236,23 @@ function RiscoCancelamentoPage() {
     if (lote) await imprimirIdentificadorApi(lote, printerId, { auto: true });
   }
 
+  // Pedido SEM TAG (embalado fora do fluxo de lote) não tem identificadora de
+  // lote — sai uma identificadora de REIMPRESSÃO por SKU, mesmo ZPL, com a
+  // "TAG" REIMP-hhmm-sku, para a pilha reimpressa ser reconhecida na bancada.
+  async function identificadoraReimpressao(sku: string, loja: string, pedidos: number) {
+    if (!identOn || !printerId) return;
+    const agora = new Date();
+    const hhmm = `${String(agora.getHours()).padStart(2, "0")}${String(agora.getMinutes()).padStart(2, "0")}`;
+    const lote: TagLoteRow = {
+      id: 0, data: agora.toISOString().slice(0, 10), sequencia: 0,
+      tag: `REIMP-${hhmm}`,
+      grupo_origem: `REIMPRESSAO · ${sku} · ${loja}`,
+      sku, tipo_envio: loja, qtd_pedidos: pedidos, qtd_pulados: 0,
+      status: "aplicada", embalado_em: null, criado_em: agora.toISOString(),
+    };
+    await imprimirIdentificadorApi(lote, printerId, {});
+  }
+
   const resumo = useMemo(() => {
     const todos = q.data ?? [];
     const hoje = todos.filter((r) => Number(r.dias_para_cancelar) <= 0);
@@ -268,7 +285,8 @@ function RiscoCancelamentoPage() {
           evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
           order_sn: r.order_sn, tag: r.tag_lote, detalhe: { via: "risco", forcar: true, loja: lojaParam(r.shop_id) },
         });
-        await identificadoraDaTag(r.tag_lote);
+        if (r.tag_lote) await identificadoraDaTag(r.tag_lote);
+        else await identificadoraReimpressao(skusDe(r.itens)[0] ?? "?", r.loja, 1);
         setReimpressos((prev) => new Set(prev).add(r.order_sn));
       }
     } finally {
@@ -280,8 +298,11 @@ function RiscoCancelamentoPage() {
     if (!printerId) { toast.warning("Escolha a impressora primeiro."); return; }
     if (massa) return;
     // ordena por TAG para a identificadora sair logo DEPOIS das etiquetas de cada lote
+    // chave de agrupamento: TAG real, ou (sem TAG) SKU+loja — cada grupo fecha
+    // com a sua identificadora logo depois das etiquetas
+    const chaveDe = (r: RiscoRow) => r.tag_lote ? `T|${r.tag_lote}` : `S|${r.loja}|${skusDe(r.itens)[0] ?? "?"}`;
     const alvo = linhas.filter((r) => sel.has(r.order_sn))
-      .sort((a, b) => (a.tag_lote ?? "~").localeCompare(b.tag_lote ?? "~") || a.order_sn.localeCompare(b.order_sn));
+      .sort((a, b) => chaveDe(a).localeCompare(chaveDe(b)) || a.order_sn.localeCompare(b.order_sn));
     if (alvo.length === 0) return;
     if (impressora?.estado === "offline") { toast.error("Impressora offline"); return; }
     if (!window.confirm(AVISO(alvo.length))) return;
@@ -289,9 +310,15 @@ function RiscoCancelamentoPage() {
     pausaRef.current = false;
     setPausado(false);
     let ok = 0;
-    let tagAberta: string | null = null;
+    let chaveAberta: string | null = null;
+    let linhaAberta: RiscoRow | null = null;
     let okNaTag = 0;
     const feitos = new Set<string>();
+    const fecharGrupo = async () => {
+      if (!linhaAberta || okNaTag === 0) return;
+      if (linhaAberta.tag_lote) await identificadoraDaTag(linhaAberta.tag_lote);
+      else await identificadoraReimpressao(skusDe(linhaAberta.itens)[0] ?? "?", linhaAberta.loja, okNaTag);
+    };
     try {
       for (let i = 0; i < alvo.length; i++) {
         // pausa: segura ANTES do próximo pedido (nunca no meio de uma etiqueta)
@@ -299,10 +326,10 @@ function RiscoCancelamentoPage() {
         if (cancelarRef.current) break;
         setMassa({ atual: i + 1, total: alvo.length });
         const r = alvo[i];
-        if (r.tag_lote !== tagAberta) {
-          // mudou de lote: fecha o anterior com a identificadora dele
-          if (tagAberta && okNaTag > 0) await identificadoraDaTag(tagAberta);
-          tagAberta = r.tag_lote; okNaTag = 0;
+        if (chaveDe(r) !== chaveAberta) {
+          // mudou de grupo: fecha o anterior com a identificadora dele
+          await fecharGrupo();
+          chaveAberta = chaveDe(r); linhaAberta = r; okNaTag = 0;
         }
         if (await reimprimirShopee(lojaParam(r.shop_id), r.order_sn, printerId)) {
           ok++; okNaTag++; feitos.add(r.order_sn);
@@ -312,7 +339,7 @@ function RiscoCancelamentoPage() {
           });
         }
       }
-      if (tagAberta && okNaTag > 0) await identificadoraDaTag(tagAberta);
+      await fecharGrupo();
     } finally {
       setMassa(null);
       setPausado(false);
