@@ -1500,6 +1500,12 @@ function PedidoExpandido({ p }: { p: PedidoIntegrado }) {
         </div>
 
         {p.cobertura_cmv !== "completo" && p.marketplace !== "amazon" && <PuxarCustoTiny pedido={p} />}
+        {/* Reprocessar CMV por periodo vale para QUALQUER pedido — corrigir custo
+            errado e justamente em pedido com cobertura completa. Antes ficava
+            dentro do PuxarCustoTiny (so incompletos) e nunca aparecia (11/set). */}
+        <div className="mt-4 rounded-md border border-border p-3">
+          <CustoManual pedido={p} skus={(p.skus ?? "").split(",").map((x) => x.trim()).filter(Boolean)} />
+        </div>
 
         {shopee && (
           <a
@@ -1646,7 +1652,6 @@ function PuxarCustoTiny({ pedido }: { pedido: PedidoIntegrado }) {
           Puxar custo do Tiny
         </Button>
       </div>
-      <CustoManual pedido={pedido} skus={skus} />
     </div>
   );
 }

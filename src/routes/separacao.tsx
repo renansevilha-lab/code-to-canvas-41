@@ -2128,11 +2128,12 @@ function LotesDoDia({
           <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", !corpoAberto && "-rotate-90")} />
           <TagIcon className="h-4 w-4 text-primary" />
           <h2 className="font-semibold text-sm">Lotes do dia</h2>
-          <MensagemLoteDialog tag={msgLote} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
           {lotes && lotes.length > 0 && (
             <Badge variant="secondary">{lotes.length}</Badge>
           )}
         </button>
+        {/* fora do <button> do cabecalho: clique dentro do dialogo borbulhava e recolhia o painel */}
+        <MensagemLoteDialog tag={msgLote} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
         <Button
           variant="ghost"
           size="sm"
