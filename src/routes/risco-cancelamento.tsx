@@ -177,6 +177,23 @@ function RiscoCancelamentoPage() {
   // pedidos reimpressos NESTA sessão da tela — alvo do "marcar embalado"
   const [reimpressos, setReimpressos] = useState<Set<string>>(new Set());
   const [embalando, setEmbalando] = useState<{ atual: number; total: number } | null>(null);
+  // "tratados" = tirados da lista pela operação (persistido; o risco real segue)
+  const [mostrarTratados, setMostrarTratados] = useState(false);
+  const tratadosQ = useQuery({
+    queryKey: ["risco-cancelamento", "tratados"],
+    refetchInterval: 120_000,
+    queryFn: async (): Promise<Map<string, { por: string | null; em: string }>> => {
+      const { data, error } = await supabaseExternal
+        .from("risco_cancelamento_tratados").select("order_sn, tratado_por, tratado_em").limit(5000);
+      if (error) throw error;
+      const m = new Map<string, { por: string | null; em: string }>();
+      for (const r of (data ?? []) as { order_sn: string; tratado_por: string | null; tratado_em: string }[]) {
+        m.set(r.order_sn, { por: r.tratado_por, em: r.tratado_em });
+      }
+      return m;
+    },
+  });
+  const tratados = tratadosQ.data ?? new Map<string, { por: string | null; em: string }>();
 
   const q = useQuery({
     queryKey: ["risco-cancelamento", "lista"],
@@ -194,6 +211,7 @@ function RiscoCancelamentoPage() {
   const linhas = useMemo(() => {
     const t = busca.trim().toLowerCase();
     return (q.data ?? []).filter((r) => {
+      if (!mostrarTratados && tratados.has(r.order_sn)) return false;
       if (empresa !== "todas" && r.loja !== empresa) return false;
       if (quando === "hoje" && Number(r.dias_para_cancelar) > 0) return false;
       if (quando === "amanha" && Number(r.dias_para_cancelar) !== 1) return false;
@@ -206,7 +224,7 @@ function RiscoCancelamentoPage() {
       )) return false;
       return true;
     });
-  }, [q.data, empresa, quando, situacao, busca]);
+  }, [q.data, empresa, quando, situacao, busca, mostrarTratados, tratados]);
 
   const skusVisiveis = useMemo(() => linhas.flatMap((r) => skusDe(r.itens)), [linhas]);
   const produtosQ = useProdutos(mostrarFotos ? skusVisiveis : []);
@@ -353,6 +371,36 @@ function RiscoCancelamentoPage() {
     toast[erros > 0 ? "warning" : "success"](`${ok} pedido(s) marcados como embalados${erros > 0 ? ` · ${erros} erro(s)` : ""}`);
   }
 
+  // Tira da lista (persistido) — só os que ainda não estão tratados.
+  async function tirarDaLista(orderSns: Set<string>, origem: "reimpressos" | "selecionados") {
+    const alvo = [...orderSns].filter((sn) => !tratados.has(sn));
+    if (alvo.length === 0) { toast.info("Esses pedidos já estão fora da lista."); return; }
+    if (!window.confirm(
+      `Tirar da lista ${alvo.length} pedido(s) ${origem === "reimpressos" ? "reimpressos nesta sessão" : "selecionados"}?\n\n` +
+      `Só some desta tela — o risco na Shopee continua até a coleta bipar. ` +
+      `Dá para rever/desfazer em "Mostrar tratados".`,
+    )) return;
+    const { error } = await supabaseExternal.from("risco_cancelamento_tratados").upsert(
+      alvo.map((sn) => ({ order_sn: sn, tratado_por: perfil?.nome ?? null, motivo: origem })),
+      { onConflict: "order_sn" },
+    );
+    if (error) { toast.error("Falha ao tirar da lista", { description: error.message }); return; }
+    toast.success(`${alvo.length} pedido(s) fora da lista`);
+    setReimpressos((prev) => { const n = new Set(prev); for (const sn of alvo) n.delete(sn); return n; });
+    setSel(new Set());
+    void qc.invalidateQueries({ queryKey: ["risco-cancelamento", "tratados"] });
+  }
+
+  async function voltarParaLista(orderSns: Set<string>) {
+    const alvo = [...orderSns].filter((sn) => tratados.has(sn));
+    if (alvo.length === 0) return;
+    const { error } = await supabaseExternal.from("risco_cancelamento_tratados").delete().in("order_sn", alvo);
+    if (error) { toast.error("Falha ao voltar para a lista", { description: error.message }); return; }
+    toast.success(`${alvo.length} pedido(s) de volta à lista`);
+    setSel(new Set());
+    void qc.invalidateQueries({ queryKey: ["risco-cancelamento", "tratados"] });
+  }
+
   const todasSel = linhas.length > 0 && linhas.every((r) => sel.has(r.order_sn));
 
   return (
@@ -441,6 +489,16 @@ function RiscoCancelamentoPage() {
             </button>
           ))}
         </div>
+        {(() => {
+          const n = (q.data ?? []).filter((r) => tratados.has(r.order_sn)).length;
+          if (n === 0 && !mostrarTratados) return null;
+          return (
+            <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={mostrarTratados} onChange={(e) => setMostrarTratados(e.target.checked)} />
+              Mostrar tratados ({formatNumber(n)})
+            </label>
+          );
+        })()}
         <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
           <input type="checkbox" className="h-4 w-4 accent-primary" checked={identOn} onChange={(e) => setIdentOn(e.target.checked)} />
           Identificadora do lote
@@ -502,6 +560,12 @@ function RiscoCancelamentoPage() {
                           : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300")}>
                         {r.situacao_fisica}
                       </span>
+                      {tratados.has(r.order_sn) && (
+                        <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+                          title={`Tirado da lista${tratados.get(r.order_sn)?.por ? ` por ${tratados.get(r.order_sn)?.por}` : ""} — o risco na Shopee continua até a coleta`}>
+                          tratado
+                        </span>
+                      )}
                       {semEnvio && (
                         <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
                           title="Pedido sem envio arranjado na Shopee — não há etiqueta; precisa faturar/arranjar">
@@ -590,6 +654,11 @@ function RiscoCancelamentoPage() {
                   <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void marcarEmbalado(sel, "selecionados")}>
                     <PackageIcon className="h-4 w-4" /> Marcar embalado selecionados
                   </Button>
+                  {mostrarTratados && [...sel].some((sn) => tratados.has(sn)) ? (
+                    <Button size="sm" variant="outline" onClick={() => void voltarParaLista(sel)}>Voltar à lista</Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => void tirarDaLista(sel, "selecionados")}>Tirar da lista</Button>
+                  )}
                   <Button size="sm" variant="ghost" onClick={() => setSel(new Set())}>Limpar</Button>
                 </>
               )}
@@ -598,6 +667,13 @@ function RiscoCancelamentoPage() {
                   title="Marca embalado no Tiny os pedidos reimpressos nesta sessão que ainda estão na fila"
                   onClick={() => void marcarEmbalado(reimpressos, "reimpressos")}>
                   <PackageIcon className="h-4 w-4" /> Marcar embalado os reimpressos ({reimpressos.size})
+                </Button>
+              )}
+              {reimpressos.size > 0 && (
+                <Button size="sm" variant="outline" className="gap-1.5"
+                  title="Tira desta lista os pedidos reimpressos com sucesso nesta sessão (o risco na Shopee continua até a coleta)"
+                  onClick={() => void tirarDaLista(reimpressos, "reimpressos")}>
+                  Tirar da lista os reimpressos ({reimpressos.size})
                 </Button>
               )}
             </>

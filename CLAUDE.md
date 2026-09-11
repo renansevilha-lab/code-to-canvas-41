@@ -440,7 +440,11 @@ Usa a mesma impressora da Separação (`localStorage separacao.printerId`). Most
 `separacao.identificadorLote`). **A identificadora mora em
 `src/lib/identificador.ts`** (`gerarZplIdentificador`, `acharLoteDaTag`,
 `imprimirIdentificadorApi`, `TagLoteRow`, `diasAtePrazo`) — fonte única para
-Separação e Risco; não duplicar o ZPL em tela nenhuma.
+Separação e Risco; não duplicar o ZPL em tela nenhuma. Barra da tela: Pausar/Retomar e Encerrar na massa; "Marcar embalado"
+(reimpressos ou selecionados; só os ainda na fila, via `embalar-um`);
+"Tirar da lista" grava em `risco_cancelamento_tratados` (só some da TELA —
+o risco real, a faixa e o watchdog seguem contando até a coleta bipar);
+"Mostrar tratados" revê e "Voltar à lista" desfaz.
 **Filtro na fila (11/set):** chip **RISCO DE CANCELAMENTO** na Separação
 (ao lado de SEM ESTOQUE) + selo "cancela hoje/amanhã (n)" na linha, via
 `view_risco_cancelamento_linhas` (pedidos AINDA NA FILA, hoje+amanhã, por
