@@ -56,7 +56,7 @@ import {
   EXTERNAL_URL,
   EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, formatBRL } from "@/lib/format";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import {
@@ -800,7 +800,22 @@ interface SaudeEtiquetasRow {
   geradas_30min: number;
 }
 
+interface RiscoCancelRow { loja: string; cancela_em: string; dias_para_cancelar: number; pedidos: number; aguardando_coleta: number; na_fila: number; valor: number }
+
 function SaudeEtiquetasFaixa() {
+  // Risco de cancelamento automático (Shopee): arranjado e não coletado;
+  // cancela_em = ship_by + 3 dias (view_risco_cancelamento_resumo).
+  const riscoQ = useQuery({
+    queryKey: ["separacao", "risco-cancelamento"],
+    refetchInterval: 120_000,
+    staleTime: 60_000,
+    queryFn: async (): Promise<RiscoCancelRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_risco_cancelamento_resumo").select("*").lte("dias_para_cancelar", 1);
+      if (error) throw error;
+      return (data ?? []) as RiscoCancelRow[];
+    },
+  });
   const { data } = useQuery({
     queryKey: ["separacao", "saude-etiquetas"],
     refetchInterval: 60_000,
@@ -850,6 +865,27 @@ function SaudeEtiquetasFaixa() {
           </span>
         )}
       </div>
+      {(() => {
+        const r = riscoQ.data ?? [];
+        if (r.length === 0) return null;
+        const hoje = r.filter((x) => Number(x.dias_para_cancelar) <= 0);
+        const amanha = r.filter((x) => Number(x.dias_para_cancelar) === 1);
+        const soma = (xs: RiscoCancelRow[], k: keyof RiscoCancelRow) => xs.reduce((a, b) => a + Number(b[k] ?? 0), 0);
+        const bloco = (rot: string, xs: RiscoCancelRow[], urgente: boolean) => xs.length === 0 ? null : (
+          <span className={cn("text-[12.5px] tabular-nums", urgente ? "font-bold text-destructive" : "text-amber-700 dark:text-amber-400")}>
+            {rot}: <b>{formatNumber(soma(xs, "pedidos"))}</b> pedidos
+            <span className="font-normal text-muted-foreground"> ({formatNumber(soma(xs, "aguardando_coleta"))} embalados aguardando coleta · {formatNumber(soma(xs, "na_fila"))} na fila · {formatBRL(soma(xs, "valor"))})</span>
+          </span>
+        );
+        return (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mt-1.5 pt-1.5 border-t border-border/60">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-destructive">⚠ Cancelamento automático Shopee</span>
+            {bloco("Cancela HOJE", hoje, true)}
+            {bloco("Cancela amanhã", amanha, false)}
+            <span className="text-[11px] text-muted-foreground">pedido arranjado sem coleta até a data é cancelado — cobrar SPX / priorizar</span>
+          </div>
+        );
+      })()}
     </Card>
   );
 }
