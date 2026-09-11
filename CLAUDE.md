@@ -633,8 +633,19 @@ group by 1;
 **credencial** (quem tem, posta como se fosse o sistema) e mora só lá, em
 secret — nunca no front, nunca no banco. Canais por secret:
 `DISCORD_WEBHOOK_GERAL` (fallback), `_PEDIDOS`, `_FULFILMENT`, `_ERROS`,
-`_ESTOQUE`, `_DEVOLUCOES`, `_COMPRAS`. Diagnóstico: `?modulo=status` mostra
-quais estão configurados; `?modulo=teste&canal=X` manda uma mensagem de prova.
+`_ESTOQUE`, `_DEVOLUCOES`, `_COMPRAS`, `_ATUALIZACOES` (#atualizações-projeto:
+relâmpago Shopee e avisos de "o sistema fez X"). Diagnóstico: `?modulo=status`
+mostra quais estão configurados; `?modulo=teste&canal=X` manda uma mensagem
+de prova.
+
+**v3 (11/set/2026) — canal genérico:** qualquer `canal` vira o secret
+`DISCORD_WEBHOOK_<CANAL em maiúsculas>`; sem o secret cai no GERAL (não
+falha). **A porta exige JWT** (o deploy via MCP religa `verify_jwt`): TODO
+chamador manda `Authorization: Bearer` — edge functions usam a service key,
+funções do banco (`notificar_envio_fulfillment`, `fulfillment_atualizar_envio`)
+e crons usam a chave publicável. Chamada sem header morre em 401 *silencioso*
+("melhor-esforço") — o aviso simplesmente não chega. Já corrigidos:
+`shopee-flashsale` v6, `separacao-falta` v5, as duas funções do banco.
 
 **Como marcar alguém (duas pegadinhas que custam o aviso não chegar):**
 1. O Discord **só notifica pelo ID numérico** — `<@583378141901357075>`.
