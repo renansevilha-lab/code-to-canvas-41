@@ -263,6 +263,16 @@ interface TagsPorLinha {
   comTag: number;
   /** pedidos da linha com falta de estoque reportada (badge + filtro) */
   falta: number;
+  /** empresas com pedido nesta linha ("ottz" | "bumi") — filtro por empresa */
+  empresas: Set<string>;
+}
+
+// Empresa dona do pedido pela grafia do canal no Tiny (Shopee/ML/TikTok).
+function empresaDe(marca: string | null): "ottz" | "bumi" | null {
+  const m = (marca ?? "").toLowerCase();
+  if (/ottz|acz/.test(m)) return "ottz";
+  if (/bumi|svl|sevilla/.test(m)) return "bumi";
+  return null;
 }
 function useTagsPorLinha() {
   return useQuery({
@@ -270,14 +280,16 @@ function useTagsPorLinha() {
     queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("view_separacao_pedidos")
-        .select("sku_unico, tipo_envio, tag_lote, tag_sugerida, falta_estoque_em")
+        .select("sku_unico, tipo_envio, tag_lote, tag_sugerida, falta_estoque_em, marca_canal")
         .limit(20000);
       if (error) throw error;
       const map = new Map<string, TagsPorLinha>();
-      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number; falta: number }>();
-      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null; tag_sugerida: string | null; falta_estoque_em: string | null }[]) {
+      const buckets = new Map<string, { tags: Set<string>; sem: number; com: number; falta: number; empresas: Set<string> }>();
+      for (const p of (data ?? []) as { sku_unico: string | null; tipo_envio: string | null; tag_lote: string | null; tag_sugerida: string | null; falta_estoque_em: string | null; marca_canal: string | null }[]) {
         const key = linhaKeyDe(p);
-        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0, falta: 0 };
+        const b = buckets.get(key) ?? { tags: new Set<string>(), sem: 0, com: 0, falta: 0, empresas: new Set<string>() };
+        const emp = empresaDe(p.marca_canal);
+        if (emp) b.empresas.add(emp);
         if (p.tag_lote) { b.tags.add(p.tag_lote); b.com++; }
         else { b.sem++; }
         if (p.falta_estoque_em) b.falta++;
@@ -291,7 +303,7 @@ function useTagsPorLinha() {
         else if (tagsArr.length === 1 && b.sem === 0) { estado = "com_tag"; tag = tagsArr[0]; }
         else if (tagsArr.length === 1 && b.sem > 0) { estado = "parcial"; tag = tagsArr[0]; }
         else estado = "tags_mistas";
-        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com, falta: b.falta });
+        map.set(key, { estado, tag, semTag: b.sem, comTag: b.com, falta: b.falta, empresas: b.empresas });
       }
       return map;
     },
@@ -2719,8 +2731,12 @@ function FilaPriorizada() {
   const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);
   // Filtro "sem estoque": mostra so linhas com falta reportada (badge ambar).
   const [soSemEstoque, setSoSemEstoque] = useState(false);
-  // Filtro "risco de cancelamento": só linhas com pedido que a Shopee cancela hoje/amanhã.
-  const [soRisco, setSoRisco] = useState(false);
+  // Filtro "risco de cancelamento": "hoje" = só linhas com pedido que a Shopee
+  // cancela HOJE; "amanha" = amanhã. Null = sem filtro.
+  const [riscoFiltro, setRiscoFiltro] = useState<null | "hoje" | "amanha">(null);
+  // Filtro por empresa (Ottz / Bumi): linha entra se tem pedido da empresa.
+  // Combinações multi-SKU não têm empresa mapeada (chave genérica) e passam.
+  const [empresaFiltro, setEmpresaFiltro] = useState<null | "ottz" | "bumi">(null);
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
@@ -3361,7 +3377,14 @@ function FilaPriorizada() {
     return (rows ?? []).filter((r) => {
       if (r.tipo_envio && !enviosAtivosSet.has(r.tipo_envio)) return false;
       if (soSemEstoque && (tagsPorLinha?.get(linhaKeyDe(r))?.falta ?? 0) === 0) return false;
-      if (soRisco && !riscoPorLinha?.has(linhaKeyDe(r))) return false;
+      if (riscoFiltro) {
+        const ri = riscoPorLinha?.get(linhaKeyDe(r));
+        if (!ri || (riscoFiltro === "hoje" ? ri.hoje : ri.amanha) === 0) return false;
+      }
+      if (empresaFiltro) {
+        const emp = tagsPorLinha?.get(linhaKeyDe(r))?.empresas;
+        if (emp && emp.size > 0 && !emp.has(empresaFiltro)) return false;
+      }
       if (q) {
         const hit =
           (r.sku ?? "").toLowerCase().includes(q) ||
@@ -3375,7 +3398,7 @@ function FilaPriorizada() {
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, soRisco, riscoPorLinha, tagsPorLinha, pedidoLinhas]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3549,35 +3572,55 @@ function FilaPriorizada() {
           );
         })()}
         {(() => {
-          let n = 0;
-          let hoje = 0;
-          for (const v of riscoPorLinha?.values() ?? []) { n += v.hoje + v.amanha; hoje += v.hoje; }
-          if (n === 0 && !soRisco) return null;
-          return (
-            <button
-              type="button"
-              onClick={() => setSoRisco((v) => !v)}
-              className={cn(
-                "flex items-center gap-2 rounded-[9px] border pl-3 pr-2 py-[7px] text-[12.5px] font-semibold transition-colors",
-                soRisco
-                  ? "bg-red-600 border-red-600 text-white"
-                  : "bg-red-50 border-red-300 text-red-700 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800",
-              )}
-              title={`Pedidos ainda na fila que a Shopee cancela automaticamente se não forem despachados (${hoje} hoje, ${n - hoje} amanhã). Os já embalados que só esperam coleta não aparecem na fila — estão na faixa acima.`}
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              RISCO DE CANCELAMENTO
-              <span
-                className={cn(
-                  "rounded-md px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums",
-                  soRisco ? "bg-white/25 text-white" : "bg-red-100 text-red-800 dark:bg-red-900/50",
-                )}
+          let hoje = 0, amanha = 0;
+          for (const v of riscoPorLinha?.values() ?? []) { hoje += v.hoje; amanha += v.amanha; }
+          const chip = (id: "hoje" | "amanha", rotulo: string, n: number, corOn: string, corOff: string, corN: string) => {
+            if (n === 0 && riscoFiltro !== id) return null;
+            const on = riscoFiltro === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRiscoFiltro(on ? null : id)}
+                className={cn("flex items-center gap-2 rounded-[9px] border pl-3 pr-2 py-[7px] text-[12.5px] font-semibold transition-colors", on ? corOn : corOff)}
+                title={`Pedidos ainda na fila que a Shopee cancela automaticamente ${id === "hoje" ? "HOJE" : "amanhã"} se não forem despachados. Embalados que só esperam coleta não estão na fila — veja a faixa acima.`}
               >
-                {formatNumber(n)}
-              </span>
-            </button>
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {rotulo}
+                <span className={cn("rounded-md px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums", on ? "bg-white/25 text-white" : corN)}>
+                  {formatNumber(n)}
+                </span>
+              </button>
+            );
+          };
+          return (
+            <>
+              {chip("hoje", "CANCELA HOJE", hoje,
+                "bg-red-600 border-red-600 text-white",
+                "bg-red-50 border-red-300 text-red-700 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800",
+                "bg-red-100 text-red-800 dark:bg-red-900/50")}
+              {chip("amanha", "CANCELA AMANHÃ", amanha,
+                "bg-orange-500 border-orange-500 text-white",
+                "bg-orange-50 border-orange-300 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800",
+                "bg-orange-100 text-orange-800 dark:bg-orange-900/50")}
+            </>
           );
         })()}
+        {/* filtro por empresa: linha entra se tem pedido da empresa */}
+        <div className="inline-flex rounded-[9px] border bg-card p-0.5">
+          {([["ottz", "Ottz"], ["bumi", "Bumi"]] as const).map(([id, rot]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setEmpresaFiltro((v) => (v === id ? null : id))}
+              className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition",
+                empresaFiltro === id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}
+              title={`Só linhas com pedido da ${rot} (Shopee, ML e TikTok da empresa)`}
+            >
+              {rot}
+            </button>
+          ))}
+        </div>
         {fullCount != null && fullCount > 0 && (
           <span
             className="rounded-[9px] border border-dashed border-border bg-muted/40 px-3 py-[7px] text-[11.5px] text-muted-foreground"
