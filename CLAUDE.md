@@ -910,6 +910,21 @@ fila" mantém o `await` (esperar é o esperado ali).
 
 ---
 
+## 9.1 Site publicado — como saber se um recurso já está no ar
+
+URL publicada: **https://code-to-canvas-41.lovable.app** (o `id-preview--…lovable.app`
+do editor exige login e não serve para checar). Front só muda com **Publish**
+no Lovable; backend (banco/edge) vale na hora. Para conferir sem depender do
+usuário: baixe o index, siga os `modulepreload`/`/assets/*.js` e os
+`import("./…")` dos chunks (as rotas são lazy — ~100 bundles) e procure uma
+string única do recurso (rótulo de botão, nome de RPC). Não há service worker
+e o index é `no-cache`: reload normal já traz a versão publicada.
+
+Armadilha real (11/set/2026): "não aparece" pode ser **condição de exibição**,
+não Publish — o "Reprocessar CMV por período" nasceu dentro do bloco "Puxar
+custo do Tiny", que só renderiza em pedido com custo INCOMPLETO; nos pedidos
+completos (onde se corrige custo errado) nunca aparecia.
+
 ## 10. Como trabalhar aqui
 
 - **Diagnostique antes de alterar.** Várias correções erradas saíram de supor a
