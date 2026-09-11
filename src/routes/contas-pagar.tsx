@@ -1,5 +1,6 @@
 import { BotaoSincronizar } from "@/components/BotaoSincronizar";
 import { NovaContaDialog } from "@/components/contas-pagar/NovaContaDialog";
+import { AcoesConta, GestaoRegras } from "@/components/contas-pagar/AcoesConta";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -26,6 +27,7 @@ export const Route = createFileRoute("/contas-pagar")({
 
 type Conta = {
   id: string;
+  tiny_id: number | null;
   numero_documento: string | null;
   fornecedor_nome: string | null;
   descricao: string | null;
@@ -76,7 +78,7 @@ async function fetchAllContas(): Promise<Conta[]> {
     const { data, error } = await supabaseExternal
       .from("contas_pagar")
       .select(
-        "id,numero_documento,fornecedor_nome,descricao,categoria,valor_total,valor_pago,data_emissao,data_vencimento,data_pagamento,status",
+        "id,tiny_id,numero_documento,fornecedor_nome,descricao,categoria,valor_total,valor_pago,data_emissao,data_vencimento,data_pagamento,status",
       )
       .order("data_vencimento", { ascending: true })
       .range(start, start + PAGE_SIZE - 1);
@@ -281,6 +283,7 @@ function ContasPagarPage() {
         <SyncStatusFooter area="contas_pagar" />
         <div className="flex items-center gap-2">
           <NovaContaDialog onCriada={() => setRecarga((n) => n + 1)} />
+          <GestaoRegras onMudou={() => setRecarga((n) => n + 1)} />
         <BotaoSincronizar
           rotulo="Sincronizar contas"
           titulo="Puxa as contas a pagar do Tiny agora. O cron faz isso 1x por dia (madrugada)."
@@ -405,7 +408,7 @@ function ContasPagarPage() {
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground px-3 py-3 text-right">Status</span>
               </div>
               {linhasTabela.map(({ c, dias, saldo }) => (
-                <ContaRow key={c.id} c={c} dias={dias} saldo={saldo} paga={isPaid(c)} grid={GRID} />
+                <ContaRow key={c.id} c={c} dias={dias} saldo={saldo} paga={isPaid(c)} grid={GRID} onMudou={() => setRecarga((n) => n + 1)} />
               ))}
             </div>
           </div>
@@ -504,12 +507,14 @@ function ContaRow({
   saldo,
   paga,
   grid,
+  onMudou,
 }: {
   c: Conta;
   dias: number | null;
   saldo: number;
   paga: boolean;
   grid: string;
+  onMudou: () => void;
 }) {
   const info = statusInfo(dias, paga);
   return (
@@ -528,8 +533,9 @@ function ContaRow({
         <span className="text-[11px]" style={{ color: info.prazoColor }}>{info.prazo}</span>
       </div>
       <span className="px-3 py-3 text-[13px] font-semibold text-right tabular-nums font-mono">{formatBRL(saldo)}</span>
-      <div className="px-3 py-3 flex justify-end">
+      <div className="px-3 py-3 flex justify-end items-center gap-1">
         <span className={cn("text-[11.5px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap", info.pillCls)}>{info.label}</span>
+        <AcoesConta conta={c} onMudou={onMudou} />
       </div>
     </div>
   );

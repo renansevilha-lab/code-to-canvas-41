@@ -179,6 +179,29 @@ coleta como despesa do mês; tarifas por pedido conciliam com `pedidos`).
   Shopee `ressarcimento`/`estorno_credito` NÃO têm (48+29) — são créditos por
   item perdido no armazém, sem pedido.
 
+## 2.1.5 Sessões paralelas em 11/set — o que ficou e o que foi sobrescrito
+
+Duas sessões (dois PCs) implementaram os mesmos 4 pedidos ao mesmo tempo. O
+que vale hoje:
+- **Chat Shopee em massa:** a versão da outra sessão (`shopee-chat` v3, tabela
+  `shopee_mensagens`, `MensagemLoteDialog`). A tentativa desta sessão foi
+  bloqueada pelo classificador e sua tabela `shopee_chat_envios` foi apagada.
+- **Ignorar fornecedor:** `contas_pagar_ignorar` + trigger + RPCs (outra
+  sessão). A alternativa `contas_pagar_exclusoes` desta sessão foi apagada e o
+  `tiny-sync-contas-pagar` voltou ao código original (v21 = v19 sem a rpc).
+  Em `/contas-pagar`, o ícone ⃠ da linha chama `ignorar_fornecedor_contas_pagar`
+  e o painel "Regras" lista/reativa.
+- **Recorrência — DUAS formas, complementares:** (a) `repetir_meses` no
+  diálogo "Nova conta" cria N meses de uma vez; (b) regra em
+  `contas_pagar_recorrentes` (ícone ↻ na linha) gera todo mês pelo cron
+  `contas-pagar-recorrentes` (12:00 UTC) via `tiny-contas-pagar?modulo=
+  recorrentes-gerar` (`&dry=1` para prévia). **A `tiny-contas-pagar` v4 tem as
+  duas**: o deploy da v3 desta sessão havia sobrescrito a v2 da outra (o front
+  já mandava `repetir_meses` e a função ignorava). Lição: antes de redeployar
+  uma função, `get_edge_function` e compare o cabeçalho — CLAUDE.md §10.
+- **DRE custo fixo sem/com ADS:** front da outra sessão; a coluna
+  `view_dre_mensal.custo_fixo_sem_ads` desta sessão ficou (redundante, inofensiva).
+
 ## 2.2 Receita fantasma — cancelamento que não chega ao espelho
 
 O sync de rotina do ML roda com `dias=2` (custo). Pedido **cancelado depois

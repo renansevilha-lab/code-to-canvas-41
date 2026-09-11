@@ -400,3 +400,14 @@ Backend valendo; front aguarda Publish. Detalhe em CLAUDE.md §2.1.3.
    cruzar com `escrow_reembolso`/escrow_componentes.return_order_sn_list, que a
    view só usa parcialmente) e 203 com valor divergente. Próximo passo: tela
    `/conciliacao` e refinar a regra Shopee com `escrow_componentes`.
+
+### 11/set (manhã) — colisão de sessões paralelas, resolvida
+Ver CLAUDE.md §2.1.5. Resumo: os 4 itens (chat Shopee por TAG, recorrentes,
+DRE custo fixo sem/com ADS, ignorar fornecedor) já estavam feitos pela outra
+sessão; esta sessão descartou o commit duplicado, apagou seus objetos
+duplicados no banco, republicou `tiny-sync-contas-pagar` sem a rpc removida e
+publicou `tiny-contas-pagar` **v4** (repetir_meses + recorrentes-gerar). O que
+ficou desta sessão: `contas_pagar_recorrentes` + cron 106 + ícones ↻/⃠ e
+painel "Regras" em `/contas-pagar`. **Nunca testado com conta real no Tiny**
+(nem o `criar` simples, nem `repetir_meses`, nem a regra) — primeiro uso com
+valor pequeno e conferir no Tiny.
