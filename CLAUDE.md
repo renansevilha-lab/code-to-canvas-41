@@ -435,7 +435,12 @@ coleta) — a fila só mostra situação 1. Filtros empresa / hoje-amanhã /
 situação física / busca; reimpressão por pedido e em massa (SEMPRE forçada,
 `imprimir&order_sn=` não tem dedup) com aviso de etiqueta em dobro; pedido
 `READY_TO_SHIP` ("sem envio arranjado") não tem etiqueta e fica sem botão.
-Usa a mesma impressora da Separação (`localStorage separacao.printerId`).
+Usa a mesma impressora da Separação (`localStorage separacao.printerId`). Mostra foto+nome do 1º SKU (`produtos`, só os visíveis, toggle) e imprime a
+**identificadora** da TAG depois das etiquetas (toggle compartilhado
+`separacao.identificadorLote`). **A identificadora mora em
+`src/lib/identificador.ts`** (`gerarZplIdentificador`, `acharLoteDaTag`,
+`imprimirIdentificadorApi`, `TagLoteRow`, `diasAtePrazo`) — fonte única para
+Separação e Risco; não duplicar o ZPL em tela nenhuma.
 **Filtro na fila (11/set):** chip **RISCO DE CANCELAMENTO** na Separação
 (ao lado de SEM ESTOQUE) + selo "cancela hoje/amanhã (n)" na linha, via
 `view_risco_cancelamento_linhas` (pedidos AINDA NA FILA, hoje+amanhã, por

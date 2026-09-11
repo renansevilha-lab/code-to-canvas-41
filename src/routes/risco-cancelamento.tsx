@@ -17,6 +17,8 @@ import {
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
+import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
+import { Package as PackageIcon } from "lucide-react";
 
 // ============================================================================
 // Risco de cancelamento automático (Shopee) — TODOS os pedidos em risco,
@@ -53,8 +55,37 @@ interface Impressora {
   estado: string;
 }
 
-// mesma chave da Separação: a impressora escolhida lá vale aqui
+// mesmas chaves da Separação: impressora e toggle da identificadora valem aqui
 const STORAGE_PRINTER = "separacao.printerId";
+const STORAGE_IDENT = "separacao.identificadorLote";
+const STORAGE_FOTOS = "risco.mostrarFotos";
+
+// "15996 x1, 15994 x2" -> ["15996", "15994"]
+function skusDe(itens: string | null): string[] {
+  return (itens ?? "").split(",").map((x) => x.trim().split(" ")[0]).filter(Boolean);
+}
+
+// Foto + nome por SKU (produtos.foto_capa/nome) — só os SKUs visíveis, em
+// lotes de 300 (corte de 1.000 do PostgREST).
+function useProdutos(skus: string[]) {
+  const chave = useMemo(() => Array.from(new Set(skus)).sort(), [skus]);
+  return useQuery({
+    queryKey: ["risco-cancelamento", "produtos", chave],
+    enabled: chave.length > 0,
+    staleTime: 30 * 60_000,
+    queryFn: async (): Promise<Record<string, { nome: string | null; foto: string | null }>> => {
+      const map: Record<string, { nome: string | null; foto: string | null }> = {};
+      for (let i = 0; i < chave.length; i += 300) {
+        const { data } = await supabaseExternal
+          .from("produtos").select("sku, nome, foto_capa").in("sku", chave.slice(i, i + 300));
+        for (const r of (data ?? []) as { sku: string; nome: string | null; foto_capa: string | null }[]) {
+          map[r.sku] = { nome: r.nome, foto: r.foto_capa };
+        }
+      }
+      return map;
+    },
+  });
+}
 
 const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const lojaParam = (shopId: number): "ottz" | "svl" => (shopId === 522186766 ? "ottz" : "svl");
@@ -114,6 +145,15 @@ function RiscoCancelamentoPage() {
   const [situacao, setSituacao] = useState<"todas" | "embalado" | "fila" | "fora">("todas");
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  // identificadora do lote depois das etiquetas (mesma regra/chave da Separação)
+  const [identOn, setIdentOn] = useState<boolean>(() => {
+    try { const v = localStorage.getItem(STORAGE_IDENT); return v === null ? true : v === "1"; } catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem(STORAGE_IDENT, identOn ? "1" : "0"); } catch { /* noop */ } }, [identOn]);
+  const [mostrarFotos, setMostrarFotos] = useState<boolean>(() => {
+    try { return localStorage.getItem(STORAGE_FOTOS) !== "0"; } catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem(STORAGE_FOTOS, mostrarFotos ? "1" : "0"); } catch { /* noop */ } }, [mostrarFotos]);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
   const [massa, setMassa] = useState<{ atual: number; total: number } | null>(null);
   const cancelarRef = useRef(false);
@@ -148,6 +188,16 @@ function RiscoCancelamentoPage() {
     });
   }, [q.data, empresa, quando, situacao, busca]);
 
+  const skusVisiveis = useMemo(() => linhas.flatMap((r) => skusDe(r.itens)), [linhas]);
+  const produtosQ = useProdutos(mostrarFotos ? skusVisiveis : []);
+
+  // identificadora da TAG (modo auto: dedupe 60s; TAG recém-criada é buscada no banco)
+  async function identificadoraDaTag(tag: string | null) {
+    if (!identOn || !tag || !printerId) return;
+    const lote = await acharLoteDaTag(tag, undefined);
+    if (lote) await imprimirIdentificadorApi(lote, printerId, { auto: true });
+  }
+
   const resumo = useMemo(() => {
     const todos = q.data ?? [];
     const hoje = todos.filter((r) => Number(r.dias_para_cancelar) <= 0);
@@ -180,6 +230,7 @@ function RiscoCancelamentoPage() {
           evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
           order_sn: r.order_sn, tag: r.tag_lote, detalhe: { via: "risco", forcar: true, loja: lojaParam(r.shop_id) },
         });
+        await identificadoraDaTag(r.tag_lote);
       }
     } finally {
       setImprimindo(null);
@@ -189,25 +240,35 @@ function RiscoCancelamentoPage() {
   async function reimprimirSelecionados() {
     if (!printerId) { toast.warning("Escolha a impressora primeiro."); return; }
     if (massa) return;
-    const alvo = linhas.filter((r) => sel.has(r.order_sn));
+    // ordena por TAG para a identificadora sair logo DEPOIS das etiquetas de cada lote
+    const alvo = linhas.filter((r) => sel.has(r.order_sn))
+      .sort((a, b) => (a.tag_lote ?? "~").localeCompare(b.tag_lote ?? "~") || a.order_sn.localeCompare(b.order_sn));
     if (alvo.length === 0) return;
     if (impressora?.estado === "offline") { toast.error("Impressora offline"); return; }
     if (!window.confirm(AVISO(alvo.length))) return;
     cancelarRef.current = false;
     let ok = 0;
+    let tagAberta: string | null = null;
+    let okNaTag = 0;
     try {
       for (let i = 0; i < alvo.length; i++) {
         if (cancelarRef.current) break;
         setMassa({ atual: i + 1, total: alvo.length });
         const r = alvo[i];
+        if (r.tag_lote !== tagAberta) {
+          // mudou de lote: fecha o anterior com a identificadora dele
+          if (tagAberta && okNaTag > 0) await identificadoraDaTag(tagAberta);
+          tagAberta = r.tag_lote; okNaTag = 0;
+        }
         if (await reimprimirShopee(lojaParam(r.shop_id), r.order_sn, printerId)) {
-          ok++;
+          ok++; okNaTag++;
           void registrarSeparacaoLog({
             evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
             order_sn: r.order_sn, tag: r.tag_lote, detalhe: { via: "risco-massa", forcar: true, loja: lojaParam(r.shop_id) },
           });
         }
       }
+      if (tagAberta && okNaTag > 0) await identificadoraDaTag(tagAberta);
     } finally {
       setMassa(null);
     }
@@ -303,6 +364,14 @@ function RiscoCancelamentoPage() {
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
+          <input type="checkbox" className="h-4 w-4 accent-primary" checked={identOn} onChange={(e) => setIdentOn(e.target.checked)} />
+          Identificadora do lote
+        </label>
+        <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
+          <input type="checkbox" className="h-4 w-4 accent-primary" checked={mostrarFotos} onChange={(e) => setMostrarFotos(e.target.checked)} />
+          Mostrar foto e nome
+        </label>
         <div className="relative w-full sm:w-auto sm:min-w-[260px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input className="h-9 pl-8 text-sm bg-card" placeholder="Pedido, rastreio, TAG ou SKU"
@@ -330,7 +399,7 @@ function RiscoCancelamentoPage() {
                 <th className="p-2 text-left">Situação física</th>
                 <th className="p-2 text-left">TAG</th>
                 <th className="p-2 text-left">Rastreio</th>
-                <th className="p-2 text-left">Itens</th>
+                <th className="p-2 text-left">{mostrarFotos ? "Produto" : "Itens"}</th>
                 <th className="p-2 text-right">Valor</th>
                 <th className="p-2 text-left">Prazo</th>
                 <th className="p-2 text-left">Cancela</th>
@@ -365,7 +434,28 @@ function RiscoCancelamentoPage() {
                     </td>
                     <td className="p-2 font-mono">{r.tag_lote ?? "—"}</td>
                     <td className="p-2 font-mono text-[11.5px]">{r.rastreio ?? "—"}</td>
-                    <td className="p-2 text-muted-foreground max-w-[220px] truncate" title={r.itens ?? ""}>{r.itens ?? "—"}</td>
+                    <td className="p-2 max-w-[300px]" title={r.itens ?? ""}>
+                      {(() => {
+                        const skus = skusDe(r.itens);
+                        const p0 = skus[0] ? produtosQ.data?.[skus[0]] : undefined;
+                        if (!mostrarFotos) return <span className="text-muted-foreground truncate block">{r.itens ?? "—"}</span>;
+                        return (
+                          <div className="flex items-center gap-2 min-w-0">
+                            {p0?.foto ? (
+                              <img src={p0.foto} alt="" loading="lazy" className="w-9 h-9 rounded-md object-cover bg-muted border shrink-0" />
+                            ) : (
+                              <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center shrink-0"><PackageIcon className="h-4 w-4 text-muted-foreground" /></div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="truncate text-[12px]">{p0?.nome ?? skus[0] ?? "—"}</div>
+                              <div className="text-[11px] text-muted-foreground font-mono truncate">
+                                {r.itens ?? ""}{skus.length > 1 ? ` · ${skus.length} SKUs` : ""}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="p-2 text-right tabular-nums">{formatBRL(Number(r.valor ?? 0))}</td>
                     <td className="p-2 tabular-nums">{ddmm(r.vence_em)}</td>
                     <td className="p-2">
