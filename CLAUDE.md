@@ -429,6 +429,17 @@ nível erro quando cancela HOJE). **Armadilha de fuso:** `ship_by_date` é
 `ship_by_date <= data` em UTC deixa o último dia de fora. Achado em 11/set:
 121 pedidos (R$ 14 mil) cancelando no dia, 108 deles já embalados esperando
 coleta — o gargalo era a coleta SPX, não a separação.
+**Filtro na fila (11/set):** chip **RISCO DE CANCELAMENTO** na Separação
+(ao lado de SEM ESTOQUE) + selo "cancela hoje/amanhã (n)" na linha, via
+`view_risco_cancelamento_linhas` (pedidos AINDA NA FILA, hoje+amanhã, por
+linha). A chave casa com a `tag_sugerida` da priorizada: multi-SKU é
+`'MULTI: ' + SKUs do itens_json ordenados com '+'` — no pedido a tag é o
+genérico `MULTI SKU` e não casaria. Embalados que só esperam coleta não
+aparecem na fila (estão na faixa). Validado: 48/48 pedidos de print do Seller
+Center (Ottz) presentes na view. **`rastreio` da view vem do espelho do Tiny e
+pode faltar** mesmo com envio agendado — "sem envio agendado" de verdade é
+`status_pedido = 'READY_TO_SHIP'` (ex.: 2609057QVR7FG5, concluído no Tiny e
+nunca arranjado na Shopee).
 
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por

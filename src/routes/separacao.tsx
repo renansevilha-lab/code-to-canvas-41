@@ -298,6 +298,49 @@ function useTagsPorLinha() {
   });
 }
 
+interface RiscoLinha { hoje: number; amanha: number }
+
+// Pedidos ainda na fila que a Shopee cancela automaticamente hoje/amanhã,
+// agregados por linha (view_risco_cancelamento_linhas — a chave de multi-SKU
+// já vem no formato da priorizada, 'MULTI: a+b').
+function useRiscoPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "risco_por_linha"],
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_risco_cancelamento_linhas")
+        .select("linha_key, cancela_hoje, cancela_amanha");
+      if (error) throw error;
+      const map = new Map<string, RiscoLinha>();
+      for (const r of (data ?? []) as { linha_key: string | null; cancela_hoje: number; cancela_amanha: number }[]) {
+        if (r.linha_key) map.set(r.linha_key, { hoje: Number(r.cancela_hoje), amanha: Number(r.cancela_amanha) });
+      }
+      return map;
+    },
+  });
+}
+
+function RiscoBadge({ info }: { info: RiscoLinha | undefined }) {
+  if (!info || info.hoje + info.amanha === 0) return null;
+  const hoje = info.hoje > 0;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[11px] font-sans font-semibold px-2 py-0.5 rounded-full",
+        hoje
+          ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+          : "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300",
+      )}
+      title="Pedidos desta linha que a Shopee cancela automaticamente se não forem despachados"
+    >
+      <AlertTriangle className="h-3 w-3" />
+      {hoje ? `cancela hoje (${info.hoje})` : `cancela amanhã (${info.amanha})`}
+      {hoje && info.amanha > 0 ? ` +${info.amanha} amanhã` : ""}
+    </span>
+  );
+}
+
 /**
  * Prazo de despacho (ship_by_date) por LINHA da fila (tag_sugerida). Guarda o
  * prazo MAIS PRÓXIMO (mínimo) do grupo — é o que decide a urgência da linha e
@@ -2594,6 +2637,7 @@ function FilaPriorizada() {
   const { data: lotesHoje } = useTagsDoDia();
   const { data: tagsPorLinha } = useTagsPorLinha();
   const { data: prazosPorLinha } = usePrazosPorLinha();
+  const { data: riscoPorLinha } = useRiscoPorLinha();
   const { data: impressaoEstados } = useImpressaoEstados();
   const { data: impressorasData, isLoading: loadingImpressoras } = useImpressoras();
   const impressoras = impressorasData ?? [];
@@ -2675,6 +2719,8 @@ function FilaPriorizada() {
   const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);
   // Filtro "sem estoque": mostra so linhas com falta reportada (badge ambar).
   const [soSemEstoque, setSoSemEstoque] = useState(false);
+  // Filtro "risco de cancelamento": só linhas com pedido que a Shopee cancela hoje/amanhã.
+  const [soRisco, setSoRisco] = useState(false);
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
@@ -3315,6 +3361,7 @@ function FilaPriorizada() {
     return (rows ?? []).filter((r) => {
       if (r.tipo_envio && !enviosAtivosSet.has(r.tipo_envio)) return false;
       if (soSemEstoque && (tagsPorLinha?.get(linhaKeyDe(r))?.falta ?? 0) === 0) return false;
+      if (soRisco && !riscoPorLinha?.has(linhaKeyDe(r))) return false;
       if (q) {
         const hit =
           (r.sku ?? "").toLowerCase().includes(q) ||
@@ -3328,7 +3375,7 @@ function FilaPriorizada() {
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, tagsPorLinha, pedidoLinhas]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, soRisco, riscoPorLinha, tagsPorLinha, pedidoLinhas]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3497,6 +3544,36 @@ function FilaPriorizada() {
                 )}
               >
                 {formatNumber(f)}
+              </span>
+            </button>
+          );
+        })()}
+        {(() => {
+          let n = 0;
+          let hoje = 0;
+          for (const v of riscoPorLinha?.values() ?? []) { n += v.hoje + v.amanha; hoje += v.hoje; }
+          if (n === 0 && !soRisco) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => setSoRisco((v) => !v)}
+              className={cn(
+                "flex items-center gap-2 rounded-[9px] border pl-3 pr-2 py-[7px] text-[12.5px] font-semibold transition-colors",
+                soRisco
+                  ? "bg-red-600 border-red-600 text-white"
+                  : "bg-red-50 border-red-300 text-red-700 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800",
+              )}
+              title={`Pedidos ainda na fila que a Shopee cancela automaticamente se não forem despachados (${hoje} hoje, ${n - hoje} amanhã). Os já embalados que só esperam coleta não aparecem na fila — estão na faixa acima.`}
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              RISCO DE CANCELAMENTO
+              <span
+                className={cn(
+                  "rounded-md px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums",
+                  soRisco ? "bg-white/25 text-white" : "bg-red-100 text-red-800 dark:bg-red-900/50",
+                )}
+              >
+                {formatNumber(n)}
               </span>
             </button>
           );
@@ -3797,6 +3874,7 @@ function FilaPriorizada() {
                             </span>
                           );
                         })()}
+                        <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />
                       </div>
                       <div
                         className="text-sm text-muted-foreground truncate"
@@ -4122,6 +4200,7 @@ function FilaPriorizada() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
+                  <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />
                   <div className="px-4 py-2 rounded-lg font-bold text-lg md:text-xl tabular-nums bg-purple-600 text-white">
                     {formatNumber(item.qtd_pedidos ?? 0)} pedidos
                   </div>
