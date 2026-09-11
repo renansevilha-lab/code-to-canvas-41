@@ -18,7 +18,8 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi, type TagLoteRow } from "@/lib/identificador";
-import { Package as PackageIcon } from "lucide-react";
+import { Package as PackageIcon, MessageSquare } from "lucide-react";
+import { MensagemLoteDialog, type AlvoMensagem } from "@/components/separacao/MensagemLoteDialog";
 
 // ============================================================================
 // Risco de cancelamento automático (Shopee) — TODOS os pedidos em risco,
@@ -179,6 +180,8 @@ function RiscoCancelamentoPage() {
   const [embalando, setEmbalando] = useState<{ atual: number; total: number } | null>(null);
   // "tratados" = tirados da lista pela operação (persistido; o risco real segue)
   const [mostrarTratados, setMostrarTratados] = useState(false);
+  // mensagem em massa (chat Shopee) para os pedidos selecionados
+  const [msgAlvo, setMsgAlvo] = useState<AlvoMensagem | null>(null);
   const tratadosQ = useQuery({
     queryKey: ["risco-cancelamento", "tratados"],
     refetchInterval: 120_000,
@@ -648,6 +651,8 @@ function RiscoCancelamentoPage() {
         )}
       </Card>
 
+      <MensagemLoteDialog alvo={msgAlvo} onClose={() => setMsgAlvo(null)} enviadoPor={perfil?.nome ?? null} />
+
       {/* barra de seleção / progresso */}
       {(sel.size > 0 || massa || embalando || reimpressos.size > 0) && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg max-w-[95vw]">
@@ -680,6 +685,11 @@ function RiscoCancelamentoPage() {
                   </Button>
                   <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void marcarEmbalado(sel, "selecionados")}>
                     <PackageIcon className="h-4 w-4" /> Marcar embalado selecionados
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5"
+                    title="Envia uma mensagem no chat da Shopee para os compradores dos pedidos selecionados"
+                    onClick={() => setMsgAlvo({ tipo: "pedidos", orderSns: [...sel], rotulo: `${sel.size} pedido(s) em risco de cancelamento` })}>
+                    <MessageSquare className="h-4 w-4" /> Mensagem aos clientes ({sel.size})
                   </Button>
                   {mostrarTratados && [...sel].some((sn) => tratados.has(sn)) ? (
                     <Button size="sm" variant="outline" onClick={() => void voltarParaLista(sel)}>Voltar à lista</Button>

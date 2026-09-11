@@ -23,7 +23,10 @@ interface Preview { pedidos_no_lote: number; pedidos_shopee: number; com_buyer_i
 // view_separacao_pedidos com o MESMO filtro do drill-down da fila.
 export type AlvoMensagem =
   | { tipo: "tag"; tag: string; rotulo: string }
-  | { tipo: "linha"; sku: string | null; tipoEnvio: string | null; tagSugerida: string | null; rotulo: string };
+  | { tipo: "linha"; sku: string | null; tipoEnvio: string | null; tagSugerida: string | null; rotulo: string }
+  // lista pronta de pedidos (ex.: tela de Risco de cancelamento — inclui
+  // embalados que já saíram da fila e não estão na view_separacao_pedidos)
+  | { tipo: "pedidos"; orderSns: string[]; rotulo: string };
 
 const MODELOS: { rotulo: string; texto: string }[] = [
   {
@@ -33,6 +36,10 @@ const MODELOS: { rotulo: string; texto: string }[] = [
   {
     rotulo: "Agradecimento",
     texto: "Olá! Obrigado pela compra. 🐾 Seu pedido está sendo preparado com carinho e sai em breve. Se precisar de algo, estamos por aqui!",
+  },
+  {
+    rotulo: "Aguardando coleta",
+    texto: "Olá! Seu pedido já está embalado e com a etiqueta pronta, aguardando a coleta da transportadora da Shopee. 🐾 Assim que ela retirar, o rastreio atualiza por aqui. Obrigado pela paciência!",
   },
   {
     rotulo: "Atraso",
@@ -54,6 +61,10 @@ export function MensagemLoteDialog({ alvo, onClose, enviadoPor }: { alvo: AlvoMe
     setCarregando(true);
     (async () => {
       let sns: string[] = [];
+      if (alvo.tipo === "pedidos") {
+        sns = alvo.orderSns;
+        if (vivo) setOrderSns(sns);
+      }
       if (alvo.tipo === "linha") {
         let q = supabaseExternal.from("view_separacao_pedidos").select("numero_ecommerce");
         if (alvo.tagSugerida) q = q.eq("tag_sugerida", alvo.tagSugerida);
