@@ -46,6 +46,7 @@ interface RiscoRow {
   rastreio: string | null;
   valor: number | null;
   itens: string | null;
+  separacao_id: number | null;
 }
 
 interface Impressora {
@@ -126,6 +127,20 @@ async function reimprimirShopee(loja: "ottz" | "svl", orderSn: string, printerId
   return true;
 }
 
+/** Marca UMA separação como embalada no Tiny (mesmo endpoint da Separação). */
+async function embalarUmApi(separacaoId: number): Promise<void> {
+  const resp = await fetch(
+    `${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=embalar-um&separacao_id=${separacaoId}&confirmar=1`,
+    { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+  );
+  if (!resp.ok) {
+    const d = (await resp.json().catch(() => ({}))) as { error?: string; message?: string };
+    throw new Error(d.error ?? d.message ?? `HTTP ${resp.status}`);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function RiscoCancelamentoPage() {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
@@ -157,6 +172,11 @@ function RiscoCancelamentoPage() {
   const [imprimindo, setImprimindo] = useState<string | null>(null);
   const [massa, setMassa] = useState<{ atual: number; total: number } | null>(null);
   const cancelarRef = useRef(false);
+  const pausaRef = useRef(false);
+  const [pausado, setPausado] = useState(false);
+  // pedidos reimpressos NESTA sessão da tela — alvo do "marcar embalado"
+  const [reimpressos, setReimpressos] = useState<Set<string>>(new Set());
+  const [embalando, setEmbalando] = useState<{ atual: number; total: number } | null>(null);
 
   const q = useQuery({
     queryKey: ["risco-cancelamento", "lista"],
@@ -231,6 +251,7 @@ function RiscoCancelamentoPage() {
           order_sn: r.order_sn, tag: r.tag_lote, detalhe: { via: "risco", forcar: true, loja: lojaParam(r.shop_id) },
         });
         await identificadoraDaTag(r.tag_lote);
+        setReimpressos((prev) => new Set(prev).add(r.order_sn));
       }
     } finally {
       setImprimindo(null);
@@ -247,11 +268,16 @@ function RiscoCancelamentoPage() {
     if (impressora?.estado === "offline") { toast.error("Impressora offline"); return; }
     if (!window.confirm(AVISO(alvo.length))) return;
     cancelarRef.current = false;
+    pausaRef.current = false;
+    setPausado(false);
     let ok = 0;
     let tagAberta: string | null = null;
     let okNaTag = 0;
+    const feitos = new Set<string>();
     try {
       for (let i = 0; i < alvo.length; i++) {
+        // pausa: segura ANTES do próximo pedido (nunca no meio de uma etiqueta)
+        while (pausaRef.current && !cancelarRef.current) await sleep(400);
         if (cancelarRef.current) break;
         setMassa({ atual: i + 1, total: alvo.length });
         const r = alvo[i];
@@ -261,7 +287,7 @@ function RiscoCancelamentoPage() {
           tagAberta = r.tag_lote; okNaTag = 0;
         }
         if (await reimprimirShopee(lojaParam(r.shop_id), r.order_sn, printerId)) {
-          ok++; okNaTag++;
+          ok++; okNaTag++; feitos.add(r.order_sn);
           void registrarSeparacaoLog({
             evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
             order_sn: r.order_sn, tag: r.tag_lote, detalhe: { via: "risco-massa", forcar: true, loja: lojaParam(r.shop_id) },
@@ -271,9 +297,60 @@ function RiscoCancelamentoPage() {
       if (tagAberta && okNaTag > 0) await identificadoraDaTag(tagAberta);
     } finally {
       setMassa(null);
+      setPausado(false);
+      pausaRef.current = false;
+      setReimpressos((prev) => { const n = new Set(prev); for (const x of feitos) n.add(x); return n; });
     }
-    toast.success(`${ok} de ${alvo.length} etiqueta(s) reimpressa(s)`, { description: impressora?.nome ?? "" });
+    toast[cancelarRef.current ? "info" : "success"](
+      cancelarRef.current
+        ? `Reimpressão encerrada — ${ok} etiqueta(s) saíram antes de parar`
+        : `${ok} de ${alvo.length} etiqueta(s) reimpressa(s)`,
+      { description: impressora?.nome ?? "" },
+    );
     setSel(new Set());
+  }
+
+  // Marca embalado no Tiny os pedidos informados que ainda estão na fila/em
+  // separação (quem já consta embalado/concluído é pulado; fora da separação
+  // não tem separacao_id).
+  async function marcarEmbalado(orderSns: Set<string>, origem: "reimpressos" | "selecionados") {
+    if (embalando || massa) return;
+    const todos = (q.data ?? []).filter((r) => orderSns.has(r.order_sn));
+    const alvo = todos.filter((r) => r.separacao_id && ["na fila", "em separação"].includes(r.situacao_fisica));
+    const pulados = todos.length - alvo.length;
+    if (alvo.length === 0) {
+      toast.info("Nada a marcar", { description: pulados > 0 ? `${pulados} já constam embalados/concluídos ou estão fora da separação.` : "Nenhum pedido." });
+      return;
+    }
+    if (!window.confirm(
+      `Marcar como EMBALADOS no Tiny ${alvo.length} pedido(s) ${origem === "reimpressos" ? "reimpressos nesta sessão" : "selecionados"}?\n` +
+      (pulados > 0 ? `${pulados} ficam de fora (já embalados/concluídos ou fora da separação).\n` : "") +
+      `Confirme só se a etiqueta nova está no pacote.`,
+    )) return;
+    let ok = 0, erros = 0;
+    try {
+      for (let i = 0; i < alvo.length; i++) {
+        setEmbalando({ atual: i + 1, total: alvo.length });
+        const r = alvo[i];
+        try {
+          await embalarUmApi(r.separacao_id as number);
+          ok++;
+          void registrarSeparacaoLog({
+            evento: "embalado", usuario: perfil?.nome ?? null,
+            order_sn: r.order_sn, separacao_id: r.separacao_id, tag: r.tag_lote,
+            detalhe: { via: "risco", forcado: false },
+          });
+        } catch (e) {
+          erros++;
+          toast.error(`Falha ao embalar ${r.order_sn}`, { description: (e as Error).message });
+        }
+      }
+    } finally {
+      setEmbalando(null);
+      setReimpressos((prev) => { const n = new Set(prev); for (const r of alvo) n.delete(r.order_sn); return n; });
+      void qc.invalidateQueries({ queryKey: ["risco-cancelamento"] });
+    }
+    toast[erros > 0 ? "warning" : "success"](`${ok} pedido(s) marcados como embalados${erros > 0 ? ` · ${erros} erro(s)` : ""}`);
   }
 
   const todasSel = linhas.length > 0 && linhas.every((r) => sel.has(r.order_sn));
@@ -481,21 +558,48 @@ function RiscoCancelamentoPage() {
       </Card>
 
       {/* barra de seleção / progresso */}
-      {(sel.size > 0 || massa) && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
+      {(sel.size > 0 || massa || embalando || reimpressos.size > 0) && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg max-w-[95vw]">
           {massa ? (
             <>
+              <Loader2 className={cn("h-4 w-4 text-primary", !pausado && "animate-spin")} />
+              <span className="text-sm font-medium tabular-nums">
+                {pausado ? "PAUSADO em" : "Reimprimindo"} {massa.atual}/{massa.total}
+              </span>
+              <Button size="sm" variant={pausado ? "default" : "secondary"}
+                onClick={() => { pausaRef.current = !pausaRef.current; setPausado(pausaRef.current); }}>
+                {pausado ? "Retomar" : "Pausar"}
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => { cancelarRef.current = true; pausaRef.current = false; }}>
+                Encerrar (após esta etiqueta)
+              </Button>
+            </>
+          ) : embalando ? (
+            <>
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-sm font-medium tabular-nums">Reimprimindo {massa.atual}/{massa.total}</span>
-              <Button size="sm" variant="destructive" onClick={() => { cancelarRef.current = true; }}>Parar após este</Button>
+              <span className="text-sm font-medium tabular-nums">Marcando embalado {embalando.atual}/{embalando.total}</span>
             </>
           ) : (
             <>
-              <span className="text-sm font-medium">{sel.size} pedido(s) selecionado(s)</span>
-              <Button size="sm" variant="destructive" className="gap-1.5" onClick={() => void reimprimirSelecionados()}>
-                <AlertTriangle className="h-4 w-4" /> Reimprimir selecionados (forçar)
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSel(new Set())}>Limpar</Button>
+              {sel.size > 0 && (
+                <>
+                  <span className="text-sm font-medium">{sel.size} selecionado(s)</span>
+                  <Button size="sm" variant="destructive" className="gap-1.5" onClick={() => void reimprimirSelecionados()}>
+                    <AlertTriangle className="h-4 w-4" /> Reimprimir selecionados (forçar)
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void marcarEmbalado(sel, "selecionados")}>
+                    <PackageIcon className="h-4 w-4" /> Marcar embalado selecionados
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSel(new Set())}>Limpar</Button>
+                </>
+              )}
+              {reimpressos.size > 0 && (
+                <Button size="sm" variant="default" className="gap-1.5"
+                  title="Marca embalado no Tiny os pedidos reimpressos nesta sessão que ainda estão na fila"
+                  onClick={() => void marcarEmbalado(reimpressos, "reimpressos")}>
+                  <PackageIcon className="h-4 w-4" /> Marcar embalado os reimpressos ({reimpressos.size})
+                </Button>
+              )}
             </>
           )}
         </div>
