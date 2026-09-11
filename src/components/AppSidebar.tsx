@@ -70,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "galpao" },
       { title: "Compras & Recebimento", url: "/compras", icon: PackagePlus, modulo: "galpao" },
       { title: "Manual de Operação", url: "/processos", icon: ClipboardCheck, modulo: "galpao" },
+      { title: "Risco de cancelamento", url: "/risco-cancelamento", icon: AlertTriangle, modulo: "galpao" },
       { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "devolucoes" },
     ],
   },
