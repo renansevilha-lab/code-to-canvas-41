@@ -416,6 +416,20 @@ modulo=verificar` (cron 20 min): alerta no canal erros se a geração PAROU
 (≥100 sem etiqueta, mais antigo >6h), com cooldown de 2h
 (`etiquetas_saude_alerta`). Silêncio é bom: saudável não posta.
 
+**Cancelamento automático da Shopee (11/set/2026):** pedido arranjado
+(PROCESSED/READY_TO_SHIP) que a transportadora não bipa é cancelado ~**3 dias
+depois do `ship_by_date`** (observado no Seller Center: "Cancelamento em 1
+dia" para ship_by 08/09 → cancela 11/09; a API não expõe a data, é
+estimativa). `view_pedidos_risco_cancelamento` (por pedido: `cancela_em`,
+`situacao_fisica` = embalado aguardando coleta / na fila / fora da separação,
+rastreio, TAG, valor) e `view_risco_cancelamento_resumo`. Consumidas pela faixa
+da Separação e pelo watchdog `etiquetas-saude` v3 (canal pedidos, cooldown 6h;
+nível erro quando cancela HOJE). **Armadilha de fuso:** `ship_by_date` é
+23:59:59 BRT — comparar com `(x at time zone 'America/Sao_Paulo')::date`;
+`ship_by_date <= data` em UTC deixa o último dia de fora. Achado em 11/set:
+121 pedidos (R$ 14 mil) cancelando no dia, 108 deles já embalados esperando
+coleta — o gargalo era a coleta SPX, não a separação.
+
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
