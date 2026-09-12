@@ -90,6 +90,8 @@ interface Impressora {
 const STORAGE_PRINTER = "separacao.printerId";
 const STORAGE_IDENT = "separacao.identificadorLote";
 const STORAGE_FOTOS = "risco.mostrarFotos";
+const STORAGE_SAIR = "risco.sairAoImprimir";
+type Tratado = { por: string | null; em: string; motivo: string | null };
 
 // "15996 x1, 15994 x2" -> ["15996", "15994"]
 function skusDe(itens: string | null): string[] {
@@ -220,25 +222,44 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
   // pedidos reimpressos NESTA sessão da tela — alvo do "marcar embalado"
   const [reimpressos, setReimpressos] = useState<Set<string>>(new Set());
   const [embalando, setEmbalando] = useState<{ atual: number; total: number } | null>(null);
-  // "tratados" = tirados da lista pela operação (persistido; o risco real segue)
+  // "tratados" = tirados da lista pela operação (persistido; o risco real segue).
+  // motivo 'impresso' = saiu sozinho ao imprimir com sucesso (sairAoImprimir).
   const [mostrarTratados, setMostrarTratados] = useState(false);
+  const [sairAoImprimir, setSairAoImprimir] = useState<boolean>(() => {
+    try { return localStorage.getItem(STORAGE_SAIR) !== "0"; } catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem(STORAGE_SAIR, sairAoImprimir ? "1" : "0"); } catch { /* noop */ } }, [sairAoImprimir]);
   // mensagem em massa (chat Shopee) para os pedidos selecionados
   const [msgAlvo, setMsgAlvo] = useState<AlvoMensagem | null>(null);
   const tratadosQ = useQuery({
     queryKey: ["risco-cancelamento", "tratados"],
     refetchInterval: 120_000,
-    queryFn: async (): Promise<Map<string, { por: string | null; em: string }>> => {
+    queryFn: async (): Promise<Map<string, Tratado>> => {
       const { data, error } = await supabaseExternal
-        .from("risco_cancelamento_tratados").select("order_sn, tratado_por, tratado_em").limit(5000);
+        .from("risco_cancelamento_tratados").select("order_sn, tratado_por, tratado_em, motivo").limit(5000);
       if (error) throw error;
-      const m = new Map<string, { por: string | null; em: string }>();
-      for (const r of (data ?? []) as { order_sn: string; tratado_por: string | null; tratado_em: string }[]) {
-        m.set(r.order_sn, { por: r.tratado_por, em: r.tratado_em });
+      const m = new Map<string, Tratado>();
+      for (const r of (data ?? []) as { order_sn: string; tratado_por: string | null; tratado_em: string; motivo: string | null }[]) {
+        m.set(r.order_sn, { por: r.tratado_por, em: r.tratado_em, motivo: r.motivo });
       }
       return m;
     },
   });
-  const tratados = tratadosQ.data ?? new Map<string, { por: string | null; em: string }>();
+  const tratados = tratadosQ.data ?? new Map<string, Tratado>();
+
+  // Impressão com sucesso → grava 'impresso' e o pedido sai da aba na hora
+  // (persistido: sobrevive a fechar a tela; "Mostrar impressos/tirados" revê,
+  // "Voltar à lista" desfaz). Sem confirmação: é o caminho feliz.
+  async function registrarImpressos(sns: string[]) {
+    const alvo = sns.filter((sn) => !tratados.has(sn));
+    if (alvo.length === 0) return;
+    const { error } = await supabaseExternal.from("risco_cancelamento_tratados").upsert(
+      alvo.map((sn) => ({ order_sn: sn, tratado_por: perfil?.nome ?? null, motivo: "impresso" })),
+      { onConflict: "order_sn" },
+    );
+    if (error) { toast.error("Impresso, mas não consegui tirar da aba", { description: error.message }); return; }
+    void qc.invalidateQueries({ queryKey: ["risco-cancelamento", "tratados"] });
+  }
 
   const q = useQuery({
     queryKey: ["risco-cancelamento", "lista", modo],
@@ -341,6 +362,7 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
         if (r.tag_lote) await identificadoraDaTag(r.tag_lote);
         else await identificadoraReimpressao(skusDe(r.itens)[0] ?? "?", r.loja, 1);
         setReimpressos((prev) => new Set(prev).add(r.order_sn));
+        if (sairAoImprimir) await registrarImpressos([r.order_sn]);
       }
     } finally {
       setImprimindo(null);
@@ -398,6 +420,8 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
       setPausado(false);
       pausaRef.current = false;
       setReimpressos((prev) => { const n = new Set(prev); for (const x of feitos) n.add(x); return n; });
+      // saem da aba os que saíram da impressora (também ao Encerrar no meio)
+      if (sairAoImprimir && feitos.size > 0) await registrarImpressos([...feitos]);
     }
     toast[cancelarRef.current ? "info" : "success"](
       cancelarRef.current
@@ -458,7 +482,7 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
     if (!window.confirm(
       `Tirar da lista ${alvo.length} pedido(s) ${origem === "reimpressos" ? "reimpressos nesta sessão" : "selecionados"}?\n\n` +
       `Só some desta tela — o risco na Shopee continua até a coleta bipar. ` +
-      `Dá para rever/desfazer em "Mostrar tratados".`,
+      `Dá para rever/desfazer em "Mostrar impressos/tirados".`,
     )) return;
     const { error } = await supabaseExternal.from("risco_cancelamento_tratados").upsert(
       alvo.map((sn) => ({ order_sn: sn, tratado_por: perfil?.nome ?? null, motivo: origem })),
@@ -482,6 +506,8 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
   }
 
   const todasSel = linhas.length > 0 && linhas.every((r) => sel.has(r.order_sn));
+  // reimpressos nesta sessão que AINDA estão na aba (com "sair ao imprimir" ligado fica vazio)
+  const reimpressosNaAba = useMemo(() => new Set([...reimpressos].filter((sn) => !tratados.has(sn))), [reimpressos, tratados]);
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-4">
@@ -597,10 +623,15 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
           return (
             <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
               <input type="checkbox" className="h-4 w-4 accent-primary" checked={mostrarTratados} onChange={(e) => setMostrarTratados(e.target.checked)} />
-              Mostrar tratados ({formatNumber(n)})
+              Mostrar impressos/tirados ({formatNumber(n)})
             </label>
           );
         })()}
+        <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1"
+          title="Ao imprimir com sucesso, o pedido sai desta aba sozinho (fica em 'Mostrar impressos/tirados'). Desligue para tirar à mão.">
+          <input type="checkbox" className="h-4 w-4 accent-primary" checked={sairAoImprimir} onChange={(e) => setSairAoImprimir(e.target.checked)} />
+          Sair da aba ao imprimir
+        </label>
         <label className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none px-1">
           <input type="checkbox" className="h-4 w-4 accent-primary" checked={identOn} onChange={(e) => setIdentOn(e.target.checked)} />
           Identificadora do lote
@@ -663,12 +694,18 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
                           : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300")}>
                         {r.situacao_fisica}
                       </span>
-                      {tratados.has(r.order_sn) && (
-                        <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
-                          title={`Tirado da lista${tratados.get(r.order_sn)?.por ? ` por ${tratados.get(r.order_sn)?.por}` : ""} — o risco na Shopee continua até a coleta`}>
-                          tratado
-                        </span>
-                      )}
+                      {tratados.has(r.order_sn) && (() => {
+                        const t = tratados.get(r.order_sn)!;
+                        const impresso = t.motivo === "impresso";
+                        return (
+                          <span className={cn("ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold",
+                            impresso ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                              : "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300")}
+                            title={`${impresso ? "Impresso pelo sistema" : "Tirado da lista"}${t.por ? ` por ${t.por}` : ""} em ${ddmmHHmm(t.em)} — o risco na Shopee continua até a coleta`}>
+                            {impresso ? "impresso" : "tratado"}
+                          </span>
+                        );
+                      })()}
                       {semEnvio && (
                         <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
                           title="Pedido sem envio arranjado na Shopee — não há etiqueta; precisa faturar/arranjar">
@@ -805,11 +842,11 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
                   <PackageIcon className="h-4 w-4" /> Marcar embalado os reimpressos ({reimpressos.size})
                 </Button>
               )}
-              {reimpressos.size > 0 && (
+              {reimpressosNaAba.size > 0 && (
                 <Button size="sm" variant="outline" className="gap-1.5"
                   title="Tira desta lista os pedidos reimpressos com sucesso nesta sessão (o risco na Shopee continua até a coleta)"
-                  onClick={() => void tirarDaLista(reimpressos, "reimpressos")}>
-                  Tirar da lista os reimpressos ({reimpressos.size})
+                  onClick={() => void tirarDaLista(reimpressosNaAba, "reimpressos")}>
+                  Tirar da lista os reimpressos ({reimpressosNaAba.size})
                 </Button>
               )}
             </>

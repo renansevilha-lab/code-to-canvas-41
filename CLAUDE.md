@@ -462,7 +462,13 @@ Separação e Risco; não duplicar o ZPL em tela nenhuma. Barra da tela: Pausar/
 (reimpressos ou selecionados; só os ainda na fila, via `embalar-um`);
 "Tirar da lista" grava em `risco_cancelamento_tratados` (só some da TELA —
 o risco real, a faixa e o watchdog seguem contando até a coleta bipar);
-"Mostrar tratados" revê e "Voltar à lista" desfaz.
+"Mostrar impressos/tirados" revê e "Voltar à lista" desfaz. **Sair da aba ao
+imprimir (12/set, ligado por padrão, `localStorage risco.sairAoImprimir`):**
+impressão com sucesso (por pedido ou em massa, inclusive ao Encerrar no meio)
+grava `motivo='impresso'` na mesma tabela e o pedido some das duas abas na
+hora — antes ele ficava até alguém clicar "Tirar da lista os reimpressos", e
+o botão morria com a sessão (lista só em memória). Selo verde "impresso"
+quando revisto.
 **Tela `/a-enviar` (12/set):** MESMA tela (`src/components/separacao/
 PedidosShopeeLista.tsx`, prop `modo="risco" | "a-enviar"`; as duas rotas são
 finas) lendo `view_pedidos_a_enviar` = TUDO que consta "A enviar" no Seller
