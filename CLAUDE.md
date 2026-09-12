@@ -850,8 +850,12 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
 - **`escrow_componentes.raw_json`** = a resposta inteira do
   `get_escrow_detail` da Shopee por pedido (itens, preços, promoções, taxas —
   ~2,5 kB cada), 90 MB dos ~500 MB. Nada lê a coluna (nenhuma view/função/
-  cron); todos os valores usados já estão nas colunas tipadas. Candidata a
-  ser zerada para pedidos antigos se o espaço apertar.
+  cron); todos os valores usados já estão nas colunas tipadas. **Retenção de
+  60 dias pela data do PEDIDO** (decisão do dono, 12/set): zerado para 16.702
+  pedidos antigos (38 MB) via copia+TRUNCATE+reinsert; cron
+  `limpar-escrow-raw` (03:45 UTC) zera quem completa 60 dias. Não usar
+  `coletado_em` como critério — ele é renovado a cada recoleta. Campo novo da
+  Shopee para pedido antigo tem de ser rebuscado na API.
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e
