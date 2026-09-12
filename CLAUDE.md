@@ -122,7 +122,16 @@ a `view_margem_pedido_v2` exige `escrow_atualizado_em`, que só o
 `ml-sync?modulo=pedidos-detalhes` preenche; com token vencido os pedidos
 entram em `pedidos` mas não aparecem no PI. Cura: `ml-refresh-token?force=1`
 → `ml-sync?modulo=pedidos&dias=2` → `ml-sync?modulo=pedidos-detalhes&max=80`.
-Pendente (decisão do dono): `escrow_componentes.raw_json` = 90 MB dos 497 MB.
+**Mesma armadilha no Tiny (16:00 UTC do mesmo dia):** `tiny-refresh-token-auto`
+rodava `0 * * * *` sem auth; o token do Tiny dura 4 h, três `:00` seguidos
+com "Erro ao ler tokens: Gateway Timeout" e o `processar-abertos` parou de
+aplicar TAG/aprovar ("Tiny API 401 em /pedidos", 6 candidatos presos por 1 h).
+Movido para **`13,43`** com Bearer; `amazon-refresh-token-auto` para
+`3,23,43`; `cmv-congelar-novos` para `6,21,36,51`; `refresh-kpi-pedidos-dia`
+para `8,28,48`. **Regra: cron de renovação de token NUNCA no minuto :00/:15/
+:30/:45** (19 jobs disparam em `0 * * * *`). Cura: `POST tiny-refresh-token`
+(renova as duas contas) e `tiny-separacao?modulo=processar-abertos&canal=
+shopee` para destravar a fila.
 
 ## 2.1.2 Custos do Full/ML pela API de faturamento (verificado 10/set/2026)
 
