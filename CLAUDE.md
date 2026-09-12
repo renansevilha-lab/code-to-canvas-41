@@ -445,6 +445,15 @@ Separação e Risco; não duplicar o ZPL em tela nenhuma. Barra da tela: Pausar/
 "Tirar da lista" grava em `risco_cancelamento_tratados` (só some da TELA —
 o risco real, a faixa e o watchdog seguem contando até a coleta bipar);
 "Mostrar tratados" revê e "Voltar à lista" desfaz.
+**Tela `/a-enviar` (12/set):** MESMA tela (`src/components/separacao/
+PedidosShopeeLista.tsx`, prop `modo="risco" | "a-enviar"`; as duas rotas são
+finas) lendo `view_pedidos_a_enviar` = TUDO que consta "A enviar" no Seller
+Center (READY_TO_SHIP/PROCESSED, sem Full, `ship_by` nos últimos 15 dias),
+atrasado ou não, com `dias_para_prazo`/`atrasado`/`opcao_envio` a mais.
+Chips de prazo: Todos · Vence hoje · Atrasados · Prestes a cancelar (≤ amanhã)
+· Cancela hoje; cards A enviar / Atrasados somam-se aos de cancelamento.
+"Tirar da lista" usa a MESMA `risco_cancelamento_tratados` — some das duas
+telas. Não duplicar a tela: mudança de layout/ação vai no componente.
 **Filtro na fila (11/set):** chip **RISCO DE CANCELAMENTO** na Separação
 (ao lado de SEM ESTOQUE) + selo "cancela hoje/amanhã (n)" na linha, via
 `view_risco_cancelamento_linhas` (pedidos AINDA NA FILA, hoje+amanhã, por
