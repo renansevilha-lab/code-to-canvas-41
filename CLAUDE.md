@@ -105,6 +105,24 @@ impressão em massa "não funcionou". Defesas: cron `ml-refresh-token` passou de
 vigiada pelo watchdog `etiquetas-saude?modulo=verificar` (20 min) com alerta
 no canal erros e cooldown de 2h. Diagnóstico rápido: `select * from
 view_tokens_saude`; cura: `ml-refresh-token?force=1` (ou `?user_id=`).
+**Segunda queda (12/set/2026) — o banco travado no minuto cheio:** o refresh
+no ML funcionava, mas a gravação em `oauth_tokens_ml` morria em "DB: Gateway
+Timeout" 6 rodadas seguidas (11:00→13:30 UTC) e o token venceu de novo.
+Causa: às :00/:15/:30/:45 rodam juntos `refresh-margem-incremental` (20–27 s,
+reescrevia ~900 pedidos por rodada sem checar mudança), `cmv-congelar-novos`
+(11–21 s) e o refresh das matviews, com o banco em 511 MB (acima do teto);
+todo cron que caía nesse segundo levava timeout (Tiny, Amazon, ML). Feito:
+`ml-refresh-token` v16 com **retry 3× no select/update + aviso no Discord**
+(canal erros) e cron movido para **`7,37`** com `Authorization: Bearer`
+(deploy religou o verify_jwt); `refresh-margem-incremental` movido para
+`4,19,34,49` e os UPDATEs de imposto/renda ganharam `IS DISTINCT FROM` (só
+reescreve o que mudou); `cron.job_run_details` encolhido (retenção 3 dias,
+truncate+reinsert). Sintoma no app: **Pedidos Integrados "não puxa" o ML** —
+a `view_margem_pedido_v2` exige `escrow_atualizado_em`, que só o
+`ml-sync?modulo=pedidos-detalhes` preenche; com token vencido os pedidos
+entram em `pedidos` mas não aparecem no PI. Cura: `ml-refresh-token?force=1`
+→ `ml-sync?modulo=pedidos&dias=2` → `ml-sync?modulo=pedidos-detalhes&max=80`.
+Pendente (decisão do dono): `escrow_componentes.raw_json` = 90 MB dos 497 MB.
 
 ## 2.1.2 Custos do Full/ML pela API de faturamento (verificado 10/set/2026)
 
@@ -454,6 +472,13 @@ Chips de prazo: Todos · Vence hoje · Atrasados · Prestes a cancelar (≤ aman
 · Cancela hoje; cards A enviar / Atrasados somam-se aos de cancelamento.
 "Tirar da lista" usa a MESMA `risco_cancelamento_tratados` — some das duas
 telas. Não duplicar a tela: mudança de layout/ação vai no componente.
+**Coluna "Impressa" (12/set):** as duas views trazem `impressa_em`/
+`impressa_estado`/`impressa_tag`/`impressa_forcado_por`/`impressoes` (LATERAL
+na `impressao_etiquetas`, última done/forcado/sent) — o front mostra data/hora
++ como (lote TAG / avulsa / forçada por X / N×). "sem registro" = nunca passou
+pelo PrintNode via app: em 12/set, 471 dos 496 embalados a enviar estavam
+assim (etiqueta no cache, sem TAG, sem `separacao_log`) — saíram pelo Seller
+Center/Tiny durante o colapso do 9.9. Não é bug da coluna.
 **Filtro na fila (11/set):** chip **RISCO DE CANCELAMENTO** na Separação
 (ao lado de SEM ESTOQUE) + selo "cancela hoje/amanhã (n)" na linha, via
 `view_risco_cancelamento_linhas` (pedidos AINDA NA FILA, hoje+amanhã, por

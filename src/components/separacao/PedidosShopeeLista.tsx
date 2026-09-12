@@ -71,6 +71,12 @@ interface RiscoRow {
   valor: number | null;
   itens: string | null;
   separacao_id: number | null;
+  // última impressão que saiu (impressao_etiquetas: done/forcado/sent)
+  impressa_em: string | null;
+  impressa_estado: string | null;
+  impressa_tag: string | null;
+  impressa_forcado_por: string | null;
+  impressoes: number | null;
 }
 
 interface Impressora {
@@ -113,6 +119,16 @@ function useProdutos(skus: string[]) {
 }
 
 const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+const ddmmHHmm = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+// "como" a etiqueta saiu: lote (TAG) / avulsa (pedido a pedido) / forçada
+function comoImpressa(r: RiscoRow): string {
+  if (r.impressa_forcado_por) return `forçada por ${r.impressa_forcado_por}`;
+  if (r.impressa_tag) return `lote ${r.impressa_tag}`;
+  return "avulsa";
+}
 // dias até o prazo de envio (negativo = atrasado); cancela_em = vence_em + 3
 const diasPrazo = (r: RiscoRow) => Number(r.dias_para_prazo ?? (Number(r.dias_para_cancelar) - 3));
 const lojaParam = (shopId: number): "ottz" | "svl" => (shopId === 522186766 ? "ottz" : "svl");
@@ -620,6 +636,7 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
                 <th className="p-2 text-left">Situação física</th>
                 <th className="p-2 text-left">TAG</th>
                 <th className="p-2 text-left">Rastreio</th>
+                <th className="p-2 text-left">Impressa</th>
                 <th className="p-2 text-left">{mostrarFotos ? "Produto" : "Itens"}</th>
                 <th className="p-2 text-right">Valor</th>
                 <th className="p-2 text-left">Prazo</th>
@@ -661,6 +678,21 @@ export function PedidosShopeeLista({ modo }: { modo: ModoLista }) {
                     </td>
                     <td className="p-2 font-mono">{r.tag_lote ?? "—"}</td>
                     <td className="p-2 font-mono text-[11.5px]">{r.rastreio ?? "—"}</td>
+                    <td className="p-2 whitespace-nowrap">
+                      {r.impressa_em ? (
+                        <div title={`Última impressão registrada (PrintNode)${r.impressa_estado === "sent" ? " — enviada, ainda sem confirmação da impressora" : ""}`}>
+                          <div className="tabular-nums font-medium">
+                            {ddmmHHmm(r.impressa_em)}
+                            {r.impressa_estado === "sent" && <span className="ml-1 text-[10.5px] text-amber-700 dark:text-amber-400">enviada</span>}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {comoImpressa(r)}{Number(r.impressoes ?? 0) > 1 ? ` · ${r.impressoes}×` : ""}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground" title="Nenhuma impressão pelo sistema (PrintNode). Se o pedido já está embalado, a etiqueta saiu por fora — Seller Center ou Tiny.">sem registro</span>
+                      )}
+                    </td>
                     <td className="p-2 max-w-[300px]" title={r.itens ?? ""}>
                       {(() => {
                         const skus = skusDe(r.itens);
