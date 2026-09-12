@@ -840,6 +840,18 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   03:30 UTC) que chama `limpar_etiquetas_cache(5)` — copia 5 dias, TRUNCATE,
   reinsere. O `limpar-logs` (jobid 47) passou a fazer **TRUNCATE** em
   `net._http_response` (o DELETE deixava 90 MB de espaço morto p/ 1 mil linhas).
+- **PDF não mora no banco.** `fulfillment_envio_docs` guardava 21 MB de PDF em
+  base64 (12/set/2026); migrado para o Storage bucket **`fulfillment-docs`**
+  (policy anon+authenticated, caminho `<envio_id>/<8 do id>-<nome>`), a linha
+  virou metadado + `storage_path` (`conteudo_base64` fica NULL; o front ainda
+  lê base64 se `storage_path` for nulo). Upload/abrir/imprimir/excluir passam
+  por `subirDocStorage`/`baixarDocBytes`/`removerArquivosDoEnvio` em
+  `fulfillment.tsx`. Anexo novo em tabela = mesma armadilha: use Storage.
+- **`escrow_componentes.raw_json`** = a resposta inteira do
+  `get_escrow_detail` da Shopee por pedido (itens, preços, promoções, taxas —
+  ~2,5 kB cada), 90 MB dos ~500 MB. Nada lê a coluna (nenhuma view/função/
+  cron); todos os valores usados já estão nas colunas tipadas. Candidata a
+  ser zerada para pedidos antigos se o espaço apertar.
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e

@@ -1067,6 +1067,58 @@ interface EnvioDoc {
   mime: string | null;
   tamanho: number | null;
   criado_em: string;
+  // arquivo no Storage (bucket fulfillment-docs). Nulo = legado em conteudo_base64.
+  storage_path: string | null;
+}
+
+// Documentos dos envios moram no Storage (12/set/2026): 21 MB de PDF em base64
+// dentro do Postgres ajudaram a estourar o teto de 500 MB do plano. A linha em
+// fulfillment_envio_docs é só metadado + storage_path.
+const DOCS_BUCKET = "fulfillment-docs";
+function caminhoDoc(envioId: string, nome: string): string {
+  const slug = (nome || "doc").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120) || "doc";
+  return `${envioId}/${crypto.randomUUID().slice(0, 8)}-${slug}`;
+}
+async function subirDocStorage(envioId: string, file: File, tipo: string): Promise<void> {
+  const path = caminhoDoc(envioId, file.name);
+  const mime = file.type || "application/pdf";
+  const { error: eUp } = await supabaseExternal.storage.from(DOCS_BUCKET).upload(path, file, { contentType: mime, upsert: false });
+  if (eUp) throw new Error(`upload: ${eUp.message}`);
+  const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
+    envio_id: envioId, tipo, nome: file.name, mime, tamanho: file.size, storage_path: path,
+  });
+  if (error) {
+    await supabaseExternal.storage.from(DOCS_BUCKET).remove([path]);
+    throw error;
+  }
+}
+// Bytes do documento: Storage quando há storage_path; senão o base64 legado.
+async function baixarDocBytes(d: Pick<EnvioDoc, "id" | "storage_path" | "mime">): Promise<{ bytes: Uint8Array; mime: string }> {
+  if (d.storage_path) {
+    const { data, error } = await supabaseExternal.storage.from(DOCS_BUCKET).download(d.storage_path);
+    if (error || !data) throw new Error(error?.message ?? "arquivo não encontrado no Storage");
+    return { bytes: new Uint8Array(await data.arrayBuffer()), mime: data.type || d.mime || "application/pdf" };
+  }
+  const { data, error } = await supabaseExternal
+    .from("fulfillment_envio_docs").select("conteudo_base64, mime").eq("id", d.id).single();
+  if (error || !data?.conteudo_base64) throw error ?? new Error("documento sem conteúdo");
+  const bin = atob(data.conteudo_base64 as string);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { bytes, mime: (data.mime as string) || d.mime || "application/pdf" };
+}
+function bytesParaBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+// Apaga os arquivos de um envio no Storage (antes de apagar as linhas).
+async function removerArquivosDoEnvio(envioId: string): Promise<void> {
+  const { data } = await supabaseExternal.storage.from(DOCS_BUCKET).list(envioId, { limit: 1000 });
+  if (data && data.length > 0) {
+    await supabaseExternal.storage.from(DOCS_BUCKET).remove(data.map((o) => `${envioId}/${o.name}`));
+  }
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -1267,6 +1319,7 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     // Remoção otimista do quadro
     qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) => (old ?? []).filter((x) => x.id !== e.id));
     try {
+      await removerArquivosDoEnvio(e.id);
       await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", e.id);
       await supabaseExternal.from("fulfillment_envio_itens").delete().eq("envio_id", e.id);
       const { error } = await supabaseExternal.from("fulfillment_envios").delete().eq("id", e.id);
@@ -1886,7 +1939,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     queryFn: async (): Promise<EnvioDoc[]> => {
       const { data, error } = await supabaseExternal
         .from("fulfillment_envio_docs")
-        .select("id, tipo, nome, mime, tamanho, criado_em")
+        .select("id, tipo, nome, mime, tamanho, criado_em, storage_path")
         .eq("envio_id", envioId)
         .order("criado_em", { ascending: false });
       if (error) throw error;
@@ -1903,12 +1956,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   async function subirDoc(file: File, tipoOverride?: string) {
     setSubindoDoc(true);
     try {
-      const b64 = await fileToBase64(file);
-      const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
-        envio_id: envioId, tipo: tipoOverride ?? tipoDoc, nome: file.name, mime: file.type || "application/pdf",
-        tamanho: file.size, conteudo_base64: b64,
-      });
-      if (error) throw error;
+      await subirDocStorage(envioId, file, tipoOverride ?? tipoDoc);
       toast.success(`"${file.name}" anexado`);
       docsQ.refetch();
     } catch (e) {
@@ -1927,11 +1975,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       for (const f of arr) {
         const tipo = detectarTipoDoc(f.name);
         try {
-          const b64 = await fileToBase64(f);
-          const { error } = await supabaseExternal.from("fulfillment_envio_docs").insert({
-            envio_id: envioId, tipo, nome: f.name, mime: f.type || "application/pdf", tamanho: f.size, conteudo_base64: b64,
-          });
-          if (error) throw error;
+          await subirDocStorage(envioId, f, tipo);
           resumo[tipo] = (resumo[tipo] ?? 0) + 1;
         } catch (e) {
           toast.error(`Falha em "${f.name}"`, { description: (e as Error).message });
@@ -1962,11 +2006,9 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     if (!window.confirm(`Imprimir "${d.nome ?? "documento"}" na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
     setImprimindoDoc(d.id);
     try {
-      const { data, error } = await supabaseExternal
-        .from("fulfillment_envio_docs").select("conteudo_base64").eq("id", d.id).single();
-      if (error || !data) throw error ?? new Error("documento não encontrado");
+      const { bytes } = await baixarDocBytes(d);
       const { data: r, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
-        body: { modulo: "imprimir", pdf_base64: data.conteudo_base64, printer_id: printerId, title: d.nome ?? "Documento" },
+        body: { modulo: "imprimir", pdf_base64: bytesParaBase64(bytes), printer_id: printerId, title: d.nome ?? "Documento" },
       });
       if (e2) throw new Error(e2.message);
       if (!(r as { ok?: boolean })?.ok) throw new Error(JSON.stringify((r as { resposta?: unknown })?.resposta ?? r));
@@ -1980,13 +2022,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
 
   async function abrirDoc(d: EnvioDoc) {
     try {
-      const { data, error } = await supabaseExternal
-        .from("fulfillment_envio_docs").select("conteudo_base64, mime").eq("id", d.id).single();
-      if (error || !data) throw error ?? new Error("não encontrado");
-      const bin = atob(data.conteudo_base64 as string);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes], { type: (data.mime as string) || d.mime || "application/pdf" });
+      const { bytes, mime } = await baixarDocBytes(d);
+      const blob = new Blob([bytes as BlobPart], { type: mime });
       const urlObj = URL.createObjectURL(blob);
       window.open(urlObj, "_blank");
       setTimeout(() => URL.revokeObjectURL(urlObj), 60_000);
@@ -1998,6 +2035,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     if (!window.confirm(`Excluir "${d.nome ?? "documento"}"?`)) return;
     const { error } = await supabaseExternal.from("fulfillment_envio_docs").delete().eq("id", d.id);
     if (error) { toast.error("Falha ao excluir", { description: error.message }); return; }
+    if (d.storage_path) await supabaseExternal.storage.from(DOCS_BUCKET).remove([d.storage_path]);
     docsQ.refetch();
   }
 
@@ -2300,6 +2338,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     const rotulo = envio?.numero ? `#${envio.numero}` : "";
     if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
     try {
+      await removerArquivosDoEnvio(envioId);
       await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", envioId);
       await supabaseExternal.from("fulfillment_envio_itens").delete().eq("envio_id", envioId);
       const { error } = await supabaseExternal.from("fulfillment_envios").delete().eq("id", envioId);
