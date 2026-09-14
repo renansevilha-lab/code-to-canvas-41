@@ -384,6 +384,22 @@ Dois comportamentos que já geraram bug:
 
 ---
 
+## 5.0 Cron de TAG + aprovação (tiny-separacao processar-abertos) — 14/set/2026
+
+"Travou" duas vezes pelo mesmo motivo: o cron rodava em `*/5` (minutos cheios,
+onde dezenas de crons disparam juntos num NANO) e metade das rodadas morria em
+**"Token Tiny não encontrado"** — o token existe, a LEITURA falhou (504). Na
+fase ao vivo, a leitura do espelho com erro era tratada como vazio e o módulo
+reinseria itens já existentes (`duplicate key` em `pedido_itens_tiny_uniq`),
+queimando o orçamento. **v40:** token com 3 tentativas; leitura do espelho com
+erro pula a fase ao vivo; duplicate key = item já espelhado. Crons movidos para
+fora dos minutos cheios: 30 → `3-59/5`, 27 → `1-59/10`, 31 → `9-59/15`,
+13 (shopee-sync) → `2-59/10`. Deploy via MCP religou `verify_jwt`: crons 27/30/31
+levam Bearer (front já levava). Regra: **pedido Shopee ainda fora do espelho
+`pedidos` fica com `tag_sugerida` "Shopee Envios" e é pulado de propósito**
+(`pulados_sem_match_shopee`) até o `shopee-sync` trazê-lo — se o shopee-sync
+também falha nos minutos cheios, os dois efeitos se somam e o pedido "trava".
+
 ## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
 
 **Semântica dos status Shopee (validada com dados 22/jul/2026 — é o INVERSO do
