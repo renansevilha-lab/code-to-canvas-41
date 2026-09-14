@@ -724,6 +724,27 @@ clica). Validação: a alocação fecha ao centavo com os resgates e os descober
 começam logo após o último resgate de cada loja. `FAST_ESCROW_DEDUCT` ("Ajuste
 do Shopee Acelera") é pequeno (3–4% do antecipado): cancelamento/valor menor.
 
+## 5.5 Separação — botão único "Imprimir etiqueta" (TAG nasce ao imprimir)
+
+Pedido do dono (14/set/2026): um clique imprime e aplica a TAG, sem que o
+marcador do Tiny (1 chamada por pedido, ~0,4 s cada) atrase o papel, e a TAG
+só vale para quem saiu. Ordem no front (`imprimirComTag` em `separacao.tsx`):
+1. `separacao-imprimir?modulo=reservar&grupo=<tag_sugerida>` — aloca a TAG do
+   dia, grava `tags_lote(status='imprimindo')` e `separacao_tiny.tag_lote` nos
+   pedidos sem TAG da linha. **Só banco, instantâneo.**
+2. Imprime pela TAG pelo caminho de sempre (`imprimirPorSku`: Shopee por lote,
+   ML pedido a pedido, identificadora no fim). `imprimirLoteApi`/`imprimirMlPedidos`
+   agora devolvem a lista do que saiu.
+3. `separacao-imprimir?modulo=aplicar&tag=X` body `{order_sns_ok}` — marcador no
+   Tiny só nos impressos (+ quem já constava em `impressao_etiquetas`), com
+   orçamento de 20 s e retomada (`restantes`; o front chama em laço, idempotente
+   por `tags_aplicadas_pedidos`). Ao finalizar, quem NÃO saiu perde a TAG no
+   sistema e volta para a fila; `tags_lote` vira `aplicada` com a contagem real.
+Linha que já tem TAG só imprime. "Aplicar TAG em massa" (tag-lote antigo) segue
+existindo na barra. Função separada da `tiny-separacao` (crítica; outras sessões
+mexem). **Fase 2 (a testar): embalar automaticamente os pedidos com impressão
+confirmada** — o gancho natural é o `confirmar-impressao` (job `done`).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |

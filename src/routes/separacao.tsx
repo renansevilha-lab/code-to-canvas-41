@@ -154,8 +154,32 @@ interface ImprimirResponse {
   pedidos_no_lote: number;
   etiquetas_prontas: number;
   ja_impressos_pulados?: number;
+  pedidos_impressos?: string[];
   aviso: string | null;
   erro?: string;
+}
+
+// ---- botão único (14/set): reservar TAG → imprimir → aplicar no Tiny ----
+interface ReservarTagResponse { tag: string; grupo: string; pedidos: number; pulados: number; order_sns: string[] }
+interface AplicarTagResponse {
+  tag: string; pedidos_na_tag: number; impressos: number; ja_aplicados: number; aplicados: number;
+  restantes: number; nao_impressos_liberados: number; finalizado: boolean; falhas: string[];
+}
+
+/** Chama a edge fn separacao-imprimir (GET sem corpo, POST com corpo JSON). */
+async function callImprimirFn<T>(qs: string, body?: unknown): Promise<T> {
+  const resp = await fetch(`${EXTERNAL_URL}/functions/v1/separacao-imprimir?${qs}`, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = (await resp.json().catch(() => ({}))) as T & { erro?: string };
+  if (!resp.ok || data.erro) {
+    const err = new Error(data.erro ?? `HTTP ${resp.status}`) as Error & { status?: number };
+    err.status = resp.status;
+    throw err;
+  }
+  return data;
 }
 
 function useTagsDoDia() {
@@ -1260,7 +1284,7 @@ async function imprimirLoteApi(
   printerId: number,
   printerNome?: string,
   forcar = false,
-): Promise<{ enviadas: number; jaPulados: number }> {
+): Promise<{ enviadas: number; jaPulados: number; impressos: string[] }> {
   const url =
     `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
     `?modulo=imprimir&loja=${loja}&tag=${encodeURIComponent(tag)}&printer_id=${printerId}` +
@@ -1273,7 +1297,7 @@ async function imprimirLoteApi(
     toast.error(`Falha ao imprimir lote ${tag}`, {
       description: data.erro ?? `HTTP ${resp.status}`,
     });
-    return { enviadas: 0, jaPulados: 0 };
+    return { enviadas: 0, jaPulados: 0, impressos: [] };
   }
   if ((data.etiquetas_prontas ?? 0) < (data.pedidos_no_lote ?? 0)) {
     toast.warning(
@@ -1290,7 +1314,7 @@ async function imprimirLoteApi(
       { description: printerNome ?? "" },
     );
   }
-  return { enviadas: data.etiquetas_enviadas ?? 0, jaPulados: data.ja_impressos_pulados ?? 0 };
+  return { enviadas: data.etiquetas_enviadas ?? 0, jaPulados: data.ja_impressos_pulados ?? 0, impressos: data.pedidos_impressos ?? [] };
 }
 
 /**
@@ -1411,17 +1435,18 @@ async function imprimirMlPedidos(
   pedidos: { numero_ecommerce: string; marca_canal: string | null }[],
   printerId: number,
   printerNome?: string,
-): Promise<{ ok: number; semConta: number }> {
+): Promise<{ ok: number; semConta: number; okSns: string[] }> {
   let ok = 0, semConta = 0;
+  const okSns: string[] = [];
   for (const p of pedidos) {
     if (!mlContaIntegrada(p.marca_canal)) { semConta++; continue; }
     try {
-      if (await imprimirPedidoMlApi(p.numero_ecommerce, printerId, printerNome)) ok++;
+      if (await imprimirPedidoMlApi(p.numero_ecommerce, printerId, printerNome)) { ok++; okSns.push(p.numero_ecommerce); }
     } catch {
       /* imprimirPedidoMlApi ja avisa o operador; segue para o proximo */
     }
   }
-  return { ok, semConta };
+  return { ok, semConta, okSns };
 }
 
 // ============ Pedidos individuais expandidos (por SKU) ============
@@ -2173,7 +2198,7 @@ function LotesDoDia({
       {ajudaAberta && (
         <div className="text-xs bg-muted/40 rounded-md p-3 space-y-1 text-muted-foreground">
           <p><strong className="text-foreground">1.</strong> Escolha a impressora acima (só precisa uma vez).</p>
-          <p><strong className="text-foreground">2.</strong> Na fila, clique em <strong>Aplicar TAG</strong> num bloco → você recebe uma tag como <span className="font-mono">1307-01</span>.</p>
+          <p><strong className="text-foreground">2.</strong> Na fila, clique em <strong>Imprimir etiqueta</strong> num bloco → a TAG (ex.: <span className="font-mono">1307-01</span>) é criada na hora, as etiquetas saem e o marcador vai para o Tiny só nos pedidos impressos.</p>
           <p><strong className="text-foreground">3.</strong> Aqui no painel, clique em <strong>Imprimir</strong> — as etiquetas saem na Zebra.</p>
           <p><strong className="text-foreground">4.</strong> Confira as etiquetas e clique em <strong>Marcar embalado</strong>.</p>
         </div>
@@ -2189,7 +2214,7 @@ function LotesDoDia({
 
       {!isLoading && !error && (lotes?.length ?? 0) === 0 && (
         <p className="text-xs text-muted-foreground">
-          Nenhum lote aplicado hoje ainda. Clique em <strong>Aplicar TAG</strong> num bloco abaixo pra começar.
+          Nenhum lote hoje ainda. Clique em <strong>Imprimir etiqueta</strong> num bloco abaixo pra começar — a TAG é criada ao imprimir.
         </p>
       )}
 
@@ -2765,7 +2790,7 @@ function FilaPriorizada() {
           `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.\n\n`
         : `Imprimir TODOS os lotes do filtro atual?\n\n`) +
       `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.\n` +
-      (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — as TAGs serão aplicadas antes de imprimir.\n` : "") +
+      (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — a TAG é criada ao imprimir e marcada no Tiny só nos pedidos que saírem.\n` : "") +
       (multis > 0 ? `${multis} combinação(ões) multi-SKU ficam de fora (fluxo próprio).\n` : "") +
       (opts?.forcar ? `Confirmar a REIMPRESSÃO de tudo isso?` : `Etiquetas já impressas NÃO saem de novo (proteção automática).`),
     )) return;
@@ -2785,11 +2810,7 @@ function FilaPriorizada() {
         const item = linhas[i];
         setMassa((m) => ({ atual: i + 1, total: linhas.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}`, etiquetas: m?.etiquetas ?? 0, previstas: totalPedidos }));
         try {
-          const info = tagsPorLinha?.get(linhaKeyDe(item));
-          if ((!info || info.estado !== "com_tag") && item.tag_sugerida) {
-            await aplicarTag(item.tag_sugerida);
-          }
-          await imprimirPorSku(item, { emMassa: true, forcar: !!opts?.forcar });
+          await imprimirComTag(item, { emMassa: true, forcar: !!opts?.forcar });
           feitas++;
         } catch {
           comErro++;
@@ -2825,13 +2846,16 @@ function FilaPriorizada() {
     });
   }
 
-  async function imprimirPorSku(item: PriorizadaRow, opts?: { emMassa?: boolean; forcar?: boolean }) {
+  async function imprimirPorSku(item: PriorizadaRow, opts?: { emMassa?: boolean; forcar?: boolean }): Promise<{ impressos: string[] } | undefined> {
     const key = `sku:${item.sku}:${item.tipo_envio}`;
-    if (!opts?.emMassa && imprimindoKey) return;
+    if (!opts?.emMassa && imprimindoKey) return undefined;
     if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
-      if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+      if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return undefined;
     }
     setImprimindoKey(key);
+    // quem saiu de fato (Shopee: pedidos_impressos do lote; ML: um a um) — é o
+    // que o botão único usa para aplicar a TAG no Tiny só nos impressos.
+    const impressos: string[] = [];
     try {
       let qImp = supabaseExternal
         .from("view_separacao_pedidos")
@@ -2911,7 +2935,8 @@ function FilaPriorizada() {
           proximoLote(`${tag} · ${loja === "ottz" ? "Ottz" : "Bumi"}`);
           // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
           // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
-          const { enviadas, jaPulados } = await imprimirLoteApi(loja, tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
+          const { enviadas, jaPulados, impressos: snsLoja } = await imprimirLoteApi(loja, tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
+          impressos.push(...snsLoja);
           contar(enviadas);
           if (enviadas > 0 || jaPulados > 0) loteImpresso = true;
           void registrarSeparacaoLog({
@@ -2942,7 +2967,8 @@ function FilaPriorizada() {
             }
           }
           if (pedidos.length > 0) {
-            const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
+            const { ok, semConta, okSns } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
+            impressos.push(...okSns);
             contar(ok);
             if (ok > 0) {
               loteImpresso = true;
@@ -2984,11 +3010,103 @@ function FilaPriorizada() {
       // o estado "embalando" (que desabilita os botões) por vários segundos
       // enquanto a lista de 5000 linhas recarregava.
       void qc.invalidateQueries({ queryKey: ["separacao"] });
+      return { impressos };
     } catch (e) {
       toast.error("Erro ao imprimir", { description: (e as Error).message });
+      return { impressos };
     } finally {
       setImprimindoKey(null);
       setImpProg(null);
+    }
+  }
+
+  /**
+   * BOTÃO ÚNICO (14/set): imprime e aplica a TAG num clique, nesta ordem:
+   *   1) reserva a TAG no sistema (só banco, instantâneo) — a linha já sai com
+   *      TAG no espelho, então a impressão pela TAG funciona como sempre;
+   *   2) imprime (caminho normal: Shopee por lote, ML pedido a pedido,
+   *      identificadora no fim);
+   *   3) aplica o marcador no Tiny SÓ nos pedidos que saíram (o Tiny é 1 chamada
+   *      por pedido e era isso que atrasava; agora vem depois do papel). Quem não
+   *      saiu perde a TAG e volta para a fila.
+   * Linha que já tem TAG: só imprime (comportamento antigo).
+   */
+  async function imprimirComTag(item: PriorizadaRow, opts?: { emMassa?: boolean; forcar?: boolean }) {
+    const info = tagsPorLinha?.get(linhaKeyDe(item));
+    const precisaTag = !info || info.estado !== "com_tag";
+    let tagNova: string | null = null;
+    if (precisaTag) {
+      if (!item.tag_sugerida || item.tipo_grupo === "multi") {
+        toast.warning("Esta linha não gera TAG automática", { description: "Combinação multi-SKU: imprima pedido a pedido." });
+        return;
+      }
+      if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
+        if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+      }
+      try {
+        const r = await callImprimirFn<ReservarTagResponse>(
+          `modulo=reservar&grupo=${encodeURIComponent(item.tag_sugerida)}&por=${encodeURIComponent(perfil?.nome ?? "")}`,
+        );
+        tagNova = r.tag;
+        void registrarSeparacaoLog({
+          evento: "tag_aplicada", usuario: perfil?.nome ?? null,
+          tag: r.tag, detalhe: { grupo: item.tag_sugerida, pedidos_tagueados: r.pedidos, via: "imprimir" },
+        });
+        if (r.pulados > 0) toast.info(`${r.pulados} pedido(s) já tinham TAG hoje e ficaram de fora`);
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        if (err.status === 409) toast.warning("Todos os pedidos desta linha já têm TAG hoje", { description: err.message });
+        else if (err.status === 404) toast.warning("Nada para imprimir", { description: err.message });
+        else toast.error("Não consegui reservar a TAG", { description: err.message });
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+      void qc.invalidateQueries({ queryKey: ["separacao", "tags_por_linha"] });
+    }
+    const res = await imprimirPorSku(item, opts);
+    if (!tagNova) return;
+    // 3) marcador no Tiny só para quem saiu — em segundo plano visual (spinner na linha)
+    setAplicando(item.tag_sugerida ?? tagNova);
+    try {
+      let restantes = 1, guard = 0, aplicados = 0, liberados = 0, impressosNaTag = 0;
+      let falhas: string[] = [];
+      while (restantes > 0 && guard++ < 12) {
+        const a = await callImprimirFn<AplicarTagResponse>(
+          `modulo=aplicar&tag=${encodeURIComponent(tagNova)}`,
+          { order_sns_ok: res?.impressos ?? [], por: perfil?.nome ?? null },
+        );
+        restantes = a.restantes;
+        aplicados += a.aplicados;
+        liberados = a.nao_impressos_liberados;
+        impressosNaTag = a.impressos;
+        falhas = a.falhas ?? [];
+        if (falhas.length > 0) break;
+      }
+      if (impressosNaTag === 0) {
+        toast.warning(`TAG ${tagNova}: nenhuma etiqueta saiu — TAG desfeita, pedidos seguem na fila`);
+      } else {
+        toast.success(`TAG ${tagNova} aplicada no Tiny em ${aplicados} pedido(s) impresso(s)`, {
+          description: liberados > 0 ? `${liberados} pedido(s) sem etiqueta voltaram para a fila sem TAG` : undefined,
+          action: { label: "Copiar tag", onClick: () => void copyToClipboard(tagNova as string) },
+          duration: 8000,
+        });
+      }
+      if (falhas.length > 0) {
+        toast.error(`TAG ${tagNova}: ${falhas.length} falha(s) ao marcar no Tiny`, {
+          description: `${falhas[0]} — clique em Imprimir de novo: as etiquetas não repetem e a TAG é reaplicada.`,
+          duration: 12000,
+        });
+      }
+    } catch (e) {
+      toast.error("Etiquetas saíram, mas a TAG não foi aplicada no Tiny", {
+        description: `${(e as Error).message} — clique em Imprimir de novo (as etiquetas não repetem).`,
+        duration: 12000,
+      });
+    } finally {
+      setAplicando(null);
+      void qc.invalidateQueries({ queryKey: ["separacao", "tags_por_linha"] });
+      void qc.invalidateQueries({ queryKey: ["separacao", "tags_lote", "hoje"] });
+      void qc.invalidateQueries({ queryKey: ["separacao"] });
     }
   }
 
@@ -3944,26 +4062,21 @@ function FilaPriorizada() {
                             </button>
                           );
                         }
-                        // sem_tag, parcial ou tags_mistas → oferecer Aplicar TAG
-                        // (pedidos sem tag na linha sempre podem receber uma tag nova)
+                        // sem_tag, parcial ou tags_mistas → a TAG nasce ao clicar em
+                        // Imprimir (botão único, 14/set): reserva no sistema, imprime,
+                        // marca no Tiny só quem saiu. Aqui só o estado.
                         return (
                           <div className="flex flex-col items-end gap-1">
-                            <Button
-                              size="sm"
-                              variant={bloqueados.has(grupo) ? "secondary" : "outline"}
-                              disabled={!grupo || aplicando === grupo || bloqueados.has(grupo)}
-                              onClick={() => void aplicarTag(grupo)}
-                              className="w-28"
+                            <div
+                              className="inline-flex items-center justify-center gap-1 text-[10px] text-muted-foreground w-28 px-2 py-2 rounded-md border border-dashed leading-tight text-center"
+                              title="A TAG é criada quando você clica em Imprimir etiqueta e marcada no Tiny só nos pedidos que saírem"
                             >
                               {aplicando === grupo ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <><Loader2 className="h-3 w-3 animate-spin" /> TAG no Tiny…</>
                               ) : (
-                                <>
-                                  <TagIcon className="h-3 w-3 mr-1" />
-                                  Aplicar TAG
-                                </>
+                                <><TagIcon className="h-3 w-3" /> TAG ao imprimir</>
                               )}
-                            </Button>
+                            </div>
                             {estado === "parcial" && tagAtual && (
                               <div className="text-[10px] text-amber-700 dark:text-amber-400 max-w-[220px] text-right leading-tight">
                                 {info?.comTag} c/ TAG <span className="font-mono">{tagAtual}</span>, {info?.semTag} sem TAG
@@ -3993,10 +4106,10 @@ function FilaPriorizada() {
                         <Button
                           size="sm"
                           variant="default"
-                          disabled={busyImprimir || imprimindoKey !== null}
-                          onClick={() => void imprimirPorSku(item)}
+                          disabled={busyImprimir || imprimindoKey !== null || aplicando !== null}
+                          onClick={() => void imprimirComTag(item)}
                           className="w-36"
-                          title="Imprime todas as etiquetas Shopee deste SKU"
+                          title="Um clique: cria a TAG (se a linha ainda não tem), imprime as etiquetas e marca a TAG no Tiny só nos pedidos que saírem"
                         >
                           {busyImprimir ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
