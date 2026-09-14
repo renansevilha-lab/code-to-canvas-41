@@ -426,6 +426,14 @@ que ENTREGA ao PrintNode, então a barra tem duas fases: "Enviando TAG · loja"
 min (`aguardarImpressora` em `separacao.tsx`; botão Fechar encerra a espera).
 Na massa a espera é só no fim de tudo. Etiqueta pulada pela dedup não conta
 como enviada.
+**Identificadora no meio da pilha (14/set):** a mesma TAG tem pedidos da
+Ottz E da Bumi (hoje 20 das 35 TAGs); a Shopee imprime por loja, e o
+`imprimirPorSku` disparava a identificadora logo após a parte da Ottz — ela
+saía ANTES das etiquetas da Bumi. Agora agrupa por TAG (`porTag`: partes
+Shopee por loja + ML) e a identificadora sai UMA vez, depois da última parte.
+O painel Lotes do dia (`imprimirLote`) tinha bug pior: `lojaDoLote` escolhia
+UMA loja e a outra metade da TAG nem era impressa — agora imprime todas as
+lojas presentes em `separacao_tiny` da TAG.
 
 **Pico de campanha derruba a geração de etiquetas (9.9, 10/set/2026 — v57/v58):**
 com ~500 pedidos do pico na fila, o `pregerar` tentava 40 e gerava **zero** em

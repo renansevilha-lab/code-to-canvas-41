@@ -1910,7 +1910,15 @@ function LotesDoDia({
         // lote misto: as do ML ja sairam, segue para as da Shopee abaixo
       }
 
-      const loja = lojaDoLote(lote);
+      // A TAG pode ter pedidos das DUAS lojas (a fila junta Ottz e Bumi na mesma
+      // linha) e a Shopee imprime por loja: uma chamada por loja presente, e a
+      // identificadora só depois da última. Antes saía só a loja "do lote".
+      const lojasNoLote = Array.from(new Set(
+        daShopee.map((p) => marcaToLoja(p.marca_canal)).filter((l): l is "ottz" | "svl" => l === "ottz" || l === "svl"),
+      ));
+      const lojas: ("ottz" | "svl")[] = lojasNoLote.length > 0 ? lojasNoLote : [lojaDoLote(lote)];
+      let loteImpresso = false;
+      for (const loja of lojas) {
       const url =
         `${EXTERNAL_URL}/functions/v1/shopee-sync-ads` +
         `?modulo=imprimir&loja=${loja}` +
@@ -1922,14 +1930,14 @@ function LotesDoDia({
       });
       const data = (await resp.json().catch(() => ({}))) as ImprimirResponse;
       if (!resp.ok || data.erro) {
-        toast.error("Erro ao imprimir", {
+        toast.error(`Erro ao imprimir (${loja === "ottz" ? "Ottz" : "Bumi"})`, {
           description: data.erro ?? `HTTP ${resp.status}`,
         });
-        return;
+        continue;
       }
       if (data.etiquetas_prontas < data.pedidos_no_lote) {
         toast.warning(
-          `Lote ${data.tag}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
+          `Lote ${data.tag} · ${loja === "ottz" ? "Ottz" : "Bumi"}: ${data.etiquetas_enviadas} de ${data.pedidos_no_lote} etiquetas`,
           {
             description:
               data.aviso ??
@@ -1939,7 +1947,7 @@ function LotesDoDia({
         );
       } else {
         toast.success(
-          `Lote ${data.tag} enviado para impressão (${data.etiquetas_enviadas} etiquetas)`,
+          `Lote ${data.tag} · ${loja === "ottz" ? "Ottz" : "Bumi"} enviado para impressão (${data.etiquetas_enviadas} etiquetas)`,
           { description: impressoraSelecionada?.nome ?? "" },
         );
       }
@@ -1950,6 +1958,8 @@ function LotesDoDia({
           detalhe: { loja, enviadas: data.etiquetas_enviadas, forcar, via: "lote" },
         });
       }
+      if ((data.etiquetas_enviadas ?? 0) > 0 || (data.ja_impressos_pulados ?? 0) > 0) loteImpresso = true;
+      }
       // Etiqueta identificadora junto do lote (se ligado e teve envio).
       // AWAIT (não void): como é um job SEPARADO no PrintNode, disparar em segundo
       // plano corria com o envio — a identificadora saía no meio/antes ou se perdia.
@@ -1959,8 +1969,6 @@ function LotesDoDia({
       // Identificadora quando o lote foi impresso AGORA (enviadas>0) OU já estava
       // todo impresso (ja_impressos_pulados>0 — o v51 pulou etiquetas já enviadas).
       // Nos dois casos o lote está pronto e merece o controle. Conta pela TAG.
-      const loteImpresso =
-        (data.etiquetas_enviadas ?? 0) > 0 || (data.ja_impressos_pulados ?? 0) > 0;
       if (identificadorAtivo && loteImpresso) {
         await imprimirIdentificador(lote, forcar ? {} : { auto: true });
       }
@@ -2885,67 +2893,79 @@ function FilaPriorizada() {
         }
       };
       setImpProg({ rotulo, etapa: "", loteAtual: 0, lotesTotal, etiquetas: 0, fase: "enviando" });
-      for (const g of groups.values()) {
-        proximoLote(`${g.tag} · ${g.loja === "ottz" ? "Ottz" : "Bumi"}`);
-        // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
-        // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
-        const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
-        contar(enviadas);
-        void registrarSeparacaoLog({
-          evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
-          tag: g.tag, sku: item.sku, detalhe: { loja: g.loja, enviadas, jaPulados, via: "sku", forcar: !!opts?.forcar },
-        });
-        // identificadora por lote (impresso agora OU já estava todo impresso).
-        // AWAIT (não void): sai DEPOIS das etiquetas de envio deste lote e antes
-        // do próximo lote (não intercala no PrintNode). Conta pela TAG.
-        if (identOn && (enviadas > 0 || jaPulados > 0)) {
-          const loteRow = await acharLoteDaTag(g.tag, lotesHoje);
-          if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
-          else toast.warning(`Identificadora da TAG ${g.tag} não saiu`, { description: "Lote não encontrado — imprima pelo painel Lotes do dia." });
-        }
-      }
-      // Mercado Livre: uma etiqueta por pedido. A identificadora do lote sai
-      // depois, igual ao fluxo Shopee (o lote físico é o mesmo).
-      for (const [tag, pedidosTag] of mlPorTag.entries()) {
-        // Mesma regra de ouro da Shopee: etiqueta ML já impressa NÃO sai de
-        // novo (o ML não tem lote nem dedup no servidor — a trava é aqui).
-        // Só a ação "Reimprimir (forçar)" passa por cima, com aviso.
-        let pedidos = pedidosTag;
-        if (!opts?.forcar) {
-          const sns = pedidos.map((p) => p.numero_ecommerce);
-          const { data: ja } = await supabaseExternal
-            .from("impressao_etiquetas").select("order_sn")
-            .in("order_sn", sns).in("estado", ["done", "sent", "forcado", "preso"]);
-          const jaSet = new Set(((ja ?? []) as { order_sn: string }[]).map((r) => r.order_sn));
-          const pulados = pedidos.filter((p) => jaSet.has(p.numero_ecommerce)).length;
-          pedidos = pedidos.filter((p) => !jaSet.has(p.numero_ecommerce));
-          if (pulados > 0) {
-            toast.info(`${pulados} pedido(s) ML já impresso(s) — pulados`, {
-              description: "Para sair de novo, use ⋮ → Reimprimir etiquetas (forçar).",
-            });
-          }
-          if (pedidos.length === 0) { proximoLote(`${tag || "sem TAG"} · ML`); continue; }
-        }
-        proximoLote(`${tag || "sem TAG"} · ML`);
-        const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
-        contar(ok);
-        if (ok > 0) {
+      // Agrupa por TAG: a mesma TAG pode ter pedidos da Ottz, da Bumi e do ML.
+      // A identificadora sai UMA vez por TAG, só depois da ÚLTIMA parte — antes
+      // ela saía logo após a parte da Ottz e ficava no meio da pilha da Bumi.
+      const porTag = new Map<string, { shopee: ("ottz" | "svl")[]; ml: { numero_ecommerce: string; marca_canal: string | null }[] }>();
+      const entradaTag = (tag: string) => {
+        let e = porTag.get(tag);
+        if (!e) { e = { shopee: [], ml: [] }; porTag.set(tag, e); }
+        return e;
+      };
+      for (const g of groups.values()) entradaTag(g.tag).shopee.push(g.loja);
+      for (const [tag, peds] of mlPorTag.entries()) entradaTag(tag).ml = peds;
+
+      for (const [tag, partes] of porTag.entries()) {
+        let loteImpresso = false; // enviou agora OU já estava todo impresso
+        for (const loja of partes.shopee) {
+          proximoLote(`${tag} · ${loja === "ottz" ? "Ottz" : "Bumi"}`);
+          // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
+          // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
+          const { enviadas, jaPulados } = await imprimirLoteApi(loja, tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
+          contar(enviadas);
+          if (enviadas > 0 || jaPulados > 0) loteImpresso = true;
           void registrarSeparacaoLog({
             evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
-            tag: tag || null, sku: item.sku,
-            detalhe: { canal: "mercadolivre", enviadas: ok, via: "sku-ml" },
+            tag, sku: item.sku, detalhe: { loja, enviadas, jaPulados, via: "sku", forcar: !!opts?.forcar },
           });
-          if (identOn && tag) {
-            const loteRow = await acharLoteDaTag(tag, lotesHoje);
-            if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
-            else toast.warning(`Identificadora da TAG ${tag} não saiu`, { description: "Lote não encontrado — imprima pelo painel Lotes do dia." });
+        }
+        // Mercado Livre: uma etiqueta por pedido (o ML não tem lote).
+        if (partes.ml.length > 0) {
+          // Mesma regra de ouro da Shopee: etiqueta ML já impressa NÃO sai de
+          // novo (o ML não tem lote nem dedup no servidor — a trava é aqui).
+          // Só a ação "Reimprimir (forçar)" passa por cima, com aviso.
+          let pedidos = partes.ml;
+          proximoLote(`${tag || "sem TAG"} · ML`);
+          if (!opts?.forcar) {
+            const sns = pedidos.map((p) => p.numero_ecommerce);
+            const { data: ja } = await supabaseExternal
+              .from("impressao_etiquetas").select("order_sn")
+              .in("order_sn", sns).in("estado", ["done", "sent", "forcado", "preso"]);
+            const jaSet = new Set(((ja ?? []) as { order_sn: string }[]).map((r) => r.order_sn));
+            const pulados = pedidos.filter((p) => jaSet.has(p.numero_ecommerce)).length;
+            pedidos = pedidos.filter((p) => !jaSet.has(p.numero_ecommerce));
+            if (pulados > 0) {
+              loteImpresso = true;
+              toast.info(`${pulados} pedido(s) ML já impresso(s) — pulados`, {
+                description: "Para sair de novo, use ⋮ → Reimprimir etiquetas (forçar).",
+              });
+            }
+          }
+          if (pedidos.length > 0) {
+            const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
+            contar(ok);
+            if (ok > 0) {
+              loteImpresso = true;
+              void registrarSeparacaoLog({
+                evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
+                tag: tag || null, sku: item.sku,
+                detalhe: { canal: "mercadolivre", enviadas: ok, via: "sku-ml" },
+              });
+            }
+            if (semConta > 0) {
+              toast.warning(`${semConta} pedido(s) da conta SVL do ML não saem pelo app`, {
+                description: "A integração é da conta Ottz. Imprima esses pelo painel do ML.",
+                duration: 10000,
+              });
+            }
           }
         }
-        if (semConta > 0) {
-          toast.warning(`${semConta} pedido(s) da conta SVL do ML não saem pelo app`, {
-            description: "A integração é da conta Ottz. Imprima esses pelo painel do ML.",
-            duration: 10000,
-          });
+        // identificadora da TAG — AWAIT (não void): entra na fila do PrintNode
+        // DEPOIS de todas as partes (Ottz, Bumi, ML) e antes da próxima TAG.
+        if (identOn && tag && loteImpresso) {
+          const loteRow = await acharLoteDaTag(tag, lotesHoje);
+          if (loteRow) await imprimirIdentificadorApi(loteRow, printerId, { auto: true });
+          else toast.warning(`Identificadora da TAG ${tag} não saiu`, { description: "Lote não encontrado — imprima pelo painel Lotes do dia." });
         }
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) sem etiqueta pelo app ignorados`);
