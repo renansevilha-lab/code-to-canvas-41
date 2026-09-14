@@ -539,6 +539,18 @@ nunca arranjado na Shopee).
   order_sn=Y` mostra tipos de doc, rastreio e testa o create com/sem tracking.
 - Depurar por SKU/loja: `imprimir?loja=svl&order_sn=X&dry=1` gera 1 pedido, salva
   no cache e **não imprime** (o `dry` só pula o PrintNode; o save é antes).
+- **v63 (14/set/2026) — pregerar não confia em leitura que falhou.** Nos minutos
+  :00/:10/:20/… dezenas de crons disparam juntos e o PostgREST devolve 504. O
+  pregerar ignorava `error` (`const { data } = …`): candidatos viravam "nenhum
+  elegível" e, pior, a checagem de cache vinha vazia → TODOS os pedidos viravam
+  "sem cache", as 40 tentativas iam à Shopee com pedidos JÁ PRONTOS (`sem_codigo`)
+  e eles entravam em backoff (1.013 registros falsos em 13/set; o watchdog
+  `etiquetas-saude` gritou "geração PAROU"). Agora: leitura com 3 tentativas; se
+  ainda falhar, a rodada **aborta com 503 sem gravar**; backoff de pedido que já
+  está no cache é apagado na hora. Os crons 55/56 saíram dos minutos múltiplos
+  de 5 (listas explícitas). **`shopee-sync-ads` agora exige JWT** (deploy via
+  MCP): crons 38–45/55/56 e a função `confirmar_impressoes_pendentes` levam
+  Bearer (chave publicável); o front já levava. Chamada sem header = 401.
 
 **Por que o "app confirma o envio" NÃO avança (testado 23/jul):** o `ship_order`
 pelo app falha com **`logistics.lack_of_invoice_data`** — a Shopee exige a NF-e
