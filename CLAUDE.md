@@ -690,6 +690,23 @@ drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 
 ---
 
+## 5.4 Fluxo de caixa × Shopee Acelera
+
+As **duas lojas** usam o Shopee Acelera (antecipação de repasse; Ottz desde maio,
+Bumi desde 28/08/2026). O "Resgate do Shopee Acelera" entra em
+`transacoes_carteira` como `FAST_ESCROW_DISBURSE` **sem `pedido_id`**, e os
+pedidos que ele paga **nunca** ganham "Renda do pedido" (`ESCROW_VERIFIED_ADD`).
+Consequência: "pedido sem evento na carteira" ≠ "a receber". Em 14/set a
+projeção mostrava R$ 259 mil de entradas Shopee em 7 dias; R$ 202 mil já tinham
+entrado via resgate. Modelo atual (opção A): `view_shopee_a_receber_acelera`
+aloca os resgates dos últimos 45 dias aos pedidos sem evento (60 dias) do mais
+antigo para o mais novo (FIFO) e marca `coberto_por_resgate`; as views
+`view_fluxo_caixa_eventos` e `view_carteira_a_receber` só contam os descobertos
+("disponível p/ resgate", em D+1 — o resgate é **manual**, entra quando alguém
+clica). Validação: a alocação fecha ao centavo com os resgates e os descobertos
+começam logo após o último resgate de cada loja. `FAST_ESCROW_DEDUCT` ("Ajuste
+do Shopee Acelera") é pequeno (3–4% do antecipado): cancelamento/valor menor.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
