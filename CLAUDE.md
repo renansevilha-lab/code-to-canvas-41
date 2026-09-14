@@ -418,6 +418,15 @@ fica) → o pedido sai do fluxo em massa e volta à fila para decisão humana, c
 aviso no Discord (canal pedidos). A impressão individual nunca teve dedup — é
 a via consciente do operador, que vê na bancada se o papel saiu.
 
+**Contador de impressão na Separação (14/set):** o `imprimir` devolve assim
+que ENTREGA ao PrintNode, então a barra tem duas fases: "Enviando TAG · loja"
+(uma TAG pode ser 2 chamadas — Ottz e Bumi — a Shopee imprime por loja) e
+"Impressora imprimindo · faltam N na fila", que consulta
+`confirmar-impressao` (sem tag) a cada 4 s até `jobs_ainda_sent = 0` ou 2
+min (`aguardarImpressora` em `separacao.tsx`; botão Fechar encerra a espera).
+Na massa a espera é só no fim de tudo. Etiqueta pulada pela dedup não conta
+como enviada.
+
 **Pico de campanha derruba a geração de etiquetas (9.9, 10/set/2026 — v57/v58):**
 com ~500 pedidos do pico na fila, o `pregerar` tentava 40 e gerava **zero** em
 27s, e a fila nunca andava. Três causas empilhadas: (1) a busca de tracking do

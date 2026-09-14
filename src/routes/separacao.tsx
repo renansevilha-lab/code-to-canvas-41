@@ -1293,6 +1293,35 @@ async function imprimirLoteApi(
   return { enviadas: data.etiquetas_enviadas ?? 0, jaPulados: data.ja_impressos_pulados ?? 0 };
 }
 
+/**
+ * O `imprimir` devolve assim que ENTREGA os jobs ao PrintNode — a impressora
+ * ainda está trabalhando. Para a barra refletir a impressão de verdade, consulta
+ * o PrintNode (confirmar-impressao, o mesmo módulo do cron) a cada 4 s até a
+ * fila de jobs 'sent' zerar (ou 2 min). `impressas` = jobs confirmados nesta
+ * espera; `pendentes` = ainda na fila.
+ */
+async function aguardarImpressora(
+  onTick: (impressas: number, pendentes: number) => void,
+  cancelado: () => boolean,
+  maxMs = 120_000,
+): Promise<void> {
+  const inicio = Date.now();
+  let impressas = 0;
+  while (Date.now() - inicio < maxMs && !cancelado()) {
+    try {
+      const resp = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=confirmar-impressao`, {
+        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+      });
+      const d = (await resp.json().catch(() => ({}))) as { jobs_done?: number; jobs_ainda_sent?: number; nota?: string };
+      impressas += d.jobs_done ?? 0;
+      const pendentes = d.jobs_ainda_sent ?? 0;
+      onTick(impressas, pendentes);
+      if (pendentes === 0) return;
+    } catch { /* tenta de novo */ }
+    await new Promise((r) => setTimeout(r, 4000));
+  }
+}
+
 async function imprimirPedidoApi(
   loja: "ottz" | "svl",
   orderSn: string,
@@ -2561,10 +2590,18 @@ function FilaPriorizada() {
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   // impressão em massa: aplica TAG + imprime cada linha filtrada, na ordem de
   // prioridade da fila. Sequencial de propósito (uma impressora, um fluxo).
-  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string; modo?: "embalar"; etiquetas?: number; previstas?: number } | null>(null);
+  const [massa, setMassa] = useState<{
+    atual: number; total: number; linha: string; modo?: "embalar"; etiquetas?: number; previstas?: number;
+    fase?: "impressora" | "concluido"; impressas?: number; pendentes?: number;
+  } | null>(null);
   // contador de impressão (igual ao da aba A enviar): lote k/n da linha e
   // etiquetas que o servidor confirmou ter enviado à impressora
-  const [impProg, setImpProg] = useState<{ rotulo: string; loteAtual: number; lotesTotal: number; etiquetas: number } | null>(null);
+  const [impProg, setImpProg] = useState<{
+    rotulo: string; etapa: string; loteAtual: number; lotesTotal: number; etiquetas: number;
+    fase: "enviando" | "impressora" | "concluido"; impressas?: number; pendentes?: number;
+  } | null>(null);
+  const fecharEsperaRef = useRef(false);
+  const massaEtiqRef = useRef(0);
   const cancelarMassaRef = useRef(false);
   const pausaMassaRef = useRef(false);
   const [massaPausada, setMassaPausada] = useState(false);
@@ -2728,6 +2765,8 @@ function FilaPriorizada() {
     pausaMassaRef.current = false;
     setMassaPausada(false);
     let feitas = 0, comErro = 0;
+    massaEtiqRef.current = 0;
+    fecharEsperaRef.current = false;
     try {
       for (let i = 0; i < linhas.length; i++) {
         // pausa: segura ANTES de começar a próxima linha (nunca no meio de uma)
@@ -2747,6 +2786,15 @@ function FilaPriorizada() {
         } catch {
           comErro++;
         }
+      }
+      // tudo entregue ao PrintNode — agora a barra acompanha a IMPRESSORA
+      if (massaEtiqRef.current > 0) {
+        setMassa((m) => (m ? { ...m, fase: "impressora", impressas: 0, pendentes: massaEtiqRef.current } : m));
+        await aguardarImpressora(
+          (impressas, pendentes) => setMassa((m) => (m ? { ...m, fase: pendentes === 0 ? "concluido" : "impressora", impressas, pendentes } : m)),
+          () => fecharEsperaRef.current,
+        );
+        if (!fecharEsperaRef.current) await new Promise((r) => setTimeout(r, 2500));
       }
     } finally {
       setMassa(null);
@@ -2824,15 +2872,21 @@ function FilaPriorizada() {
       const rotulo = `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}`;
       const lotesTotal = groups.size + mlPorTag.size;
       let loteAtual = 0, etiq = 0;
-      const proximoLote = () => { loteAtual++; setImpProg({ rotulo, loteAtual, lotesTotal, etiquetas: etiq }); };
+      // etapa = TAG · loja (a mesma TAG pode ter pedidos da Ottz E da Bumi — a
+      // Shopee imprime por loja, então uma TAG pode ser 2 chamadas)
+      let etapa = "";
+      const proximoLote = (rot: string) => { loteAtual++; etapa = rot; setImpProg({ rotulo, etapa, loteAtual, lotesTotal, etiquetas: etiq, fase: "enviando" }); };
       const contar = (n: number) => {
         etiq += n;
-        setImpProg({ rotulo, loteAtual, lotesTotal, etiquetas: etiq });
-        if (opts?.emMassa && n > 0) setMassa((m) => (m ? { ...m, etiquetas: (m.etiquetas ?? 0) + n } : m));
+        setImpProg({ rotulo, etapa, loteAtual, lotesTotal, etiquetas: etiq, fase: "enviando" });
+        if (opts?.emMassa && n > 0) {
+          massaEtiqRef.current += n;
+          setMassa((m) => (m ? { ...m, etiquetas: (m.etiquetas ?? 0) + n } : m));
+        }
       };
-      setImpProg({ rotulo, loteAtual: 0, lotesTotal, etiquetas: 0 });
+      setImpProg({ rotulo, etapa: "", loteAtual: 0, lotesTotal, etiquetas: 0, fase: "enviando" });
       for (const g of groups.values()) {
-        proximoLote();
+        proximoLote(`${g.tag} · ${g.loja === "ottz" ? "Ottz" : "Bumi"}`);
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
         const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
@@ -2870,9 +2924,9 @@ function FilaPriorizada() {
               description: "Para sair de novo, use ⋮ → Reimprimir etiquetas (forçar).",
             });
           }
-          if (pedidos.length === 0) { proximoLote(); continue; }
+          if (pedidos.length === 0) { proximoLote(`${tag || "sem TAG"} · ML`); continue; }
         }
-        proximoLote();
+        proximoLote(`${tag || "sem TAG"} · ML`);
         const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
         contar(ok);
         if (ok > 0) {
@@ -2896,6 +2950,16 @@ function FilaPriorizada() {
       }
       if (skTiktok > 0) toast.info(`${skTiktok} pedido(s) sem etiqueta pelo app ignorados`);
       if (skNoLote > 0) toast.warning(`${skNoLote} pedido(s) sem TAG ignorados`);
+      // avulso: segura a barra até a impressora terminar (na massa quem espera é o laço)
+      if (!opts?.emMassa && etiq > 0) {
+        fecharEsperaRef.current = false;
+        setImpProg({ rotulo, etapa, loteAtual, lotesTotal, etiquetas: etiq, fase: "impressora", impressas: 0, pendentes: etiq });
+        await aguardarImpressora(
+          (impressas, pendentes) => setImpProg({ rotulo, etapa, loteAtual, lotesTotal, etiquetas: etiq, fase: pendentes === 0 ? "concluido" : "impressora", impressas, pendentes }),
+          () => fecharEsperaRef.current,
+        );
+        if (!fecharEsperaRef.current) await new Promise((r) => setTimeout(r, 2500));
+      }
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
       // enquanto a lista de 5000 linhas recarregava.
@@ -3295,7 +3359,22 @@ function FilaPriorizada() {
 
   return (
     <div className="space-y-5">
-      {massa && (
+      {massa && massa.fase ? (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
+          {massa.fase === "concluido"
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            : <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+          <span className="text-sm font-medium tabular-nums">
+            {massa.fase === "concluido" ? "Impressora concluiu" : "Impressora imprimindo"} — <b>{massa.etiquetas ?? 0}</b> etiqueta(s) enviada(s)
+            <span className="ml-2 text-muted-foreground">
+              · faltam <b className="text-foreground">{massa.pendentes ?? 0}</b> na fila · {massa.impressas ?? 0} confirmada(s)
+            </span>
+          </span>
+          {massa.fase !== "concluido" && (
+            <Button size="sm" variant="ghost" onClick={() => { fecharEsperaRef.current = true; }}>Fechar</Button>
+          )}
+        </div>
+      ) : massa && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span className="text-sm font-medium tabular-nums">
@@ -3303,7 +3382,7 @@ function FilaPriorizada() {
             {massa.modo !== "embalar" && (
               <span className="ml-2 text-muted-foreground">
                 · <b className="text-foreground">{massa.etiquetas ?? 0}</b> etiqueta(s) enviada(s){massa.previstas ? ` · ${massa.previstas} pedido(s) no filtro` : ""}
-                {impProg && impProg.lotesTotal > 1 ? ` · lote ${impProg.loteAtual}/${impProg.lotesTotal} da linha` : ""}
+                {impProg?.etapa ? <> · <span className="font-mono">{impProg.etapa}</span></> : null}
               </span>
             )}
           </span>
@@ -3318,12 +3397,28 @@ function FilaPriorizada() {
       )}
       {impProg && !massa && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          {impProg.fase === "concluido"
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            : <Loader2 className="h-4 w-4 animate-spin text-primary" />}
           <span className="text-sm font-medium tabular-nums">
-            Imprimindo <span className="font-mono">{impProg.rotulo}</span>
-            {impProg.lotesTotal > 1 ? ` — lote ${impProg.loteAtual}/${impProg.lotesTotal}` : ""}
-            <span className="ml-2 text-muted-foreground">· <b className="text-foreground">{impProg.etiquetas}</b> etiqueta(s) enviada(s)</span>
+            {impProg.fase === "enviando" ? (
+              <>
+                Enviando <span className="font-mono">{impProg.rotulo}</span>
+                {impProg.etapa ? <> — <span className="font-mono">{impProg.etapa}</span>{impProg.lotesTotal > 1 ? ` (${impProg.loteAtual}/${impProg.lotesTotal})` : ""}</> : null}
+                <span className="ml-2 text-muted-foreground">· <b className="text-foreground">{impProg.etiquetas}</b> etiqueta(s) enviada(s)</span>
+              </>
+            ) : (
+              <>
+                {impProg.fase === "concluido" ? "Impressora concluiu" : "Impressora imprimindo"} <span className="font-mono">{impProg.rotulo}</span>
+                <span className="ml-2 text-muted-foreground">
+                  · <b className="text-foreground">{impProg.etiquetas}</b> enviada(s) · faltam <b className="text-foreground">{impProg.pendentes ?? 0}</b> na fila · {impProg.impressas ?? 0} confirmada(s)
+                </span>
+              </>
+            )}
           </span>
+          {impProg.fase === "impressora" && (
+            <Button size="sm" variant="ghost" onClick={() => { fecharEsperaRef.current = true; }}>Fechar</Button>
+          )}
         </div>
       )}
       {selGrupos.size > 0 && !massa && !impProg && (
