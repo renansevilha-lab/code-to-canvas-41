@@ -2561,7 +2561,10 @@ function FilaPriorizada() {
   const [imprimindoKey, setImprimindoKey] = useState<string | null>(null);
   // impressão em massa: aplica TAG + imprime cada linha filtrada, na ordem de
   // prioridade da fila. Sequencial de propósito (uma impressora, um fluxo).
-  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string; modo?: "embalar" } | null>(null);
+  const [massa, setMassa] = useState<{ atual: number; total: number; linha: string; modo?: "embalar"; etiquetas?: number; previstas?: number } | null>(null);
+  // contador de impressão (igual ao da aba A enviar): lote k/n da linha e
+  // etiquetas que o servidor confirmou ter enviado à impressora
+  const [impProg, setImpProg] = useState<{ rotulo: string; loteAtual: number; lotesTotal: number; etiquetas: number } | null>(null);
   const cancelarMassaRef = useRef(false);
   const pausaMassaRef = useRef(false);
   const [massaPausada, setMassaPausada] = useState(false);
@@ -2733,7 +2736,7 @@ function FilaPriorizada() {
         }
         if (cancelarMassaRef.current) break;
         const item = linhas[i];
-        setMassa({ atual: i + 1, total: linhas.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}` });
+        setMassa((m) => ({ atual: i + 1, total: linhas.length, linha: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}`, etiquetas: m?.etiquetas ?? 0, previstas: totalPedidos }));
         try {
           const info = tagsPorLinha?.get(linhaKeyDe(item));
           if ((!info || info.estado !== "com_tag") && item.tag_sugerida) {
@@ -2817,10 +2820,23 @@ function FilaPriorizada() {
       }
       let identOn = false;
       try { identOn = localStorage.getItem(STORAGE_IDENT) === "1"; } catch { /* noop */ }
+      // contador visível: lote k/n desta linha e etiquetas enviadas (acumula na massa)
+      const rotulo = `${item.sku ?? "?"} · ${item.tipo_envio ?? ""}`;
+      const lotesTotal = groups.size + mlPorTag.size;
+      let loteAtual = 0, etiq = 0;
+      const proximoLote = () => { loteAtual++; setImpProg({ rotulo, loteAtual, lotesTotal, etiquetas: etiq }); };
+      const contar = (n: number) => {
+        etiq += n;
+        setImpProg({ rotulo, loteAtual, lotesTotal, etiquetas: etiq });
+        if (opts?.emMassa && n > 0) setMassa((m) => (m ? { ...m, etiquetas: (m.etiquetas ?? 0) + n } : m));
+      };
+      setImpProg({ rotulo, loteAtual: 0, lotesTotal, etiquetas: 0 });
       for (const g of groups.values()) {
+        proximoLote();
         // imprime o lote — a dedup no backend (v51) pula quem já saiu (done/sent),
         // então reimprimir NÃO duplica e o reprocessamento só retenta os pendentes.
         const { enviadas, jaPulados } = await imprimirLoteApi(g.loja, g.tag, printerId, impressoraSelecionada?.nome, !!opts?.forcar);
+        contar(enviadas);
         void registrarSeparacaoLog({
           evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
           tag: g.tag, sku: item.sku, detalhe: { loja: g.loja, enviadas, jaPulados, via: "sku", forcar: !!opts?.forcar },
@@ -2854,9 +2870,11 @@ function FilaPriorizada() {
               description: "Para sair de novo, use ⋮ → Reimprimir etiquetas (forçar).",
             });
           }
-          if (pedidos.length === 0) continue;
+          if (pedidos.length === 0) { proximoLote(); continue; }
         }
+        proximoLote();
         const { ok, semConta } = await imprimirMlPedidos(pedidos, printerId, impressoraSelecionada?.nome);
+        contar(ok);
         if (ok > 0) {
           void registrarSeparacaoLog({
             evento: "etiqueta_impressa", usuario: perfil?.nome ?? null,
@@ -2886,6 +2904,7 @@ function FilaPriorizada() {
       toast.error("Erro ao imprimir", { description: (e as Error).message });
     } finally {
       setImprimindoKey(null);
+      setImpProg(null);
     }
   }
 
@@ -3281,6 +3300,12 @@ function FilaPriorizada() {
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span className="text-sm font-medium tabular-nums">
             {massaPausada ? "PAUSADO em" : massa.modo === "embalar" ? "Embalando linha" : "Imprimindo lote"} {massa.atual}/{massa.total} — <span className="font-mono">{massa.linha}</span>
+            {massa.modo !== "embalar" && (
+              <span className="ml-2 text-muted-foreground">
+                · <b className="text-foreground">{massa.etiquetas ?? 0}</b> etiqueta(s) enviada(s){massa.previstas ? ` · ${massa.previstas} pedido(s) no filtro` : ""}
+                {impProg && impProg.lotesTotal > 1 ? ` · lote ${impProg.loteAtual}/${impProg.lotesTotal} da linha` : ""}
+              </span>
+            )}
           </span>
           <Button size="sm" variant={massaPausada ? "default" : "secondary"}
             onClick={() => { pausaMassaRef.current = !pausaMassaRef.current; setMassaPausada(pausaMassaRef.current); }}>
@@ -3291,7 +3316,17 @@ function FilaPriorizada() {
           </Button>
         </div>
       )}
-      {selGrupos.size > 0 && (
+      {impProg && !massa && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span className="text-sm font-medium tabular-nums">
+            Imprimindo <span className="font-mono">{impProg.rotulo}</span>
+            {impProg.lotesTotal > 1 ? ` — lote ${impProg.loteAtual}/${impProg.lotesTotal}` : ""}
+            <span className="ml-2 text-muted-foreground">· <b className="text-foreground">{impProg.etiquetas}</b> etiqueta(s) enviada(s)</span>
+          </span>
+        </div>
+      )}
+      {selGrupos.size > 0 && !massa && !impProg && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           <span className="text-sm font-medium">{selGrupos.size} bloco(s) selecionado(s)</span>
           <Button size="sm" onClick={() => void aplicarTagVarios()} disabled={aplicandoLote} className="gap-1.5">
