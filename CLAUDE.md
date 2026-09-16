@@ -400,6 +400,32 @@ levam Bearer (front já levava). Regra: **pedido Shopee ainda fora do espelho
 (`pulados_sem_match_shopee`) até o `shopee-sync` trazê-lo — se o shopee-sync
 também falha nos minutos cheios, os dois efeitos se somam e o pedido "trava".
 
+## 5.0.1 Multi SKU — aba própria em /separacao (16/set/2026)
+
+Pedido com 2+ SKUs não tem TAG por bloco (o `tag-lote` só resolve linha de SKU
+único; a priorizada mostra "MULTI: a+b" e a impressão em massa pula). A aba
+**Multi SKU** (`src/components/separacao/MultiSkuPanel.tsx`) trata isso com
+dois modos, lendo `view_separacao_multi_pedidos` (1 linha por pedido multi na
+fila: `chave_combo` = sku×qtd ordenado, `itens` jsonb com sku/nome/qtd/
+localização/foto, loja, prazo, TAG, estado de impressão):
+- **Por pedido:** agrupa pedidos IGUAIS (mesma `chave_combo`); expandir mostra
+  os produtos (foto, localização) e os pedidos. "Imprimir etiquetas" do grupo
+  = TAG (se faltar) + etiquetas; "Embalar" só quem tem impressão confirmada
+  (`embalar-um`). Seleção de grupos → uma TAG por grupo.
+- **Picking list:** `view_separacao_multi_picking` (necessário × separado por
+  SKU, só pedidos SEM TAG) + tabela `separacao_multi_picking(sku, qtd_separada)`
+  persistida. Alocação GREEDY no front por prioridade (ER > SPX > ML, prazo,
+  idade): pedido só é liberado se TODOS os itens cabem no que resta; quem não
+  cabe não consome. "Liberar e imprimir" abate o separado ANTES de imprimir,
+  aplica TAG (`grupo` "MULTI · picking") e imprime.
+- **TAG:** edge fn **`separacao-multi`** (`POST ?modulo=tag`, body
+  `{separacao_ids, grupo}`): mesma sequência `ddmm-NN` de `tags_lote`, mesmo
+  dedup (pedido com TAG hoje é pulado), `tags_lote.sku='MULTI'`. Criada à
+  parte para não redeployar a `tiny-separacao` (outra sessão mexe nela).
+- **Impressão:** Shopee por TAG e loja (dedup do servidor), ML pedido a pedido
+  (regra de ouro: já impresso não sai), identificadora por TAG no fim; barra
+  de progresso com espera da impressora igual à da fila.
+
 ## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
 
 **Semântica dos status Shopee (validada com dados 22/jul/2026 — é o INVERSO do

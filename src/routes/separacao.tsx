@@ -31,6 +31,7 @@ import { MensagemLoteDialog, type AlvoMensagem } from "@/components/separacao/Me
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { MultiSkuPanel } from "@/components/separacao/MultiSkuPanel";
 import {
   Select,
   SelectContent,
@@ -4570,11 +4571,22 @@ function SeparacaoPage() {
       <Tabs defaultValue="priorizada" className="space-y-4">
         <TabsList>
           <TabsTrigger value="priorizada">Fila Priorizada</TabsTrigger>
+          <TabsTrigger value="multi">
+            Multi SKU
+            {(() => {
+              const n = (rows ?? []).filter((r) => r.tipo === "multi_sku").length;
+              return n > 0 ? <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-bold bg-purple-600 text-white">{n}</span> : null;
+            })()}
+          </TabsTrigger>
           <TabsTrigger value="detalhado">Detalhado</TabsTrigger>
         </TabsList>
 
         <TabsContent value="priorizada" className="space-y-4 mt-2">
           <FilaPriorizada />
+        </TabsContent>
+
+        <TabsContent value="multi" className="space-y-4 mt-2">
+          <MultiSkuPanel />
         </TabsContent>
 
         <TabsContent value="detalhado" className="space-y-6 mt-2">
