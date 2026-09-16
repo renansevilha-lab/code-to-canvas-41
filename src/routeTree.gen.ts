@@ -30,6 +30,7 @@ import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
 import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
+import { Route as PontoRouteImport } from './routes/ponto'
 import { Route as ProcessosRouteImport } from './routes/processos'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
@@ -149,6 +150,11 @@ const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
   path: '/pedidos-integrados',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PontoRoute = PontoRouteImport.update({
+  id: '/ponto',
+  path: '/ponto',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProcessosRoute = ProcessosRouteImport.update({
   id: '/processos',
   path: '/processos',
@@ -237,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
+  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
@@ -273,6 +280,7 @@ export interface FileRoutesByTo {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
+  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
@@ -310,6 +318,7 @@ export interface FileRoutesById {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
+  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
@@ -348,6 +357,7 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
+    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
@@ -384,6 +394,7 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
+    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
@@ -420,6 +431,7 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
+    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
@@ -457,6 +469,7 @@ export interface RootRouteChildren {
   MonitoramentoRoute: typeof MonitoramentoRoute
   PedidosRoute: typeof PedidosRoute
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
+  PontoRoute: typeof PontoRoute
   ProcessosRoute: typeof ProcessosRoute
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
@@ -621,6 +634,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PedidosIntegradosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ponto': {
+      id: '/ponto'
+      path: '/ponto'
+      fullPath: '/ponto'
+      preLoaderRoute: typeof PontoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/processos': {
       id: '/processos'
       path: '/processos'
@@ -737,6 +757,7 @@ const rootRouteChildren: RootRouteChildren = {
   MonitoramentoRoute: MonitoramentoRoute,
   PedidosRoute: PedidosRoute,
   PedidosIntegradosRoute: PedidosIntegradosRoute,
+  PontoRoute: PontoRoute,
   ProcessosRoute: ProcessosRoute,
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,

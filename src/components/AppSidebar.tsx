@@ -28,6 +28,7 @@ import {
   RotateCcw,
   Zap,
   Users,
+  Clock,
   ChevronDown,
   type LucideIcon,
 } from "lucide-react";
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "galpao" },
       { title: "Compras & Recebimento", url: "/compras", icon: PackagePlus, modulo: "galpao" },
       { title: "Manual de Operação", url: "/processos", icon: ClipboardCheck, modulo: "galpao" },
+      { title: "Ponto", url: "/ponto", icon: Clock, modulo: "galpao" },
       { title: "Risco de cancelamento", url: "/risco-cancelamento", icon: AlertTriangle, modulo: "galpao" },
       { title: "A enviar (Shopee)", url: "/a-enviar", icon: Truck, modulo: "galpao" },
       { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "devolucoes" },
