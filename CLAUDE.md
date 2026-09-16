@@ -788,6 +788,20 @@ existindo na barra. Função separada da `tiny-separacao` (crítica; outras sess
 mexem). **Fase 2 (a testar): embalar automaticamente os pedidos com impressão
 confirmada** — o gancho natural é o `confirmar-impressao` (job `done`).
 
+## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
+
+Rota `/ponto` (módulo `galpao`), quiosque: a pessoa escolhe o nome, digita a
+SUA senha e bate **Chegada / Almoço / Saída** ("Almoço" é um botão: 1º clique =
+saída, 2º = volta). Pessoas em `ponto_pessoas` (vini, renan, niko, tania,
+kevin; senha em **bcrypt** via pgcrypto — que no Supabase vive no schema
+`extensions`: as RPCs têm `search_path = public, extensions`). Escrita **só por
+RPC security definer**: `ponto_definir_senha(pessoa, nova, atual?)` e
+`ponto_registrar(pessoa, senha, evento)` — ordem dos eventos, um por dia,
+`pg_sleep(0.6)` em senha errada. As tabelas não têm grant para o app; ele lê
+`view_ponto_pessoas` (sem hash) e `view_ponto_dia` (horas = saída − chegada −
+almoço; dia sem saída/volta = incompleto). Ajuste manual de marcação ainda não
+existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária (12 casos).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
