@@ -30,12 +30,12 @@ import { Route as MetasRouteImport } from './routes/metas'
 import { Route as MonitoramentoRouteImport } from './routes/monitoramento'
 import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
-import { Route as PontoRouteImport } from './routes/ponto'
 import { Route as ProcessosRouteImport } from './routes/processos'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as PromocoesRouteImport } from './routes/promocoes'
 import { Route as PromocoesMlRouteImport } from './routes/promocoes-ml'
+import { Route as RegistroHorasRouteImport } from './routes/registro-horas'
 import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
 import { Route as RiscoCancelamentoRouteImport } from './routes/risco-cancelamento'
 import { Route as SaudeMlRouteImport } from './routes/saude-ml'
@@ -150,11 +150,6 @@ const PedidosIntegradosRoute = PedidosIntegradosRouteImport.update({
   path: '/pedidos-integrados',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PontoRoute = PontoRouteImport.update({
-  id: '/ponto',
-  path: '/ponto',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ProcessosRoute = ProcessosRouteImport.update({
   id: '/processos',
   path: '/processos',
@@ -178,6 +173,11 @@ const PromocoesRoute = PromocoesRouteImport.update({
 const PromocoesMlRoute = PromocoesMlRouteImport.update({
   id: '/promocoes-ml',
   path: '/promocoes-ml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegistroHorasRoute = RegistroHorasRouteImport.update({
+  id: '/registro-horas',
+  path: '/registro-horas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReprocessarCmvRoute = ReprocessarCmvRouteImport.update({
@@ -243,12 +243,12 @@ export interface FileRoutesByFullPath {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
-  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
   '/saude-ml': typeof SaudeMlRoute
@@ -280,12 +280,12 @@ export interface FileRoutesByTo {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
-  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
   '/saude-ml': typeof SaudeMlRoute
@@ -318,12 +318,12 @@ export interface FileRoutesById {
   '/monitoramento': typeof MonitoramentoRoute
   '/pedidos': typeof PedidosRoute
   '/pedidos-integrados': typeof PedidosIntegradosRoute
-  '/ponto': typeof PontoRoute
   '/processos': typeof ProcessosRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
   '/saude-ml': typeof SaudeMlRoute
@@ -357,12 +357,12 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
-    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
     | '/saude-ml'
@@ -394,12 +394,12 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
-    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
     | '/saude-ml'
@@ -431,12 +431,12 @@ export interface FileRouteTypes {
     | '/monitoramento'
     | '/pedidos'
     | '/pedidos-integrados'
-    | '/ponto'
     | '/processos'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
     | '/saude-ml'
@@ -469,12 +469,12 @@ export interface RootRouteChildren {
   MonitoramentoRoute: typeof MonitoramentoRoute
   PedidosRoute: typeof PedidosRoute
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
-  PontoRoute: typeof PontoRoute
   ProcessosRoute: typeof ProcessosRoute
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
   PromocoesRoute: typeof PromocoesRoute
   PromocoesMlRoute: typeof PromocoesMlRoute
+  RegistroHorasRoute: typeof RegistroHorasRoute
   ReprocessarCmvRoute: typeof ReprocessarCmvRoute
   RiscoCancelamentoRoute: typeof RiscoCancelamentoRoute
   SaudeMlRoute: typeof SaudeMlRoute
@@ -634,13 +634,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PedidosIntegradosRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ponto': {
-      id: '/ponto'
-      path: '/ponto'
-      fullPath: '/ponto'
-      preLoaderRoute: typeof PontoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/processos': {
       id: '/processos'
       path: '/processos'
@@ -674,6 +667,13 @@ declare module '@tanstack/react-router' {
       path: '/promocoes-ml'
       fullPath: '/promocoes-ml'
       preLoaderRoute: typeof PromocoesMlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/registro-horas': {
+      id: '/registro-horas'
+      path: '/registro-horas'
+      fullPath: '/registro-horas'
+      preLoaderRoute: typeof RegistroHorasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reprocessar-cmv': {
@@ -757,12 +757,12 @@ const rootRouteChildren: RootRouteChildren = {
   MonitoramentoRoute: MonitoramentoRoute,
   PedidosRoute: PedidosRoute,
   PedidosIntegradosRoute: PedidosIntegradosRoute,
-  PontoRoute: PontoRoute,
   ProcessosRoute: ProcessosRoute,
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,
   PromocoesRoute: PromocoesRoute,
   PromocoesMlRoute: PromocoesMlRoute,
+  RegistroHorasRoute: RegistroHorasRoute,
   ReprocessarCmvRoute: ReprocessarCmvRoute,
   RiscoCancelamentoRoute: RiscoCancelamentoRoute,
   SaudeMlRoute: SaudeMlRoute,

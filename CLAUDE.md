@@ -799,8 +799,9 @@ RPC security definer**: `ponto_definir_senha(pessoa, nova, atual?)` e
 `ponto_registrar(pessoa, senha, evento)` — ordem dos eventos, um por dia,
 `pg_sleep(0.6)` em senha errada. As tabelas não têm grant para o app; ele lê
 `view_ponto_pessoas` (sem hash) e `view_ponto_dia` (horas = saída − chegada −
-almoço; dia sem saída/volta = incompleto). Ajuste manual de marcação ainda não
-existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária (12 casos).
+almoço; dia sem saída/volta = incompleto). O quadro "Hoje" e o "Relatório do mês" só
+aparecem para o administrador (módulo `todos`). Ajuste manual de marcação
+ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária (12 casos).
 
 ## 6. Edge Functions
 

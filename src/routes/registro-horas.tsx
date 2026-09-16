@@ -10,10 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { usePerfil } from "@/hooks/usePerfil";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
-// Ponto (16/set/2026) — quiosque de marcação para a equipe do galpão.
+// Registro de horas (16/set/2026) — quiosque de marcação para a equipe.
 // A pessoa escolhe o nome, digita a SUA senha e bate Chegada / Almoço / Saída.
 // Toda a regra (senha em hash, ordem dos eventos, um por dia) mora no banco:
 // RPCs `ponto_registrar` e `ponto_definir_senha` (security definer). O front
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 // "Almoço" é um botão só: o 1º clique registra a saída, o 2º a volta.
 // ============================================================================
 
-export const Route = createFileRoute("/ponto")({
+export const Route = createFileRoute("/registro-horas")({
   component: PontoPage,
 });
 
@@ -67,6 +68,9 @@ function useDia(de: string, ate: string) {
 
 function PontoPage() {
   const qc = useQueryClient();
+  // Quadro de hoje e relatório do mês: só o administrador (módulo "todos").
+  const { perfil } = usePerfil();
+  const admin = !!perfil?.modulos.includes("todos");
   const { data: pessoas } = usePessoas();
   const hoje = hojeISO();
   const { data: hojeRows } = useDia(hoje, hoje);
@@ -126,11 +130,11 @@ function PontoPage() {
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-5">
       <div>
-        <h1 className="text-lg font-semibold flex items-center gap-2"><Clock className="h-5 w-5" /> Ponto</h1>
+        <h1 className="text-lg font-semibold flex items-center gap-2"><Clock className="h-5 w-5" /> Registro de horas</h1>
         <p className="text-sm text-muted-foreground">Escolha seu nome, digite sua senha e registre. O horário é o do servidor (Brasília).</p>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className={cn("grid gap-5", admin && "lg:grid-cols-[minmax(0,1fr)_380px]")}>
         <Card className="p-5 flex flex-col gap-5">
           {/* 1) quem */}
           <div className="flex flex-wrap gap-2">
@@ -193,7 +197,8 @@ function PontoPage() {
           )}
         </Card>
 
-        {/* hoje, todo mundo */}
+        {/* hoje, todo mundo — só administrador */}
+        {admin && (
         <Card className="p-4">
           <h2 className="text-sm font-semibold mb-2">Hoje · {format(new Date(), "dd/MM")}</h2>
           <table className="w-full text-sm">
@@ -216,9 +221,10 @@ function PontoPage() {
             </tbody>
           </table>
         </Card>
+        )}
       </div>
 
-      <Relatorio pessoas={pessoas ?? []} />
+      {admin && <Relatorio pessoas={pessoas ?? []} />}
 
       {pessoa && (
         <SenhaDialog pessoa={pessoa} aberto={senhaDlg} onClose={() => setSenhaDlg(false)} onSalvo={invalidar} />
