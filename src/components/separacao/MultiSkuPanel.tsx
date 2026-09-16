@@ -20,6 +20,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
+import { FAIXAS_PRAZO, faixaPrazo, nivelPrazo, PRAZO_ESTILO } from "@/lib/prazo";
 
 // ============================================================================
 // Separação de pedidos MULTI SKU (aba própria em /separacao, 16/set/2026).
@@ -57,6 +58,22 @@ interface Impressora { printer_id: number; nome: string; computador: string; est
 const STORAGE_PRINTER = "separacao.printerId";
 const STORAGE_IDENT = "separacao.identificadorLote";
 const STORAGE_MODO = "separacao.multi.modo";
+type EstadoFiltro = "todos" | "sem_tag" | "com_tag" | "impressos" | "nao_impressos";
+const ESTADOS: ReadonlyArray<readonly [EstadoFiltro, string]> = [
+  ["todos", "Todos"], ["sem_tag", "Sem TAG"], ["com_tag", "Com TAG"], ["impressos", "Impressos"], ["nao_impressos", "Não impressos"],
+];
+// selo de prazo (mesma régua da fila): "3d atraso" / "vence hoje" / "amanhã" / "em N d"
+function PrazoBadge({ dias, iso }: { dias: number | null; iso: string | null }) {
+  const nivel = nivelPrazo(dias);
+  if (!nivel) return <span className="text-muted-foreground">sem prazo</span>;
+  const texto = dias! < 0 ? `${-dias!}d atraso` : dias === 0 ? "vence hoje" : dias === 1 ? "amanhã" : `em ${dias} d`;
+  return (
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold tabular-nums whitespace-nowrap", PRAZO_ESTILO[nivel])}
+      title={iso ? `Prazo de envio ${ddmm(iso)}` : ""}>
+      {texto}{iso ? <span className="font-normal opacity-80">· {ddmm(iso)}</span> : null}
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------- helpers
 function lojaDeMarca(m: string | null): "ottz" | "svl" | null {
@@ -184,6 +201,13 @@ export function MultiSkuPanel() {
   });
   useEffect(() => { try { localStorage.setItem(STORAGE_MODO, modo); } catch { /* noop */ } }, [modo]);
   const [busca, setBusca] = useState("");
+  // filtros (valem nos dois modos; no picking limitam o que entra na lista)
+  const [envios, setEnvios] = useState<string[] | null>(null);        // null = todos
+  const [empresa, setEmpresa] = useState<"todas" | "Ottz" | "Bumi" | "ML">("todas");
+  const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);       // faixas (vazio = todas)
+  const [estado, setEstado] = useState<EstadoFiltro>("todos");
+  const filtrosAtivos = envios !== null || empresa !== "todas" || prazoFiltro.length > 0 || estado !== "todos" || busca.trim() !== "";
+  const limparFiltros = () => { setEnvios(null); setEmpresa("todas"); setPrazoFiltro([]); setEstado("todos"); setBusca(""); };
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const [pedidosAbertos, setPedidosAbertos] = useState<Set<number>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set()); // chaves de combinação selecionadas
@@ -213,19 +237,59 @@ export function MultiSkuPanel() {
     },
   });
   const pedidos = q.data ?? [];
-  const picking = pickingQ.data ?? [];
+  const pickingBase = pickingQ.data ?? [];
   const invalidar = () => {
     void qc.invalidateQueries({ queryKey: ["separacao", "multi"] });
     void qc.invalidateQueries({ queryKey: ["separacao"] });
   };
 
+  const enviosDisponiveis = useMemo(() => Array.from(new Set(pedidos.map((p) => p.tipo_envio ?? "?"))).sort((a, b) => {
+    const o = (e: string) => (e === "ER" ? 1 : e === "SPX" ? 2 : e === "ML" ? 3 : 4); return o(a) - o(b) || a.localeCompare(b);
+  }), [pedidos]);
+  const faixasDisponiveis = useMemo(() => new Set(pedidos.map((p) => faixaPrazo(p.dias_para_prazo))), [pedidos]);
+
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    if (!t) return pedidos;
-    return pedidos.filter((p) =>
-      (p.venda_numero ?? "").toLowerCase().includes(t) || (p.numero_ecommerce ?? "").toLowerCase().includes(t) ||
-      (p.tag_lote ?? "").toLowerCase().includes(t) || p.itens.some((i) => i.sku.toLowerCase().includes(t) || (i.nome ?? "").toLowerCase().includes(t)));
-  }, [pedidos, busca]);
+    return pedidos.filter((p) => {
+      if (envios && !envios.includes(p.tipo_envio ?? "?")) return false;
+      if (empresa !== "todas" && p.loja !== empresa) return false;
+      if (prazoFiltro.length > 0 && !prazoFiltro.includes(faixaPrazo(p.dias_para_prazo))) return false;
+      if (estado === "sem_tag" && p.tag_lote) return false;
+      if (estado === "com_tag" && !p.tag_lote) return false;
+      if (estado === "impressos" && !impressa(p)) return false;
+      if (estado === "nao_impressos" && impressa(p)) return false;
+      if (t && !(
+        (p.venda_numero ?? "").toLowerCase().includes(t) || (p.numero_ecommerce ?? "").toLowerCase().includes(t) ||
+        (p.tag_lote ?? "").toLowerCase().includes(t) || p.itens.some((i) => i.sku.toLowerCase().includes(t) || (i.nome ?? "").toLowerCase().includes(t)))) return false;
+      return true;
+    });
+  }, [pedidos, busca, envios, empresa, prazoFiltro, estado]);
+
+  // picking respeita os filtros: o necessário é recalculado só com os pedidos
+  // SEM TAG que passaram no filtro (ex.: "só Entrega Rápida de hoje"); o
+  // separado (persistido) vem da tabela, por SKU.
+  const picking = useMemo(() => {
+    const need = new Map<string, { qtd: number; pedidos: Set<number> }>();
+    for (const p of filtrados) {
+      if (p.tag_lote) continue;
+      for (const i of p.itens) {
+        const e = need.get(i.sku) ?? { qtd: 0, pedidos: new Set<number>() };
+        e.qtd += i.qtd; e.pedidos.add(p.separacao_id); need.set(i.sku, e);
+      }
+    }
+    const porSku = new Map(pickingBase.map((r) => [r.sku, r]));
+    const linhas: PickingRow[] = [];
+    for (const [sku, e] of need.entries()) {
+      const b = porSku.get(sku);
+      const item = filtrados.flatMap((p) => p.itens).find((i) => i.sku === sku);
+      linhas.push({
+        sku, nome: b?.nome ?? item?.nome ?? null, foto: b?.foto ?? item?.foto ?? null, localizacao: b?.localizacao ?? item?.localizacao ?? null,
+        qtd_necessaria: e.qtd, pedidos: e.pedidos.size, qtd_separada: Number(b?.qtd_separada ?? 0),
+        separado_por: b?.separado_por ?? null, separado_em: b?.separado_em ?? null,
+      });
+    }
+    return linhas.sort((a, b) => (a.localizacao ?? "~").localeCompare(b.localizacao ?? "~") || a.sku.localeCompare(b.sku));
+  }, [filtrados, pickingBase]);
 
   // grupos de pedidos IGUAIS (mesma combinação sku×qtd), na ordem de prioridade
   const grupos = useMemo(() => {
@@ -247,7 +311,7 @@ export function MultiSkuPanel() {
   // no que ainda resta separado; ao liberar, consome. Quem não cabe não consome.
   const alocacao = useMemo(() => {
     const restante = new Map<string, number>(picking.map((r) => [r.sku, Number(r.qtd_separada ?? 0)]));
-    const pendentes = pedidos.filter((p) => !p.tag_lote).sort(porPrioridade);
+    const pendentes = filtrados.filter((p) => !p.tag_lote).sort(porPrioridade);
     const liberados: PedidoMulti[] = [];
     const faltando: { p: PedidoMulti; faltas: { sku: string; falta: number }[] }[] = [];
     for (const p of pendentes) {
@@ -258,7 +322,7 @@ export function MultiSkuPanel() {
       } else faltando.push({ p, faltas });
     }
     return { liberados, faltando, sobra: restante };
-  }, [pedidos, picking]);
+  }, [filtrados, picking]);
 
   // ---------------------------------------------------------------- impressão
   /** Imprime as etiquetas dos pedidos (todos com TAG): Shopee por TAG e loja, ML por pedido, identificadora por TAG no fim. */
@@ -378,7 +442,7 @@ export function MultiSkuPanel() {
   async function marcarTudoSeparado() {
     if (!window.confirm(`Marcar TODOS os ${picking.length} SKUs como totalmente separados?`)) return;
     const { error } = await supabaseExternal.from("separacao_multi_picking").upsert(
-      picking.map((r) => ({ sku: r.sku, qtd_separada: Number(r.qtd_necessaria), atualizado_por: perfil?.nome ?? null, atualizado_em: new Date().toISOString() })), { onConflict: "sku" });
+      picking.map((r) => ({ sku: r.sku, qtd_separada: Math.max(Number(r.qtd_necessaria), Number(r.qtd_separada)), atualizado_por: perfil?.nome ?? null, atualizado_em: new Date().toISOString() })), { onConflict: "sku" });
     if (error) { toast.error("Falha", { description: error.message }); return; }
     void qc.invalidateQueries({ queryKey: ["separacao", "multi", "picking"] });
   }
@@ -396,7 +460,7 @@ export function MultiSkuPanel() {
     // abate ANTES de imprimir (o que sobra continua separado para os próximos)
     const consumo = new Map<string, number>();
     for (const p of lib) for (const i of p.itens) consumo.set(i.sku, (consumo.get(i.sku) ?? 0) + i.qtd);
-    const linhas = picking.filter((r) => consumo.has(r.sku)).map((r) => ({
+    const linhas = pickingBase.filter((r) => consumo.has(r.sku)).map((r) => ({
       sku: r.sku, qtd_separada: Math.max(0, Number(r.qtd_separada) - (consumo.get(r.sku) ?? 0)),
       atualizado_por: perfil?.nome ?? null, atualizado_em: new Date().toISOString(),
     }));
@@ -428,6 +492,7 @@ export function MultiSkuPanel() {
           <div className="text-[12.5px] text-muted-foreground">
             <b className="text-foreground">{formatNumber(resumo.pedidos)}</b> pedidos · {formatNumber(resumo.combos)} combinações · {formatNumber(resumo.unidades)} un ·{" "}
             {formatNumber(resumo.semTag)} sem TAG · {formatNumber(resumo.impressos)} impressos
+            {filtrosAtivos && <> · <b className="text-foreground">{formatNumber(filtrados.length)}</b> no filtro</>}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -448,10 +513,58 @@ export function MultiSkuPanel() {
         </div>
       </div>
 
+      {/* filtros */}
+      {pedidos.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border bg-card p-0.5">
+            <button onClick={() => setEnvios(null)} className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", envios === null ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}>Todos envios</button>
+            {enviosDisponiveis.map((e) => {
+              const n = pedidos.filter((p) => (p.tipo_envio ?? "?") === e).length;
+              const on = envios?.includes(e) ?? false;
+              return (
+                <button key={e} title="Clique isola o envio; Ctrl+clique soma"
+                  onClick={(ev) => {
+                    if (ev.ctrlKey || ev.metaKey) { const base = envios ?? enviosDisponiveis; setEnvios(base.includes(e) ? base.filter((x) => x !== e) : [...base, e]); }
+                    else setEnvios(envios && envios.length === 1 && envios[0] === e ? null : [e]);
+                  }}
+                  className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", on ? (e === "ER" ? "bg-red-600 text-white" : "bg-accent text-accent-foreground") : "text-muted-foreground hover:text-foreground")}>
+                  {e} <span className="opacity-70">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="inline-flex rounded-lg border bg-card p-0.5">
+            {([["todas", "Todas"], ["Ottz", "Ottz"], ["Bumi", "Bumi"], ["ML", "ML"]] as const).map(([id, rot]) => (
+              <button key={id} onClick={() => setEmpresa(id)} className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", empresa === id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}>{rot}</button>
+            ))}
+          </div>
+          <div className="inline-flex rounded-lg border bg-card p-0.5" title="Prazo de envio — marque mais de uma faixa">
+            {FAIXAS_PRAZO.filter((f) => faixasDisponiveis.has(f.id)).map((f) => {
+              const n = pedidos.filter((p) => faixaPrazo(p.dias_para_prazo) === f.id).length;
+              const on = prazoFiltro.includes(f.id);
+              return (
+                <button key={f.id} onClick={() => setPrazoFiltro((cur) => (cur.includes(f.id) ? cur.filter((x) => x !== f.id) : [...cur, f.id]))}
+                  className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", on ? (f.id === "vencidos" ? "bg-red-600 text-white" : f.id === "0" ? "bg-orange-600 text-white" : "bg-accent text-accent-foreground") : "text-muted-foreground hover:text-foreground")}>
+                  {f.label} <span className="opacity-70">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="inline-flex rounded-lg border bg-card p-0.5">
+            {ESTADOS.map(([id, rot]) => (
+              <button key={id} onClick={() => setEstado(id)} className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", estado === id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}>{rot}</button>
+            ))}
+          </div>
+          {filtrosAtivos && <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={limparFiltros}>Limpar filtros</Button>}
+        </div>
+      )}
+
       {q.isLoading ? (
         <Card className="p-8 text-center text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</Card>
       ) : pedidos.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">Nenhum pedido multi-SKU na fila. 🎉</Card>
+      ) : filtrados.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-muted-foreground">Nenhum pedido com esses filtros. <button className="underline" onClick={limparFiltros}>Limpar filtros</button></Card>
       ) : modo === "pedido" ? (
         // ============================================================ POR PEDIDO
         <div className="space-y-2">
@@ -482,6 +595,12 @@ export function MultiSkuPanel() {
                   <div className="flex items-center gap-2 shrink-0 text-[11.5px]">
                     <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300 font-semibold">{g.peds.length} pedido(s)</span>
                     {envios.map((e) => <span key={e} className="px-2 py-0.5 rounded-full bg-muted font-semibold">{e}</span>)}
+                    {(() => {
+                      const comPrazo = g.peds.filter((p) => p.dias_para_prazo != null);
+                      if (comPrazo.length === 0) return null;
+                      const m = comPrazo.reduce((a, b) => ((a.dias_para_prazo ?? 999) <= (b.dias_para_prazo ?? 999) ? a : b));
+                      return <PrazoBadge dias={m.dias_para_prazo} iso={m.ship_by_date} />;
+                    })()}
                     {tags.map((t) => <span key={t} className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 font-mono font-semibold">{t}</span>)}
                     {nImp > 0 && <span className="text-muted-foreground">{nImp}/{g.peds.length} impressos</span>}
                   </div>
@@ -523,9 +642,7 @@ export function MultiSkuPanel() {
                             </td>
                             <td>{p.loja}</td>
                             <td>{p.tipo_envio ?? "—"}</td>
-                            <td className={cn("tabular-nums", (p.dias_para_prazo ?? 9) < 0 && "text-destructive font-semibold", p.dias_para_prazo === 0 && "text-orange-600 font-semibold")}>
-                              {ddmm(p.ship_by_date)}{p.dias_para_prazo != null && p.dias_para_prazo < 0 ? ` · ${-p.dias_para_prazo}d atraso` : p.dias_para_prazo === 0 ? " · hoje" : ""}
-                            </td>
+                            <td><PrazoBadge dias={p.dias_para_prazo} iso={p.ship_by_date} /></td>
                             <td className="font-mono">{p.tag_lote ?? "—"}</td>
                             <td>
                               {impressa(p) ? <span className="text-emerald-700 dark:text-emerald-400 font-semibold">impressa {hhmm(p.impressa_em)}</span>
@@ -555,7 +672,7 @@ export function MultiSkuPanel() {
         <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
           <Card className="overflow-hidden">
             <div className="p-3 flex flex-wrap items-center justify-between gap-2 border-b">
-              <div className="text-sm font-semibold">Picking list — {formatNumber(picking.length)} SKUs · {formatNumber(picking.reduce((s, r) => s + Number(r.qtd_necessaria), 0))} un a separar (pedidos sem TAG)</div>
+              <div className="text-sm font-semibold">Picking list — {formatNumber(picking.length)} SKUs · {formatNumber(picking.reduce((s, r) => s + Number(r.qtd_necessaria), 0))} un a separar (pedidos sem TAG{filtrosAtivos ? ", no filtro" : ""})</div>
               <div className="flex items-center gap-1.5">
                 <Button size="sm" variant="outline" className="h-8" onClick={() => void marcarTudoSeparado()} disabled={picking.length === 0}>Marcar tudo separado</Button>
                 <Button size="sm" variant="ghost" className="h-8 gap-1" onClick={() => void zerarPicking()} disabled={picking.length === 0}><RotateCcw className="h-3.5 w-3.5" /> Zerar</Button>
@@ -617,7 +734,7 @@ export function MultiSkuPanel() {
                 <div className="space-y-1 max-h-[420px] overflow-auto">
                   {alocacao.liberados.map((p) => (
                     <div key={p.separacao_id} className="rounded-md border p-2 text-[12px] flex items-center justify-between gap-2">
-                      <div className="min-w-0"><span className="font-mono font-semibold">#{p.venda_numero}</span> <span className="text-muted-foreground">{p.loja} · {p.tipo_envio}</span><div className="text-muted-foreground truncate">{descricaoCombo(p.itens)}</div></div>
+                      <div className="min-w-0"><span className="font-mono font-semibold">#{p.venda_numero}</span> <span className="text-muted-foreground">{p.loja} · {p.tipo_envio}</span> <PrazoBadge dias={p.dias_para_prazo} iso={p.ship_by_date} /><div className="text-muted-foreground truncate">{descricaoCombo(p.itens)}</div></div>
                       <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                     </div>
                   ))}
@@ -630,7 +747,7 @@ export function MultiSkuPanel() {
                 <div className="space-y-1 max-h-[360px] overflow-auto">
                   {alocacao.faltando.map(({ p, faltas }) => (
                     <div key={p.separacao_id} className="rounded-md border p-2 text-[12px]">
-                      <span className="font-mono font-semibold">#{p.venda_numero}</span> <span className="text-muted-foreground">{p.loja} · {p.tipo_envio}</span>
+                      <span className="font-mono font-semibold">#{p.venda_numero}</span> <span className="text-muted-foreground">{p.loja} · {p.tipo_envio}</span> <PrazoBadge dias={p.dias_para_prazo} iso={p.ship_by_date} />
                       <div className="text-amber-700 dark:text-amber-400">falta {faltas.map((f) => `${f.sku} ×${formatNumber(f.falta)}`).join(", ")}</div>
                     </div>
                   ))}
