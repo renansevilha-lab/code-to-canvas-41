@@ -1190,6 +1190,13 @@ não Publish — o "Reprocessar CMV por período" nasceu dentro do bloco "Puxar
 custo do Tiny", que só renderiza em pedido com custo INCOMPLETO; nos pedidos
 completos (onde se corrige custo errado) nunca aparecia.
 
+## 9.2 Planos do dono
+
+Backlog com levantamento pronto em **`docs/planos.md`**: (1) integração TikTok
+Shop (`docs/integracao-tiktok-shop.md`); (2) falta de estoque → balanço 0 no
+depósito Geral do Tiny (`POST /estoque/{id}`, permissão de escrita confirmada
+17/set) + conferência do anúncio na Shopee ao vivo.
+
 ## 10. Como trabalhar aqui
 
 - **Diagnostique antes de alterar.** Várias correções erradas saíram de supor a
