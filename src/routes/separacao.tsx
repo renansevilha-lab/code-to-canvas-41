@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MultiSkuPanel } from "@/components/separacao/MultiSkuPanel";
+import { FaltaEstoqueDialog, type AlvoFalta, desfazerZeramento, useConferenciaFalta, ConferenciaBadge } from "@/components/separacao/FaltaEstoqueDialog";
 import {
   Select,
   SelectContent,
@@ -1478,50 +1479,23 @@ function PedidosDoSku({
   const { perfil } = usePerfil();
   const obsQ = useObsSeparacao();
   const [reportando, setReportando] = useState<number | null>(null);
+  const [alvoFalta, setAlvoFalta] = useState<AlvoFalta | null>(null);
 
   /**
-   * Reportar falta de estoque: marcador "FALTA ESTOQUE" no pedido do Tiny +
-   * aviso no Discord (edge fn separacao-falta — separada da tiny-separacao de
-   * propósito, para não mexer na função crítica de bancada).
+   * Reportar falta de estoque: abre o FaltaEstoqueDialog (confirmação com o
+   * saldo do Tiny; produto simples zera o Geral, kit pergunta o componente).
+   * Backend: separacao-falta v6 — separada da tiny-separacao de propósito.
    */
-  async function reportarFalta(p: PedidoSepRow) {
+  function reportarFalta(p: PedidoSepRow) {
     if (p.separacao_id == null) { toast.error("Sem separacao_id"); return; }
-    if (!window.confirm(
-      `Reportar FALTA DE ESTOQUE?
-
-` +
-      `Pedido ${p.numero_ecommerce ?? p.separacao_id} · SKU ${p.sku_unico ?? "?"}
-` +
-      `Aplica o marcador "FALTA ESTOQUE" no Tiny e avisa a equipe no Discord.`,
-    )) return;
     setReportando(p.separacao_id);
-    try {
-      const resp = await fetch(
-        `${EXTERNAL_URL}/functions/v1/separacao-falta?separacao_id=${p.separacao_id}` +
-        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
-        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-      );
-      const d = (await resp.json().catch(() => ({}))) as {
-        ok?: boolean; erro?: string; discord?: boolean;
-      };
-      if (!resp.ok || !d.ok) throw new Error(d.erro ?? `HTTP ${resp.status}`);
-      toast.success(`Falta reportada — ${p.sku_unico ?? p.numero_ecommerce}`, {
-        description: d.discord
-          ? "Marcador no Tiny + aviso no Discord."
-          : "Marcador aplicado no Tiny (Discord indisponível agora).",
-      });
-      void registrarSeparacaoLog({
-        evento: "falta_estoque", usuario: perfil?.nome ?? null,
-        order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
-        detalhe: { via: "menu_pedido" },
-      });
-      // badge/filtro "sem estoque" atualizam na hora (em segundo plano)
-      void qc.invalidateQueries({ queryKey: ["separacao"] });
-    } catch (e) {
-      toast.error("Erro ao reportar falta", { description: (e as Error).message });
-    } finally {
-      setReportando(null);
-    }
+    setAlvoFalta({
+      filtro: `separacao_id=${p.separacao_id}`,
+      rotulo: `Pedido ${p.numero_ecommerce ?? p.separacao_id} · SKU ${p.sku_unico ?? "?"}`,
+      sku: p.sku_unico ?? null,
+      via: "menu_pedido",
+      log: { order_sn: p.numero_ecommerce, separacao_id: p.separacao_id },
+    });
   }
   const { data, isLoading, error } = useQuery({
     queryKey: ["separacao", "view_separacao_pedidos", sku, tipoEnvio, tagSugerida],
@@ -1567,6 +1541,12 @@ function PedidosDoSku({
   }
   return (
     <div className="ml-8 mt-1 mb-2 border-l-2 border-muted pl-3">
+      <FaltaEstoqueDialog
+        alvo={alvoFalta}
+        por={perfil?.nome ?? null}
+        onClose={() => { setAlvoFalta(null); setReportando(null); }}
+        onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+      />
       <table className="w-full text-xs">
         <thead className="text-[10px] uppercase text-muted-foreground">
           <tr className="border-b">
@@ -1663,6 +1643,17 @@ function PedidosDoSku({
                         <PackageX className="h-3.5 w-3.5 mr-2" />
                         Reportar falta de estoque
                       </DropdownMenuItem>
+                      {p.falta_estoque_em && p.sku_unico ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            void desfazerZeramento(String(p.sku_unico), perfil?.nome ?? null)
+                              .then((ok) => { if (ok) void qc.invalidateQueries({ queryKey: ["separacao"] }); });
+                          }}
+                        >
+                          <PackageCheck className="h-3.5 w-3.5 mr-2" />
+                          Estoque voltou (desfazer balanço no Tiny)
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem
                         disabled={p.separacao_id == null}
                         onClick={() => {
@@ -1804,6 +1795,7 @@ function LotesDoDia({
   const [selLotes, setSelLotes] = useState<Set<string>>(new Set());
   const [embalandoLote, setEmbalandoLote] = useState(false);
   const [reportandoFalta, setReportandoFalta] = useState<string | null>(null);
+  const [alvoFalta, setAlvoFalta] = useState<AlvoFalta | null>(null);
   const obsQ = useObsSeparacao();
 
   /**
@@ -1811,47 +1803,15 @@ function LotesDoDia({
    * cada pedido ainda na fila + UM aviso agregado no Discord (separacao-falta
    * v2, modo ?tag=). Evita o um-por-um quando a prateleira está vazia.
    */
-  async function reportarFaltaLote(lote: TagLoteRow) {
-    if (!window.confirm(
-      `Reportar FALTA DE ESTOQUE do lote ${lote.tag}?
-
-` +
-      `${lote.sku ?? "?"} · ${lote.qtd_pedidos} pedido(s)
-` +
-      `Aplica o marcador "FALTA ESTOQUE" em cada pedido no Tiny e manda UM aviso no Discord.`,
-    )) return;
+  function reportarFaltaLote(lote: TagLoteRow) {
     setReportandoFalta(lote.tag);
-    try {
-      const resp = await fetch(
-        `${EXTERNAL_URL}/functions/v1/separacao-falta?tag=${encodeURIComponent(lote.tag)}` +
-        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
-        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-      );
-      const d = (await resp.json().catch(() => ({}))) as {
-        ok?: boolean; erro?: string; aplicados?: number;
-        pedidos_no_lote?: number; falhas?: string[]; discord?: boolean;
-      };
-      if (!resp.ok || !d.ok) throw new Error(d.erro ?? d.falhas?.[0] ?? `HTTP ${resp.status}`);
-      const parcial = (d.aplicados ?? 0) < (d.pedidos_no_lote ?? 0);
-      toast.success(`Falta reportada — lote ${lote.tag}`, {
-        description: `${d.aplicados}/${d.pedidos_no_lote} pedido(s) marcados no Tiny` +
-          (parcial ? ` — ${d.falhas?.[0] ?? "reste rode de novo"}` : "") +
-          (d.discord ? " · aviso no Discord" : ""),
-        duration: parcial ? 10000 : 5000,
-      });
-      void registrarSeparacaoLog({
-        evento: "falta_estoque", usuario: perfil?.nome ?? null,
-        tag: lote.tag, sku: lote.sku,
-        detalhe: { via: "menu_lote", aplicados: d.aplicados, no_lote: d.pedidos_no_lote },
-      });
-      void qc.invalidateQueries({ queryKey: ["separacao"] });
-    } catch (e) {
-      toast.error(`Erro ao reportar falta do lote ${lote.tag}`, {
-        description: (e as Error).message,
-      });
-    } finally {
-      setReportandoFalta(null);
-    }
+    setAlvoFalta({
+      filtro: `tag=${encodeURIComponent(lote.tag)}`,
+      rotulo: `Lote ${lote.tag} · ${lote.sku ?? "?"} · ${lote.qtd_pedidos} pedido(s)`,
+      sku: lote.sku ?? null,
+      via: "menu_lote",
+      log: { tag: lote.tag },
+    });
   }
   const [identificadorAtivo, setIdentificadorAtivo] = useState<boolean>(() => {
     try { return localStorage.getItem(STORAGE_IDENT) === "1"; } catch { return false; }
@@ -2089,6 +2049,12 @@ function LotesDoDia({
 
   return (
     <Card className="p-4 space-y-3">
+      <FaltaEstoqueDialog
+        alvo={alvoFalta}
+        por={perfil?.nome ?? null}
+        onClose={() => { setAlvoFalta(null); setReportandoFalta(null); }}
+        onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+      />
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
           type="button"
@@ -2653,6 +2619,8 @@ function FilaPriorizada() {
   }
 
   const [reportandoLinha, setReportandoLinha] = useState<string | null>(null);
+  const [alvoFalta, setAlvoFalta] = useState<AlvoFalta | null>(null);
+  const confFaltaQ = useConferenciaFalta();
 
   const [msgLinha, setMsgLinha] = useState<AlvoMensagem | null>(null);
   const obsSepQ = useObsSeparacao();
@@ -2663,49 +2631,19 @@ function FilaPriorizada() {
    * (tag_sugerida) — o fallback sku+envio mistura quantidades: medido, a linha
    * de 8 pedidos viraria 12 sem ele.
    */
-  async function reportarFaltaLinha(item: PriorizadaRow) {
+  function reportarFaltaLinha(item: PriorizadaRow) {
     const chave = `${item.sku}|${item.tipo_envio}`;
-    if (!window.confirm(
-      `Reportar FALTA DE ESTOQUE da linha inteira?
-
-` +
-      `${item.sku ?? "?"} · ${item.tipo_envio ?? ""} — ${item.qtd_pedidos ?? "?"} pedido(s)
-` +
-      `Aplica o marcador "FALTA ESTOQUE" em cada pedido no Tiny e manda UM aviso no Discord.`,
-    )) return;
+    const filtro = item.tag_sugerida
+      ? `grupo=${encodeURIComponent(item.tag_sugerida)}`
+      : `sku=${encodeURIComponent(item.sku ?? "")}&envio=${encodeURIComponent(item.tipo_envio ?? "")}`;
     setReportandoLinha(chave);
-    try {
-      const filtro = item.tag_sugerida
-        ? `grupo=${encodeURIComponent(item.tag_sugerida)}`
-        : `sku=${encodeURIComponent(item.sku ?? "")}&envio=${encodeURIComponent(item.tipo_envio ?? "")}`;
-      const resp = await fetch(
-        `${EXTERNAL_URL}/functions/v1/separacao-falta?${filtro}` +
-        `&por=${encodeURIComponent(perfil?.nome ?? "")}`,
-        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-      );
-      const d = (await resp.json().catch(() => ({}))) as {
-        ok?: boolean; erro?: string; aplicados?: number;
-        pedidos_no_lote?: number; falhas?: string[]; discord?: boolean;
-      };
-      if (!resp.ok || !d.ok) throw new Error(d.erro ?? d.falhas?.[0] ?? `HTTP ${resp.status}`);
-      const parcial = (d.aplicados ?? 0) < (d.pedidos_no_lote ?? 0);
-      toast.success(`Falta reportada — ${item.sku}`, {
-        description: `${d.aplicados}/${d.pedidos_no_lote} pedido(s) marcados no Tiny` +
-          (parcial ? " — rode de novo para o restante" : "") +
-          (d.discord ? " · aviso no Discord" : ""),
-        duration: parcial ? 10000 : 5000,
-      });
-      void registrarSeparacaoLog({
-        evento: "falta_estoque", usuario: perfil?.nome ?? null,
-        sku: item.sku,
-        detalhe: { via: "menu_linha", grupo: item.tag_sugerida, aplicados: d.aplicados, na_linha: d.pedidos_no_lote },
-      });
-      void qc.invalidateQueries({ queryKey: ["separacao"] });
-    } catch (e) {
-      toast.error("Erro ao reportar falta", { description: (e as Error).message });
-    } finally {
-      setReportandoLinha(null);
-    }
+    setAlvoFalta({
+      filtro,
+      rotulo: `Linha ${item.sku ?? "?"} · ${item.tipo_envio ?? ""} — ${item.qtd_pedidos ?? "?"} pedido(s)`,
+      sku: item.sku ?? null,
+      via: "menu_linha",
+      log: { grupo: item.tag_sugerida },
+    });
   }
 
   // Conta, por linha, os pedidos com impressão CONFIRMADA (done/forcado) — a
@@ -3498,6 +3436,12 @@ function FilaPriorizada() {
 
   return (
     <div className="space-y-5">
+      <FaltaEstoqueDialog
+        alvo={alvoFalta}
+        por={perfil?.nome ?? null}
+        onClose={() => { setAlvoFalta(null); setReportandoLinha(null); }}
+        onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+      />
       {massa && massa.fase ? (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-card border shadow-lg">
           {massa.fase === "concluido"
@@ -3912,6 +3856,17 @@ function FilaPriorizada() {
                           <PackageX className="h-4 w-4 mr-2" />
                           Reportar falta de estoque ({formatNumber(item.qtd_pedidos ?? 0)} pedidos)
                         </DropdownMenuItem>
+                        {(tagsPorLinha?.get(linhaKeyDe(item))?.falta ?? 0) > 0 && item.sku ? (
+                          <DropdownMenuItem
+                            onClick={() => {
+                              void desfazerZeramento(String(item.sku), perfil?.nome ?? null)
+                                .then((ok) => { if (ok) void qc.invalidateQueries({ queryKey: ["separacao"] }); });
+                            }}
+                          >
+                            <PackageCheck className="h-4 w-4 mr-2" />
+                            Estoque voltou (desfazer balanço no Tiny)
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem
                           onClick={() => {
                             const chave = linhaKeyDe(item);
@@ -3995,12 +3950,15 @@ function FilaPriorizada() {
                           const f = tagsPorLinha?.get(linhaKeyDe(item))?.falta ?? 0;
                           if (f <= 0) return null;
                           return (
-                            <span
-                              className="inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-                              title={`${f} pedido(s) desta linha com falta de estoque reportada`}
-                            >
-                              <PackageX className="h-3 w-3" /> sem estoque ({f})
-                            </span>
+                            <>
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                                title={`${f} pedido(s) desta linha com falta de estoque reportada`}
+                              >
+                                <PackageX className="h-3 w-3" /> sem estoque ({f})
+                              </span>
+                              <ConferenciaBadge c={confFaltaQ.data?.get(item.sku ?? "")} />
+                            </>
                           );
                         })()}
                         <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />

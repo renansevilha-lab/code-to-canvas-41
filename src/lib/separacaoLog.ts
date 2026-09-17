@@ -9,7 +9,9 @@ export type EventoSep =
   | "etiqueta_impressa"
   | "tag_finalizada"
   | "embalado"
-  | "falta_estoque";
+  | "falta_estoque"
+  | "estoque_zerado"      // gravado pela separacao-falta (balanço 0 no Tiny)
+  | "estoque_restaurado"; // idem, "estoque voltou"
 
 export async function registrarSeparacaoLog(entrada: {
   evento: EventoSep;

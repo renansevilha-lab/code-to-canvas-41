@@ -9,6 +9,14 @@ app → webhooks.
 
 ## 2. Falta de estoque → zerar no Tiny → conferir o anúncio na Shopee (viabilidade 17/set/2026)
 
+**IMPLEMENTADO em 17/set/2026 (opção A, com as decisões do dono):** kit
+pergunta manualmente o componente; confirmação nos dois casos; aviso no
+Discord `#estoque-pedido-sem-estoque` (canal `estoque` — falta o secret
+`DISCORD_WEBHOOK_ESTOQUE`). Detalhes em CLAUDE.md §5.0.2: `separacao-falta` v6
+(preview / zerar / desfazer), `estoque-conferir` v1 + cron `falta-estoque-
+conferir`, tabela `falta_estoque_conferencia`, `FaltaEstoqueDialog.tsx`.
+Front depende de Publish no Lovable. O levantamento abaixo fica como registro.
+
 **Hoje** (`separacao-falta` v5): marcador "FALTA ESTOQUE" no pedido do Tiny +
 `separacao_tiny.falta_estoque_em/_por` + aviso no Discord (canal estoque).
 61 reportes até 17/set, 28 SKUs, quase todos produto simples (tipo S). Caso

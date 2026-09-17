@@ -427,6 +427,48 @@ localização/foto, loja, prazo, TAG, estado de impressão):
   (regra de ouro: já impresso não sai), identificadora por TAG no fim; barra
   de progresso com espera da impressora igual à da fila.
 
+## 5.0.2 Falta de estoque → balanço 0 no Tiny → conferência na Shopee (17/set/2026)
+
+Pedido do dono: ao reportar falta, **zerar o estoque no Tiny** (senão o Tiny
+segue anunciando o que não está na prateleira) e **conferir se o anúncio da
+Shopee zerou**; kit **pergunta manualmente** qual componente zerar; confirmação
+em ambos os casos; aviso no Discord `#estoque-pedido-sem-estoque`.
+- **Front:** `src/components/separacao/FaltaEstoqueDialog.tsx` substitui os
+  três `window.confirm` (pedido, lote, linha) da Separação. Abre com
+  `separacao-falta?…&preview=1` (SKU, se é kit, saldo do Geral **ao vivo** de
+  cada candidato); checkbox "Zerar o estoque no Tiny" (ligada por padrão,
+  `localStorage separacao.falta.zerarTiny`); kit = lista de componentes com
+  rádio (obrigatório); confirmação mostra "Geral: 15 (9 reservados) → 0".
+  Menu "Estoque voltou (desfazer balanço no Tiny)" no pedido e na linha.
+  Selo na linha da fila (`ConferenciaBadge`): "conferindo Shopee" → "Shopee
+  zerada" (verde) / "Shopee ainda com N" (vermelho), via
+  `falta_estoque_conferencia` (3 dias).
+- **Tiny:** `POST /estoque/{idProduto}` `{deposito:{id:604130012}, tipo:"B",
+  data:"YYYY-MM-DD HH:mm:ss" (BRT), quantidade:0, precoUnitario:custo||0,
+  observacoes}` no depósito **Geral** (id 604130012 na conta ottz; achado por
+  id ou nome). Os depósitos Full (ML/Shopee/Amazon) são estoque nos CDs e
+  NUNCA são tocados. O Tiny envia o **`disponivel`** (saldo − reservado) aos
+  marketplaces (medido: 14752 Geral 634/62 reservados → Shopee 572 nas duas
+  lojas); com saldo 0 o disponível fica negativo e a Shopee recebe 0. Kit não
+  tem estoque próprio: zera-se o **componente** escolhido (validado em
+  `produto_kits`). Saldo já 0 = não lança, só confere a Shopee.
+- **Registro:** `falta_estoque_conferencia` (sku zerado, `sku_reportado`,
+  `saldo_anterior`, `conferir_em`, `tentativas`, `shopee_zerada`, `resultado`
+  por loja/anúncio/variação, `desfeito_em`) + `separacao_log` eventos
+  `estoque_zerado` / `estoque_restaurado`. Desfazer = balanço com o
+  `saldo_anterior` guardado.
+- **Conferência:** `estoque-conferir` (cron `4-59/5`, Bearer) processa as
+  linhas vencidas: 1ª tentativa 10 min após zerar; se ainda > 0, reagenda +15
+  min (até 3) — a propagação Tiny → Shopee leva minutos e alarme falso seria
+  ruído. "Zerada" = todo anúncio/variação com status NORMAL do SKU tem
+  `seller_stock` 0. Posta **ok** ("Shopee zerada") ou **aviso** ("Shopee AINDA
+  mostra N") no canal `estoque` — aqui silêncio não é bom, o dono pediu o
+  retorno. Anúncio despublicado não conta.
+- **Discord:** o canal `estoque` já é `#estoque-pedido-sem-estoque`, mas o
+  secret **`DISCORD_WEBHOOK_ESTOQUE` NÃO está cadastrado** (17/set) — tudo cai
+  no GERAL até o dono criar o secret (idem `_ERROS`, `_ATUALIZACOES`,
+  `_DEVOLUCOES`, `_COMPRAS`). `discord-notify?modulo=status` lista.
+
 ## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
 
 **Semântica dos status Shopee (validada com dados 22/jul/2026 — é o INVERSO do
@@ -811,7 +853,8 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
-| `separacao-falta` | v4 | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal estoque). `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila. Grava `separacao_tiny.falta_estoque_em/_por` (espelho p/ badge+filtro da tela). Separada da tiny-separacao de propósito |
+| `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |
+| `estoque-conferir` | v1 | Fecha o ciclo da falta: lê o estoque **ao vivo** dos anúncios Shopee do SKU (`get_model_list` / `get_item_base_info`, duas lojas) e avisa no canal `estoque` se, depois do balanço 0 no Tiny, a Shopee ainda mostra estoque. `?modulo=conferir` (cron jobid 109, `4-59/5`), `&sku=X` força, `?modulo=estoque&sku=X` só leitura. Ver §5.0.2 |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
@@ -1193,9 +1236,9 @@ completos (onde se corrige custo errado) nunca aparecia.
 ## 9.2 Planos do dono
 
 Backlog com levantamento pronto em **`docs/planos.md`**: (1) integração TikTok
-Shop (`docs/integracao-tiktok-shop.md`); (2) falta de estoque → balanço 0 no
-depósito Geral do Tiny (`POST /estoque/{id}`, permissão de escrita confirmada
-17/set) + conferência do anúncio na Shopee ao vivo.
+Shop (`docs/integracao-tiktok-shop.md`) — depende do cadastro do app pelo
+dono; (2) falta de estoque → balanço 0 no Tiny + conferência na Shopee —
+**FEITO em 17/set/2026** (§5.0.2).
 
 ## 10. Como trabalhar aqui
 
