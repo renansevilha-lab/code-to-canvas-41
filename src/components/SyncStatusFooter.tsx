@@ -34,7 +34,8 @@ const DOT: Record<SyncStatus, string> = {
   sem_dado: "bg-muted-foreground/40",
 };
 
-const REFRESH_MS = 30_000;
+// 2 min: o rodapé só diz "há N min"; a 30 s era a 5ª consulta mais cara do banco (760 chamadas/dia).
+const REFRESH_MS = 120_000;
 
 export function SyncStatusFooter({
   area,

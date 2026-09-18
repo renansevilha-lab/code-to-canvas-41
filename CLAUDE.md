@@ -1002,6 +1002,35 @@ fica nas views → saída idêntica, md5 das 3 views validado igual ao baseline)
 cron **62** (a cada 20 min). Se criar outra view de pedidos para o DRE, leia
 daqui — nunca da `view_margem_pedido_v2` direto.
 
+### Pane de 17/set/2026 (11:26–12:01 BRT) — banco sem folga de CPU
+"Erro ao carregar pedidos: upstream request timeout" no Pedidos Integrados.
+Por 20 min o banco não iniciou nem cron trivial (77 "job startup timeout", 47
+conexões SSL resetadas, `pg_settings` em 12,9 s) e depois estourou de novo no
+minuto cheio das 12:00. Não era tráfego (as requisições caíram) nem disco
+(cache 99,99%; checkpoint de 270 s é o espalhamento normal de 5 min): é a
+instância pequena (1 GB) saturada pela carga de fundo. Diagnóstico pelo
+`pg_stat_statements` (total acumulado) + `query_logs` por minuto. Cortes feitos
+em 18/set:
+- **`refresh-margem-incremental` (cron 57): 19–24 s → 0,8 s.** O UPDATE lia a
+  `view_cmv_pedido` inteira (48 mil itens, agregação de kits por item) para
+  mexer em 5–8 pedidos. O planner NÃO empurra o filtro para dentro da view nem
+  com `IN (subquery)` nem com `LATERAL` (medido: 24 s e 20 s) — a cura é
+  repetir o corpo da agregação num CTE com `p.data_pedido >= now() - '2 days'`
+  DENTRO. Se a `view_cmv_pedido` mudar, o CTE do cron 57 muda junto.
+- **`fn_cmv_congelar_novos`: 16 s → 0,4 s.** Ganhou `p_dias`; sem argumento =
+  7 dias (cron de 15 min); `fn_cmv_congelar_novos(null)` = varredura completa,
+  no cron diário `cmv-congelar-completo` (03:40 UTC).
+- **`view_anomalias` → `mv_anomalias`** (2–3 s por chamada, 409×/dia entre
+  sidebar, Dashboard e `/anomalias`). Matview com índice único (tipo, chave,
+  marketplace), refresh no cron 62 junto da KPI (20 min); o nome
+  `view_anomalias` segue valendo. md5 idêntico antes/depois (378 linhas).
+- **`view_sync_status`**: índices parciais para o `max()` de carteira e escrow
+  (2,8 s → 8 ms); `pedidos_tiny.atualizado_em` fica SEM índice de propósito
+  (muda em todo upsert e mataria os HOT updates). Rodapé do front passou de
+  30 s para 2 min.
+Se voltar a acontecer com esses cortes no ar, o próximo passo é subir a
+instância (Micro → Small), não caçar consulta.
+
 ### Ao mexer em view de cálculo, capture baseline antes
 Rode os totais de um período conhecido **antes** da alteração e compare depois,
 ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
