@@ -103,17 +103,29 @@ interface ReposicaoRow {
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes / helpers
 
+// Envios Full: além dos 3 integrados (estoque/reposição), a equipe manda
+// remessa para os outros canais — entram só no quadro de Envios (packing).
 const MKT_LABEL: Record<string, string> = {
   amazon: "Amazon",
   mercadolivre: "Mercado Livre",
   shopee: "Shopee",
+  tiktok: "TikTok Shop",
+  temu: "Temu",
+  shein: "Shein",
+  olist: "Olist",
+  magalu: "Magalu",
 };
 const MKT_COLOR: Record<string, string> = {
   amazon: "#232F3E",
   mercadolivre: "#FFE600",
   shopee: "#EE4D2D",
+  tiktok: "#111111",
+  temu: "#F97316",
+  shein: "#3B3B3B",
+  olist: "#1E88E5",
+  magalu: "#0086FF",
 };
-const MKT_ORDER = ["amazon", "mercadolivre", "shopee"];
+const MKT_ORDER = ["amazon", "mercadolivre", "shopee", "tiktok", "temu", "shein", "olist", "magalu"];
 
 // Cores do design (paleta Claude Design) por marketplace — para barras/badges.
 function MKT_COR(mkt: string): string {
@@ -197,7 +209,8 @@ type SearchParams = { tab: SubTab; mkt: MktFiltro; q: string; somenteSugestao: b
 
 export const Route = createFileRoute("/fulfillment")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
-    tab: s.tab === "inventario" ? "inventario" : s.tab === "envios" ? "envios" : "reposicao",
+    // Envios é a aba padrão (pedido do dono, 17/set): é o quadro que a equipe usa todo dia.
+    tab: s.tab === "inventario" ? "inventario" : s.tab === "reposicao" ? "reposicao" : "envios",
     mkt: (["todos", "amazon", "mercadolivre", "shopee"].includes(s.mkt as string)
       ? (s.mkt as MktFiltro)
       : "todos"),
@@ -1337,8 +1350,38 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
   const arquivados = todos.filter((e) => !!e.arquivado_em);
   const hoje = new Date().toISOString().slice(0, 10);
   const totPlan = envios.reduce((s, e) => s + (progressoQ.data?.get(e.id)?.plan ?? e.total_unidades ?? 0), 0);
+  // Contador de unidades (pedido do dono, 17/set): nos envios ainda não
+  // enviados, o que falta separar, o que já está separado mas em preparo, e o
+  // que está na coluna "Pronto para Envio".
+  const contador = envios.reduce(
+    (acc, e) => {
+      if (e.status === "enviado") return acc;
+      const p = progressoQ.data?.get(e.id);
+      const plan = p?.plan ?? e.total_unidades ?? 0;
+      const sep = p?.sep ?? 0;
+      acc.aguardando += Math.max(0, plan - sep);
+      if (e.status === "pronto_envio") acc.prontas += sep;
+      else acc.emPreparo += sep;
+      return acc;
+    },
+    { aguardando: 0, emPreparo: 0, prontas: 0 },
+  );
   return (
     <div className="flex flex-col gap-4">
+      {!mostrarArquivados && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { rotulo: "Aguardando separação", valor: contador.aguardando, cor: "#B7791F", dica: "planejado − separado nos envios em aberto" },
+            { rotulo: "Separadas, em preparo", valor: contador.emPreparo, cor: "#2F6FB0", dica: "já separadas nas etapas Separando / Embalar / Etiquetas" },
+            { rotulo: "Prontas para envio", valor: contador.prontas, cor: "#0E8A5F", dica: "unidades dos envios na coluna Pronto para Envio" },
+          ].map((c) => (
+            <div key={c.rotulo} className="bg-card rounded-xl px-4 py-3" style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${c.cor}` }} title={c.dica}>
+              <div className="text-[11.5px] text-[#8B93A1]">{c.rotulo}</div>
+              <div className="text-[22px] font-semibold tracking-[-0.02em] leading-tight">{formatNumber(c.valor)} <span className="text-[13px] font-normal text-[#8B93A1]">un</span></div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] text-[#8B93A1]">
           {mostrarArquivados
@@ -1715,6 +1758,11 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
                 <SelectItem value="mercadolivre">Mercado Livre</SelectItem>
                 <SelectItem value="amazon">Amazon</SelectItem>
                 <SelectItem value="shopee">Shopee</SelectItem>
+                <SelectItem value="tiktok">TikTok Shop</SelectItem>
+                <SelectItem value="temu">Temu</SelectItem>
+                <SelectItem value="shein">Shein</SelectItem>
+                <SelectItem value="olist">Olist</SelectItem>
+                <SelectItem value="magalu">Magalu</SelectItem>
               </SelectContent>
             </Select>
           </div>
