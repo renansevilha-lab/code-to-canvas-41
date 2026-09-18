@@ -83,6 +83,8 @@ interface InventarioRow {
 
 interface ReposicaoRow {
   marketplace: string;
+  shop_id: number | null;
+  empresa: string | null;
   sku: string;
   produto: string | null;
   eh_kit: boolean | null;
@@ -149,7 +151,14 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const rowKey = (r: { marketplace: string; sku: string }) => `${r.marketplace}|${r.sku}`;
+const rowKey = (r: { marketplace: string; shop_id?: number | null; sku: string }) => `${r.marketplace}|${r.shop_id ?? 0}|${r.sku}`;
+// Empresa dona de cada conta (as contas NÃO compartilham estoque no CD).
+const EMPRESA_POR_SHOP: Record<number, string> = {
+  522186766: "ACZ Pet", 1107117809: "ACZ Pet", 900001: "ACZ Pet",
+  759046323: "SVL Store", 1299638625: "SVL Store", 900002: "SVL Store",
+};
+type EmpFiltro = "todas" | "ACZ Pet" | "SVL Store";
+const EMPRESA_CURTA = (e: string | null | undefined) => (e === "SVL Store" ? "SVL" : e === "ACZ Pet" ? "Ottz" : e ?? "");
 
 // Busca a melhor foto por SKU (view_foto_produto = fallback Tiny-novo > Shopee CDN
 // > ML CDN > Tiny-antigo) apenas dos SKUs visíveis, em lotes ≤300 para nunca
@@ -205,12 +214,13 @@ function Thumb({ url, alt }: { url?: string | null; alt?: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
-type SearchParams = { tab: SubTab; mkt: MktFiltro; q: string; somenteSugestao: boolean };
+type SearchParams = { tab: SubTab; mkt: MktFiltro; emp: EmpFiltro; q: string; somenteSugestao: boolean };
 
 export const Route = createFileRoute("/fulfillment")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
     // Envios é a aba padrão (pedido do dono, 17/set): é o quadro que a equipe usa todo dia.
     tab: s.tab === "inventario" ? "inventario" : s.tab === "reposicao" ? "reposicao" : "envios",
+    emp: (["todas", "ACZ Pet", "SVL Store"].includes(s.emp as string) ? (s.emp as EmpFiltro) : "todas"),
     mkt: (["todos", "amazon", "mercadolivre", "shopee"].includes(s.mkt as string)
       ? (s.mkt as MktFiltro)
       : "todos"),
@@ -258,7 +268,7 @@ function FulfillmentPage() {
       let query = supabaseExternal
         .from("view_reposicao_full")
         .select(
-          "marketplace,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,em_envio_aberto,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em",
+          "marketplace,shop_id,empresa,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,em_envio_aberto,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em",
         )
         .order("sugestao_envio", { ascending: false });
       if (mkt !== "todos") query = query.eq("marketplace", mkt);
@@ -328,6 +338,7 @@ function FulfillmentPage() {
             {tab !== "envios" && (
               <div className="flex flex-wrap items-center gap-2">
                 <MktSegment value={mkt} onChange={(m) => update({ mkt: m })} />
+                <EmpSegment value={search.emp} onChange={(e) => update({ emp: e })} />
                 <div className="relative w-full max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
@@ -343,7 +354,7 @@ function FulfillmentPage() {
 
           <TabsContent value="reposicao" className="mt-4">
             <ReposicaoTab
-              rows={repQuery.data ?? []}
+              rows={(repQuery.data ?? []).filter((r) => search.emp === "todas" || (r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0]) === search.emp)}
               loading={repQuery.isLoading}
               error={(repQuery.error as Error | null)?.message ?? null}
               busca={q}
@@ -354,7 +365,7 @@ function FulfillmentPage() {
 
           <TabsContent value="inventario" className="mt-4">
             <InventarioTab
-              rows={invQuery.data ?? []}
+              rows={(invQuery.data ?? []).filter((r) => search.emp === "todas" || EMPRESA_POR_SHOP[r.shop_id ?? 0] === search.emp)}
               loading={invQuery.isLoading}
               error={(invQuery.error as Error | null)?.message ?? null}
               busca={q}
@@ -538,6 +549,7 @@ function ReposicaoTab({
                         >
                           {MKT_LABEL[r.marketplace] ?? r.marketplace}
                         </span>
+                        <div className="text-[10.5px] text-muted-foreground mt-0.5">{EMPRESA_CURTA(r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0])}</div>
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.estoque_full))}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
@@ -609,6 +621,7 @@ function ReposicaoTab({
         onFechar={() => setEnvioAberto(false)}
         itens={selecionadas.map((r) => ({
           marketplace: r.marketplace,
+          empresa: r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0] ?? null,
           sku: r.sku,
           produto: r.produto,
           foto: fotos[r.sku] ?? null,
@@ -626,16 +639,22 @@ function EnvioSheet({
 }: {
   aberto: boolean;
   onFechar: () => void;
-  itens: { marketplace: string; sku: string; produto: string | null; foto: string | null; quantidade: number }[];
+  itens: { marketplace: string; empresa: string | null; sku: string; produto: string | null; foto: string | null; quantidade: number }[];
 }) {
+  // Um bloco por canal E empresa: o envio vai para o CD da conta certa.
   const porCanal = useMemo(() => {
     const map = new Map<string, typeof itens>();
     for (const it of itens) {
-      const arr = map.get(it.marketplace) ?? [];
+      const k = `${it.marketplace}|${it.empresa ?? ""}`;
+      const arr = map.get(k) ?? [];
       arr.push(it);
-      map.set(it.marketplace, arr);
+      map.set(k, arr);
     }
-    return MKT_ORDER.filter((m) => map.has(m)).map((m) => ({ marketplace: m, itens: map.get(m)! }));
+    const chaves = [...map.keys()].sort((a, b) => {
+      const [ma, ea] = a.split("|"); const [mb, eb] = b.split("|");
+      return (MKT_ORDER.indexOf(ma) - MKT_ORDER.indexOf(mb)) || ea.localeCompare(eb);
+    });
+    return chaves.map((k) => ({ marketplace: k.split("|")[0], empresa: k.split("|")[1] || null, itens: map.get(k)! }));
   }, [itens]);
 
   return (
@@ -653,13 +672,14 @@ function EnvioSheet({
         </div>
 
         <div className="mt-4 space-y-5">
-          {porCanal.map(({ marketplace, itens }) => {
+          {porCanal.map(({ marketplace, empresa, itens }) => {
             const total = itens.reduce((s, i) => s + i.quantidade, 0);
             return (
-              <div key={marketplace}>
+              <div key={`${marketplace}|${empresa ?? ""}`}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="inline-flex items-center gap-1.5 text-sm font-medium">
                     <MktDot marketplace={marketplace} />
+                    {empresa && <span className="text-xs text-muted-foreground font-normal">· {EMPRESA_CURTA(empresa)}</span>}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {itens.length} SKUs · {formatNumber(total)} un.
@@ -688,8 +708,8 @@ function EnvioSheet({
           variant="outline"
           className="w-full mt-6 gap-2"
           onClick={() => {
-            const linhas = itens.map((i) => `${i.marketplace}\t${i.sku}\t${i.quantidade}`).join("\n");
-            navigator.clipboard?.writeText(`marketplace\tsku\tquantidade\n${linhas}`);
+            const linhas = itens.map((i) => `${i.marketplace}\t${i.empresa ?? ""}\t${i.sku}\t${i.quantidade}`).join("\n");
+            navigator.clipboard?.writeText(`marketplace\tempresa\tsku\tquantidade\n${linhas}`);
           }}
         >
           Copiar lista (TSV)
@@ -866,6 +886,7 @@ function InventarioTab({
                         >
                           {MKT_LABEL[r.marketplace] ?? r.marketplace}
                         </span>
+                        <div className="text-[10.5px] text-muted-foreground mt-0.5">{EMPRESA_CURTA(EMPRESA_POR_SHOP[r.shop_id ?? 0])}</div>
                       </td>
                       <td className="px-3 py-2.5 text-[12.5px] whitespace-nowrap text-secondary-foreground">{r.warehouse}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.sellable))}</td>
@@ -905,6 +926,30 @@ function MktSegment({ value, onChange }: { value: MktFiltro; onChange: (v: MktFi
   ];
   return (
     <div className="inline-flex rounded-md border bg-card p-0.5">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          onClick={() => onChange(o.id)}
+          className={cn(
+            "px-2.5 py-1 text-xs font-medium rounded-sm transition",
+            value === o.id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmpSegment({ value, onChange }: { value: EmpFiltro; onChange: (v: EmpFiltro) => void }) {
+  const opts: { id: EmpFiltro; label: string }[] = [
+    { id: "todas", label: "Ambas" },
+    { id: "ACZ Pet", label: "Ottz / ACZ" },
+    { id: "SVL Store", label: "SVL / Bumi" },
+  ];
+  return (
+    <div className="inline-flex rounded-md border bg-card p-0.5" title="Empresa dona da conta no marketplace — o estoque no CD não é compartilhado">
       {opts.map((o) => (
         <button
           key={o.id}
