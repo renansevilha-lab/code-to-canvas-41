@@ -39,20 +39,36 @@ export function BotaoSincronizar({ rotas, rotulo = "Sincronizar", titulo, invali
     try {
       // Em sequência de propósito: cada função abre conexão no banco, e o
       // objetivo aqui é justamente não empilhar carga no compute.
+      // Uma rota que falha NÃO derruba as outras (17/set): antes, um erro na
+      // 1ª rota abortava o resto e a tela dizia "falha" com metade sincronizada.
+      const falhas: string[] = [];
+      const avisos: string[] = [];
       for (const rota of rotas) {
-        const resp = await fetch(`${EXTERNAL_URL}/functions/v1/${rota}`, {
-          headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
-        });
-        const corpo = (await resp.json().catch(() => ({}))) as { erro?: string };
-        if (!resp.ok || corpo?.erro) {
-          throw new Error(corpo?.erro ?? `HTTP ${resp.status} em ${rota.split("?")[0]}`);
+        const nome = rota.split("?")[0].replace("fulfillment-sync", "").replace(/^-/, "") || rota.split("?")[0];
+        const q = new URLSearchParams(rota.split("?")[1] ?? "");
+        const rotuloRota = [q.get("modulo"), q.get("loja")].filter(Boolean).join(" ") || nome;
+        try {
+          const resp = await fetch(`${EXTERNAL_URL}/functions/v1/${rota}`, {
+            headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
+          });
+          const corpo = (await resp.json().catch(() => ({}))) as { erro?: string; erros?: string[] };
+          if (!resp.ok || corpo?.erro) falhas.push(`${rotuloRota}: ${corpo?.erro ?? `HTTP ${resp.status}`}`);
+          else if (Array.isArray(corpo?.erros) && corpo.erros.length > 0) avisos.push(`${rotuloRota}: ${corpo.erros[0]}`);
+        } catch (e) {
+          falhas.push(`${rotuloRota}: ${(e as Error).message}`);
         }
       }
-      toast.success("Sincronizado", { description: "Dados atualizados a partir da origem." });
       if (invalidar) void qc.invalidateQueries({ queryKey: invalidar });
       onConcluido?.();
-    } catch (e) {
-      toast.error("Falha ao sincronizar", { description: (e as Error).message });
+      if (falhas.length === rotas.length) {
+        toast.error("Falha ao sincronizar", { description: falhas.join(" · "), duration: 10000 });
+      } else if (falhas.length > 0) {
+        toast.warning(`Sincronizado em parte — ${falhas.length} de ${rotas.length} falhou`, { description: falhas.join(" · "), duration: 10000 });
+      } else if (avisos.length > 0) {
+        toast.success("Sincronizado (com avisos)", { description: avisos.join(" · "), duration: 8000 });
+      } else {
+        toast.success("Sincronizado", { description: "Dados atualizados a partir da origem." });
+      }
     } finally {
       setRodando(false);
     }

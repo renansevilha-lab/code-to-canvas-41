@@ -299,10 +299,11 @@ function FulfillmentPage() {
             </Button>
             <BotaoSincronizar
               rotulo="Sincronizar CDs"
-              titulo="Puxa o estoque de Amazon FBA, Shopee SBS e ML Full agora. O cron faz isso às 8h e às 18h."
+              titulo="Puxa o estoque de Amazon FBA (Ottz+SVL), Shopee SBS (Ottz+Bumi) e ML Full (Ottz+SVL) agora — leva ~1 min. O cron faz isso às 8h e às 18h."
               rotas={[
                 "fulfillment-sync?modulo=amazon",
-                "fulfillment-sync?modulo=shopee",
+                "fulfillment-sync?modulo=shopee&loja=ottz",
+                "fulfillment-sync?modulo=shopee&loja=svl",
                 "fulfillment-sync?modulo=ml&limite=120",
               ]}
               invalidar={["fulfillment"]}
