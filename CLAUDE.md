@@ -1028,6 +1028,17 @@ em 18/set:
   (2,8 s → 8 ms); `pedidos_tiny.atualizado_em` fica SEM índice de propósito
   (muda em todo upsert e mataria os HOT updates). Rodapé do front passou de
   30 s para 2 min.
+- **19/set — Dashboard "não carrega" (10:38 BRT):** sem pane no banco; o
+  Dashboard dispara 12 consultas em paralelo e três levaram 500 (8 s) logo após
+  um login. `view_canais_diario` (1,7 s, 2×) e `view_canais_sem_integracao`
+  (2,8 s) viraram `mv_canais_diario` / `mv_canais_sem_integracao` (mesmo
+  refresh do cron 62; nomes das views preservados; md5 idêntico). Os números
+  por canal do Dashboard agora têm até 20 min de atraso, como a KPI.
+- **`fn_cmv_congelar_novos`, 2ª correção (19/set):** a janela de 7 dias não
+  bastou (seguia em 13 s): o planner empurrava `cmv_na_data(...) IS NOT NULL`
+  para ANTES do anti-join e avaliava a função (~4 ms, kit-aware) nos ~2.600
+  itens da janela. CTEs `MATERIALIZED` (anti-join primeiro, função só nos
+  novos). Lição: função cara em CTE filtrada depois = cerca de otimização.
 Se voltar a acontecer com esses cortes no ar, o próximo passo é subir a
 instância (Micro → Small), não caçar consulta.
 
