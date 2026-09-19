@@ -70,6 +70,7 @@ type KpiCanal = {
   pedidos_ant: number | null;
   receita_ant: number | null;
   margem_ant: number | null;
+  ads_ant: number | null;
   var_receita_pct: number | null;
   var_margem_pct: number | null;
   var_pedidos_pct: number | null;
@@ -120,9 +121,12 @@ type VisaoGeralRow = {
   ticket_medio: number | null;
   projecao_vendas: number | null;
   cobertura_pct: number | null;
+  ads: number | null;
+  lucro_pos_ads: number | null;
+  lucro_pos_ads_pct: number | null;
 };
 
-type DiaSerie = { data: string; receita: number; margem: number; pedidos: number };
+type DiaSerie = { data: string; receita: number; margem: number; pedidos: number; ads: number };
 
 // Vendas por SKU / Marca (kit destrinchado) — RPCs vendas_por_sku / vendas_por_marca.
 type VendaSkuRow = {
@@ -286,7 +290,7 @@ function Dashboard() {
 
         const canaisPrevQ = supabaseExternal
           .from("view_canais_diario")
-          .select("canal,shop_id,pedidos,receita,margem")
+          .select("canal,shop_id,pedidos,receita,margem,ads")
           .gte("data", prevFrom)
           .lte("data", prevTo);
 
@@ -383,7 +387,7 @@ function Dashboard() {
         };
         type CanalPrevRow = {
           canal: string; shop_id: string | null;
-          pedidos: number | null; receita: number | null; margem: number | null;
+          pedidos: number | null; receita: number | null; margem: number | null; ads: number | null;
         };
 
         const rows = (canaisR.data ?? []) as CanalRow[];
@@ -392,10 +396,11 @@ function Dashboard() {
         // Série diária (soma de todos os canais por dia) — base das sparklines
         const porDia = new Map<string, DiaSerie>();
         for (const r of rows) {
-          const cur = porDia.get(r.data) ?? { data: r.data, receita: 0, margem: 0, pedidos: 0 };
+          const cur = porDia.get(r.data) ?? { data: r.data, receita: 0, margem: 0, pedidos: 0, ads: 0 };
           cur.receita += Number(r.receita ?? 0);
           cur.margem += Number(r.margem ?? 0);
           cur.pedidos += Number(r.pedidos ?? 0);
+          cur.ads += Number(r.ads ?? 0);
           porDia.set(r.data, cur);
         }
         setSerieDiaria(Array.from(porDia.values()).sort((a, b) => (a.data < b.data ? -1 : 1)));
@@ -411,7 +416,7 @@ function Dashboard() {
             pedidos: 0, receita: 0, cmv: 0, imposto: 0, margem: 0,
             mc_pct: 0, ticket_medio: 0,
             ads: 0, acos: null,
-            pedidos_ant: null, receita_ant: null, margem_ant: null,
+            pedidos_ant: null, receita_ant: null, margem_ant: null, ads_ant: null,
             var_receita_pct: null, var_margem_pct: null, var_pedidos_pct: null,
             cobertura_pct: null,
             receita_com_custo: 0,
@@ -426,13 +431,14 @@ function Dashboard() {
         }
 
         // Agrega período anterior por canal
-        const aggPrev = new Map<string, { pedidos: number; receita: number; margem: number }>();
+        const aggPrev = new Map<string, { pedidos: number; receita: number; margem: number; ads: number }>();
         for (const r of rowsPrev) {
           const key = `${r.canal}|${r.shop_id ?? ""}`;
-          const cur = aggPrev.get(key) ?? { pedidos: 0, receita: 0, margem: 0 };
+          const cur = aggPrev.get(key) ?? { pedidos: 0, receita: 0, margem: 0, ads: 0 };
           cur.pedidos += Number(r.pedidos ?? 0);
           cur.receita += Number(r.receita ?? 0);
           cur.margem += Number(r.margem ?? 0);
+          cur.ads += Number(r.ads ?? 0);
           aggPrev.set(key, cur);
         }
 
@@ -454,6 +460,7 @@ function Dashboard() {
             v.pedidos_ant = p.pedidos;
             v.receita_ant = p.receita;
             v.margem_ant = p.margem;
+            v.ads_ant = p.ads;
             v.var_receita_pct = pctVar(v.receita, p.receita);
             v.var_margem_pct = pctVar(v.margem, p.margem);
             v.var_pedidos_pct = pctVar(v.pedidos, p.pedidos);
@@ -529,10 +536,11 @@ function Dashboard() {
 
   // Deltas globais (todos os canais): soma dos absolutos atual vs anterior.
   const deltas = useMemo(() => {
-    let r = 0, m = 0, p = 0, ra = 0, ma = 0, pa = 0;
+    let r = 0, m = 0, p = 0, ra = 0, ma = 0, pa = 0, a = 0, aa = 0;
     for (const k of kpisCanal) {
       r += k.receita; m += k.margem; p += k.pedidos;
       ra += k.receita_ant ?? 0; ma += k.margem_ant ?? 0; pa += k.pedidos_ant ?? 0;
+      a += k.ads ?? 0; aa += k.ads_ant ?? 0;
     }
     const rel = (c: number, pv: number) => (pv ? ((c - pv) / Math.abs(pv)) * 100 : null);
     const mcCur = r > 0 ? (m / r) * 100 : null;
@@ -542,6 +550,9 @@ function Dashboard() {
       margem: rel(m, ma),
       pedidos: rel(p, pa),
       mcPp: mcCur != null && mcAnt != null ? mcCur - mcAnt : null,
+      ads: rel(a, aa),
+      // lucro pós ADS anterior = margem anterior − ADS anterior (mesma conta do card)
+      lucroPosAds: rel(m - a, ma - aa),
       temHistorico: ra > 0 || ma > 0 || pa > 0,
     };
   }, [kpisCanal]);
@@ -559,6 +570,12 @@ function Dashboard() {
   const ticket = Number(visaoGeral?.ticket_medio ?? 0);
   const cobertura = visaoGeral?.cobertura_pct != null ? Number(visaoGeral.cobertura_pct) : null;
   const projecao = visaoGeral?.projecao_vendas != null ? Number(visaoGeral.projecao_vendas) : null;
+  // ADS e lucro pós ADS vêm da MESMA RPC (shopee_ads_diario + ml_ads_diario,
+  // idêntico ao DRE). A Amazon não tem ADS integrado e fica de fora.
+  const adsTot = Number(visaoGeral?.ads ?? 0);
+  const lucroPosAds = Number(visaoGeral?.lucro_pos_ads ?? 0);
+  const lucroPosAdsPct = visaoGeral?.lucro_pos_ads_pct != null ? Number(visaoGeral.lucro_pos_ads_pct) : null;
+  const acosGeral = vendas > 0 ? (adsTot / vendas) * 100 : null;
 
   const heroKpis: HeroKpiData[] = [
     {
@@ -595,6 +612,25 @@ function Dashboard() {
       color: "var(--color-chart-4)",
       sub: `Ticket ${formatBRL(ticket, { compact: true })}`,
       spark: sparkPoints(serieDiaria.map((s) => s.pedidos)),
+    },
+    {
+      label: "Gastos com ADS",
+      value: formatBRL(adsTot, { compact: true }),
+      // gastar MAIS não é bom por si só: o delta verde/vermelho sai invertido
+      delta: deltas.ads, deltaKind: "rel", deltaInverso: true, temHistorico: deltas.temHistorico,
+      color: "var(--color-chart-5)",
+      sub: acosGeral != null ? `ACOS geral ${formatPercent(acosGeral)}` : "Shopee + Mercado Livre",
+      spark: sparkPoints(serieDiaria.map((s) => s.ads)),
+    },
+    {
+      label: "Lucro pós ADS",
+      value: formatBRL(lucroPosAds, { compact: true }),
+      delta: deltas.lucroPosAds, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      color: "var(--color-chart-2)",
+      sub: lucroPosAdsPct != null
+        ? `${formatPercent(lucroPosAdsPct)} da receita · sem ADS da Amazon`
+        : "Margem de contribuição − ADS",
+      spark: sparkPoints(serieDiaria.map((s) => s.margem - s.ads)),
     },
   ];
 
@@ -658,7 +694,7 @@ function Dashboard() {
       )}
 
       {/* Hero KPIs */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-[14px]">
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-[14px]">
         {heroKpis.map((k) => (
           <HeroKpi key={k.label} data={k} loading={loading && !visaoGeral} />
         ))}
@@ -747,6 +783,8 @@ type HeroKpiData = {
   value: string;
   delta: number | null;
   deltaKind: "rel" | "pp";
+  /** true = subir é ruim (ex.: gasto com ADS) — inverte a cor do delta */
+  deltaInverso?: boolean;
   temHistorico: boolean;
   color: string;
   sub: string;
@@ -755,10 +793,12 @@ type HeroKpiData = {
 };
 
 function HeroKpi({ data, loading }: { data: HeroKpiData; loading: boolean }) {
-  const { label, value, delta, deltaKind, temHistorico, color, sub, subAlerta, spark } = data;
-  const positivo = delta != null && delta >= 0.05;
-  const negativo = delta != null && delta <= -0.05;
-  const deltaCls = positivo ? "text-success" : negativo ? "text-destructive" : "text-muted-foreground";
+  const { label, value, delta, deltaKind, deltaInverso, temHistorico, color, sub, subAlerta, spark } = data;
+  const subiu = delta != null && delta >= 0.05;
+  const caiu = delta != null && delta <= -0.05;
+  const bom = deltaInverso ? caiu : subiu;
+  const ruim = deltaInverso ? subiu : caiu;
+  const deltaCls = bom ? "text-success" : ruim ? "text-destructive" : "text-muted-foreground";
   const deltaTxt =
     !temHistorico || delta == null
       ? "—"

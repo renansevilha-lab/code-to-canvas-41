@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   MoreVertical,
   PackageX,
+  Weight,
   StickyNote, MessageSquare } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -286,6 +287,100 @@ function empresaDe(marca: string | null): "ottz" | "bumi" | null {
   if (/bumi|svl|sevilla/.test(m)) return "bumi";
   return null;
 }
+/**
+ * Peso e separador por LINHA da fila (view_separacao_peso_linha).
+ * O peso vem do cadastro do Tiny (produtos.peso_bruto); a faixa e o separador
+ * saem da regra do banco (separacao_regra_peso + separacao_separadores):
+ * acima do limite → Nikolas/Kevin; até o limite → Tânia/Vinicius.
+ * Pedido com item sem peso cadastrado fica "sem_peso" e NÃO recebe separador.
+ */
+export interface PesoLinha {
+  tag_sugerida: string;
+  pedidos: number | null;
+  peso_kg: number | null;
+  peso_kg_min: number | null;
+  peso_completo: boolean | null;
+  faixa: "pesados" | "leves" | "sem_peso";
+  separador: string | null;
+  separador_id: string | null;
+  limite_kg: number | null;
+}
+
+interface SeparadorRow { id: string; nome: string; faixa: "pesados" | "leves"; ordem: number }
+
+function usePesoPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "view_separacao_peso_linha"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_peso_linha")
+        .select("tag_sugerida,pedidos,peso_kg,peso_kg_min,peso_completo,faixa,separador,separador_id,limite_kg")
+        .limit(5000);
+      if (error) throw error;
+      const map = new Map<string, PesoLinha>();
+      for (const r of (data ?? []) as PesoLinha[]) if (r.tag_sugerida) map.set(r.tag_sugerida, r);
+      return map;
+    },
+  });
+}
+
+function useSeparadores() {
+  return useQuery({
+    queryKey: ["separacao", "separadores"],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("separacao_separadores")
+        .select("id,nome,faixa,ordem")
+        .eq("ativo", true)
+        .order("faixa", { ascending: false })
+        .order("ordem");
+      if (error) throw error;
+      return (data ?? []) as SeparadorRow[];
+    },
+    staleTime: 10 * 60_000,
+  });
+}
+
+/** "773 g" · "4,0 kg" · "36 kg" */
+export function fmtPeso(kg: number): string {
+  if (kg < 1) return `${Math.round(kg * 1000)} g`;
+  if (kg >= 10) return `${Math.round(kg)} kg`;
+  return `${kg.toFixed(1).replace(".", ",")} kg`;
+}
+
+function PesoBadge({ info }: { info?: PesoLinha }) {
+  if (!info) return null;
+  if (info.faixa === "sem_peso") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground"
+        title="Algum item do pedido está sem peso no cadastro do Tiny. Sem peso o sistema não sabe de que time é a linha — cadastre o peso no Tiny."
+      >
+        <Weight className="h-3 w-3" /> sem peso
+      </span>
+    );
+  }
+  const pesado = info.faixa === "pesados";
+  const kg = Number(info.peso_kg ?? 0);
+  const faixaTxt = info.peso_kg_min != null && Number(info.peso_kg_min) !== kg
+    ? `${fmtPeso(Number(info.peso_kg_min))} a ${fmtPeso(kg)}`
+    : fmtPeso(kg);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-full",
+        pesado
+          ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
+          : "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
+      )}
+      title={`Peso do pedido: ${faixaTxt}${info.limite_kg != null ? ` · limite ${fmtPeso(Number(info.limite_kg))}` : ""}${info.separador ? ` · separador ${info.separador}` : ""}`}
+    >
+      <Weight className="h-3 w-3" /> {faixaTxt}
+      {info.separador && <span className="opacity-80">· {info.separador}</span>}
+    </span>
+  );
+}
+
 function useTagsPorLinha() {
   return useQuery({
     queryKey: ["separacao", "tags_por_linha"],
@@ -2583,6 +2678,16 @@ function FilaPriorizada() {
   // Filtro por empresa (Ottz / Bumi): linha entra se tem pedido da empresa.
   // Combinações multi-SKU não têm empresa mapeada (chave genérica) e passam.
   const [empresaFiltro, setEmpresaFiltro] = useState<null | "ottz" | "bumi">(null);
+  // Filtro por faixa de peso do pedido (regra do banco: acima do limite =
+  // pesados). "sem_peso" = falta peso no cadastro do Tiny.
+  const [faixaPesoFiltro, setFaixaPesoFiltro] = useState<null | "pesados" | "leves" | "sem_peso">(null);
+  // Filtro por separador. Fica no localStorage: na bancada cada estação
+  // costuma ficar fixa numa pessoa, e o filtro sobrevive ao refresh.
+  const [separadorFiltro, setSeparadorFiltro] = useState<string | null>(() => {
+    try { return localStorage.getItem("separacao.separadorFiltro") || null; } catch { return null; }
+  });
+  const pesoPorLinha = usePesoPorLinha().data;
+  const separadores = useSeparadores().data;
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
@@ -3373,9 +3478,17 @@ function FilaPriorizada() {
         const dias = diasAtePrazo(prazosPorLinha?.get(linhaKeyDe(r)) ?? null);
         if (!prazoFiltro.includes(faixaPrazo(dias))) return false;
       }
+      if (faixaPesoFiltro) {
+        const pi = pesoPorLinha?.get(linhaKeyDe(r));
+        if ((pi?.faixa ?? "sem_peso") !== faixaPesoFiltro) return false;
+      }
+      if (separadorFiltro) {
+        const pi = pesoPorLinha?.get(linhaKeyDe(r));
+        if (pi?.separador_id !== separadorFiltro) return false;
+      }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, faixaPesoFiltro, separadorFiltro, pesoPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3651,6 +3764,69 @@ function FilaPriorizada() {
             </button>
           ))}
         </div>
+        {/* filtro por faixa de peso — regra e limite vêm do banco */}
+        {(() => {
+          let pesados = 0, leves = 0, semPeso = 0;
+          for (const v of pesoPorLinha?.values() ?? []) {
+            const n = Number(v.pedidos ?? 0);
+            if (v.faixa === "pesados") pesados += n;
+            else if (v.faixa === "leves") leves += n;
+            else semPeso += n;
+          }
+          const limite = pesoPorLinha?.values().next().value?.limite_kg;
+          const limTxt = limite != null ? fmtPeso(Number(limite)) : "4 kg";
+          const botao = (id: "pesados" | "leves" | "sem_peso", rot: string, n: number, dica: string) => {
+            if (id === "sem_peso" && n === 0 && faixaPesoFiltro !== id) return null;
+            const on = faixaPesoFiltro === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setFaixaPesoFiltro(on ? null : id)}
+                className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition inline-flex items-center gap-1.5",
+                  on ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}
+                title={dica}
+              >
+                {rot}
+                <span className="font-mono tabular-nums opacity-70">{formatNumber(n)}</span>
+              </button>
+            );
+          };
+          return (
+            <div className="inline-flex rounded-[9px] border bg-card p-0.5">
+              <span className="self-center pl-2 pr-1 text-[11px] font-semibold text-muted-foreground">
+                <Weight className="h-3.5 w-3.5 inline" />
+              </span>
+              {botao("pesados", `Acima de ${limTxt}`, pesados, `Pedidos acima de ${limTxt} — time do Nikolas e do Kevin`)}
+              {botao("leves", `Até ${limTxt}`, leves, `Pedidos de até ${limTxt} — time da Tânia e do Vinicius`)}
+              {botao("sem_peso", "Sem peso", semPeso, "Pedido com item sem peso no cadastro do Tiny — não entra na divisão")}
+            </div>
+          );
+        })()}
+        {/* filtro por separador (atribuição automática pela faixa de peso) */}
+        <Select
+          value={separadorFiltro ?? "todos"}
+          onValueChange={(v) => {
+            const val = v === "todos" ? null : v;
+            setSeparadorFiltro(val);
+            try {
+              if (val) localStorage.setItem("separacao.separadorFiltro", val);
+              else localStorage.removeItem("separacao.separadorFiltro");
+            } catch { /* ignore */ }
+          }}
+        >
+          <SelectTrigger className="h-9 w-[176px] text-xs" title="Mostra só as linhas atribuídas à pessoa (divisão automática por peso)">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Separador: todos</SelectItem>
+            {(separadores ?? []).map((sp) => (
+              <SelectItem key={sp.id} value={sp.id}>
+                {sp.nome} · {sp.faixa === "pesados" ? "pesados" : "leves"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {fullCount != null && fullCount > 0 && (
           <span
             className="rounded-[9px] border border-dashed border-border bg-muted/40 px-3 py-[7px] text-[11.5px] text-muted-foreground"
@@ -3962,6 +4138,7 @@ function FilaPriorizada() {
                           );
                         })()}
                         <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />
+                        <PesoBadge info={pesoPorLinha?.get(linhaKeyDe(item))} />
                       </div>
                       <div
                         className="text-sm text-muted-foreground truncate"

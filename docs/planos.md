@@ -1,5 +1,25 @@
 # Planos (backlog do dono)
 
+## 0. Imposto da ACZ Pet no lucro real (decidido 19/set/2026: fases A e B)
+
+O app usa hoje **10% fixo** sobre o subtotal para a ACZ (`lojas.aliquota_imposto`
+vazia → fallback; a SVL usa 7,5%). As NF-e reais de venda da ACZ (CRT 3) mostram
+**27,2% a 29,8%** de débito: SP = ICMS 18% + PIS/COFINS 9,25%; BA = ICMS 7% +
+DIFAL 13,5% + 9,25%. O XML de cada nota vem pelo Tiny em `GET /notas/{id}/xml`
+(`ICMSTot`: vICMS, vICMSUFDest, vFCP, vPIS, vCOFINS, vST) — **rate limit
+apertado: 9 de 14 chamadas seguidas voltaram 429**, então o sync tem de ser
+cadenciado (~1 req/s) e o histórico entra aos poucos.
+
+- **Fase A — débito real por nota:** espelhar os tributos por pedido (ICMS,
+  DIFAL, FCP, PIS, COFINS) e usar no Pedidos Integrados e no DRE, com o DIFAL
+  separado (não gera crédito).
+- **Fase B — imposto líquido:** creditar PIS/COFINS (9,25% sobre a mercadoria) e
+  ICMS da compra, lendo também o XML das NF de entrada. **Pendência do dono/
+  contabilidade:** quais itens têm ICMS-ST ou PIS/COFINS monofásico, e se
+  comissão de marketplace e frete entram como crédito de PIS/COFINS.
+- IRPJ/CSLL ficam fora: incidem sobre o lucro do período, não sobre a venda —
+  entram como linha mensal do DRE.
+
 ## 1. Integração TikTok Shop
 Levantamento completo em `docs/integracao-tiktok-shop.md` (16/set/2026). Depende
 do dono: cadastro no Partner Center (região/mercado Brasil, "Seller in-house

@@ -283,7 +283,7 @@ fantasma** (motivos `buyer_cancel_express`, `mediations`,
 
 | Objeto | O que entrega |
 |---|---|
-| `dashboard_visao_geral(data_inicial, data_final)` | 1 linha: vendas, custo_total, margem_contrib, margem_pct, pedidos, produtos, ticket_medio, projecao_vendas, cobertura_pct. **Sem quebra por canal** |
+| `dashboard_visao_geral(data_inicial, data_final)` | 1 linha: vendas, custo_total, margem_contrib, margem_pct, pedidos, produtos, ticket_medio, projecao_vendas, cobertura_pct + **ads, lucro_pos_ads, lucro_pos_ads_pct** (19/set). ADS = `shopee_ads_diario` + `ml_ads_diario` no período, a MESMA definição do DRE (`view_dre_ads_marketplace`) — conferido ao centavo em jul e ago; **não** usa `view_canais_diario`, que junta o ADS do ML sem filtrar shop_id e duplicaria no dia em que a SVL do ML entrar em `pedidos_validos`. Amazon não tem ADS integrado e fica de fora. **Sem quebra por canal** |
 | `view_kpi_pedidos_dia` | **MATERIALIZADA** (refresh a cada 10 min). Agregada por dia/canal/empresa/marketplace: pedidos, venda, venda_bruta, comissao_total, frete_vendedor, custo_prod, imposto, custo_total, recebido_estimado, margem, margem_pct, itens, itens_sem_cmv, cobertura_cmv_pct. **Não tem coluna de ADS** — cobre só Shopee e Mercado Livre. Para ADS por canal, fonte separada |
 | `view_margem_pedido_v2` | Uma linha por pedido, com margem completa. Use `select` só das colunas exibidas + paginação |
 | `view_ads_anuncios` | Uma linha por anúncio (30 dias): investimento, vendas, roas, acos, ctr, cpc, `classificacao_roas`, `teve_gasto`, foto, sku_pai |
@@ -468,6 +468,48 @@ em ambos os casos; aviso no Discord `#estoque-pedido-sem-estoque`.
   secret **`DISCORD_WEBHOOK_ESTOQUE` NÃO está cadastrado** (17/set) — tudo cai
   no GERAL até o dono criar o secret (idem `_ERROS`, `_ATUALIZACOES`,
   `_DEVOLUCOES`, `_COMPRAS`). `discord-notify?modulo=status` lista.
+
+## 5.0.3 Peso do pedido e divisão do trabalho por separador (19/set/2026)
+
+Pedido do dono: **Nikolas e Kevin fazem os pedidos acima de 4 kg; Tânia e
+Vinicius, os mais leves**, com filtro de peso e de separador na Separação.
+
+- **O peso é do CADASTRO, não do nome.** O Tiny tem `dimensoes.pesoBruto` em kg
+  (`GET /produtos/{id}`; medido: SKU 14752 = 12, 11116 = 0,09, e a "Areia 4kg"
+  do SKU 15984 pesa **4,01** bruto). Até aqui o app só tinha `extrairPeso` em
+  `src/lib/prazo.ts`, um regex sobre o nome usado no `/monitoramento` — regex
+  não serve para dividir trabalho: um erro manda 12 kg para quem separa leve.
+  Colunas novas: `produtos.peso_bruto`, `peso_liquido`, `peso_atualizado_em`.
+- **Quem preenche:** edge fn **`produtos-peso`** (`preencher` prioriza os SKUs
+  da fila de separação, depois os ativos; `refresh`; `sku`), cron
+  `produtos-peso-preencher` **`9,39`** (fora do minuto cheio e longe do
+  `tiny-detalhar-refresh` 17,47), ~20 produtos por rodada a 1 req/s. Função
+  SEPARADA da `tiny-sync-produtos` v25 de propósito (§2.1.5/§10). SKU que o
+  Tiny devolve **404** (apagado lá, ainda ativo no espelho: `10901_FBA`,
+  `10941HJ`…) ficava eternamente na fila e queimava o orçamento da rodada —
+  a v2 grava a tentativa em `peso_atualizado_em` e só repesca depois de 7 dias.
+- **Regra, no banco:** `separacao_regra_peso.limite_kg` (4) e
+  `separacao_separadores(id, nome, faixa pesados|leves, ativo, ordem)`.
+  "Acima de 4 kg" é **estritamente maior** — pedido de exatamente 4,00 kg é
+  leve (por isso a areia de 4,01 cai nos pesados).
+- **Views:** `view_separacao_itens` (um item por linha, do `itens_json`),
+  `view_separacao_peso_pedido` (peso por pedido da fila) e
+  **`view_separacao_peso_linha`** (chave = `tag_sugerida` da priorizada,
+  `peso_kg`, `faixa`, `separador`). O separador sai de **rodízio determinístico**
+  `hashtext(chave) % nº de ativos do time`: a mesma linha cai sempre na mesma
+  pessoa (não embaralha a cada refresh) e desligar alguém em
+  `separacao_separadores.ativo` redistribui na hora.
+- **Peso incompleto = sem atribuição.** Se qualquer item do pedido está sem
+  peso no cadastro, a linha fica `sem_peso`, aparece com selo cinza e **não
+  recebe separador** — é cadastro a corrigir no Tiny, e chutar seria pior.
+- **Front:** `separacao.tsx` ganhou `usePesoPorLinha`/`useSeparadores` (mesmo
+  padrão de Map por linha de `tagsPorLinha`/`riscoPorLinha` — a
+  `view_separacao_priorizada`, crítica, **não** foi alterada), grupo de filtro
+  "Acima de 4 kg / Até 4 kg / Sem peso" com contagem, select "Separador"
+  (persistido em `localStorage separacao.separadorFiltro`, porque a estação da
+  bancada costuma ser fixa numa pessoa) e selo de peso + nome na linha.
+- Medido na fila de 19/set: 45 linhas / 99 pedidos pesados (0,12 a 36 kg) e
+  51 linhas / 89 pedidos leves — divisão equilibrada entre os dois times.
 
 ## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
 
@@ -854,6 +896,7 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |
+| `produtos-peso` | v2 | Peso real do produto (`dimensoes.pesoBruto` do Tiny) → `produtos.peso_bruto`. Base da divisão de separação por peso — ver §5.0.3. `?modulo=preencher` (cron jobid 113, `9,39`), `refresh`, `sku=X`, `&dry=1` |
 | `estoque-conferir` | v1 | Fecha o ciclo da falta: lê o estoque **ao vivo** dos anúncios Shopee do SKU (`get_model_list` / `get_item_base_info`, duas lojas) e avisa no canal `estoque` se, depois do balanço 0 no Tiny, a Shopee ainda mostra estoque. `?modulo=conferir` (cron jobid 109, `4-59/5`), `&sku=X` força, `?modulo=estoque&sku=X` só leitura. Ver §5.0.2 |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
