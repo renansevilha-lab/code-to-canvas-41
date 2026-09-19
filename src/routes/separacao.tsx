@@ -23,6 +23,7 @@ import {
   MoreVertical,
   PackageX,
   Weight,
+  UserCheck,
   StickyNote, MessageSquare } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -288,11 +289,12 @@ function empresaDe(marca: string | null): "ottz" | "bumi" | null {
   return null;
 }
 /**
- * Peso e separador por LINHA da fila (view_separacao_peso_linha).
- * O peso vem do cadastro do Tiny (produtos.peso_bruto); a faixa e o separador
- * saem da regra do banco (separacao_regra_peso + separacao_separadores):
- * acima do limite → Nikolas/Kevin; até o limite → Tânia/Vinicius.
- * Pedido com item sem peso cadastrado fica "sem_peso" e NÃO recebe separador.
+ * Peso por LINHA da fila (view_separacao_peso_linha).
+ * O peso vem do cadastro do Tiny (produtos.peso_bruto) e a faixa do limite em
+ * separacao_regra_peso (acima dele = time dos pesados). A tela só CLASSIFICA e
+ * filtra: quem separou/embalou é quem FINALIZA a TAG (tags_lote.finalizada_por,
+ * decisão do dono em 19/set) — não há atribuição prévia.
+ * Pedido com item sem peso cadastrado fica "sem_peso".
  */
 export interface PesoLinha {
   tag_sugerida: string;
@@ -301,12 +303,8 @@ export interface PesoLinha {
   peso_kg_min: number | null;
   peso_completo: boolean | null;
   faixa: "pesados" | "leves" | "sem_peso";
-  separador: string | null;
-  separador_id: string | null;
   limite_kg: number | null;
 }
-
-interface SeparadorRow { id: string; nome: string; faixa: "pesados" | "leves"; ordem: number }
 
 function usePesoPorLinha() {
   return useQuery({
@@ -314,30 +312,13 @@ function usePesoPorLinha() {
     queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("view_separacao_peso_linha")
-        .select("tag_sugerida,pedidos,peso_kg,peso_kg_min,peso_completo,faixa,separador,separador_id,limite_kg")
+        .select("tag_sugerida,pedidos,peso_kg,peso_kg_min,peso_completo,faixa,limite_kg")
         .limit(5000);
       if (error) throw error;
       const map = new Map<string, PesoLinha>();
       for (const r of (data ?? []) as PesoLinha[]) if (r.tag_sugerida) map.set(r.tag_sugerida, r);
       return map;
     },
-  });
-}
-
-function useSeparadores() {
-  return useQuery({
-    queryKey: ["separacao", "separadores"],
-    queryFn: async () => {
-      const { data, error } = await supabaseExternal
-        .from("separacao_separadores")
-        .select("id,nome,faixa,ordem")
-        .eq("ativo", true)
-        .order("faixa", { ascending: false })
-        .order("ordem");
-      if (error) throw error;
-      return (data ?? []) as SeparadorRow[];
-    },
-    staleTime: 10 * 60_000,
   });
 }
 
@@ -373,10 +354,9 @@ function PesoBadge({ info }: { info?: PesoLinha }) {
           ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
           : "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300",
       )}
-      title={`Peso do pedido: ${faixaTxt}${info.limite_kg != null ? ` · limite ${fmtPeso(Number(info.limite_kg))}` : ""}${info.separador ? ` · separador ${info.separador}` : ""}`}
+      title={`Peso do pedido: ${faixaTxt}${info.limite_kg != null ? ` · limite ${fmtPeso(Number(info.limite_kg))}` : ""}`}
     >
       <Weight className="h-3 w-3" /> {faixaTxt}
-      {info.separador && <span className="opacity-80">· {info.separador}</span>}
     </span>
   );
 }
@@ -2164,6 +2144,35 @@ function LotesDoDia({
             <Badge variant="secondary">{lotes.length}</Badge>
           )}
         </button>
+        {/* Quem separou/embalou hoje = quem finalizou a TAG no /monitoramento */}
+        {(() => {
+          const porPessoa = new Map<string, { lotes: number; pedidos: number }>();
+          for (const l of lotes ?? []) {
+            if (!l.finalizada_por) continue;
+            const cur = porPessoa.get(l.finalizada_por) ?? { lotes: 0, pedidos: 0 };
+            cur.lotes += 1;
+            cur.pedidos += Number(l.qtd_pedidos ?? 0);
+            porPessoa.set(l.finalizada_por, cur);
+          }
+          if (porPessoa.size === 0) return null;
+          const lista = Array.from(porPessoa.entries()).sort((a, b) => b[1].pedidos - a[1].pedidos);
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap text-[11.5px]">
+              <span className="text-muted-foreground">Finalizadas hoje:</span>
+              {lista.map(([nome, v]) => (
+                <span
+                  key={nome}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300 font-medium"
+                  title={`${nome} finalizou ${v.lotes} lote(s) · ${v.pedidos} pedido(s)`}
+                >
+                  <UserCheck className="h-3 w-3" />
+                  {nome}
+                  <span className="font-mono tabular-nums opacity-80">{formatNumber(v.pedidos)}</span>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         {/* fora do <button> do cabecalho: clique dentro do dialogo borbulhava e recolhia o painel */}
         <MensagemLoteDialog alvo={msgLote ? { tipo: "tag", tag: msgLote, rotulo: `lote ${msgLote}` } : null} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
         <Button
@@ -2441,6 +2450,14 @@ function LotesDoDia({
                           <Check className="h-3 w-3" /> Impresso
                         </span>
                       )}
+                      {l.finalizada_por && (
+                        <span
+                          className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300 ml-2"
+                          title={`Separou/embalou: ${l.finalizada_por}${l.finalizada_em ? ` · finalizada às ${new Date(l.finalizada_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""}`}
+                        >
+                          <UserCheck className="h-3 w-3" /> {l.finalizada_por}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 text-right">
                       {!embalada && (
@@ -2681,13 +2698,7 @@ function FilaPriorizada() {
   // Filtro por faixa de peso do pedido (regra do banco: acima do limite =
   // pesados). "sem_peso" = falta peso no cadastro do Tiny.
   const [faixaPesoFiltro, setFaixaPesoFiltro] = useState<null | "pesados" | "leves" | "sem_peso">(null);
-  // Filtro por separador. Fica no localStorage: na bancada cada estação
-  // costuma ficar fixa numa pessoa, e o filtro sobrevive ao refresh.
-  const [separadorFiltro, setSeparadorFiltro] = useState<string | null>(() => {
-    try { return localStorage.getItem("separacao.separadorFiltro") || null; } catch { return null; }
-  });
   const pesoPorLinha = usePesoPorLinha().data;
-  const separadores = useSeparadores().data;
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
   const [selGrupos, setSelGrupos] = useState<Set<string>>(new Set());
@@ -3482,13 +3493,9 @@ function FilaPriorizada() {
         const pi = pesoPorLinha?.get(linhaKeyDe(r));
         if ((pi?.faixa ?? "sem_peso") !== faixaPesoFiltro) return false;
       }
-      if (separadorFiltro) {
-        const pi = pesoPorLinha?.get(linhaKeyDe(r));
-        if (pi?.separador_id !== separadorFiltro) return false;
-      }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, faixaPesoFiltro, separadorFiltro, pesoPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, faixaPesoFiltro, pesoPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3797,36 +3804,12 @@ function FilaPriorizada() {
               <span className="self-center pl-2 pr-1 text-[11px] font-semibold text-muted-foreground">
                 <Weight className="h-3.5 w-3.5 inline" />
               </span>
-              {botao("pesados", `Acima de ${limTxt}`, pesados, `Pedidos acima de ${limTxt} — time do Nikolas e do Kevin`)}
-              {botao("leves", `Até ${limTxt}`, leves, `Pedidos de até ${limTxt} — time da Tânia e do Vinicius`)}
+              {botao("pesados", `Acima de ${limTxt}`, pesados, `Pedidos acima de ${limTxt} (peso do cadastro do Tiny) — trabalho dos pesados`)}
+              {botao("leves", `Até ${limTxt}`, leves, `Pedidos de até ${limTxt} (peso do cadastro do Tiny) — trabalho dos leves`)}
               {botao("sem_peso", "Sem peso", semPeso, "Pedido com item sem peso no cadastro do Tiny — não entra na divisão")}
             </div>
           );
         })()}
-        {/* filtro por separador (atribuição automática pela faixa de peso) */}
-        <Select
-          value={separadorFiltro ?? "todos"}
-          onValueChange={(v) => {
-            const val = v === "todos" ? null : v;
-            setSeparadorFiltro(val);
-            try {
-              if (val) localStorage.setItem("separacao.separadorFiltro", val);
-              else localStorage.removeItem("separacao.separadorFiltro");
-            } catch { /* ignore */ }
-          }}
-        >
-          <SelectTrigger className="h-9 w-[176px] text-xs" title="Mostra só as linhas atribuídas à pessoa (divisão automática por peso)">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Separador: todos</SelectItem>
-            {(separadores ?? []).map((sp) => (
-              <SelectItem key={sp.id} value={sp.id}>
-                {sp.nome} · {sp.faixa === "pesados" ? "pesados" : "leves"}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         {fullCount != null && fullCount > 0 && (
           <span
             className="rounded-[9px] border border-dashed border-border bg-muted/40 px-3 py-[7px] text-[11.5px] text-muted-foreground"

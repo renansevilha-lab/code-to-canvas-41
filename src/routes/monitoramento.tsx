@@ -446,7 +446,13 @@ function MonitoramentoPage() {
         };
       });
     }
-    const { error } = await supabaseExternal.rpc("monitoramento_finalizar_tag", { p_tag: tag });
+    // p_por: quem finaliza a TAG é creditado como separador/embalador do lote
+    // (tags_lote.finalizada_por) — decisão do dono em 19/set/2026.
+    const { error } = await supabaseExternal.rpc("monitoramento_finalizar_tag", {
+      p_tag: tag,
+      p_desfazer: false,
+      p_por: perfil?.nome ?? null,
+    });
     if (error) {
       qc.setQueryData(["monitoramento", "lotes"], prevLotes);
       qc.setQueryData(["monitoramento", "totais"], prevTotais);

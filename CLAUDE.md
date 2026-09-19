@@ -469,10 +469,15 @@ em ambos os casos; aviso no Discord `#estoque-pedido-sem-estoque`.
   no GERAL até o dono criar o secret (idem `_ERROS`, `_ATUALIZACOES`,
   `_DEVOLUCOES`, `_COMPRAS`). `discord-notify?modulo=status` lista.
 
-## 5.0.3 Peso do pedido e divisão do trabalho por separador (19/set/2026)
+## 5.0.3 Peso do pedido e crédito do separador/embalador (19/set/2026)
 
-Pedido do dono: **Nikolas e Kevin fazem os pedidos acima de 4 kg; Tânia e
-Vinicius, os mais leves**, com filtro de peso e de separador na Separação.
+Duas decisões do dono no mesmo dia, nesta ordem:
+1. Dividir o trabalho por peso — **acima de 4 kg** é dos pesados (Nikolas e
+   Kevin), até 4 kg dos leves (Tânia e Vinicius), com filtro de peso na tela.
+2. **Sem atribuição prévia de pessoa.** A tela só classifica por peso; o
+   **separador/embalador é quem FINALIZA a TAG** no `/monitoramento`
+   (`tags_lote.finalizada_por`). O rodízio automático por pessoa foi removido
+   no mesmo dia, antes de entrar em produção.
 
 - **O peso é do CADASTRO, não do nome.** O Tiny tem `dimensoes.pesoBruto` em kg
   (`GET /produtos/{id}`; medido: SKU 14752 = 12, 11116 = 0,09, e a "Areia 4kg"
@@ -488,28 +493,39 @@ Vinicius, os mais leves**, com filtro de peso e de separador na Separação.
   Tiny devolve **404** (apagado lá, ainda ativo no espelho: `10901_FBA`,
   `10941HJ`…) ficava eternamente na fila e queimava o orçamento da rodada —
   a v2 grava a tentativa em `peso_atualizado_em` e só repesca depois de 7 dias.
-- **Regra, no banco:** `separacao_regra_peso.limite_kg` (4) e
-  `separacao_separadores(id, nome, faixa pesados|leves, ativo, ordem)`.
-  "Acima de 4 kg" é **estritamente maior** — pedido de exatamente 4,00 kg é
-  leve (por isso a areia de 4,01 cai nos pesados).
+- **Regra, no banco:** `separacao_regra_peso.limite_kg` (4). "Acima de 4 kg" é
+  **estritamente maior** — pedido de exatamente 4,00 kg é leve (por isso a
+  areia de 4,01 kg cai nos pesados). `separacao_separadores` ficou apenas como
+  REGISTRO dos times; não alimenta atribuição nenhuma.
 - **Views:** `view_separacao_itens` (um item por linha, do `itens_json`),
   `view_separacao_peso_pedido` (peso por pedido da fila) e
   **`view_separacao_peso_linha`** (chave = `tag_sugerida` da priorizada,
-  `peso_kg`, `faixa`, `separador`). O separador sai de **rodízio determinístico**
-  `hashtext(chave) % nº de ativos do time`: a mesma linha cai sempre na mesma
-  pessoa (não embaralha a cada refresh) e desligar alguém em
-  `separacao_separadores.ativo` redistribui na hora.
-- **Peso incompleto = sem atribuição.** Se qualquer item do pedido está sem
-  peso no cadastro, a linha fica `sem_peso`, aparece com selo cinza e **não
-  recebe separador** — é cadastro a corrigir no Tiny, e chutar seria pior.
-- **Front:** `separacao.tsx` ganhou `usePesoPorLinha`/`useSeparadores` (mesmo
-  padrão de Map por linha de `tagsPorLinha`/`riscoPorLinha` — a
-  `view_separacao_priorizada`, crítica, **não** foi alterada), grupo de filtro
-  "Acima de 4 kg / Até 4 kg / Sem peso" com contagem, select "Separador"
-  (persistido em `localStorage separacao.separadorFiltro`, porque a estação da
-  bancada costuma ser fixa numa pessoa) e selo de peso + nome na linha.
-- Medido na fila de 19/set: 45 linhas / 99 pedidos pesados (0,12 a 36 kg) e
-  51 linhas / 89 pedidos leves — divisão equilibrada entre os dois times.
+  `peso_kg`, `peso_kg_min`, `faixa`, `limite_kg`).
+- **Peso incompleto = sem faixa.** Se qualquer item do pedido está sem peso no
+  cadastro, a linha fica `sem_peso` com selo cinza — é cadastro a corrigir no
+  Tiny, e chutar o peso seria pior do que não classificar.
+- **Front:** `separacao.tsx` ganhou `usePesoPorLinha` (mesmo padrão de Map por
+  linha de `tagsPorLinha`/`riscoPorLinha` — a `view_separacao_priorizada`,
+  crítica, **não** foi alterada), o grupo de filtro "Acima de 4 kg / Até 4 kg /
+  Sem peso" com contagem e o selo de peso na linha.
+- Medido na fila de 19/set: 45 linhas / 99 pedidos acima de 4 kg (até 36 kg) e
+  51 linhas / 89 pedidos até 4 kg — volume parelho entre os dois lados.
+
+**Crédito do separador/embalador (quem finaliza a TAG):**
+- `tags_lote.finalizada_por` (novo) + RPC
+  **`monitoramento_finalizar_tag(p_tag, p_desfazer, p_por)`** — o 3º argumento
+  entrou com default para não quebrar chamada antiga; **desfazer limpa a data e
+  o nome juntos**. O `/monitoramento` passa `perfil?.nome`.
+- O nome já existia em `separacao_log` (`evento='tag_finalizada'`, com
+  `usuario`) mas não ficava na TAG, então nenhuma tela mostrava "quem fez".
+  Backfill do histórico a partir do log: **1.088 de 1.273** TAGs finalizadas
+  ganharam nome (Nikolas 455, Vinicius 393, "Separacao 1" 191, "separacao2" 30,
+  Renan 19).
+- **Login compartilhado estraga o crédito:** 221 TAGs estão em "Separacao 1"/
+  "separacao2" (contas de bancada). Para o crédito valer, cada pessoa precisa
+  entrar com o próprio usuário.
+- Onde aparece: painel **Lotes do dia** da Separação — selo roxo com o nome na
+  linha do lote e um resumo "Finalizadas hoje: Fulano N" no cabeçalho.
 
 ## 5.1 Etiquetas Shopee — status, cache e confirmação de envio
 

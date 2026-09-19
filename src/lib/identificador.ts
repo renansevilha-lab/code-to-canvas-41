@@ -23,6 +23,9 @@ export interface TagLoteRow {
   status: "aplicada" | "embalada" | string;
   embalado_em: string | null;
   impresso_em?: string | null;
+  /** quem finalizou a TAG = quem separou/embalou o lote (19/set/2026) */
+  finalizada_em?: string | null;
+  finalizada_por?: string | null;
   criado_em: string;
 }
 
