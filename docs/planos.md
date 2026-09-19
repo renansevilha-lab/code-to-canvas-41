@@ -14,9 +14,19 @@ cadenciado (~1 req/s) e o histórico entra aos poucos.
   DIFAL, FCP, PIS, COFINS) e usar no Pedidos Integrados e no DRE, com o DIFAL
   separado (não gera crédito).
 - **Fase B — imposto líquido:** creditar PIS/COFINS (9,25% sobre a mercadoria) e
-  ICMS da compra, lendo também o XML das NF de entrada. **Pendência do dono/
-  contabilidade:** quais itens têm ICMS-ST ou PIS/COFINS monofásico, e se
-  comissão de marketplace e frete entram como crédito de PIS/COFINS.
+  ICMS da compra, lendo também o XML das NF de entrada.
+  - **Frete (respondido pelo dono, 19/set):** entra como crédito **só no
+    Mercado Livre**, porque lá o frete sai em **CTE individual por envio**. Na
+    Shopee/Amazon não há CTE por pedido, então frete não gera crédito. Efeito
+    prático no modelo: o crédito de frete é calculado por pedido ML, a partir
+    do CT-e, e não como percentual sobre a dedução do marketplace.
+  - **Monofásico:** o dono não identifica produto monofásico no mix (pet food /
+    higiene / acessórios); **confirmação com a contabilidade na segunda,
+    22/set/2026**. Até lá o modelo assume PIS/COFINS não-cumulativo em toda a
+    mercadoria — se houver monofásico, o crédito desses itens cai a zero e a
+    conta muda para eles.
+  - **Continua pendente:** ICMS-ST por item (quais SKUs) e se a comissão de
+    marketplace gera crédito de PIS/COFINS.
 - IRPJ/CSLL ficam fora: incidem sobre o lucro do período, não sobre a venda —
   entram como linha mensal do DRE.
 

@@ -297,7 +297,7 @@ function Dashboard() {
         const metasQ = supabaseExternal
           .from("view_metas_realizado")
           .select("*")
-          .eq("competencia", compAtual);
+          .order("competencia", { ascending: true });
 
         const produtosQ = supabaseExternal
           .from("view_produtos_dashboard")
@@ -560,7 +560,12 @@ function Dashboard() {
   const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
 
   // Metas
-  const metaTodos = metas.find((m) => m.marketplace === "todos") ?? null;
+  const metaTodos = metas.find((m) => m.marketplace === "todos" && m.competencia === compAtual) ?? null;
+  // Serie mensal de ACOS (todos os canais), base do painel ACOS mês a mês.
+  const acosMeses = useMemo(
+    () => metas.filter((m) => m.marketplace === "todos" && Number(m.receita_realizada ?? 0) > 0),
+    [metas],
+  );
 
   // Hero KPIs — valor da RPC (fonte única) + delta/sparkline da série diária.
   const vendas = Number(visaoGeral?.vendas ?? 0);
@@ -712,6 +717,9 @@ function Dashboard() {
         <AnomaliasPanel anomalias={anomalias} />
         <MetasPanel data={metaTodos} competencia={compAtual} />
       </div>
+
+      {/* ACOS mês a mês (realizado × meta) */}
+      <AcosMensalPanel meses={acosMeses} loading={loading && acosMeses.length === 0} />
 
       {/* Vendas por produto (kit destrinchado) */}
       <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 items-start">
@@ -1139,6 +1147,115 @@ function AnomaliasPanel({ anomalias }: { anomalias: AnomaliaData[] }) {
 // ============================================================
 // Metas do mês
 // ============================================================
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+/** "2026-09-01" → "set/26". Sem new Date(): a competência é data pura e o
+ *  parse com fuso jogaria o mês para trás. */
+function rotuloMes(competencia: string): string {
+  const [ano, mes] = competencia.split("-");
+  const i = Number(mes) - 1;
+  return `${MES_CURTO[i] ?? mes}/${ano.slice(2)}`;
+}
+
+/**
+ * ACOS do mês × meta × mês a mês (pedido do dono, 19/set/2026).
+ * Fonte: view_metas_realizado (marketplace 'todos') — ACOS = ADS ÷ receita do
+ * mês, e a meta sai da tabela `metas` (tipo 'acos'), que muda de mês para mês
+ * (jul = 5%, ago/set = 6%). Por isso a meta é uma marca por barra, e não uma
+ * linha única no gráfico.
+ */
+function AcosMensalPanel({ meses, loading }: { meses: MetaRealizado[]; loading: boolean }) {
+  const dados = meses.slice(-12);
+  const atual = dados.length > 0 ? dados[dados.length - 1] : null;
+  const acosAtual = atual?.acos_realizado != null ? Number(atual.acos_realizado) : null;
+  const metaAtual = atual?.meta_acos != null ? Number(atual.meta_acos) : null;
+  const deltaPp = acosAtual != null && metaAtual != null ? acosAtual - metaAtual : null;
+  const estourouAtual = deltaPp != null && deltaPp > 0;
+  const maxEscala =
+    Math.max(1, ...dados.map((m) => Math.max(Number(m.acos_realizado ?? 0), Number(m.meta_acos ?? 0)))) * 1.18;
+
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">ACOS mês a mês</div>
+          <p className="text-[11.5px] text-muted-foreground">
+            Gasto com ADS sobre a receita · traço = meta do mês · Shopee e Mercado Livre
+          </p>
+        </div>
+        <div className="flex items-baseline gap-2.5">
+          <span
+            className="text-[30px] font-semibold tabular-nums leading-none"
+            style={{ color: estourouAtual ? "var(--color-destructive)" : "var(--color-chart-2)" }}
+          >
+            {acosAtual != null ? formatPercent(acosAtual) : "—"}
+          </span>
+          <span className="text-[11.5px] font-medium text-muted-foreground">
+            {metaAtual != null ? `meta ${formatPercent(metaAtual)}` : "sem meta no mês"}
+            {deltaPp != null && (
+              <span className={cn("ml-1.5 font-semibold", estourouAtual ? "text-destructive" : "text-success")}>
+                {deltaPp >= 0 ? "+" : "−"}
+                {Math.abs(deltaPp).toFixed(1).replace(".", ",")} pp
+              </span>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="h-[150px] rounded-[10px] bg-muted/40 animate-pulse" />
+      ) : dados.length === 0 ? (
+        <p className="text-[12px] text-muted-foreground py-6 text-center">Sem histórico de ADS no período.</p>
+      ) : (
+        <div className="flex items-stretch gap-2 h-[150px]">
+          {dados.map((m) => {
+            const v = Number(m.acos_realizado ?? 0);
+            const meta = m.meta_acos != null ? Number(m.meta_acos) : null;
+            const estourou = meta != null && v > meta;
+            const alturaPct = Math.max(2, (v / maxEscala) * 100);
+            const metaPct = meta != null ? (meta / maxEscala) * 100 : null;
+            const ehAtual = atual != null && m.competencia === atual.competencia;
+            return (
+              <div key={m.competencia} className="flex-1 min-w-0 flex flex-col items-center gap-1.5">
+                <span className="text-[10.5px] font-mono tabular-nums text-muted-foreground">
+                  {v > 0 ? formatPercent(v) : "—"}
+                </span>
+                <div
+                  className="relative w-full flex-1 min-h-0 rounded-[5px] bg-muted/40"
+                  title={
+                    `${rotuloMes(m.competencia)} · ACOS ${formatPercent(v)}` +
+                    (meta != null ? ` · meta ${formatPercent(meta)}` : " · sem meta") +
+                    ` · ADS ${formatBRL(Number(m.ads_realizado ?? 0), { compact: true })}` +
+                    ` · receita ${formatBRL(Number(m.receita_realizada ?? 0), { compact: true })}`
+                  }
+                >
+                  <div
+                    className="absolute bottom-0 left-0 right-0 rounded-[5px] transition-[height]"
+                    style={{
+                      height: `${alturaPct}%`,
+                      background: estourou ? "var(--color-destructive)" : "var(--color-chart-2)",
+                      opacity: ehAtual ? 1 : 0.72,
+                    }}
+                  />
+                  {metaPct != null && (
+                    <div
+                      className="absolute left-0 right-0 border-t-[1.5px] border-dashed border-foreground/50"
+                      style={{ bottom: `${metaPct}%` }}
+                    />
+                  )}
+                </div>
+                <span className={cn("text-[10.5px]", ehAtual ? "font-semibold text-foreground" : "text-muted-foreground")}>
+                  {rotuloMes(m.competencia)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function MetasPanel({ data, competencia }: { data: MetaRealizado | null; competencia: string }) {
   const linhas: MetaLinhaData[] = [];
 

@@ -306,7 +306,7 @@ fantasma** (motivos `buyer_cancel_express`, `mediations`,
 | `view_monitoramento_lotes` | Cards do `/monitoramento` (hoje, Shopee, single-SKU). **10/set:** ganhou `prazo` (min `ship_by_date` da TAG) e `pedidos_com_prazo`. O peso do produto NÃO existe no cadastro — o front extrai do nome (`src/lib/prazo.ts` → `extrairPeso`, última ocorrência de número+kg/g/ml/l) |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
 | `classificar_roas(numeric)` | excelente / bom / ok / ruim / sem_dado. **Fonte única da regra** |
-| `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, acos_alvo 20 |
+| `config_roas_faixas` | Limites editáveis (id=1): roas_excelente 18, roas_bom 15, roas_ok 12, **acos_alvo 5** (o doc dizia 20; o banco tem 5 desde 21/jul). Vale para a classificação de ANÚNCIO; a **meta de ACOS do mês** do Dashboard é outra coisa e sai da tabela `metas` (tipo 'acos', por competência: jul 5%, ago/set 6%) |
 
 ### NÃO existem — remover do código se aparecerem
 
@@ -1192,6 +1192,22 @@ página da tabela, filtros e rolagem).
   fonte `view_amazon_dashboard`; PI = `view_margem_pedido_v2`, Shopee+ML). Atenção:
   economia Amazon é diferente (comissão + FBA + `origem_margem` real/estimado;
   status `Shipped` vs Pending/Canceled).
+
+**Feito em 19/set/2026 — Dashboard: ADS, lucro pós ADS e ACOS mês a mês:**
+- Dois cards novos no topo (**Gastos com ADS** e **Lucro pós ADS**), valor vindo
+  da `dashboard_visao_geral` — ver §3. A grade dos hero KPIs passou a 3 colunas
+  no xl (são 6 cards). O delta do card de ADS é **invertido** (gastar mais não
+  é "verde"); `HeroKpiData.deltaInverso`.
+- Painel **ACOS mês a mês** (`AcosMensalPanel`): ACOS do mês, meta do mês e as
+  últimas 12 competências em barras, com a meta como traço POR BARRA — a meta
+  muda de mês para mês (`metas` tipo 'acos': jul 5%, ago/set 6%), então uma
+  linha única mentiria. Barra vermelha = estourou. Fonte:
+  `view_metas_realizado` com `marketplace='todos'` (já trazia
+  `acos_realizado`/`meta_acos`; a consulta do Dashboard só lia o mês atual e
+  passou a ler a série — 32 linhas, 0,11 s). Medido: jul 7,04% × 5, ago 6,76% ×
+  6, set 6,85% × 6 — estourou nos três.
+- `rotuloMes` formata a competência SEM `new Date()`: a competência é data pura
+  e o parse com fuso jogaria o mês para trás.
 
 **Feito em 21/jul/2026:** limpeza do Dashboard (`src/routes/index.tsx`):
 - Removida a query morta `view_receita_diaria_canal` (`limit(20000)`) e o código
