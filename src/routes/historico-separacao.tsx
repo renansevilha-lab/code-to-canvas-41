@@ -62,11 +62,14 @@ function canalColor(nome: string | null): string {
 }
 
 // Hora HH:MM no fuso de São Paulo (os timestamps das views são timestamptz).
-function hm(iso: string | null): string {
+// Em período de vários dias, prefixa a data (dd/MM) para não confundir.
+function hm(iso: string | null, comData = false): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo",
-  });
+  const d = new Date(iso);
+  const h = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+  if (!comData) return h;
+  const dia = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
+  return `${dia} ${h}`;
 }
 
 // Dia de hoje (SP) em YYYY-MM-DD, deslocado por `offset` dias.
@@ -77,6 +80,58 @@ function diaComOffset(offset: number): string {
   base.setUTCDate(base.getUTCDate() + offset);
   return base.toISOString().slice(0, 10);
 }
+// ---- períodos (dia / semana / mês / personalizado) ----
+type Periodo = "dia" | "semana" | "mes" | "personalizado";
+const hojeSP = () => diaComOffset(0);
+function isoDe(dt: Date): string { return dt.toISOString().slice(0, 10); }
+function dataUTC(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12));
+}
+// Intervalo [ini, fim] (datas SP, inclusive) do período deslocado por `offset`.
+function intervalo(periodo: Periodo, offset: number, cIni: string, cFim: string): [string, string] {
+  if (periodo === "personalizado") return cIni <= cFim ? [cIni, cFim] : [cFim, cIni];
+  if (periodo === "dia") { const d = diaComOffset(offset); return [d, d]; }
+  const base = dataUTC(hojeSP());
+  if (periodo === "semana") {
+    // semana de segunda a domingo
+    const dow = (base.getUTCDay() + 6) % 7;
+    base.setUTCDate(base.getUTCDate() - dow + offset * 7);
+    const fim = new Date(base);
+    fim.setUTCDate(fim.getUTCDate() + 6);
+    return [isoDe(base), isoDe(fim)];
+  }
+  const ini = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + offset, 1, 12));
+  const fim = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + offset + 1, 0, 12));
+  return [isoDe(ini), isoDe(fim)];
+}
+function labelIntervalo(periodo: Periodo, ini: string, fim: string): string {
+  if (periodo === "dia") return labelDia(ini, ini === hojeSP());
+  if (periodo === "mes") {
+    return dataUTC(ini).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+  }
+  const f = (x: string) =>
+    dataUTC(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", timeZone: "UTC" }).replace(".", "");
+  return `${f(ini)} – ${f(fim)}`;
+}
+// Busca paginada: um mês passa de 1.000 linhas (corte do PostgREST) — sem isso
+// o histórico ficaria silenciosamente incompleto.
+// `ordem` = colunas com chave única: paginar sem ordem estável repete/pula linhas.
+async function buscarTudo<T>(view: string, ini: string, fim: string, ordem: string[]): Promise<T[]> {
+  const PAG = 1000;
+  const out: T[] = [];
+  for (let de = 0; ; de += PAG) {
+    let q = supabaseExternal.from(view).select("*").gte("dia", ini).lte("dia", fim);
+    for (const c of ordem) q = q.order(c, { ascending: true });
+    const { data, error } = await q.range(de, de + PAG - 1);
+    if (error) throw error;
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAG) break;
+  }
+  return out;
+}
+const LIMITE_LISTA = 150;
+
 function labelDia(dia: string, isToday: boolean): string {
   const [y, m, d] = dia.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d, 12));
@@ -155,7 +210,7 @@ function PessoaBadge({ nome }: { nome: string }) {
   );
 }
 
-function LogTimeline({ eventos, chaveLabel }: { eventos: LogRow[]; chaveLabel: string }) {
+function LogTimeline({ eventos, chaveLabel, comData }: { eventos: LogRow[]; chaveLabel: string; comData?: boolean }) {
   return (
     <div className="border-t border-border bg-muted/50 px-5 py-4 flex flex-col">
       <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">
@@ -168,7 +223,7 @@ function LogTimeline({ eventos, chaveLabel }: { eventos: LogRow[]; chaveLabel: s
         const c = EV_COLOR[ev.evento] ?? "#6C7481";
         return (
           <div key={ev.id} className="flex items-start gap-3 py-2 border-b border-border last:border-b-0">
-            <span className="text-[12.5px] font-bold font-mono shrink-0 w-[46px]">{hm(ev.criado_em)}</span>
+            <span className={cn("text-[12.5px] font-bold font-mono shrink-0", comData ? "w-[92px]" : "w-[46px]")}>{hm(ev.criado_em, comData)}</span>
             <span className="w-[22px] h-[22px] rounded-md shrink-0 flex items-center justify-center text-[11px]"
               style={{ background: c + "1c", color: c }}>{EV_ICON[ev.evento] ?? "•"}</span>
             <div className="flex flex-col gap-1 flex-1 min-w-0">
@@ -193,55 +248,49 @@ function HistoricoPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const setModo = (m: Modo) => navigate({ search: (p) => ({ ...p, modo: m }), replace: true });
 
+  const [periodo, setPeriodo] = useState<Periodo>("dia");
   const [dayOffset, setDayOffset] = useState(0);
+  const [cIni, setCIni] = useState(() => diaComOffset(-6));
+  const [cFim, setCFim] = useState(() => diaComOffset(0));
+  const [limite, setLimite] = useState(LIMITE_LISTA);
   const [search, setSearch] = useState("");
   const [eventoFiltro, setEventoFiltro] = useState<EventoFiltro>("todos");
   const [pessoaFiltro, setPessoaFiltro] = useState<string | null>(null);
   const [expTag, setExpTag] = useState<Set<string>>(new Set());
   const [expPed, setExpPed] = useState<Set<number>>(new Set());
 
-  const dia = diaComOffset(dayOffset);
-  const isToday = dayOffset === 0;
+  const [ini, fim] = intervalo(periodo, dayOffset, cIni, cFim);
+  const multi = ini !== fim;
+  const incluiHoje = ini <= hojeSP() && hojeSP() <= fim;
+  const isToday = periodo !== "personalizado" && dayOffset === 0;
+  const trocarPeriodo = (p: Periodo) => { setPeriodo(p); setDayOffset(0); setLimite(LIMITE_LISTA); };
 
   // Tela de auditoria: precisa refletir o que acabou de acontecer (ex.: uma TAG
   // finalizada agora no Monitoramento). Por isso força refetch ao abrir/voltar
   // o foco e a cada 30s — sem isso herda o "não recarrega" do QueryClient do app
   // e a finalização recém-feita não aparece sem reload manual.
+  // Período longo (semana/mês) é consulta pesada: atualiza a cada 30s só no
+  // modo dia com hoje; nos demais, só ao abrir a tela.
   const frescor = {
     staleTime: 0,
     refetchOnMount: "always" as const,
-    refetchOnWindowFocus: true,
-    refetchInterval: 30000,
+    refetchOnWindowFocus: !multi,
+    refetchInterval: !multi && incluiHoje ? 30000 : (false as const),
   };
 
   const tagsQ = useQuery({
-    queryKey: ["historico-sep", "tags", dia],
-    queryFn: async (): Promise<TagRow[]> => {
-      const { data, error } = await supabaseExternal
-        .from("view_separacao_historico_tags").select("*").eq("dia", dia);
-      if (error) throw error;
-      return (data ?? []) as TagRow[];
-    },
+    queryKey: ["historico-sep", "tags", ini, fim],
+    queryFn: () => buscarTudo<TagRow>("view_separacao_historico_tags", ini, fim, ["dia", "tag"]),
     ...frescor,
   });
   const pedidosQ = useQuery({
-    queryKey: ["historico-sep", "pedidos", dia],
-    queryFn: async (): Promise<PedidoRow[]> => {
-      const { data, error } = await supabaseExternal
-        .from("view_separacao_historico_pedidos").select("*").eq("dia", dia);
-      if (error) throw error;
-      return (data ?? []) as PedidoRow[];
-    },
+    queryKey: ["historico-sep", "pedidos", ini, fim],
+    queryFn: () => buscarTudo<PedidoRow>("view_separacao_historico_pedidos", ini, fim, ["separacao_id"]),
     ...frescor,
   });
   const logQ = useQuery({
-    queryKey: ["historico-sep", "log", dia],
-    queryFn: async (): Promise<LogRow[]> => {
-      const { data, error } = await supabaseExternal
-        .from("view_separacao_log_enriquecido").select("*").eq("dia", dia).order("criado_em", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as LogRow[];
-    },
+    queryKey: ["historico-sep", "log", ini, fim],
+    queryFn: () => buscarTudo<LogRow>("view_separacao_log_enriquecido", ini, fim, ["criado_em", "id"]),
     ...frescor,
   });
 
@@ -355,20 +404,45 @@ function HistoricoPage() {
 
       {/* Dia + contadores */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1">
-          <button onClick={() => setDayOffset((v) => v - 1)}
-            className="px-3 py-2 rounded-lg text-base font-bold hover:bg-muted transition-colors">‹</button>
-          <span className="text-sm font-bold px-2 min-w-[190px] text-center whitespace-nowrap capitalize">{labelDia(dia, isToday)}</span>
-          <button onClick={() => setDayOffset((v) => v + 1)} disabled={isToday}
-            className="px-3 py-2 rounded-lg text-base font-bold hover:bg-muted transition-colors disabled:opacity-30">›</button>
-          {!isToday && (
-            <button onClick={() => setDayOffset(0)}
-              className="ml-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-border text-primary hover:bg-muted transition-colors">hoje</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="inline-flex items-center gap-1 bg-muted rounded-xl p-1">
+            {([["dia", "Dia"], ["semana", "Semana"], ["mes", "Mês"], ["personalizado", "Personalizado"]] as [Periodo, string][]).map(([id, rot]) => (
+              <button key={id} onClick={() => trocarPeriodo(id)}
+                className={cn("px-3 py-1.5 rounded-lg text-[13px] font-bold transition-colors",
+                  periodo === id ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                {rot}
+              </button>
+            ))}
+          </div>
+          {periodo === "personalizado" ? (
+            <div className="flex items-center gap-1.5 bg-card border border-border rounded-xl px-2.5 py-1.5">
+              <input type="date" value={cIni} max={hojeSP()}
+                onChange={(e) => { if (e.target.value) { setCIni(e.target.value); setLimite(LIMITE_LISTA); } }}
+                className="bg-transparent text-sm font-semibold outline-0" />
+              <span className="text-muted-foreground text-sm">até</span>
+              <input type="date" value={cFim} max={hojeSP()}
+                onChange={(e) => { if (e.target.value) { setCFim(e.target.value); setLimite(LIMITE_LISTA); } }}
+                className="bg-transparent text-sm font-semibold outline-0" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1">
+              <button onClick={() => { setDayOffset((v) => v - 1); setLimite(LIMITE_LISTA); }}
+                className="px-3 py-2 rounded-lg text-base font-bold hover:bg-muted transition-colors">‹</button>
+              <span className="text-sm font-bold px-2 min-w-[190px] text-center whitespace-nowrap capitalize">{labelIntervalo(periodo, ini, fim)}</span>
+              <button onClick={() => { setDayOffset((v) => v + 1); setLimite(LIMITE_LISTA); }} disabled={isToday}
+                className="px-3 py-2 rounded-lg text-base font-bold hover:bg-muted transition-colors disabled:opacity-30">›</button>
+              {!isToday && (
+                <button onClick={() => { setDayOffset(0); setLimite(LIMITE_LISTA); }}
+                  className="ml-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-border text-primary hover:bg-muted transition-colors">
+                  {periodo === "dia" ? "hoje" : periodo === "semana" ? "esta semana" : "este mês"}
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
           {[
-            { label: "TAGs no dia", value: contadores.total, color: undefined as string | undefined },
+            { label: multi ? "TAGs no período" : "TAGs no dia", value: contadores.total, color: undefined as string | undefined },
             { label: "Finalizadas", value: contadores.finalizadas, color: GREEN },
             { label: "Em aberto", value: contadores.em_aberto, color: AMBER },
           ].map((c) => (
@@ -427,8 +501,8 @@ function HistoricoPage() {
       {isDayEmpty && (
         <Card className="border-dashed py-16 px-8 flex flex-col items-center gap-2.5 text-center">
           <PackageSearch className="h-8 w-8 text-muted-foreground" />
-          <span className="text-[14.5px] font-semibold">Nenhuma separação registrada neste dia</span>
-          <span className="text-[13px] text-muted-foreground">Escolha outro dia ou volte para hoje</span>
+          <span className="text-[14.5px] font-semibold">Nenhuma separação registrada {multi ? "neste período" : "neste dia"}</span>
+          <span className="text-[13px] text-muted-foreground">Escolha outro período ou volte para hoje</span>
         </Card>
       )}
 
@@ -443,19 +517,19 @@ function HistoricoPage() {
       {/* MODO TAG */}
       {modo === "tag" && !isDayEmpty && !isFilterEmpty && (
         <div className="flex flex-col gap-3.5">
-          {filteredTags.map((t) => {
+          {filteredTags.slice(0, limite).map((t) => {
             const expanded = expTag.has(t.tag);
             const imprOk = num(t.qtd_impressoes) > 0;
             const embOk = !!t.embalado_em;
             const finOk = !!t.finalizada_em;
             const imprTime = imprOk
-              ? hm(t.primeira_impressao_em) + (t.ultima_impressao_em !== t.primeira_impressao_em ? ` → ${hm(t.ultima_impressao_em)}` : "")
+              ? hm(t.primeira_impressao_em, multi) + (t.ultima_impressao_em !== t.primeira_impressao_em ? ` → ${hm(t.ultima_impressao_em, multi)}` : "")
               : "—";
             const marcos = [
-              { label: "TAG aplicada", color: BLUE, done: !!t.aplicada_em, time: hm(t.aplicada_em), sub: null as string | null, pessoas: t.aplicada_por ? [t.aplicada_por] : [] },
+              { label: "TAG aplicada", color: BLUE, done: !!t.aplicada_em, time: hm(t.aplicada_em, multi), sub: null as string | null, pessoas: t.aplicada_por ? [t.aplicada_por] : [] },
               { label: "Etiquetas impressas", color: AMBER, done: imprOk, time: imprTime, sub: imprOk ? `${num(t.qtd_impressoes)} ${num(t.qtd_impressoes) === 1 ? "impressão" : "impressões"}` : null, pessoas: t.impressa_por ?? [] },
-              { label: "Embalado", color: ROXO, done: embOk, time: hm(t.embalado_em), sub: null, pessoas: t.embalada_por ?? [] },
-              { label: "Finalizada", color: GREEN, done: finOk, time: hm(t.finalizada_em), sub: null, pessoas: t.finalizada_por ? [t.finalizada_por] : [] },
+              { label: "Embalado", color: ROXO, done: embOk, time: hm(t.embalado_em, multi), sub: null, pessoas: t.embalada_por ?? [] },
+              { label: "Finalizada", color: GREEN, done: finOk, time: hm(t.finalizada_em, multi), sub: null, pessoas: t.finalizada_por ? [t.finalizada_por] : [] },
             ];
             return (
               <Card key={t.tag} className="overflow-hidden border-[1.5px] p-0">
@@ -497,17 +571,18 @@ function HistoricoPage() {
                     ))}
                   </div>
                 </div>
-                {expanded && <LogTimeline eventos={logPorTag.get(t.tag) ?? []} chaveLabel={t.tag} />}
+                {expanded && <LogTimeline eventos={logPorTag.get(t.tag) ?? []} chaveLabel={t.tag} comData={multi} />}
               </Card>
             );
           })}
+          <MostrarMais total={filteredTags.length} limite={limite} onMais={() => setLimite((v) => v + LIMITE_LISTA)} />
         </div>
       )}
 
       {/* MODO PEDIDO */}
       {modo === "pedido" && !isDayEmpty && !isFilterEmpty && (
         <div className="flex flex-col gap-2.5">
-          {filteredPedidos.map((p) => {
+          {filteredPedidos.slice(0, limite).map((p) => {
             const expanded = expPed.has(p.separacao_id);
             const finOk = !!p.finalizada_em;
             const marcos = [
@@ -550,7 +625,7 @@ function HistoricoPage() {
                     {marcos.map((m) => (
                       <div key={m.label} className="flex flex-col gap-0.5 flex-[1_1_100px] min-w-[100px] justify-center">
                         <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted-foreground">{m.label}</span>
-                        <span className={cn("text-[12.5px] font-bold font-mono", !m.time && "text-muted-foreground")}>{hm(m.time)}</span>
+                        <span className={cn("text-[12.5px] font-bold font-mono", !m.time && "text-muted-foreground")}>{hm(m.time, multi)}</span>
                         {m.pessoa && <PessoaBadge nome={m.pessoa} />}
                       </div>
                     ))}
@@ -564,12 +639,26 @@ function HistoricoPage() {
                     <span className="text-[13px] text-muted-foreground transition-transform" style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>⌄</span>
                   </div>
                 </div>
-                {expanded && <LogTimeline eventos={logDoPedido(p)} chaveLabel={`pedido ${p.numero_ecommerce ?? p.separacao_id}`} />}
+                {expanded && <LogTimeline eventos={logDoPedido(p)} chaveLabel={`pedido ${p.numero_ecommerce ?? p.separacao_id}`} comData={multi} />}
               </Card>
             );
           })}
+          <MostrarMais total={filteredPedidos.length} limite={limite} onMais={() => setLimite((v) => v + LIMITE_LISTA)} />
         </div>
       )}
+    </div>
+  );
+}
+
+function MostrarMais({ total, limite, onMais }: { total: number; limite: number; onMais: () => void }) {
+  if (total <= limite) return null;
+  return (
+    <div className="flex items-center justify-center gap-3 py-2">
+      <span className="text-[12.5px] text-muted-foreground">Mostrando {limite} de {total}</span>
+      <button onClick={onMais}
+        className="border border-border bg-card rounded-lg px-4 py-2 text-[13px] font-semibold hover:bg-muted transition-colors">
+        Mostrar mais {Math.min(LIMITE_LISTA, total - limite)}
+      </button>
     </div>
   );
 }
