@@ -1281,19 +1281,22 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
   const progressoQ = useQuery({
     queryKey: ["fulfillment", "envios-progresso"],
     enabled: ativo,
-    queryFn: async (): Promise<Map<string, { plan: number; sep: number; itens: number }>> => {
+    queryFn: async (): Promise<Map<string, { plan: number; sep: number; itens: number; skus: { sku: string; qtd: number }[] }>> => {
       const { data, error } = await supabaseExternal
         .from("fulfillment_envio_itens")
-        .select("envio_id, qtd_planejada, qtd_separada");
+        .select("envio_id, sku, qtd_planejada, qtd_separada");
       if (error) throw error;
-      const map = new Map<string, { plan: number; sep: number; itens: number }>();
-      for (const r of (data ?? []) as { envio_id: string; qtd_planejada: number; qtd_separada: number }[]) {
-        const g = map.get(r.envio_id) ?? { plan: 0, sep: 0, itens: 0 };
+      const map = new Map<string, { plan: number; sep: number; itens: number; skus: { sku: string; qtd: number }[] }>();
+      for (const r of (data ?? []) as { envio_id: string; sku: string | null; qtd_planejada: number; qtd_separada: number }[]) {
+        const g = map.get(r.envio_id) ?? { plan: 0, sep: 0, itens: 0, skus: [] };
         g.plan += num(r.qtd_planejada);
         g.sep += num(r.qtd_separada);
         g.itens += 1;
+        if (r.sku) g.skus.push({ sku: r.sku, qtd: num(r.qtd_planejada) });
         map.set(r.envio_id, g);
       }
+      // Miniaturas do cartão: os SKUs de maior quantidade primeiro.
+      for (const g of map.values()) g.skus.sort((a, b) => b.qtd - a.qtd);
       return map;
     },
   });
@@ -1302,6 +1305,15 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
     qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
   };
+
+  // Fotos só dos até 3 SKUs exibidos por cartão (lookup por SKU, lotes ≤300).
+  // Fica antes dos returns antecipados (packing/novo) pela regra dos hooks.
+  const skusMiniatura = useMemo(
+    () => (enviosQ.data ?? []).filter((e) => !e.arquivado_em)
+      .flatMap((e) => (progressoQ.data?.get(e.id)?.skus ?? []).slice(0, 3).map((x) => x.sku)),
+    [enviosQ.data, progressoQ.data],
+  );
+  const { data: fotosCard = {} } = useFotos(skusMiniatura);
 
   if (packingId) {
     return (
@@ -1600,6 +1612,18 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
                         <span className="text-[11.5px] text-muted-foreground truncate">
                           {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
                         </span>
+                        {p && p.skus.length > 0 && (
+                          <div className="flex items-center gap-1.5">
+                            {p.skus.slice(0, 3).map((x) => (
+                              <div key={x.sku} title={`${x.sku} · ${formatNumber(x.qtd)} un`}>
+                                <Thumb url={fotosCard[x.sku]} alt={x.sku} />
+                              </div>
+                            ))}
+                            {p.skus.length > 3 && (
+                              <span className="text-[11px] text-muted-foreground font-mono">+{p.skus.length - 3}</span>
+                            )}
+                          </div>
+                        )}
                         <div className="flex flex-col gap-1.5">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[11.5px] text-[#4B5462] font-mono">{formatNumber(sepT)} / {formatNumber(planT)} un</span>
