@@ -719,6 +719,13 @@ nunca arranjado na Shopee).
   `gerarEtiquetasShopee` chama `get_shipping_document_result` **antes**; os READY
   vão direto ao download e só o resto passa pelo `create`. Vale para o
   `pregerar` e o `imprimir`.
+- **v65 (21/set/2026) — CAUSA RAIZ: 1 pedido com erro envenena o lote.** A v64
+  sozinha não resolveu. Teste ao vivo: 20 pedidos juntos (3 com
+  `package_can_not_print`) = **0** etiquetas; os mesmos 17 sem os 3 = **17**.
+  Agora quem falha (no `create` ou na consulta) sai da lista de
+  `get_shipping_document_result`, e o `create` é refeito **uma vez** só com os
+  limpos. Validado: lote misto de 20 = 19 geradas. **Regra:** chamada em lote na
+  Shopee logistics nunca pode carregar pedido já sabidamente com erro.
 
 **Por que o "app confirma o envio" NÃO avança (testado 23/jul):** o `ship_order`
 pelo app falha com **`logistics.lack_of_invoice_data`** — a Shopee exige a NF-e
@@ -915,7 +922,7 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v64 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v65 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
