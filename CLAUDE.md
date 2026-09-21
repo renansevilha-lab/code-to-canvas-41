@@ -711,6 +711,14 @@ nunca arranjado na Shopee).
   de 5 (listas explícitas). **`shopee-sync-ads` agora exige JWT** (deploy via
   MCP): crons 38–45/55/56 e a função `confirmar_impressoes_pendentes` levam
   Bearer (chave publicável); o front já levava. Chamada sem header = 401.
+- **v64 (21/set/2026) — baixa o documento que já ficou pronto.** O `create` +
+  espera (~24s de orçamento) não cabia: o documento ficava READY **depois** da
+  rodada, e a seguinte (20 min depois, pelo backoff) recriava tudo e estourava de
+  novo → `sem_codigo` em loop (145 sem etiqueta, 0 geradas na noite de 20/set),
+  enquanto o `imprimir` (40s, 1 pedido) gerava normal. Agora
+  `gerarEtiquetasShopee` chama `get_shipping_document_result` **antes**; os READY
+  vão direto ao download e só o resto passa pelo `create`. Vale para o
+  `pregerar` e o `imprimir`.
 
 **Por que o "app confirma o envio" NÃO avança (testado 23/jul):** o `ship_order`
 pelo app falha com **`logistics.lack_of_invoice_data`** — a Shopee exige a NF-e
@@ -907,7 +915,7 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v58 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v64 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
