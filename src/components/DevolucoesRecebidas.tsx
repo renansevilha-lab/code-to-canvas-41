@@ -94,6 +94,11 @@ const marketplaceDoCanal = (m: string | null): string | null => {
   return null;
 };
 
+// O status do pedido vem do espelho do marketplace — nem sempre é Shopee.
+function rotuloMkt(marca: string | null | undefined): string {
+  return /mercado/i.test(marca ?? "") ? "ML" : /amazon/i.test(marca ?? "") ? "Amazon" : "Shopee";
+}
+
 function construirItens(sep: { itens_json?: unknown; sku_unico?: string | null; nome_produto?: string | null; qtd_unidades?: number | string | null } | undefined): ItemEsperado[] {
   if (!sep) return [];
   const arr = sep.itens_json as Array<{ produto?: { sku?: string; descricao?: string }; quantidade?: number | string }> | null;
@@ -260,6 +265,8 @@ export function DevolucoesRecebidas() {
       // Fallback 5: etiqueta de DEVOLUÇÃO do Mercado Livre — o código bipado é o
       // id do ENVIO de retorno, que só o ML sabe traduzir em nº de pedido.
       let avisoMl: string | null = null;
+      // nº do pedido no marketplace quando difere da chave do Tiny (pack do ML)
+      let pedidoMkt: string | null = null;
       if (data.length === 0 && /\d{9,14}/.test(raw)) {
         try {
           const { data: mlData, error: mlErro } = await supabaseExternal.functions.invoke(
@@ -273,7 +280,13 @@ export function DevolucoesRecebidas() {
             tentativas?: { erro?: string }[];
           } | null;
           if (ml?.ok && ml.order_id) {
-            const r5 = await supabaseExternal.from("pedidos_tiny").select(sel).eq("numero_ecommerce", ml.order_id).limit(1);
+            pedidoMkt = ml.order_id;
+            // Pedido de carrinho (pack) no ML: o Tiny registra pelo pack_id, não
+            // pelo order_id — procurar só pelo order_id deixava o card vazio.
+            const { data: pk } = await supabaseExternal.from("pedidos").select("pack_id").eq("id", ml.order_id).maybeSingle();
+            const chaves = [ml.order_id, (pk as { pack_id?: string | null } | null)?.pack_id]
+              .filter((x): x is string => !!x);
+            const r5 = await supabaseExternal.from("pedidos_tiny").select(sel).in("numero_ecommerce", chaves).limit(1);
             data = (r5.data ?? []) as PT[];
             if (data.length === 0) {
               // pedido do ML fora do espelho do Tiny — card mínimo pelo nº do ML
@@ -300,17 +313,25 @@ export function DevolucoesRecebidas() {
       }
       const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };
 
-      const [{ data: sepRows }, { data: pRow }, { data: jaRec }, { data: devRows }] = await Promise.all([
+      // separacao_tiny é chaveada como o Tiny (pack); pedidos/itens do marketplace, pelo pedido
+      const idMkt = pedidoMkt ?? pt.numero_ecommerce ?? "";
+      const [{ data: sepRows }, { data: pRow }, { data: jaRec }, { data: devRows }, { data: itensMkt }] = await Promise.all([
         supabaseExternal.from("separacao_tiny").select("sku_unico, nome_produto, qtd_unidades, qtd_skus, itens_json").eq("numero_ecommerce", pt.numero_ecommerce).limit(1),
-        supabaseExternal.from("pedidos").select("status_pedido, opcao_envio, motivo_cancelamento").eq("id", pt.numero_ecommerce ?? "").maybeSingle(),
-        supabaseExternal.from("devolucoes_recebidas").select("recebido_em").eq("order_sn", pt.numero_ecommerce).order("recebido_em", { ascending: false }).limit(1),
-        supabaseExternal.from("shopee_devolucoes").select("reason, text_reason").eq("order_sn", pt.numero_ecommerce ?? "").order("update_time", { ascending: false, nullsFirst: false }).limit(1),
+        supabaseExternal.from("pedidos").select("status_pedido, opcao_envio, motivo_cancelamento").eq("id", idMkt).maybeSingle(),
+        supabaseExternal.from("devolucoes_recebidas").select("recebido_em").eq("order_sn", idMkt).order("recebido_em", { ascending: false }).limit(1),
+        supabaseExternal.from("shopee_devolucoes").select("reason, text_reason").eq("order_sn", idMkt).order("update_time", { ascending: false, nullsFirst: false }).limit(1),
+        supabaseExternal.from("pedido_itens").select("sku_pai, sku_filho, nome_produto, quantidade").eq("pedido_id", idMkt).limit(50),
       ]);
       const p = pRow as { status_pedido?: string; opcao_envio?: string; motivo_cancelamento?: string } | null;
       const dev = devRows?.[0] as { reason?: string; text_reason?: string } | undefined;
-      const itens = construirItens(sepRows?.[0]);
+      let itens = construirItens(sepRows?.[0]);
+      if (itens.length === 0) {
+        // Full / pedido que não passou pela nossa separação: itens do espelho do marketplace
+        itens = ((itensMkt ?? []) as { sku_pai: string | null; sku_filho: string | null; nome_produto: string | null; quantidade: number | string | null }[])
+          .map((it) => ({ sku: it.sku_filho || it.sku_pai || null, nome: it.nome_produto, qtd: num(it.quantidade) }));
+      }
       setPedido({
-        order_sn: pt.numero_ecommerce, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
+        order_sn: idMkt || null, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
         situacao: pt.situacao, shopee_status: p?.status_pedido ?? null,
         forma_envio: p?.opcao_envio || pt.forma_envio || null,
         motivo_cancelamento: p?.motivo_cancelamento ?? null,
@@ -450,7 +471,7 @@ export function DevolucoesRecebidas() {
               <Pill cor={canalCor(pedido.marca_canal)}>{rotuloCanal(pedido.marca_canal)}</Pill>
               {pedido.forma_envio && <Pill cor={envioCor(pedido.forma_envio)}>{pedido.forma_envio}</Pill>}
               {pedido.situacao && <Pill cor={situacaoCor(pedido.situacao)}><span className="capitalize">{pedido.situacao}</span></Pill>}
-              {pedido.shopee_status && <Pill cor={shopeeCor(pedido.shopee_status)}>Shopee: {pedido.shopee_status}</Pill>}
+              {pedido.shopee_status && <Pill cor={shopeeCor(pedido.shopee_status)}>{rotuloMkt(pedido.marca_canal)}: {pedido.shopee_status}</Pill>}
             </div>
             {pedido.rastreio && <span className="text-[12.5px] text-muted-foreground font-mono">{pedido.rastreio}</span>}
             {pedido.motivo_cancelamento && (
@@ -597,7 +618,7 @@ export function DevolucoesRecebidas() {
                             <span className="text-[12.5px] font-semibold font-mono truncate">{r.order_sn}</span>
                             <span className="text-[10.5px] text-muted-foreground">Tiny {r.tiny_numero}</span>
                             {r.shopee_status && (
-                              <span className="text-[10px] font-semibold" style={{ color: shopeeCor(r.shopee_status) }}>Shopee: {r.shopee_status}</span>
+                              <span className="text-[10px] font-semibold" style={{ color: shopeeCor(r.shopee_status) }}>{rotuloMkt(r.marca_canal)}: {r.shopee_status}</span>
                             )}
                             {r.motivo_devolucao && (
                               <span className="text-[10px] font-semibold" style={{ color: "#B7791F" }} title="Motivo da devolução (Shopee)">Devol: {r.motivo_devolucao}</span>

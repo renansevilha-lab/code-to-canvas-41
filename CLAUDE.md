@@ -851,7 +851,7 @@ cancelado, NF 086589). Não há endpoint de returns utilizável:
 não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id}`
 (o `mediations[].id` do pedido) — dá motivo e resolução, mas **não** o envio.
 
-- **Edge fn `ml-devolucao-lookup` v1:** `?codigo=<texto bipado>` (ou body
+- **Edge fn `ml-devolucao-lookup` v2:** `?codigo=<texto bipado>` (ou body
   `{codigo}`) aceita o QR inteiro, o número puro ou texto com vários números;
   tenta as contas conectadas (Ottz primeiro, depois SVL) e cacheia em
   **`ml_envio_devolucao`** (`shipment_id` PK → `order_id`, tipo, status,
@@ -862,6 +862,14 @@ não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id
   falham e o texto tem 9–14 dígitos; com o `order_id` na mão refaz a busca
   local normal (e, se o pedido não estiver no espelho, monta card mínimo).
   Mensagem de erro específica quando o ML não reconhece o envio.
+- **Pedido de carrinho (pack) — card vazio na 1ª versão:** o Tiny registra
+  pedido ML de carrinho pelo **`pack_id`**, não pelo `order_id` (1.589 casos;
+  ex.: envio 48015249396 → pedido 2000018379163128 → pack 2000014956563857 →
+  Tiny 306039). A busca do Tiny usa `numero_ecommerce in (order_id,
+  pedidos.pack_id)`; status/itens/registro ficam no `order_id`. Pedido do
+  **Full** não passa pela nossa separação (`separacao_tiny` vazia): os itens
+  vêm de `pedido_itens` (espelho do marketplace). O selo de status diz
+  "ML:"/"Shopee:" conforme o canal (antes era sempre "Shopee:").
 - **Dois dos três códigos de teste não existem para o ML:** `48037688400` e
   `47880155625` dão **404 `not_found_shipping_id`** nas duas contas (acesso a
   envio de outra conta devolve **401 `invalid_caller_id`**, não 404 — então não
