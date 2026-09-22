@@ -1065,6 +1065,8 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
 | `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |
 | `resumo-operacao` | v3 | Resumos de abertura/fechamento/fulfillment no Discord |
+| `tiktok-oauth` | v1 | Callback **público** (verify_jwt off) da autorização do TikTok Shop → `oauth_tokens_tiktok` + `tiktok_lojas` (shop_cipher). `?help=1` mostra o link |
+| `tiktok-refresh-token` | v1 | Renova o token TikTok (validade ~7d; renova se vence em <5d). Cron `tiktok-refresh-token` (jobid 115, `41 9 * * *`) |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso
