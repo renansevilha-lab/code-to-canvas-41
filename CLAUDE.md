@@ -851,7 +851,7 @@ cancelado, NF 086589). Não há endpoint de returns utilizável:
 não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id}`
 (o `mediations[].id` do pedido) — dá motivo e resolução, mas **não** o envio.
 
-- **Edge fn `ml-devolucao-lookup` v2:** `?codigo=<texto bipado>` (ou body
+- **Edge fn `ml-devolucao-lookup` v4:** `?codigo=<texto bipado>` (ou body
   `{codigo}`) aceita o QR inteiro, o número puro ou texto com vários números;
   tenta as contas conectadas (Ottz primeiro, depois SVL) e cacheia em
   **`ml_envio_devolucao`** (`shipment_id` PK → `order_id`, tipo, status,
@@ -870,12 +870,29 @@ não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id
   **Full** não passa pela nossa separação (`separacao_tiny` vazia): os itens
   vêm de `pedido_itens` (espelho do marketplace). O selo de status diz
   "ML:"/"Shopee:" conforme o canal (antes era sempre "Shopee:").
-- **Dois dos três códigos de teste não existem para o ML:** `48037688400` e
-  `47880155625` dão **404 `not_found_shipping_id`** nas duas contas (acesso a
-  envio de outra conta devolve **401 `invalid_caller_id`**, não 404 — então não
-  é questão de conta). Ficam registrados na tabela; para descobrir o que são,
-  precisa olhar a etiqueta física (pode ser outro tipo de etiqueta, ex.:
-  retirada de estoque do Full, ou dígito lido errado).
+- **Indexador (v3/v4, cron jobid 114 `27 */2 * * *`, Bearer):**
+  `?modulo=indexar&dias=N[&conta=][&reiniciar=1]` — `GET /post-purchase/v1/
+  claims/search?player_role=respondent&player_user_id=<conta>&sort=
+  last_updated:desc` (1.693 claims na Ottz) → para cada claim que não é
+  `cancel_purchase`, **`GET /post-purchase/v2/claims/{id}/returns`** →
+  `shipments[]` (`shipment_id`, `tracking_number`, status) + `orders[].order_id`.
+  Grava com `origem='indexador'`, `claim_id`, `return_id`; estado por conta em
+  `ml_devolucao_index_estado`. **Armadilhas:** o `claims/search` **não traz
+  `related_entities`** (a v3 filtrava por ele e só pegava claims tipo
+  "returns" — 11 de 40); returns sem devolução = 404 "There is no associated
+  return" (mediação resolvida por cobertura, sem o produto voltar); 429 fácil
+  (retry com espera). 90 dias: 283+14 claims → 42 envios de retorno em ~41 s.
+- **Códigos que o ML não conhece (404 `not_found_shipping_id`):**
+  `47880155625`, `47880250285`, `47881569283`, `48037688400` — QR no mesmo
+  formato `{"id":…,"t":"lm"}`. Não são de outra conta (envio de outra conta dá
+  **401 `invalid_caller_id`**, conferido com a SVL 1299638625), nem aparecem
+  em nenhuma devolução de reclamação das duas contas (90 dias), nem nas
+  operações do Full por inventário. A faixa 4788… é de envios criados ~27–28/ago.
+  Hipótese do dono: **retorno de pack do Full** — provavelmente remoção/
+  retirada do CD, que o app não enxerga (`/stock/withdrawals` = 403, falta a
+  role). Registrados em `ml_envio_devolucao` com `encontrado=false`.
+- **Rastreio dos Correios (`AP420460126BR`) não vai ao ML** — o front só
+  chama a função se o texto não casa `[A-Z]{2}\d{9}[A-Z]{2}`.
 
 ## 5.3 DRE — categorização de despesas e camada de override
 

@@ -267,7 +267,9 @@ export function DevolucoesRecebidas() {
       let avisoMl: string | null = null;
       // nº do pedido no marketplace quando difere da chave do Tiny (pack do ML)
       let pedidoMkt: string | null = null;
-      if (data.length === 0 && /\d{9,14}/.test(raw)) {
+      // Rastreio dos Correios (AP420460126BR) não é envio do ML — não perguntar lá.
+      const ehCorreios = /\b[A-Z]{2}\d{9}[A-Z]{2}\b/i.test(raw);
+      if (data.length === 0 && !ehCorreios && /\d{9,14}/.test(raw)) {
         try {
           const { data: mlData, error: mlErro } = await supabaseExternal.functions.invoke(
             "ml-devolucao-lookup",
