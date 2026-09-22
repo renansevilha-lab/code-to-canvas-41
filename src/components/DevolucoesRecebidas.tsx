@@ -94,6 +94,8 @@ const marketplaceDoCanal = (m: string | null): string | null => {
   return null;
 };
 
+type Remetente = { order_id: string; canal: string | null; data_pedido: string; primeiro_produto: string | null; tiny_numero: string | null };
+
 // O status do pedido vem do espelho do marketplace — nem sempre é Shopee.
 function rotuloMkt(marca: string | null | undefined): string {
   return /mercado/i.test(marca ?? "") ? "ML" : /amazon/i.test(marca ?? "") ? "Amazon" : "Shopee";
@@ -163,8 +165,29 @@ export function DevolucoesRecebidas() {
   const [salvando, setSalvando] = useState(false);
   // Se setado, estamos conferindo um registro JÁ existente (da lista).
   const [conferindoId, setConferindoId] = useState<string | null>(null);
+  // Etiqueta do ML que a API não mostra (devolução ao remetente): lista de candidatos
+  const [mostrarRemetente, setMostrarRemetente] = useState(false);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Pedidos ML não entregues (despachados por nós) que voltam ao vendedor e
+  // ainda não foram recebidos. A etiqueta da volta ("MELI #0", QR 4788…) não
+  // existe na API; o "Ref. ID" impresso nela é o envio original.
+  const remetenteQ = useQuery({
+    queryKey: ["devrec", "ao-remetente"],
+    enabled: mostrarRemetente,
+    staleTime: 60 * 1000,
+    queryFn: async (): Promise<Remetente[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_ml_devolucao_ao_remetente")
+        .select("order_id, canal, data_pedido, primeiro_produto, tiny_numero")
+        .is("recebido_em", null)
+        .order("data_pedido", { ascending: false })
+        .limit(40);
+      if (error) throw error;
+      return (data ?? []) as Remetente[];
+    },
+  });
 
   const listaQ = useQuery({
     queryKey: ["devolucoes-recebidas"],
@@ -186,10 +209,10 @@ export function DevolucoesRecebidas() {
 
   function limpar() { setTermo(""); setPedido(null); setConf([]); setObs(""); setConferindoId(null); inputRef.current?.focus(); }
 
-  async function buscar() {
-    const raw = termo.trim();
+  async function buscar(valor?: string) {
+    const raw = (valor ?? termo).trim();
     if (!raw) return;
-    setBuscando(true); setErro(null); setPedido(null); setConf([]); setConferindoId(null); setObs("");
+    setBuscando(true); setErro(null); setPedido(null); setConf([]); setConferindoId(null); setObs(""); setMostrarRemetente(false);
     try {
       // Blocos alfanuméricos do valor bipado (>= 8) + o texto inteiro se for puro
       // alfanumérico. Cobre order_sn, rastreio com/sem "BR" e com/sem sufixo SPX,
@@ -306,11 +329,15 @@ export function DevolucoesRecebidas() {
         }
       }
       if (data.length === 0) {
-        setErro(
-          avisoMl
-            ? `Etiqueta do Mercado Livre não reconhecida: ${avisoMl}. Use o nº do pedido (2000…) ou procure pelo rastreio.`
-            : `Pedido não encontrado para "${raw}". Confira o código e tente de novo.`,
-        );
+        if (avisoMl) {
+          setErro(
+            "O Mercado Livre não mostra esta etiqueta — costuma ser DEVOLUÇÃO AO REMETENTE (pacote não entregue, remetente \"MELI #0\"). " +
+            "Digite o Ref. ID impresso no topo da etiqueta, ou escolha o pedido abaixo.",
+          );
+          setMostrarRemetente(true);
+        } else {
+          setErro(`Pedido não encontrado para "${raw}". Confira o código e tente de novo.`);
+        }
         return;
       }
       const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };
@@ -454,6 +481,32 @@ export function DevolucoesRecebidas() {
           <div className="flex items-center gap-2 rounded-[10px] px-3.5 py-2.5" style={{ background: "#C9432F14", border: "1px solid #C9432F40" }}>
             <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: "#C9432F" }} />
             <span className="text-[13px] font-medium" style={{ color: "#C9432F" }}>{erro}</span>
+          </div>
+        )}
+        {mostrarRemetente && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Não entregues aguardando recebimento {remetenteQ.data ? `(${remetenteQ.data.length})` : ""}
+            </span>
+            {remetenteQ.isLoading && <Skeleton className="h-10 w-full" />}
+            {remetenteQ.data?.length === 0 && (
+              <span className="text-[12.5px] text-muted-foreground">Nenhum pedido não entregue pendente.</span>
+            )}
+            <div className="flex flex-col divide-y divide-border rounded-[10px] border max-h-72 overflow-y-auto">
+              {remetenteQ.data?.map((r) => (
+                <button
+                  key={r.order_id}
+                  type="button"
+                  onClick={() => { setTermo(r.order_id); void buscar(r.order_id); }}
+                  className="flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/60"
+                >
+                  <span className="text-[12px] font-mono text-muted-foreground shrink-0">{format(parseISO(r.data_pedido), "dd/MM")}</span>
+                  <span className="text-[12.5px] font-medium truncate flex-1 min-w-0">{r.primeiro_produto ?? "—"}</span>
+                  <span className="text-[11px] text-muted-foreground shrink-0 hidden sm:inline">{rotuloCanal(r.canal)}</span>
+                  <span className="text-[11px] font-mono text-muted-foreground shrink-0">{r.tiny_numero ? `Tiny ${r.tiny_numero}` : r.order_id}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </Card>

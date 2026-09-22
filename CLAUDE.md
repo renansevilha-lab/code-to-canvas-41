@@ -882,15 +882,22 @@ não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id
   "returns" — 11 de 40); returns sem devolução = 404 "There is no associated
   return" (mediação resolvida por cobertura, sem o produto voltar); 429 fácil
   (retry com espera). 90 dias: 283+14 claims → 42 envios de retorno em ~41 s.
-- **Códigos que o ML não conhece (404 `not_found_shipping_id`):**
-  `47880155625`, `47880250285`, `47881569283`, `48037688400` — QR no mesmo
-  formato `{"id":…,"t":"lm"}`. Não são de outra conta (envio de outra conta dá
-  **401 `invalid_caller_id`**, conferido com a SVL 1299638625), nem aparecem
-  em nenhuma devolução de reclamação das duas contas (90 dias), nem nas
-  operações do Full por inventário. A faixa 4788… é de envios criados ~27–28/ago.
-  Hipótese do dono: **retorno de pack do Full** — provavelmente remoção/
-  retirada do CD, que o app não enxerga (`/stock/withdrawals` = 403, falta a
-  role). Registrados em `ml_envio_devolucao` com `encontrado=false`.
+- **Códigos que o ML não conhece = DEVOLUÇÃO AO REMETENTE (resolvido 22/set
+  com a etiqueta física):** `47880155625`, `47880250285`, `47881569283`,
+  `47880389898`, `48037688400` (404 `not_found_shipping_id`; outra conta daria
+  401). A etiqueta tem remetente **"MELI #0, Rua Jussara 1250, Tamboré,
+  Barueri"**, rota `XSP1 > SSP18` e, no topo, **"Ref. ID: 47662448910"** — esse
+  é o envio ORIGINAL (despachado por nós, `xd_drop_off`, J&T; `status
+  not_delivered` / `substatus returned`) → pedido 2000017707640358 → pack →
+  Tiny 288504. O envio da volta é interno do ML e não existe na API pública, e
+  o original não cita o id novo (nem em `/history`). **Não é Full** (Full não
+  entregue volta para o CD). Solução: digitar o **Ref. ID** (a bipagem normal
+  resolve via `/shipments`) ou escolher na lista
+  **`view_ml_devolucao_ao_remetente`** (ML `motivo_cancelamento =
+  'shipment_not_delivered'`, logística ≠ fulfillment, 90 dias, Tiny por
+  `order_id`/`pack_id`, `recebido_em` de `devolucoes_recebidas`; 20 pedidos em
+  22/set, nenhum recebido), que a tela mostra quando o ML não reconhece o
+  código.
 - **Rastreio dos Correios (`AP420460126BR`) não vai ao ML** — o front só
   chama a função se o texto não casa `[A-Z]{2}\d{9}[A-Z]{2}`.
 
