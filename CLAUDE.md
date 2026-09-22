@@ -913,6 +913,14 @@ ao longo de duas semanas.
 - `view_carteira_a_receber` troca os rótulos "disponível p/ resgate" por
   "libera após a entrega" / "aguardando crédito" quando o Acelera está
   desligado. A tela `/fluxo-caixa` mostra o modo por loja no cabeçalho.
+- **PIX/transferência avulsa do Mercado Pago fica FORA (decisão do dono,
+  22/set):** `transacoes_carteira.tipo='recebimento_avulso'` é quase sempre
+  dinheiro próprio mudando de conta (saque da carteira Shopee → MP, transferência
+  dos bancos). Saiu da projeção (`ml_real`), do `view_carteira_a_receber` e do
+  `view_fluxo_caixa_previsto_realizado` — em 21 dias eram R$ 285 mil de
+  "realizado" contra R$ 95 mil de liberação real de vendas do ML, e 10 avulsos
+  de mar–ago presos como "pendente" no espelho viravam R$ 1.439 fantasmas em
+  HOJE. Os lançamentos continuam na carteira; só não contam como caixa.
 - Previsto × realizado antes da mudança mostrava o sintoma: dias de resgate
   com +R$ 60–108 mil e os demais sistematicamente abaixo do previsto.
 
