@@ -913,6 +913,15 @@ ao longo de duas semanas.
 - `view_carteira_a_receber` troca os rótulos "disponível p/ resgate" por
   "libera após a entrega" / "aguardando crédito" quando o Acelera está
   desligado. A tela `/fluxo-caixa` mostra o modo por loja no cabeçalho.
+- **Shopee só credita em DIA ÚTIL (conferido 22/set):** em 14 sáb/dom sem
+  Acelera, 22 dias com zero crédito; segunda tem ~2,5× um dia útil (235
+  créditos, R$ 10,4 mil × ~100 / R$ 4 mil); feriado igual (07/09 = 1 crédito,
+  08/09 = 227). Janela 09h–18h. Camada `view_fluxo_caixa_eventos_ajustado` move
+  só as ENTRADAS Shopee para `proximo_dia_util(dia)` (fim de semana +
+  `feriados_nacionais`, cadastrados até dez/2027 — **renovar a tabela todo
+  ano**) e reagrega; a matview lê dessa camada. Total de 60 dias idêntico ao
+  centavo. Mercado Livre libera todos os dias (sáb 515, dom 369 em 60 d) e não
+  entra na regra.
 - **PIX/transferência avulsa do Mercado Pago fica FORA (decisão do dono,
   22/set):** `transacoes_carteira.tipo='recebimento_avulso'` é quase sempre
   dinheiro próprio mudando de conta (saque da carteira Shopee → MP, transferência
