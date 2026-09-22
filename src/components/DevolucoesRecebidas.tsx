@@ -19,7 +19,12 @@ import { rotuloCanal } from "@/lib/canais";
 //   (a) "Só registrar" — dá entrada rápida (status 'recebida', a conferir); ou
 //   (b) "Registrar conferido" — já confere itens (qtd + estado) -> 'conferida'.
 // A lista permite CONFERIR depois um registro pendente. Mostra o status Shopee.
-// Backend: devolucoes_recebidas + devolucao_recebida_itens. Sem edge function.
+// Backend: devolucoes_recebidas + devolucao_recebida_itens.
+// Mercado Livre: a etiqueta de devolução NÃO traz o nº do pedido — o QR é
+// {"id":"<shipment_id>","t":"lm"} e o código de barras é o mesmo número. Esse id
+// não existe em nenhuma tabela nossa, então a bipagem só casa consultando o ML
+// (edge fn ml-devolucao-lookup → GET /shipments/{id} → order_id, com cache em
+// ml_envio_devolucao). É o único caminho: não há nº de pedido na etiqueta.
 // ============================================================================
 
 type Estado = "ok" | "quebrado" | "furado" | "faltando";
@@ -252,8 +257,45 @@ export function DevolucoesRecebidas() {
           }
         }
       }
+      // Fallback 5: etiqueta de DEVOLUÇÃO do Mercado Livre — o código bipado é o
+      // id do ENVIO de retorno, que só o ML sabe traduzir em nº de pedido.
+      let avisoMl: string | null = null;
+      if (data.length === 0 && /\d{9,14}/.test(raw)) {
+        try {
+          const { data: mlData, error: mlErro } = await supabaseExternal.functions.invoke(
+            "ml-devolucao-lookup",
+            { body: { codigo: raw } },
+          );
+          if (mlErro) throw mlErro;
+          const ml = mlData as {
+            ok?: boolean; order_id?: string | null; motivo?: string;
+            tipo?: string | null; tracking?: string | null;
+            tentativas?: { erro?: string }[];
+          } | null;
+          if (ml?.ok && ml.order_id) {
+            const r5 = await supabaseExternal.from("pedidos_tiny").select(sel).eq("numero_ecommerce", ml.order_id).limit(1);
+            data = (r5.data ?? []) as PT[];
+            if (data.length === 0) {
+              // pedido do ML fora do espelho do Tiny — card mínimo pelo nº do ML
+              data = [{
+                numero_ecommerce: ml.order_id, numero_pedido: null,
+                marca_canal: "Mercado Livre", situacao: null,
+                codigo_rastreamento: ml.tracking ?? null, forma_envio: null,
+              }];
+            }
+          } else if (ml) {
+            avisoMl = ml.tentativas?.[0]?.erro ?? ml.motivo ?? null;
+          }
+        } catch {
+          /* ML fora do ar / sem token: cai na mensagem padrão abaixo */
+        }
+      }
       if (data.length === 0) {
-        setErro(`Pedido não encontrado para "${raw}". Confira o código e tente de novo.`);
+        setErro(
+          avisoMl
+            ? `Etiqueta do Mercado Livre não reconhecida: ${avisoMl}. Use o nº do pedido (2000…) ou procure pelo rastreio.`
+            : `Pedido não encontrado para "${raw}". Confira o código e tente de novo.`,
+        );
         return;
       }
       const pt = data[0] as { numero_ecommerce: string | null; numero_pedido: string | null; marca_canal: string | null; situacao: string | null; codigo_rastreamento: string | null; forma_envio: string | null };

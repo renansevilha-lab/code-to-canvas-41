@@ -832,6 +832,43 @@ de emissões num dia dispara **SEFAZ 656 "Consumo Indevido"** — parar sem retr
 e espalhar no tempo (cron temporário jobid 98 drena o backlog; remover quando
 `recriados=0`).
 
+## 5.2.1 Bipar etiqueta de devolução do Mercado Livre (22/set/2026)
+
+A etiqueta de devolução do ML **não tem o nosso número de pedido**. O QR é
+`{"id":"<shipment_id>","t":"lm"}` e o código de barras é o mesmo número puro
+(11 dígitos) — é o id do **envio de retorno**, que não é o envio de ida nem
+existe em nenhuma tabela nossa (`ml_billing_detalhes.shipment_id` está 0/10.209
+preenchido). Por isso a bipagem em Devoluções nunca casava: o
+`DevolucoesRecebidas.buscar()` só procurava `numero_ecommerce`, `numero_pedido`
+e `codigo_rastreamento` no espelho do Tiny.
+
+Único caminho que o ML expõe: **`GET /shipments/{id}`** com o token da conta
+dona devolve `order_id` (validado ao vivo: envio `47938703625` → `type:
+"return"`, pedido `2000018261294906` → Tiny 302304, "Mercado Livre (Ottz Pet)",
+cancelado, NF 086589). Não há endpoint de returns utilizável:
+`/post-purchase/v1|v2/claims/{id}/returns` responde 400/429,
+`/post-purchase/v1/returns/...` não existe e `/stock/withdrawals` dá 403 (o app
+não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id}`
+(o `mediations[].id` do pedido) — dá motivo e resolução, mas **não** o envio.
+
+- **Edge fn `ml-devolucao-lookup` v1:** `?codigo=<texto bipado>` (ou body
+  `{codigo}`) aceita o QR inteiro, o número puro ou texto com vários números;
+  tenta as contas conectadas (Ottz primeiro, depois SVL) e cacheia em
+  **`ml_envio_devolucao`** (`shipment_id` PK → `order_id`, tipo, status,
+  tracking, `bipagens`). Bipar duas vezes o mesmo pacote não volta ao ML.
+  Código que o ML não reconhece também é gravado (`encontrado=false` + `erro`)
+  para investigar com a etiqueta na mão.
+- **Front:** "Fallback 5" no `buscar()` — só entra quando os fallbacks locais
+  falham e o texto tem 9–14 dígitos; com o `order_id` na mão refaz a busca
+  local normal (e, se o pedido não estiver no espelho, monta card mínimo).
+  Mensagem de erro específica quando o ML não reconhece o envio.
+- **Dois dos três códigos de teste não existem para o ML:** `48037688400` e
+  `47880155625` dão **404 `not_found_shipping_id`** nas duas contas (acesso a
+  envio de outra conta devolve **401 `invalid_caller_id`**, não 404 — então não
+  é questão de conta). Ficam registrados na tabela; para descobrir o que são,
+  precisa olhar a etiqueta física (pode ser outro tipo de etiqueta, ex.:
+  retirada de estoque do Full, ou dígito lido errado).
+
 ## 5.3 DRE — categorização de despesas e camada de override
 
 **Fonte das despesas:** `contas_pagar` é **espelho do Tiny**, re-sincronizado
