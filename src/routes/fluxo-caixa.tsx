@@ -56,6 +56,7 @@ interface DiaAgg {
   acumulado: number;
 }
 interface SaldoRow { carteira: string; saldo_em_conta: number; marketplace: string }
+interface AceleraRow { shop_id: number; ultimo_resgate: string | null; ativo: boolean; modo: string }
 interface PrazoRow { marketplace: string; creditos_60d: number; media_dias: number; mediana_dias: number; p90_dias: number }
 interface FonteRow { fonte: string; frequencia: string; atualizado_em: string | null }
 interface PrevRealRow { dia: string; entradas_previstas: number; entradas_reais: number | null; desvio: number; saidas_previstas: number }
@@ -74,6 +75,32 @@ function FluxoCaixaPage() {
       return (data ?? []) as EventoRow[];
     },
   });
+  // Modo do Shopee Acelera por loja (auto = resgate nos últimos 10 dias). Muda o
+  // desenho das entradas Shopee: com Acelera = disponível p/ resgate em D+1; sem =
+  // espalhado pelo prazo real de liberação (mediana ~8 dias).
+  const aceleraQ = useQuery({
+    queryKey: ["fluxo", "acelera"],
+    queryFn: async (): Promise<AceleraRow[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_shopee_acelera_status").select("shop_id, ultimo_resgate, ativo, modo");
+      if (error) throw error;
+      return (data ?? []) as AceleraRow[];
+    },
+    staleTime: 10 * 60_000,
+  });
+  const aceleraTxt = useMemo(() => {
+    const rows = aceleraQ.data ?? [];
+    if (rows.length === 0) return null;
+    const nome = (id: number) => (id === 522186766 ? "Ottz" : id === 759046323 ? "Bumi" : String(id));
+    const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "nunca");
+    return rows
+      .slice()
+      .sort((a, b) => a.shop_id - b.shop_id)
+      .map((r) => `${nome(r.shop_id)} ${r.ativo ? "ligado" : "desligado"}${r.modo !== "auto" ? " (forçado)" : ""} · último resgate ${fmt(r.ultimo_resgate)}`)
+      .join(" | ");
+  }, [aceleraQ.data]);
+  const algumAcelera = (aceleraQ.data ?? []).some((r) => r.ativo);
+
   const saldosQ = useQuery({
     queryKey: ["fluxo", "saldos"],
     queryFn: async (): Promise<SaldoRow[]> => {
@@ -196,7 +223,13 @@ function FluxoCaixaPage() {
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
-          Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee (Ottz e Bumi) pelo Shopee Acelera: o que já foi resgatado sai da conta, o resto aparece como disponível para resgate
+          Projeção de 60 dias, pedido a pedido — ML com data real de liberação; Shopee pelo prazo real de liberação de cada loja
+          {algumAcelera ? " (com Acelera onde estiver ligado: disponível p/ resgate em D+1)" : " (Acelera desligado: crédito na carteira em ~8 dias após o pedido, mediana medida)"}
+          {aceleraTxt && (
+            <span className="block text-[11.5px] mt-0.5">
+              Shopee Acelera: {aceleraTxt} · a projeção é recalculada a cada 20 min
+            </span>
+          )}
         </p>
         <label className="flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
           <input type="checkbox" className="h-4 w-4 accent-primary"
@@ -436,13 +469,13 @@ function ComoCalculado() {
       {aberto && (
         <ul className="mt-2 space-y-1 list-disc pl-5">
           <li><strong className="text-foreground">Entradas ML</strong> — data <em>real</em> de liberação informada pelo Mercado Pago, pagamento a pagamento.</li>
-          <li><strong className="text-foreground">Entradas Shopee</strong> — as <strong>duas lojas</strong> usam o <strong>Shopee Acelera</strong>. O "Resgate do Shopee Acelera" entra na carteira como um crédito único, sem número de pedido, e os pedidos pagos por ele nunca ganham "Renda do pedido". Por isso os resgates dos últimos 45 dias são <em>alocados aos pedidos sem evento na carteira, do mais antigo para o mais novo</em>; o que sobra é o que realmente falta receber e aparece como <strong>disponível p/ resgate</strong> (em D+1, porque o resgate é manual: entra quando alguém clica em resgatar). Pedidos ainda não enviados ficam como "a enviar" e só viram disponíveis após o envio. Pedido que a Shopee paga pelo ciclo normal (com "Renda do pedido") já sai da lista quando o crédito chega.</li>
+          <li><strong className="text-foreground">Entradas Shopee</strong> — o modelo detecta por loja se o <strong>Shopee Acelera</strong> está ligado (houve resgate nos últimos 10 dias; dá para forçar em <code>shopee_acelera_config</code>). <strong>Com Acelera:</strong> os resgates dos últimos 45 dias são alocados aos pedidos sem evento na carteira, do mais antigo para o mais novo, e o que sobra aparece como <em>disponível p/ resgate</em> em D+1. <strong>Sem Acelera</strong> (situação atual nas duas lojas): cada pedido pendente é espalhado pelos próximos dias pela <em>distribuição real</em> do prazo entre o pedido e o crédito "recebimento do pedido" na carteira — medida nos últimos 90 dias, por loja, e condicionada ao que o pedido já esperou (mediana 8 dias na Ottz e 7 na Bumi; 90% até 13 dias). Pedido com mais de 30 dias sem crédito não entra (é resgate antigo ou falha de sync). Pedido que recebe o crédito sai da lista na hora.</li>
           <li><strong className="text-foreground">Shopee Acelera — ajustes</strong> — saída diária estimada (média móvel de 7 dias dos débitos reais de reconciliação da antecipação: pedido devolvido ou com valor final menor que o antecipado). Não é taxa — o programa está com 0% de custo; é acerto de contas da antecipação.</li>
           <li><strong className="text-foreground">Contas a pagar</strong> — cada conta em aberto do Tiny, no vencimento; <em>vencida cai em HOJE</em>. Expanda o dia para ver fornecedor e categoria.</li>
           <li><strong className="text-foreground">ADS</strong> — regra da casa: dia <strong>10</strong> paga o gasto de ADS do mês anterior (Shopee + ML). Competência em curso é extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Impostos</strong> — regra da casa: dia <strong>20</strong> paga o imposto sobre vendas do mês anterior. Competência em curso extrapolada pro-rata.</li>
           <li><strong className="text-foreground">Gastos recorrentes</strong> — cadastrados no DRE, lançados no dia 5 de cada mês (premissa).</li>
-          <li><strong className="text-foreground">Vendas projetadas</strong> — média de venda líquida por dia-da-semana das últimas 4 semanas (qui vende ~35% mais que sex — o padrão importa). A venda projetada de um dia vira caixa com o ciclo do marketplace: Shopee +3 dias (Acelera nas duas lojas: fica disponível ~2 dias após o envio e entra quando resgatar), ML +10. Sempre em <span style={{ color: "#2F6FB0" }} className="font-semibold">azul</span> e desligável no topo — projeção nunca se mistura com caixa contratado.</li>
+          <li><strong className="text-foreground">Vendas projetadas</strong> — média de venda líquida por dia-da-semana das últimas 4 semanas (qui vende ~35% mais que sex — o padrão importa). A venda projetada de um dia vira caixa com o ciclo do marketplace: ML +10 dias; Shopee +3 dias se o Acelera estiver ligado, senão espalhada pela mesma distribuição real do prazo de liberação (mediana ~8 dias). Sempre em <span style={{ color: "#2F6FB0" }} className="font-semibold">azul</span> e desligável no topo — projeção nunca se mistura com caixa contratado.</li>
           <li><strong className="text-foreground">Limite do modelo</strong> — só entram pedidos que <em>já existem</em>: as entradas Shopee drenam em ~10 dias e, além disso, o saldo projetado é <em>conservador</em> (vendas futuras não são inventadas). Saldo inicial = carteiras Shopee (o ML não expõe saldo).</li>
         </ul>
       )}

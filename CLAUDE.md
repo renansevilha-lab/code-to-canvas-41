@@ -493,6 +493,10 @@ Duas decisões do dono no mesmo dia, nesta ordem:
   Tiny devolve **404** (apagado lá, ainda ativo no espelho: `10901_FBA`,
   `10941HJ`…) ficava eternamente na fila e queimava o orçamento da rodada —
   a v2 grava a tentativa em `peso_atualizado_em` e só repesca depois de 7 dias.
+- **Filtro por banda (22/set):** `separacao_regra_peso.limite2_kg` (8) e coluna
+  `banda` na view (`ate_limite` · `entre` · `acima` · `sem_peso`); chips
+  multi-seleção "Até 4 kg / 4 a 8 kg / Acima de 8 kg / Sem peso". A `faixa`
+  (time) continua só com o limite de 4 kg.
 - **Regra, no banco:** `separacao_regra_peso.limite_kg` (4). "Acima de 4 kg" é
   **estritamente maior** — pedido de exatamente 4,00 kg é leve (por isso a
   areia de 4,01 kg cai nos pesados). `separacao_separadores` ficou apenas como
@@ -881,6 +885,36 @@ antigo para o mais novo (FIFO) e marca `coberto_por_resgate`; as views
 clica). Validação: a alocação fecha ao centavo com os resgates e os descobertos
 começam logo após o último resgate de cada loja. `FAST_ESCROW_DEDUCT` ("Ajuste
 do Shopee Acelera") é pequeno (3–4% do antecipado): cancelamento/valor menor.
+
+## 5.4.1 Fluxo de caixa sem Shopee Acelera (22/set/2026)
+
+O dono desligou o Acelera nas duas lojas (último resgate: Ottz 06/09, Bumi
+09/09). A projeção ainda tratava todo pedido Shopee sem evento como
+"disponível p/ resgate amanhã" — R$ 114 mil caindo em D+1 que na verdade entram
+ao longo de duas semanas.
+- **Prazo real medido** (pedido → crédito "recebimento do pedido" na
+  carteira, ago/set): mediana 8 dias Ottz / 7 Bumi, p90 13 dias.
+  `view_shopee_lag_liberacao` = distribuição empírica por loja (pedidos de 21
+  a 90 dias atrás).
+- **Modo do Acelera por loja:** `shopee_acelera_config(shop_id, modo
+  auto|ligado|desligado)` + `view_shopee_acelera_status` (auto = resgate nos
+  últimos 10 dias). Volta a ligar sozinho se alguém resgatar.
+- **Sem Acelera:** cada pedido pendente é espalhado pelos próximos dias pela
+  distribuição, condicionada ao que já esperou; pedido com >30 dias sem
+  crédito não entra; concluído sem crédito entra em D+1 se tiver até 14 dias.
+  A venda projetada da Shopee usa a mesma distribuição (antes: +3 dias).
+  Com Acelera ligado, a regra antiga continua valendo.
+- **Performance:** a projeção virou **`mv_fluxo_caixa_eventos`** (refresh no
+  cron 62, a cada 20 min; ~5 s). `view_fluxo_caixa_eventos` é view fina sobre
+  ela (leitura 43 ms) e ganhou `atualizado_em`; a lógica viva está em
+  `view_fluxo_caixa_eventos_live`. `view_fluxo_caixa_diario` foi recriada
+  (dependia do nome). O snapshot diário (cron `fluxo-caixa-snapshot`, 09:15
+  UTC) lê a view fina, então mede a projeção com até 20 min de atraso.
+- `view_carteira_a_receber` troca os rótulos "disponível p/ resgate" por
+  "libera após a entrega" / "aguardando crédito" quando o Acelera está
+  desligado. A tela `/fluxo-caixa` mostra o modo por loja no cabeçalho.
+- Previsto × realizado antes da mudança mostrava o sintoma: dias de resgate
+  com +R$ 60–108 mil e os demais sistematicamente abaixo do previsto.
 
 ## 5.5 Separação — botão único "Imprimir etiqueta" (TAG nasce ao imprimir)
 

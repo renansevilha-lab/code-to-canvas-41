@@ -303,7 +303,10 @@ export interface PesoLinha {
   peso_kg_min: number | null;
   peso_completo: boolean | null;
   faixa: "pesados" | "leves" | "sem_peso";
+  /** banda para filtro: ate_limite (≤4) · entre (4–8] · acima (>8) · sem_peso */
+  banda: "ate_limite" | "entre" | "acima" | "sem_peso";
   limite_kg: number | null;
+  limite2_kg: number | null;
 }
 
 function usePesoPorLinha() {
@@ -312,7 +315,7 @@ function usePesoPorLinha() {
     queryFn: async () => {
       const { data, error } = await supabaseExternal
         .from("view_separacao_peso_linha")
-        .select("tag_sugerida,pedidos,peso_kg,peso_kg_min,peso_completo,faixa,limite_kg")
+        .select("tag_sugerida,pedidos,peso_kg,peso_kg_min,peso_completo,faixa,banda,limite_kg,limite2_kg")
         .limit(5000);
       if (error) throw error;
       const map = new Map<string, PesoLinha>();
@@ -2695,9 +2698,9 @@ function FilaPriorizada() {
   // Filtro por empresa (Ottz / Bumi): linha entra se tem pedido da empresa.
   // Combinações multi-SKU não têm empresa mapeada (chave genérica) e passam.
   const [empresaFiltro, setEmpresaFiltro] = useState<null | "ottz" | "bumi">(null);
-  // Filtro por faixa de peso do pedido (regra do banco: acima do limite =
-  // pesados). "sem_peso" = falta peso no cadastro do Tiny.
-  const [faixaPesoFiltro, setFaixaPesoFiltro] = useState<null | "pesados" | "leves" | "sem_peso">(null);
+  // Filtro por banda de peso do pedido — multi-seleção (vazio = todas):
+  // até 4 kg · 4 a 8 kg · acima de 8 kg · sem peso (limites vêm do banco).
+  const [bandasPeso, setBandasPeso] = useState<Set<string>>(new Set());
   const pesoPorLinha = usePesoPorLinha().data;
   const [aplicando, setAplicando] = useState<string | null>(null);
   const [bloqueados, setBloqueados] = useState<Set<string>>(new Set());
@@ -3489,13 +3492,13 @@ function FilaPriorizada() {
         const dias = diasAtePrazo(prazosPorLinha?.get(linhaKeyDe(r)) ?? null);
         if (!prazoFiltro.includes(faixaPrazo(dias))) return false;
       }
-      if (faixaPesoFiltro) {
+      if (bandasPeso.size > 0) {
         const pi = pesoPorLinha?.get(linhaKeyDe(r));
-        if ((pi?.faixa ?? "sem_peso") !== faixaPesoFiltro) return false;
+        if (!bandasPeso.has(pi?.banda ?? "sem_peso")) return false;
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, faixaPesoFiltro, pesoPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, bandasPeso, pesoPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3771,28 +3774,29 @@ function FilaPriorizada() {
             </button>
           ))}
         </div>
-        {/* filtro por faixa de peso — regra e limite vêm do banco */}
+        {/* filtro por banda de peso — multi-seleção; limites (4 e 8 kg) vêm do banco */}
         {(() => {
-          let pesados = 0, leves = 0, semPeso = 0;
-          for (const v of pesoPorLinha?.values() ?? []) {
-            const n = Number(v.pedidos ?? 0);
-            if (v.faixa === "pesados") pesados += n;
-            else if (v.faixa === "leves") leves += n;
-            else semPeso += n;
-          }
-          const limite = pesoPorLinha?.values().next().value?.limite_kg;
-          const limTxt = limite != null ? fmtPeso(Number(limite)) : "4 kg";
-          const botao = (id: "pesados" | "leves" | "sem_peso", rot: string, n: number, dica: string) => {
-            if (id === "sem_peso" && n === 0 && faixaPesoFiltro !== id) return null;
-            const on = faixaPesoFiltro === id;
+          const cont: Record<string, number> = { ate_limite: 0, entre: 0, acima: 0, sem_peso: 0 };
+          for (const v of pesoPorLinha?.values() ?? []) cont[v.banda ?? "sem_peso"] = (cont[v.banda ?? "sem_peso"] ?? 0) + Number(v.pedidos ?? 0);
+          const primeiro = pesoPorLinha?.values().next().value;
+          const lim1 = primeiro?.limite_kg != null ? fmtPeso(Number(primeiro.limite_kg)) : "4 kg";
+          const lim2 = primeiro?.limite2_kg != null ? fmtPeso(Number(primeiro.limite2_kg)) : "8 kg";
+          const botao = (id: string, rot: string, dica: string) => {
+            const n = cont[id] ?? 0;
+            if (id === "sem_peso" && n === 0 && !bandasPeso.has(id)) return null;
+            const on = bandasPeso.has(id);
             return (
               <button
                 key={id}
                 type="button"
-                onClick={() => setFaixaPesoFiltro(on ? null : id)}
+                onClick={() => setBandasPeso((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id); else next.add(id);
+                  return next;
+                })}
                 className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition inline-flex items-center gap-1.5",
                   on ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground")}
-                title={dica}
+                title={`${dica} — clique para combinar bandas`}
               >
                 {rot}
                 <span className="font-mono tabular-nums opacity-70">{formatNumber(n)}</span>
@@ -3804,9 +3808,10 @@ function FilaPriorizada() {
               <span className="self-center pl-2 pr-1 text-[11px] font-semibold text-muted-foreground">
                 <Weight className="h-3.5 w-3.5 inline" />
               </span>
-              {botao("pesados", `Acima de ${limTxt}`, pesados, `Pedidos acima de ${limTxt} (peso do cadastro do Tiny) — trabalho dos pesados`)}
-              {botao("leves", `Até ${limTxt}`, leves, `Pedidos de até ${limTxt} (peso do cadastro do Tiny) — trabalho dos leves`)}
-              {botao("sem_peso", "Sem peso", semPeso, "Pedido com item sem peso no cadastro do Tiny — não entra na divisão")}
+              {botao("ate_limite", `Até ${lim1}`, `Pedidos de até ${lim1} (peso do cadastro do Tiny)`)}
+              {botao("entre", `${lim1} a ${lim2}`, `Pedidos acima de ${lim1} até ${lim2}`)}
+              {botao("acima", `Acima de ${lim2}`, `Pedidos acima de ${lim2}`)}
+              {botao("sem_peso", "Sem peso", "Pedido com item sem peso no cadastro do Tiny")}
             </div>
           );
         })()}
