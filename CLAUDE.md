@@ -904,7 +904,7 @@ não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id
 ## 5.3 DRE — categorização de despesas e camada de override
 
 **Fonte das despesas:** `contas_pagar` é **espelho do Tiny**, re-sincronizado
-pelo cron `tiny-sync-contas-pagar` **a cada 15 min** (upsert por `tiny_id`).
+pelo cron `tiny-sync-contas-pagar` (jobid 16, **1×/dia às 4h**) (upsert por `tiny_id`).
 Editar/excluir direto ali **é desfeito no próximo sync** — nunca escreva no
 espelho para ajustar o DRE.
 
@@ -1038,6 +1038,42 @@ almoço; dia sem saída/volta = incompleto). O quadro "Hoje" e o "Relatório do 
 aparecem para o administrador (módulo `todos`). Ajuste manual de marcação
 ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária (12 casos).
 
+## 5.7 Prazo de pagamento por fornecedor (base do ciclo de caixa)
+
+**Objetivo:** prazo do fornecedor = vencimento da parcela − âncora. Três âncoras
+lado a lado (pedido / emissão da NF / entrada da mercadoria); **principal = NF**,
+sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa depois.
+
+**Views (22–23/set/2026):**
+- `view_cp_parcela_origem` — 1 linha por parcela. Vínculo vem do TEXTO de
+  `contas_pagar.descricao` (regex de "NF nº / Nota Fiscal l / nf 123" e "ordem de
+  compra nº"). NF casa por **CNPJ só dígitos + número sem zeros**. `categoria` =
+  categoria **efetiva do DRE** (override > `categoria_despesa_dre`), porque
+  `contas_pagar.categoria` vem **NULL em 100%** (a listagem do Tiny não traz; só o detalhe).
+- `view_prazo_pedido` — 1 linha por compra (fornecedor + NF, ou + OC), prazos
+  ponderados por valor e divergência soma das parcelas × NF/OC.
+- `view_prazo_fornecedor` — recortes 180d/12m por `data_ancora`, mín/máx/mediana,
+  % sem referência (recorte por **vencimento**), dias pedido→NF→entrada, tendência 90×90.
+- `view_fornecedor_mercadoria` — regra: DRE `Mercadoria (ref)` **ou** `Outras / a
+  classificar` com parcela citando NF/OC (Esconde Aí, Four Plastic, Napi, Vidotto
+  caem aí; Embalagem/Frete não).
+- `view_cp_sem_referencia` — parcelas "In cash"/sem referência × OCs candidatas do
+  mesmo fornecedor (pedido até 60 d antes do vencimento, casamento por **nome** — o
+  mesmo fornecedor tem contato_id diferente no Tiny). **Sugestão**, nunca vínculo.
+
+**Armadilhas:**
+- `contas_pagar.data_emissao` é a data de **lançamento** no Tiny, não a da nota.
+- `data_pagamento` só vem no **detalhe** (`dataLiquidacao`). A listagem não traz; o
+  sync v1 gravava `null` fixo. v2: sync não envia mais a coluna; o módulo
+  `liquidacao` (cron 116, 4h23 e 16h23) grava data + `valorPago`. O sync diário
+  **re-grava `valor_pago = valor − saldo`**, então juros/multa da baixa são
+  sobrescritos na rodada seguinte (pendência).
+- Boleto **cedido ao banco** (Petlook pago via Itaú): a parcela tem o CNPJ do Itaú e
+  não casa com a NF da Petlook.
+- Backfill de NF: listagem do Tiny limitada a 600/chamada → `compras-sync?modulo=nf
+  &de=&ate=&max=0` em janelas de 3 dias; depois `?modulo=nf-detalhe` até zerar
+  (data de entrada). 95% das NF são retorno do Full (`ignorar=true`) e pesam no `raw`.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -1058,7 +1094,8 @@ ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária 
 | `ml-sync-ads` | v3 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario`) |
 | `ml-etiqueta` | v14 | Etiqueta ML (ZPL via PrintNode) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
-| `compras-sync` | v1 | Espelha ordens de compra do Tiny (`GET /ordem-compra` — atenção: singular) p/ o módulo Compras & Recebimento; cron 30 min; sync NÃO toca campos de conferência do app |
+| `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
+| `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
 | `fulfillment-inbound` | v5 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9 |
 | `nf-devolucao` | v2 | Devoluções: `varrer-cancelados` (cron), `pendentes` e `emitir` — ver seção 5.2 |
 | `etiquetas-saude` | v5 | **Quadro do dia e alerta de risco de cancelamento vão para o canal `atualizacoes`** (#atualizações-projeto, pedido do dono 16/set); token e pipeline degradado seguem em `erros`. Texto do risco = UMA linha por loja (tudo que já venceu ou cancela hoje somado). `resumo` / `discord` (quadro 2×/dia) / `verificar` (watchdog 20 min) / **`entrega-rapida`** (cron jobid 103, 12h10 BRT): lista pedidos Shopee **Entrega Rápida** ainda não entregues ao motorista com prazo hoje/vencido, via `view_entrega_rapida_pendentes` (status Shopee pré-envio E situação Tiny não enviada, janela 10 dias — o espelho da Shopee tem 1.204 fantasmas em PROCESSED de mai–jul). Silêncio se não há pendente; `&sempre=1` força |
