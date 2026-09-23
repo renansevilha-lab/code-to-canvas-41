@@ -1102,6 +1102,7 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
 | `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |
 | `resumo-operacao` | v3 | Resumos de abertura/fechamento/fulfillment no Discord |
+| `ml-nfe` | v3 | Envia o XML da NF-e (Tiny) ao ML quando o Tiny não manda os dados fiscais: `?modulo=pendentes` (quem o ML espera NF), `status&pack=`, `enviar&pack=` (dry) / `&confirmar=1`. Conta ML Ottz fixa (user 1107117809). **Só envia com envio em `invoice_pending`** — o Tiny manda os dados com ATRASO (23/set: 5 pedidos viraram `ready_to_print` minutos depois da NF), sem a trava duplicaria |
 | `tiktok-oauth` | v1 | Callback **público** (verify_jwt off) da autorização do TikTok Shop → `oauth_tokens_tiktok` + `tiktok_lojas` (shop_cipher). `?help=1` mostra o link |
 | `tiktok-refresh-token` | v1 | Renova o token TikTok (validade ~7d; renova se vence em <5d). Cron `tiktok-refresh-token` (jobid 115, `41 9 * * *`) |
 
