@@ -218,6 +218,7 @@ function colorForCanal(canal: string): string {
   if (c.includes("shopee")) return "hsl(24 95% 53%)";
   if (c.includes("mercado")) return "hsl(45 93% 47%)"; // amarelo
   if (c.includes("amazon")) return "hsl(215 60% 22%)"; // azul escuro
+  if (c.includes("tiktok")) return "hsl(349 99% 58%)"; // rosa TikTok (visivel no claro e no escuro)
   return "hsl(215 15% 55%)";
 }
 

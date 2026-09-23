@@ -1074,6 +1074,35 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
   &de=&ate=&max=0` em janelas de 3 dias; depois `?modulo=nf-detalhe` até zerar
   (data de entrada). 95% das NF são retorno do Full (`ignorar=true`) e pesam no `raw`.
 
+## 5.8 TikTok Shop (ACZ) no Pedidos Integrados — 24/set/2026
+
+- **Só a loja ACZ/Ottz** (`shop_id 7496181924415506972`, "ottzpet"). A **Bumi**
+  ainda não autorizou o app e segue em "Canais sem integração" (Tiny,
+  `marca_canal = 'TikTok Shop l Bumi Pet'`).
+- `view_margem_pedido_v2` = definição Shopee/ML/Amazon **UNION ALL
+  `view_margem_tiktok`** (colunas idênticas, cast explícito para os tipos da v2 —
+  `numeric(12,2)` quebra o `CREATE OR REPLACE` sem cast). Cascata automática para
+  `view_kpi_pedidos_dia`, `mv_dre_pedidos_mes`, tendências e Dashboard. Baseline
+  validado: Shopee/ML/Amazon **idênticos ao centavo** antes/depois.
+- Loja `lojas` "TikTok (ACZ Pet)"; `view_canais_sem_integracao` exclui
+  `'TikTok Shop ACZ ?'` e `'TikTok Shop'` (nome antigo no Tiny, fev–abr/2026) —
+  senão o TikTok ACZ contaria duas vezes. `mv_canais_diario` ganhou o card
+  "TikTok · ACZ Pet" (sem ADS: TikTok Ads não integrado).
+- Margem TikTok = `recebido` REAL do extrato (liquidação) − CMV congelado em
+  `tiktok_pedido_itens` − imposto. Out/25–mar/26 deu **negativa** (frete
+  pós-liquidação + Kit Wisecat 15226 com peso errado) — é real, não bug.
+- **ARMADILHA — id > 2^53:** o `shop_id` do TikTok não cabe em número do JS.
+  `Number()` ou ler o bigint via PostgREST/JSON arredonda (`…6972` → `…7000`) e o
+  JOIN com `lojas` falha em silêncio (canal saía "TikTok" sem empresa). A v4 lê
+  `shop_id::text` e grava string. Vale para qualquer id TikTok (pedido, extrato):
+  sempre texto.
+- No front, o drawer do PI esconde "Puxar custo do Tiny" e "Custo manual" para
+  TikTok (o CMV é congelado no sync; o reprocessamento por período mexe em
+  `pedido_item_cmv`, que não alcança esses pedidos).
+- Crons (minuto quebrado, política do NANO): 117 `recentes&horas=8` a cada 3h
+  (:37) · 118 `financas` 10h47/22h47 UTC · 119 `extratos&etapa=lista` 10h53 ·
+  120 `extratos&etapa=transacoes` 10h59 · 121 `devolucoes` 11h13.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -1106,6 +1135,7 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
 | `ml-nfe` | v4 | Envia o XML da NF-e (Tiny) ao ML quando o Tiny não manda os dados fiscais: `?modulo=pendentes` (quem o ML espera NF), `status&pack=`, `enviar&pack=` (dry) / `&confirmar=1`. Conta ML Ottz fixa (user 1107117809). **Só envia com envio em `invoice_pending`** — o Tiny manda os dados com ATRASO (23/set: 5 pedidos viraram `ready_to_print` minutos depois da NF), sem a trava duplicaria |
 | `tiktok-oauth` | v1 | Callback **público** (verify_jwt off) da autorização do TikTok Shop → `oauth_tokens_tiktok` + `tiktok_lojas` (shop_cipher). `?help=1` mostra o link |
 | `tiktok-refresh-token` | v1 | Renova o token TikTok (validade ~7d; renova se vence em <5d). Cron `tiktok-refresh-token` (jobid 115, `41 9 * * *`) |
+| `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso

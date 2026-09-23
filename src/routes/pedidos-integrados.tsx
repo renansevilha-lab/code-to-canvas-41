@@ -275,6 +275,7 @@ const MARKETPLACE_COLORS: Record<string, string> = {
   shopee: "#EE4D2D",
   mercadolivre: "#FFE600",
   amazon: "#2E9E8F",
+  tiktok: "#FE2C55",
 };
 
 function marketplaceFromCanal(canal: string | null | undefined): "shopee" | "mercadolivre" | null {
@@ -1499,13 +1500,17 @@ function PedidoExpandido({ p }: { p: PedidoIntegrado }) {
           />
         </div>
 
-        {p.cobertura_cmv !== "completo" && p.marketplace !== "amazon" && <PuxarCustoTiny pedido={p} />}
+        {p.cobertura_cmv !== "completo" && p.marketplace !== "amazon" && p.marketplace !== "tiktok" && <PuxarCustoTiny pedido={p} />}
         {/* Reprocessar CMV por periodo vale para QUALQUER pedido — corrigir custo
             errado e justamente em pedido com cobertura completa. Antes ficava
             dentro do PuxarCustoTiny (so incompletos) e nunca aparecia (11/set). */}
-        <div className="mt-4 rounded-md border border-border p-3">
-          <CustoManual pedido={p} skus={(p.skus ?? "").split(",").map((x) => x.trim()).filter(Boolean)} />
-        </div>
+        {/* TikTok: o CMV e congelado em tiktok_pedido_itens no sync — o reprocessamento
+            por periodo (pedido_item_cmv) nao alcanca esses pedidos. */}
+        {p.marketplace !== "tiktok" && (
+          <div className="mt-4 rounded-md border border-border p-3">
+            <CustoManual pedido={p} skus={(p.skus ?? "").split(",").map((x) => x.trim()).filter(Boolean)} />
+          </div>
+        )}
 
         {shopee && (
           <a
