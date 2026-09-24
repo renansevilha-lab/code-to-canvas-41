@@ -1117,7 +1117,7 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
 | `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
-| `amazon-sync-pedidos` | v12 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9 |
+| `amazon-sync-pedidos` | v19 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9. Cron 33 (`dias=7`) só relê pedidos **criados** nos últimos 7 dias; **`modulo=pendentes`** (v19, cron 122 `29 11,23 * * *`) relê pelo ID (`AmazonOrderIds`, 50/chamada) os Pending mais velhos que 6 dias — antes ficavam presos para sempre (24/set: 94 presos desde jul → 44 enviados entraram no PI, 18 cancelados). Só grava status "enviado" junto com o preço |
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
 | `ml-sync-ads` | v3 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario`) |
