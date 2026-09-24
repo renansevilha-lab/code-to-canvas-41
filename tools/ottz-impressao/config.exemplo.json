@@ -1,0 +1,6 @@
+{
+  "url": "https://vhogjofsxyhnyxdyglmq.supabase.co",
+  "apikey": "<publishable key>",
+  "filtro": "ZDesigner|Zebra|ZPL",
+  "token": "<token do agente — gerado por agente; o banco guarda so o sha256 em print_agentes.token_hash>"
+}

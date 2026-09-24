@@ -1140,6 +1140,41 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
   (:37) · 118 `financas` 10h47/22h47 UTC · 119 `extratos&etapa=lista` 10h53 ·
   120 `extratos&etapa=transacoes` 10h59 · 121 `devolucoes` 11h13.
 
+## 5.9 Impressão própria (substituto do PrintNode) — fase 1, 24/set/2026
+
+**Por quê:** o PrintNode só entrega o arquivo na impressora; toda a regra
+(dedup "nunca reimprimir", preso, TAG, contador) já é nossa. PCs em rede →
+Zebra Browser Print (só imprime do PC da impressora) descartado. ML em ZPL
+aprovado pelo dono → o agente só precisa de ZPL.
+
+**Peças (fase 1 — NADA do fluxo atual usa ainda):**
+- Tabelas `print_agentes` (token só como sha256), `impressoras` (registradas
+  pelo heartbeat do agente; `usar_proprio` = **chave da transição por
+  impressora**, `printnode_id` = a mesma no PrintNode), `print_jobs`
+  (`conteudo_b64` = ZPL em bytes exatos; estados pendente → pegou →
+  impresso/erro, ou cancelado). RPC `print_jobs_pegar` (FOR UPDATE SKIP
+  LOCKED). **`pegou` sem concluir = PRESO, nunca volta sozinho** (regra do dono).
+- Edge fn **`impressao`** (verify_jwt off; agente autentica por
+  `x-agente-token`, app por JWT de usuário ou service role): `heartbeat`,
+  `aguardar` (long-poll 20 s, checa a fila a cada 1,5 s), `concluir`,
+  `enfileirar`, `status`, `cancelar`, `impressoras` (online = contato < 90 s).
+- Agente Windows **`tools/ottz-impressao/`** (PowerShell 5.1 puro, sem
+  instalar nada; `.ps1` salvo **com BOM** — sem BOM o PS 5.1 lê como ANSI e o
+  "—" vira aspas e quebra o script). ZPL cru via winspool (RAW), igual ao
+  PrintNode. Impressora offline → não manda (erro); não saiu da fila do
+  Windows em 60 s → cancela o job no Windows e reporta erro. `instalar.ps1`
+  cria a tarefa agendada "Ottz Impressao" (logon, oculta, reinicia). `-Teste`
+  imprime etiqueta local; `-Listar` mostra as Zebras vistas.
+- Medido (24/set, agente de teste): job pego **0,5 s** após entrar na fila,
+  concluído em 1,3 s (PrintNode: mediana 4–7 s).
+
+**Fase 2 (pendente):** rotear `shopee-sync-ads imprimir`, `ml-etiqueta`
+(passar a pedir ZPL), `fulfillment-inbound imprimir` e `separacao-imprimir`
+por `impressoras.usar_proprio`; `confirmar-impressao` ler `print_jobs`
+(impresso→done, erro→error, pegou 25 min→preso); PDFs do Fulfillment viram
+ZPL no navegador (pdf.js → ^GFA); seletor de impressora no front com as duas
+origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -1172,6 +1207,7 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
 | `ml-nfe` | v4 | Envia o XML da NF-e (Tiny) ao ML quando o Tiny não manda os dados fiscais: `?modulo=pendentes` (quem o ML espera NF), `status&pack=`, `enviar&pack=` (dry) / `&confirmar=1`. Conta ML Ottz fixa (user 1107117809). **Só envia com envio em `invoice_pending`** — o Tiny manda os dados com ATRASO (23/set: 5 pedidos viraram `ready_to_print` minutos depois da NF), sem a trava duplicaria |
 | `tiktok-oauth` | v1 | Callback **público** (verify_jwt off) da autorização do TikTok Shop → `oauth_tokens_tiktok` + `tiktok_lojas` (shop_cipher). `?help=1` mostra o link |
 | `tiktok-refresh-token` | v1 | Renova o token TikTok (validade ~7d; renova se vence em <5d). Cron `tiktok-refresh-token` (jobid 115, `41 9 * * *`) |
+| `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
