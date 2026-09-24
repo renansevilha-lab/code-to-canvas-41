@@ -898,8 +898,45 @@ não tem a role). O que existe e funciona é `/post-purchase/v1/claims/{claim_id
   `order_id`/`pack_id`, `recebido_em` de `devolucoes_recebidas`; 20 pedidos em
   22/set, nenhum recebido), que a tela mostra quando o ML não reconhece o
   código.
-- **Rastreio dos Correios (`AP420460126BR`) não vai ao ML** — o front só
-  chama a função se o texto não casa `[A-Z]{2}\d{9}[A-Z]{2}`.
+- **Quem vai ao ML (corrigido 24/set):** SÓ o QR `{"id":…,"t":"lm"}` ou um
+  número puro de **10–11 dígitos** (id de envio / Ref. ID). A 1ª regra ("tem
+  9–14 dígitos em algum lugar") mandava ao ML os rastreios da **Shopee**
+  (`BR263476903446F`, e o leitor às vezes entrega só os dígitos, 12–13) que não
+  estavam no espelho — a bancada via a mensagem do ML ("devolução ao remetente")
+  para pacote da Shopee (8 casos em 23–24/set, gravados em `ml_envio_devolucao`
+  com `encontrado=false`). Correios (`AP…BR`), J&T/TikTok (15 dígitos) e pedido
+  ML de 16 dígitos também ficam fora. Junto: o fallback "rastreio CONTÉM o
+  bloco" passou a tentar os 3 maiores blocos, não só o maior (o
+  `263476903446` = `BR263476903446F` não casou por isso).
+
+## 5.2.2 Bipar etiqueta do TikTok Shop em Devoluções (24/set/2026)
+
+A etiqueta do TikTok é da **J&T Express Brazil**, rastreio de 15 dígitos
+**999881…** (o mesmo da ida — pacote não entregue volta com ela). O Tiny guarda
+esse rastreio só na **Bumi** (73/97); na **ACZ, 0 de 537** — e o
+`tiktok-sync-pedidos` (outra sessão) não grava o campo. Por isso a bipagem não
+casava (ex.: `999881942058407` → pedido **585780818888131762** → Tiny 299731,
+cancelado "collection time out").
+- **Edge fn `tiktok-rastreio` v1** (separada da `tiktok-sync-pedidos` de
+  propósito, §2.1.5/§10): `?modulo=preencher[&dias=15][&max=]` lê
+  `tiktok_rastreio_pendentes(p_dias, p_max)` (pedidos não-UNPAID na janela sem
+  consulta, ou sem rastreio há >4 h) e chama **`GET /order/202309/orders?ids=`**
+  (50 por chamada) → `tracking_number` + `shipping_provider` do pedido e de cada
+  `line_items[]` (`package_id`). Grava **`tiktok_rastreios`** (PK `order_id,
+  rastreio`, índice em `rastreio`) e **`tiktok_rastreio_estado`**
+  (`n_rastreios`, `verificado_em`). `?modulo=pedido&id=` lê um pedido ao vivo.
+  Cron jobid **123** `53 */2 * * *` (`dias=20`, Bearer). Backfill de 400 dias
+  feito (a RPC corta em 1.000 linhas pelo PostgREST — rodar de novo até
+  `pendentes` < 1.000). ~85% dos pedidos têm rastreio; o resto é cancelado
+  antes de enviar.
+- **Front (`DevolucoesRecebidas.buscar`):** fallback TikTok ANTES do ML —
+  tokens de 10–20 dígitos em `tiktok_rastreios.rastreio` → `order_id` →
+  `pedidos_tiny.numero_ecommerce`. Card TikTok: status de `tiktok_pedidos`,
+  motivo de `tiktok_cancelamentos.motivo_texto` / `tiktok_devolucoes`, itens de
+  `tiktok_pedido_itens` quando a separação não tem (cada linha = 1 unidade →
+  agrupa por SKU; brinde marcado). Selo "TikTok:".
+- Os 15 dígitos da J&T **não** vão ao ML (regra em §5.2.1 — só QR `"t":"lm"`
+  ou número puro de 10–11 dígitos).
 
 ## 5.3 DRE — categorização de despesas e camada de override
 
@@ -1136,6 +1173,8 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
 | `tiktok-oauth` | v1 | Callback **público** (verify_jwt off) da autorização do TikTok Shop → `oauth_tokens_tiktok` + `tiktok_lojas` (shop_cipher). `?help=1` mostra o link |
 | `tiktok-refresh-token` | v1 | Renova o token TikTok (validade ~7d; renova se vence em <5d). Cron `tiktok-refresh-token` (jobid 115, `41 9 * * *`) |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
+| `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso

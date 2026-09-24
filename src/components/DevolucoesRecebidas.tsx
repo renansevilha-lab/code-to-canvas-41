@@ -25,6 +25,8 @@ import { rotuloCanal } from "@/lib/canais";
 // não existe em nenhuma tabela nossa, então a bipagem só casa consultando o ML
 // (edge fn ml-devolucao-lookup → GET /shipments/{id} → order_id, com cache em
 // ml_envio_devolucao). É o único caminho: não há nº de pedido na etiqueta.
+// TikTok Shop: a etiqueta J&T (999881…) casa por tiktok_rastreios (edge fn
+// tiktok-rastreio); status/itens/motivo vêm de tiktok_pedidos/_itens/_devolucoes.
 // ============================================================================
 
 type Estado = "ok" | "quebrado" | "furado" | "faltando";
@@ -98,7 +100,8 @@ type Remetente = { order_id: string; canal: string | null; data_pedido: string; 
 
 // O status do pedido vem do espelho do marketplace — nem sempre é Shopee.
 function rotuloMkt(marca: string | null | undefined): string {
-  return /mercado/i.test(marca ?? "") ? "ML" : /amazon/i.test(marca ?? "") ? "Amazon" : "Shopee";
+  const m = marca ?? "";
+  return /mercado/i.test(m) ? "ML" : /amazon/i.test(m) ? "Amazon" : /tiktok/i.test(m) ? "TikTok" : "Shopee";
 }
 
 function construirItens(sep: { itens_json?: unknown; sku_unico?: string | null; nome_produto?: string | null; qtd_unidades?: number | string | null } | undefined): ItemEsperado[] {
@@ -232,12 +235,14 @@ export function DevolucoesRecebidas() {
         if (r1.error) throw r1.error;
         data = (r1.data ?? []) as PT[];
       }
-      // Fallback: rastreio que CONTÉM o maior bloco (quando o QR traz prefixo/sufixo diferente).
+      // Fallback: rastreio que CONTÉM um dos blocos (QR com prefixo/sufixo diferente, ou
+      // leitor que entrega só os dígitos do BR…F da Shopee). Tenta do maior para o menor —
+      // olhar só o maior falhava quando o QR trazia outro bloco mais comprido.
       if (data.length === 0) {
-        const maior = [...tokens].sort((a, b) => b.length - a.length)[0];
-        if (maior && maior.length >= 10) {
-          const r2 = await supabaseExternal.from("pedidos_tiny").select(sel).ilike("codigo_rastreamento", `%${maior}%`).limit(3);
+        for (const t of [...tokens].filter((x) => x.length >= 10).sort((a, b) => b.length - a.length).slice(0, 3)) {
+          const r2 = await supabaseExternal.from("pedidos_tiny").select(sel).ilike("codigo_rastreamento", `%${t}%`).limit(3);
           data = (r2.data ?? []) as PT[];
+          if (data.length) break;
         }
       }
       // Fallback 3: rastreio FORWARD que o Tiny não capturou (~1/3 dos pedidos Shopee vêm
@@ -285,14 +290,36 @@ export function DevolucoesRecebidas() {
           }
         }
       }
+      // nº do pedido no marketplace quando difere da chave do Tiny (pack do ML)
+      let pedidoMkt: string | null = null;
+      // Fallback TikTok: etiqueta J&T/TikTok (999881…). O Tiny não guarda o rastreio
+      // dos pedidos TikTok da ACZ; tiktok_rastreios é preenchida pela edge fn
+      // tiktok-rastreio (cron) a partir da API do TikTok.
+      if (data.length === 0) {
+        const numeros = tokens.filter((t) => /^\d{10,20}$/.test(t));
+        if (numeros.length) {
+          const rt = await supabaseExternal.from("tiktok_rastreios").select("order_id").in("rastreio", numeros).limit(1);
+          const oid = (rt.data?.[0] as { order_id?: string } | undefined)?.order_id;
+          if (oid) {
+            pedidoMkt = oid;
+            const r6 = await supabaseExternal.from("pedidos_tiny").select(sel).eq("numero_ecommerce", oid).limit(1);
+            data = (r6.data ?? []) as PT[];
+            if (data.length === 0) {
+              data = [{ numero_ecommerce: oid, numero_pedido: null, marca_canal: "TikTok Shop", situacao: null, codigo_rastreamento: numeros[0], forma_envio: null }];
+            }
+          }
+        }
+      }
       // Fallback 5: etiqueta de DEVOLUÇÃO do Mercado Livre — o código bipado é o
       // id do ENVIO de retorno, que só o ML sabe traduzir em nº de pedido.
       let avisoMl: string | null = null;
-      // nº do pedido no marketplace quando difere da chave do Tiny (pack do ML)
-      let pedidoMkt: string | null = null;
-      // Rastreio dos Correios (AP420460126BR) não é envio do ML — não perguntar lá.
-      const ehCorreios = /\b[A-Z]{2}\d{9}[A-Z]{2}\b/i.test(raw);
-      if (data.length === 0 && !ehCorreios && /\d{9,14}/.test(raw)) {
+      // Só pergunta ao ML quando o código TEM CARA de ML: o QR {"id":…,"t":"lm"} ou um
+      // número puro de 10–11 dígitos (id de envio / Ref. ID). Rastreio da Shopee
+      // (BR26…F, 12–13 dígitos), dos Correios (AP…BR) e da J&T/TikTok (15 dígitos)
+      // não vão ao ML — antes iam, e a tela mostrava a mensagem do ML para pacote
+      // da Shopee que não estava no espelho.
+      const ehEtiquetaMl = /"t"\s*:\s*"lm"/i.test(raw) || /^\s*\d{10,11}\s*$/.test(raw);
+      if (data.length === 0 && ehEtiquetaMl) {
         try {
           const { data: mlData, error: mlErro } = await supabaseExternal.functions.invoke(
             "ml-devolucao-lookup",
@@ -359,13 +386,45 @@ export function DevolucoesRecebidas() {
         itens = ((itensMkt ?? []) as { sku_pai: string | null; sku_filho: string | null; nome_produto: string | null; quantidade: number | string | null }[])
           .map((it) => ({ sku: it.sku_filho || it.sku_pai || null, nome: it.nome_produto, qtd: num(it.quantidade) }));
       }
+      // TikTok Shop: status, motivo e itens vêm do espelho TikTok (não de `pedidos`)
+      type TtPed = { status?: string | null; cancelado_motivo?: string | null };
+      type TtDev = { motivo?: string | null; motivo_texto?: string | null };
+      let tt: TtPed | null = null;
+      let ttDev: TtDev | null = null;
+      let ttRastreio: string | null = null;
+      if (/tiktok/i.test(pt.marca_canal ?? "")) {
+        const [{ data: tp }, { data: td }, { data: ti }, { data: tr }, { data: tc }] = await Promise.all([
+          supabaseExternal.from("tiktok_pedidos").select("status, cancelado_motivo").eq("id", idMkt).maybeSingle(),
+          supabaseExternal.from("tiktok_devolucoes").select("motivo, motivo_texto").eq("order_id", idMkt).order("criado_em", { ascending: false }).limit(1),
+          supabaseExternal.from("tiktok_pedido_itens").select("sku, produto_nome, is_gift").eq("pedido_id", idMkt).limit(100),
+          supabaseExternal.from("tiktok_rastreios").select("rastreio").eq("order_id", idMkt).limit(1),
+          supabaseExternal.from("tiktok_cancelamentos").select("motivo_texto").eq("order_id", idMkt).order("criado_em", { ascending: false }).limit(1),
+        ]);
+        tt = tp as TtPed | null;
+        // motivo legível do cancelamento (ex.: "collection time out") quando houver
+        const cancTexto = (tc?.[0] as { motivo_texto?: string | null } | undefined)?.motivo_texto;
+        if (cancTexto) tt = { ...(tt ?? {}), cancelado_motivo: cancTexto };
+        ttDev = (td?.[0] ?? null) as TtDev | null;
+        ttRastreio = (tr?.[0] as { rastreio?: string } | undefined)?.rastreio ?? null;
+        if (itens.length === 0) {
+          // no TikTok cada linha é UMA unidade: agrupa por SKU
+          const porSku = new Map<string, ItemEsperado>();
+          for (const it of (ti ?? []) as { sku: string | null; produto_nome: string | null; is_gift: boolean | null }[]) {
+            const k = `${it.sku ?? it.produto_nome ?? "?"}|${it.is_gift ? 1 : 0}`;
+            const atual = porSku.get(k);
+            if (atual) atual.qtd += 1;
+            else porSku.set(k, { sku: it.sku, nome: it.is_gift ? `${it.produto_nome ?? ""} (brinde)` : it.produto_nome, qtd: 1 });
+          }
+          itens = [...porSku.values()];
+        }
+      }
       setPedido({
         order_sn: idMkt || null, tiny_numero: pt.numero_pedido, marca_canal: pt.marca_canal,
-        situacao: pt.situacao, shopee_status: p?.status_pedido ?? null,
+        situacao: pt.situacao, shopee_status: p?.status_pedido ?? tt?.status ?? null,
         forma_envio: p?.opcao_envio || pt.forma_envio || null,
-        motivo_cancelamento: p?.motivo_cancelamento ?? null,
-        motivo_devolucao: dev?.reason ?? null, texto_devolucao: dev?.text_reason ?? null,
-        rastreio: pt.codigo_rastreamento, itens,
+        motivo_cancelamento: p?.motivo_cancelamento ?? tt?.cancelado_motivo ?? null,
+        motivo_devolucao: dev?.reason ?? ttDev?.motivo ?? null, texto_devolucao: dev?.text_reason ?? ttDev?.motivo_texto ?? null,
+        rastreio: pt.codigo_rastreamento ?? ttRastreio, itens,
         ja_recebida_em: (jaRec?.[0]?.recebido_em as string) ?? null,
       });
       setConf(itens.map((it) => ({ sku: it.sku, nome: it.nome, qtd_esperada: it.qtd, qtd_recebida: it.qtd, estado: "ok", obs: "" })));
