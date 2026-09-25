@@ -1196,6 +1196,10 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
   fev), `detalhar` (fila `view_shopee_devolucoes_a_detalhar`, cron 124
   `13,43 * * * *`), `escrow` (fila `view_shopee_devolucoes_a_escrow`, cron 125
   `27 */2 * * *`).
+- **ARMADILHA:** a compensação por pacote perdido vem na carteira como
+  "Reembolso por objeto perdido" com **`classificacao` VAZIA** (204 lançamentos,
+  R$ 7,2 mil fev–set) — a view trata como `OBJETO_PERDIDO`. Compensação cai em
+  mediana 4 dias (até 15) após o reembolso.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
