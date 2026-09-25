@@ -1200,6 +1200,20 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
   "Reembolso por objeto perdido" com **`classificacao` VAZIA** (204 lançamentos,
   R$ 7,2 mil fev–set) — a view trata como `OBJETO_PERDIDO`. Compensação cai em
   mediana 4 dias (até 15) após o reembolso.
+- **Rastreio da IDA (25/set):** o detalhe da devolução NÃO mostra a falha da entrega
+  original (o `logistics_status` dele é o da volta). `shopee-devolucao-probe` v22
+  `modulo=rastreio-ida` (`logistics.get_tracking_info`, cron 126 `7 10,11 * * *`)
+  grava `ida_*` dos pedidos só-reembolso. Classificar pelo **CÓDIGO** do evento
+  (`DELIVERED`, `FAILED_DELIVERED`) + frase final exata ("Pedido devolvido",
+  "Pedido descartado", "Pedido extraviado…") — texto livre engana ("Não conseguimos
+  coletar: **Remetente** não preparou" não é devolução). Descrição vem com UTF-8
+  duplo (`convert_from(convert_to(x,'LATIN1'),'UTF8')`).
+- **`view_shopee_perda_logistica`** (situação 1 descartado/perdido · 2 Shopee diz que
+  devolveu, sem entrada no galpão · 2b voltando · 3 falha, não voltou · 4 entregue ×
+  "não recebi" · 5 voltou · 6 entregue, reclamação de item · 7 sem evento) +
+  **`view_shopee_perda_alertar`** + função **`shopee_alerta_perda_logistica(p_dry)`**
+  (posta no #devolucoes via discord-notify, 1× por pedido — `alerta_perda_em`;
+  silêncio sem caso novo). Cron do alerta: ver decisão do dono.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
