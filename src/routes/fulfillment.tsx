@@ -1662,6 +1662,10 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
   const [dataAgendada, setDataAgendada] = useState("");
   const [itens, setItens] = useState<ParsedItem[]>([]);
   const [totalPdf, setTotalPdf] = useState<number | null>(null);
+  // Quantos produtos o PDF declara ("Produtos do envio: N") + aviso da leitura. A soma
+  // sozinha engana: linha fantasma + quantidade faltando podem fechar o total (25/set).
+  const [produtosPdf, setProdutosPdf] = useState<number | null>(null);
+  const [avisoLeitura, setAvisoLeitura] = useState<string | null>(null);
   const [etiquetasZpl, setEtiquetasZpl] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -1670,7 +1674,8 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
 
   const { data: fotos } = useFotos(itens.map((i) => i.sku));
   const somaQtd = itens.reduce((s, i) => s + (Number(i.qtd) || 0), 0);
-  const confere = totalPdf == null || somaQtd === totalPdf;
+  const linhasBatem = produtosPdf == null || itens.length === produtosPdf;
+  const confere = (totalPdf == null || somaQtd === totalPdf) && linhasBatem;
 
   async function lerPdf(file: File) {
     setParsing(true);
@@ -1681,11 +1686,13 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       });
       if (error) throw new Error(error.message);
       if ((data as { erro?: string })?.erro) throw new Error((data as { erro?: string }).erro);
-      const d = data as { itens?: ParsedItem[]; total?: number; numero?: string; aviso?: string };
+      const d = data as { itens?: ParsedItem[]; total?: number; numero?: string; aviso?: string; produtos_esperados?: number };
       const parsed = d.itens ?? [];
       // Guarda o SKU original do PDF em sku_origem para preservar quando o operador corrigir o sku.
       setItens(parsed.map((p) => ({ ...p, sku_origem: p.sku_origem ?? p.sku })));
       setTotalPdf(d.total ?? null);
+      setProdutosPdf(d.produtos_esperados ?? null);
+      setAvisoLeitura(d.aviso ?? null);
       if (d.numero && !numero) setNumero(String(d.numero));
       if (d.aviso) toast.warning(d.aviso);
       else toast.success(`PDF lido: ${parsed.length} itens · ${d.total} unidades`);
@@ -1965,8 +1972,15 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
               <span className="font-semibold tabular-nums">{formatNumber(somaQtd)} un</span>
               {totalPdf != null && (
                 <span className={cn("ml-2 text-xs", confere ? "text-emerald-600" : "text-amber-600")}>
-                  {confere ? "✓ confere com o PDF" : `≠ PDF diz ${formatNumber(totalPdf)}`}
+                  {confere
+                    ? "✓ confere com o PDF"
+                    : !linhasBatem
+                      ? `≠ ${itens.length} linhas, o PDF tem ${produtosPdf} produtos`
+                      : `≠ PDF diz ${formatNumber(totalPdf)}`}
                 </span>
+              )}
+              {avisoLeitura && !confere && (
+                <div className="mt-1 text-xs text-amber-600">⚠ {avisoLeitura}</div>
               )}
             </div>
             <Button className="gap-2" onClick={() => void salvar()} disabled={salvando}>
