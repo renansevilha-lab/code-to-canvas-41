@@ -1462,6 +1462,19 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   `limpar-escrow-raw` (03:45 UTC) zera quem completa 60 dias. Não usar
   `coletado_em` como critério — ele é renovado a cada recoleta. Campo novo da
   Shopee para pedido antigo tem de ser rebuscado na API.
+- **Limpeza de 25/set/2026 — 517 MB → 424 MB:** (1) `ml_notificacoes` (log bruto dos
+  webhooks do ML, SÓ escrita — nada lê) 33 MB → 3,7 MB com retenção de **7 dias**:
+  função `limpar_ml_notificacoes(dias)` (copia+TRUNCATE+reinsert) + cron 131
+  `limpar-ml-notificacoes` (03:52 UTC); (2) `escrow_componentes` compactada (espaço
+  morto dos UPDATEs que zeram `raw_json`) 84 → 72 MB, sem perder linha, política de
+  60 dias mantida; (3) **índices inchados** pelo apaga-e-reinsere dos syncs — só o
+  `pedido_itens_pkey` tinha 27 MB para 9 MB de dados; REINDEX em `pedido_itens`
+  (41 → 12 MB), `pedidos_tiny`, `pedido_itens_tiny`, `separacao_tiny`,
+  `transacoes_carteira`, `pedidos` + cron 132 `reindex-semanal` (domingo 04:17 UTC,
+  lock de < 1 s por tabela); (4) removido `idx_transacoes_carteira_shopee_tx_id`
+  (cópia exata da chave única `transaction_id`). **NÃO remover**
+  `pedido_itens_tiny_uniq` (0 usos, mas trata NULL com COALESCE — protege contra
+  item duplicado que a chave `_uniq_key` deixa passar).
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e
