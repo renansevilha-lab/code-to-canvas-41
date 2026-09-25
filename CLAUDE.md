@@ -1175,6 +1175,31 @@ por `impressoras.usar_proprio`; `confirmar-impressao` ler `print_jobs`
 ZPL no navegador (pdf.js → ^GFA); seletor de impressora no front com as duas
 origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
 
+## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
+
+- **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
+  "Failed Delivery" ou TO_RETURN; coluna **`classe`** (01 em disputa … 12 em
+  retorno) + dinheiro: `valor_reembolsado`, `descontado_vendedor` (−(escrow
+  seller_return_refund + débito pós-liberação + escrow negativo)),
+  `compensado` (SELLER_COMPENSATE/RETURN_COMPENSATION + crédito da central de
+  ajustes por extravio/comprovante — order_sn no FIM da descrição), `cmv`,
+  `produto_recebido_em` (devolucoes_recebidas).
+- `shopee_devolucoes` ganhou o **detalhe** (`get_return_detail`: `disputa_motivo`
+  presente = houve disputa; `solucao` 0 devolve produto / 1 só reembolso;
+  `tipo_reembolso` RRBOC antes de concluir / RRAOC depois; logística reversa;
+  compensação; frete) e o **escrow ATUAL** (`esc_*`, via
+  `get_escrow_detail_batch` 50/chamada). **ARMADILHA:** o `escrow_componentes`
+  é foto antiga — em 883 de 1.296 reembolsos foi gravado ANTES da devolução.
+  As colunas `esc_*` são escritas só pela `shopee-devolucao-probe` (não mexer
+  no escrow_componentes, que é de outra rotina).
+- `shopee-devolucao-probe` **v20**: `sync&desde=YYYY-MM-DD` (histórico desde
+  fev), `detalhar` (fila `view_shopee_devolucoes_a_detalhar`, cron 124
+  `13,43 * * * *`), `escrow` (fila `view_shopee_devolucoes_a_escrow`, cron 125
+  `27 */2 * * *`).
+- Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
+  receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
+  ARMAZÉM" são do Full (por item_id/index, não por pedido).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
