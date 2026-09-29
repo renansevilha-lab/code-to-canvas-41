@@ -43,7 +43,6 @@ import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as VendasRouteImport } from './routes/vendas'
-import { Route as ApiPublicShopeeCallbackRouteImport } from './routes/api/public/shopee/callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -215,11 +214,6 @@ const VendasRoute = VendasRouteImport.update({
   path: '/vendas',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicShopeeCallbackRoute = ApiPublicShopeeCallbackRouteImport.update({
-  id: '/api/public/shopee/callback',
-  path: '/api/public/shopee/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -256,7 +250,6 @@ export interface FileRoutesByFullPath {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
-  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -293,7 +286,6 @@ export interface FileRoutesByTo {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
-  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -331,7 +323,6 @@ export interface FileRoutesById {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
-  '/api/public/shopee/callback': typeof ApiPublicShopeeCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -370,7 +361,6 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
-    | '/api/public/shopee/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -407,7 +397,6 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
-    | '/api/public/shopee/callback'
   id:
     | '__root__'
     | '/'
@@ -444,7 +433,6 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
-    | '/api/public/shopee/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -482,7 +470,6 @@ export interface RootRouteChildren {
   TendenciasRoute: typeof TendenciasRoute
   UsuariosRoute: typeof UsuariosRoute
   VendasRoute: typeof VendasRoute
-  ApiPublicShopeeCallbackRoute: typeof ApiPublicShopeeCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -725,13 +712,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendasRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/shopee/callback': {
-      id: '/api/public/shopee/callback'
-      path: '/api/public/shopee/callback'
-      fullPath: '/api/public/shopee/callback'
-      preLoaderRoute: typeof ApiPublicShopeeCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -770,7 +750,6 @@ const rootRouteChildren: RootRouteChildren = {
   TendenciasRoute: TendenciasRoute,
   UsuariosRoute: UsuariosRoute,
   VendasRoute: VendasRoute,
-  ApiPublicShopeeCallbackRoute: ApiPublicShopeeCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,7 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tanstack-start-app",
+  // Hospedagem propria na Cloudflare (sai do Lovable, 29/set/2026).
+  // O build (nitro preset cloudflare-module) gera .output/server/wrangler.json a partir deste.
+  // Deploy: npm run build && npx wrangler deploy --config .output/server/wrangler.json
+  "name": "ottz-pet-app",
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "@tanstack/react-start/server-entry",
+  "observability": { "enabled": true }
 }

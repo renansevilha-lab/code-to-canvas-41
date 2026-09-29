@@ -1672,6 +1672,18 @@ fila" mantém o `await` (esperar é o esperado ali).
 
 ## 9.1 Site publicado — como saber se um recurso já está no ar
 
+**Migração para Cloudflare própria (29/set/2026, em andamento):** o site também está
+em **https://ottz-pet-app.ottzpet.workers.dev** (Worker `ottz-pet-app`, conta
+Cloudflare do dono, subdomínio `ottzpet`). Deploy: `npm run build && npx wrangler
+deploy --config .output/server/wrangler.json` (o build — nitro preset
+`cloudflare-module` — gera o wrangler.json a partir do `wrangler.jsonc` da raiz).
+Medido: HTML 0,07–0,14 s vs 0,56–0,90 s no Lovable (que gerava no servidor só o
+spinner do login e injetava `/~flock.js` + selo). Removido o código de servidor da
+era Lovable (callback Shopee `/api/public/shopee/callback`, `auth.functions`,
+`sign.server`, `client.server`, 3 middlewares): nada usava — a autorização Shopee é
+a edge fn `shopee-oauth` (Supabase). O site não precisa de segredo nenhum.
+Pendente: publicação automática no push, domínio definitivo, desligar o Lovable.
+
 URL publicada: **https://code-to-canvas-41.lovable.app** (o `id-preview--…lovable.app`
 do editor exige login e não serve para checar). Front só muda com **Publish**
 no Lovable; backend (banco/edge) vale na hora. Para conferir sem depender do
