@@ -1682,7 +1682,13 @@ spinner do login e injetava `/~flock.js` + selo). Removido o código de servidor
 era Lovable (callback Shopee `/api/public/shopee/callback`, `auth.functions`,
 `sign.server`, `client.server`, 3 middlewares): nada usava — a autorização Shopee é
 a edge fn `shopee-oauth` (Supabase). O site não precisa de segredo nenhum.
-Pendente: publicação automática no push, domínio definitivo, desligar o Lovable.
+**Publicação automática (29/set):** Workers Builds ligado ao GitHub
+(`renansevilha-lab/code-to-canvas-41`, branch `main`) — build `npm run build`,
+deploy `npx wrangler deploy --config .output/server/wrangler.json`. **Push na main
+= site publicado** (não existe mais "dar Publish"). Gerenciador = **npm**
+(`bun.lockb`/`bunfig.toml` do Lovable removidos — lock do bun estava parado em
+21/jul). Endereço definitivo decidido pelo dono: **ottz-pet-app.ottzpet.workers.dev**.
+Pendente: avisar a equipe (login 1× + reescolher impressora) e desligar o Lovable.
 
 URL publicada: **https://code-to-canvas-41.lovable.app** (o `id-preview--…lovable.app`
 do editor exige login e não serve para checar). Front só muda com **Publish**
