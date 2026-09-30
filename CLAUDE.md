@@ -1204,6 +1204,19 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 - **Deploy dessas funções via MCP:** não há CLI/token no PC — o arquivo inteiro
   vai colado; conferir SEMPRE baixando a versão no ar e comparando sha256 com
   o local (feito na `shopee-sync-ads`: idêntico).
+- **1º dia de uso (30/set) — três armadilhas que NÃO eram do software:**
+  (1) a tela do Full **não tem seletor de impressora**: usa a mesma
+  `localStorage separacao.printerId` da Separação — se lá está outra ZD220, o
+  Full imprime nela pelo PrintNode (lote de 80 KB "sumiu" assim); (2) depois de
+  trocar o papel, a Zebra não aceitou o job: fila do Windows presa em
+  "Excluindo, Imprimindo" (0 bytes) — o agente cancelou em 60 s (job `erro`,
+  pedido liberado para reimprimir), mas o `Get-CimInstance Win32_Printer` do
+  heartbeat **travou junto** e o agente ficou sem sinal (~2 min) até a Zebra
+  voltar (luz verde fixa); **corrigir no agente: heartbeat não pode depender do
+  spooler**; (3) formato errado = mídia da Zebra (a etiqueta Shopee é uma
+  imagem `~DGR` 816×1218 = 10×15 cm SEM `^PW/^LL` — vale o tamanho gravado na
+  impressora; os bytes da fila são idênticos ao `etiquetas_cache`). Calibrar
+  (segurar o avanço até 2 piscadas) resolveu.
 - **Pendente:** 2ª Zebra (outro PC); tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
