@@ -24,6 +24,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DevolucoesRecebidas } from "@/components/DevolucoesRecebidas";
 import { DevolucoesShopeeAbertas } from "@/components/DevolucoesShopeeAbertas";
+import { DevolucoesShopeePerdas } from "@/components/DevolucoesShopeePerdas";
 import { rotuloCanal } from "@/lib/canais";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,16 +139,24 @@ export const Route = createFileRoute("/devolucoes")({
 // ─────────────────────────────────────────────────────────────────────────────
 // Page
 
+type AbaDevolucoes = "cancelados" | "recebidas" | "shopee" | "perdas";
+
 function DevolucoesPage() {
   const { empresa } = Route.useSearch();
-  const [aba, setAba] = useState<"cancelados" | "recebidas" | "shopee">("cancelados");
+  const [aba, setAba] = useState<AbaDevolucoes>("cancelados");
+  // "Dar entrada" da aba Perdas: abre Recebidas já buscando o pedido.
+  // `n` muda a cada clique para repetir a busca do mesmo pedido.
+  const [buscaRecebidas, setBuscaRecebidas] = useState<{ codigo: string; n: number } | null>(null);
   return (
-    <Tabs value={aba} onValueChange={(v) => setAba(v as "cancelados" | "recebidas" | "shopee")} className="w-full">
+    // Troca manual de aba descarta a busca pendente — senão reabrir Recebidas
+    // (o conteúdo remonta) repetiria a busca do último "Dar entrada".
+    <Tabs value={aba} onValueChange={(v) => { setBuscaRecebidas(null); setAba(v as AbaDevolucoes); }} className="w-full">
       <div className="px-6 pt-5 max-w-[1400px] mx-auto">
         <TabsList>
           <TabsTrigger value="cancelados">Cancelados (NF)</TabsTrigger>
           <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
           <TabsTrigger value="shopee">Shopee (abertas)</TabsTrigger>
+          <TabsTrigger value="perdas">Perdas Shopee</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="cancelados" className="mt-0">
@@ -155,7 +164,17 @@ function DevolucoesPage() {
       </TabsContent>
       <TabsContent value="recebidas" className="mt-0">
         <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
-          <DevolucoesRecebidas />
+          <DevolucoesRecebidas buscaInicial={buscaRecebidas} />
+        </div>
+      </TabsContent>
+      <TabsContent value="perdas" className="mt-0">
+        <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
+          <DevolucoesShopeePerdas
+            onDarEntrada={(codigo) => {
+              setBuscaRecebidas((b) => ({ codigo, n: (b?.n ?? 0) + 1 }));
+              setAba("recebidas");
+            }}
+          />
         </div>
       </TabsContent>
       <TabsContent value="shopee" className="mt-0">

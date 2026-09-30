@@ -33,6 +33,8 @@ import {
   supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
 import { cn } from "@/lib/utils";
+import { InfoDevolucaoCampos } from "@/components/InfoDevolucaoShopee";
+import { buscarInfoDevolucao } from "@/lib/shopeeDevolucao";
 
 interface DevAberta {
   return_sn: string;
@@ -177,6 +179,16 @@ export function DevolucoesShopeeAbertas() {
   });
 
   const lista = abertasQ.data ?? [];
+
+  // Solução do reembolso · status da solicitação · status da entrega (como no
+  // Seller Center) — a view das abertas não traz o detalhe nem o rastreio.
+  const returnSns = useMemo(() => (abertasQ.data ?? []).map((d) => d.return_sn).sort(), [abertasQ.data]);
+  const infoQ = useQuery({
+    queryKey: ["devolucoes", "shopee_abertas_info", returnSns],
+    enabled: returnSns.length > 0,
+    staleTime: 60_000,
+    queryFn: () => buscarInfoDevolucao(returnSns),
+  });
 
   // ---- filtros do quadro ----
   const [filtroLoja, setFiltroLoja] = useState<"todas" | "ottz" | "bumi">("todas");
@@ -419,6 +431,7 @@ export function DevolucoesShopeeAbertas() {
                         “{d.text_reason}”
                       </blockquote>
                     )}
+                    <InfoDevolucaoCampos info={infoQ.data?.[d.return_sn]} carregando={infoQ.isLoading} />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted-foreground">
                       {(d.itens ?? []).map((it, i) => (
                         <span key={i}>

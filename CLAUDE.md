@@ -1202,8 +1202,8 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
   mediana 4 dias (até 15) após o reembolso.
 - **Rastreio da IDA (25/set):** o detalhe da devolução NÃO mostra a falha da entrega
   original (o `logistics_status` dele é o da volta). `shopee-devolucao-probe` v22
-  `modulo=rastreio-ida` (`logistics.get_tracking_info`, cron 126 `7 10,11 * * *`)
-  grava `ida_*` dos pedidos só-reembolso. Classificar pelo **CÓDIGO** do evento
+  `modulo=rastreio-ida` (`logistics.get_tracking_info`, cron 126 `7 10,11,16,20 * * *`)
+  grava `ida_*` dos pedidos só-reembolso (e das abertas, ver abaixo). Classificar pelo **CÓDIGO** do evento
   (`DELIVERED`, `FAILED_DELIVERED`) + frase final exata ("Pedido devolvido",
   "Pedido descartado", "Pedido extraviado…") — texto livre engana ("Não conseguimos
   coletar: **Remetente** não preparou" não é devolução). Descrição vem com UTF-8
@@ -1213,7 +1213,39 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
   "não recebi" · 5 voltou · 6 entregue, reclamação de item · 7 sem evento) +
   **`view_shopee_perda_alertar`** + função **`shopee_alerta_perda_logistica(p_dry)`**
   (posta no #devolucoes via discord-notify, 1× por pedido — `alerta_perda_em`;
-  silêncio sem caso novo). Cron do alerta: ver decisão do dono.
+  silêncio sem caso novo). Cron do alerta: **NÃO criado** — o dono ainda vai decidir
+  o backlog (marcar os acumulados como avisados × soltar ~25/dia).
+- **`view_shopee_reembolsos` reescrita com LATERAL (29/set):** agregava a carteira
+  Shopee inteira (~42 mil) e o CMV de ~52 mil itens a cada leitura (~6 s); com o
+  filtro da `view_shopee_perda_logistica` por cima o planner estimava 1 linha e a
+  view de perdas estourava o statement timeout até em `count`. Agora carteira e
+  CMV são por pedido (`idx_trans_pedido`, `idx_itens_pedido`): reembolsos 6 s →
+  0,13 s, perdas timeout → 0,24 s. md5 idêntico antes/depois (2.892 linhas).
+- **Tela `/devolucoes` › aba "Perdas Shopee" (29/set,
+  `src/components/DevolucoesShopeePerdas.tsx`):** lê a `view_shopee_perda_logistica`
+  paginando de 1.000 em 1.000; chips multi-seleção por situação (padrão 1/2/3 =
+  perda), período (desde 10/ago = início das Recebidas · 60 dias · tudo), loja,
+  "sem compensação" (padrão); itens/rastreio (ida `shopee_rastreio`, volta
+  `shopee_devolucoes.tracking_number`) e foto só dos filtrados; **Planilha (CSV)**
+  do filtro atual (serve de lista para o galpão conferir); **"Dar entrada"** abre a
+  aba Recebidas já buscando o pedido (prop `buscaInicial`) — ao registrar, o
+  pedido vira situação 5 e sai da lista. Só leitura, nenhuma ação na Shopee.
+- **Faixa "como no Seller Center" (29/set, pedido do dono):** nas abas "Shopee
+  (abertas)" e "Perdas Shopee", cada card mostra **Solução do reembolso**
+  (`solucao` 1 = apenas reembolso / 0 = devolução e reembolso), **Status da
+  solicitação** (ACCEPTED dentro do `due_date` = "Pendente validação do vendedor ·
+  disputa até dd/mm"; fora = "Reembolso concluído") e **Status da entrega** da IDA
+  (`ida_*` + `pedidos.opcao_envio`), mais **Status da devolução**
+  (`logistica_reversa` com os rótulos do Seller Center — `PICKUP_DONE` = "Postado";
+  rastreio `AP…BR` = Correios Logística Reversa) quando o produto volta. Regras em
+  `src/lib/shopeeDevolucao.ts`, componente `InfoDevolucaoShopee.tsx`. Sem rastreio da
+  ida consultado, a entrega é deduzida de `pedidos.status_pedido` e o texto avisa.
+- **Rastreio da ida também nas ABERTAS (30/set, pedido do dono):**
+  `view_shopee_devolucoes_a_rastrear` passou a incluir, além de só-reembolso,
+  toda devolução REQUESTED/PROCESSING/JUDGING/SELLER_DISPUTE e ACCEPTED ainda no
+  `due_date` (antes: só `solucao = 1`, e as com produto nunca tinham "Status da
+  entrega"). Fila foi de 1 para 30; 1ª rodada 30/30 gravados em 5 s. Cron 126
+  passou a `7 10,11,16,20 * * *` (antes 10,11) — devolução aberta vence em dias.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).

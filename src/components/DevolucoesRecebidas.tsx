@@ -156,7 +156,7 @@ function Pill({ cor, children }: { cor: string; children: ReactNode }) {
   );
 }
 
-export function DevolucoesRecebidas() {
+export function DevolucoesRecebidas({ buscaInicial }: { buscaInicial?: { codigo: string; n: number } | null } = {}) {
   const { user } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [termo, setTermo] = useState("");
@@ -172,6 +172,14 @@ export function DevolucoesRecebidas() {
   const [mostrarRemetente, setMostrarRemetente] = useState(false);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Vindo de "Dar entrada" (aba Perdas Shopee): já busca o pedido.
+  useEffect(() => {
+    if (!buscaInicial?.codigo) return;
+    setTermo(buscaInicial.codigo);
+    void buscar(buscaInicial.codigo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buscaInicial?.n]);
 
   // Pedidos ML não entregues (despachados por nós) que voltam ao vendedor e
   // ainda não foram recebidos. A etiqueta da volta ("MELI #0", QR 4788…) não
