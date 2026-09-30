@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Boxes, Check, CheckCircle2, FileText, Layers, Loader2,
-  Package as PackageIcon, PackagePlus, RefreshCw, Truck,
+  Archive, ArrowLeft, Boxes, Check, CheckCircle2, FileText, FileUp, Layers, Loader2,
+  Package as PackageIcon, PackagePlus, RefreshCw, Trash2, Truck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,6 +20,12 @@ import {
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { ConciliacaoNf } from "@/components/compras/ConciliacaoNf";
+import { EntradaNfXml } from "@/components/compras/EntradaNfXml";
+import { NovaEntradaNf } from "@/components/compras/NovaEntradaNf";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // ============================================================================
 // Compras & Recebimento de Mercadorias — kanban integrado às ORDENS DE COMPRA
@@ -40,6 +46,7 @@ interface Ordem {
   situacao_tiny: string | null;
   fornecedor_nome: string | null;
   fornecedor_fantasia: string | null;
+  fornecedor_id: number | null;
   categoria: string | null;
   total_pedido: number | null;
   itens_qtd: number | null;
@@ -89,6 +96,9 @@ const SIT_TINY: Record<string, { label: string; cls: string }> = {
   "2": { label: "Cancelada", cls: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300" },
   "3": { label: "Em andamento", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
 };
+
+// Entrada criada no app a partir da NF (tiny_id negativo — não existe no Tiny).
+const SELO_APP = "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
 
 // Colunas do RECEBIMENTO (mesmo desenho do quadro do Fulfillment).
 const STAGES: Array<{ id: string; label: string; curto: string; col: string; tint: string }> = [
@@ -184,6 +194,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
+  const [novaNf, setNovaNf] = useState(false);
 
   const ordensQ = useQuery({
     queryKey: ["compras", "ordens"],
@@ -300,11 +311,18 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
             Ordens de compra do Tiny · conferência física na chegada
           </span>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void sincronizar()} disabled={sincronizando} className="gap-2">
-          {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Atualizar do Tiny
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setNovaNf(true)} className="gap-2"
+            title="Mercadoria chegou com nota e sem ordem de compra: cria a entrada a partir do XML da NF-e">
+            <FileUp className="h-3.5 w-3.5" /> Nova entrada por NF
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void sincronizar()} disabled={sincronizando} className="gap-2">
+            {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Atualizar do Tiny
+          </Button>
+        </div>
       </div>
+      <NovaEntradaNf open={novaNf} onOpenChange={setNovaNf} onCriada={onAbrir} />
 
       {/* Contadores */}
       <div className="flex items-center gap-2.5 flex-wrap">
@@ -386,6 +404,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                           <span className="text-[13px] font-extrabold font-mono">OC #{o.numero ?? o.tiny_id}</span>
                           <div className="flex-1" />
                           {sit && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", sit.cls)}>{sit.label}</span>}
+                          {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>NF · app</span>}
                         </div>
                         <span className="text-[12.5px] font-semibold leading-snug line-clamp-2">{fornecedorDe(o)}</span>
                         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -434,6 +453,9 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
   const { perfil } = usePerfil();
   const ehAdm = !!perfil?.modulos.includes("todos");
   const [salvandoFim, setSalvandoFim] = useState(false);
+  const [xmlAberto, setXmlAberto] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
+  const [confirmaExcluir, setConfirmaExcluir] = useState(false);
 
   const ordemQ = useQuery({
     queryKey: ["compras", "ordem", tinyId],
@@ -566,6 +588,48 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
     }
   }
 
+  // Arquivar: some do quadro (o sync do Tiny não desarquiva).
+  async function arquivarOrdem() {
+    if (!ordem) return;
+    if (!window.confirm(`Arquivar a OC #${ordem.numero ?? tinyId}? Ela sai do quadro; nada muda no Tiny.`)) return;
+    const { error } = await supabaseExternal.from("compras_ordens")
+      .update({ arquivada_em: new Date().toISOString() }).eq("tiny_id", tinyId);
+    if (error) { toast.error("Falha ao arquivar", { description: error.message }); return; }
+    toast.success(`OC #${ordem.numero ?? tinyId} arquivada`);
+    void qc.invalidateQueries({ queryKey: ["compras"] });
+    onVoltar();
+  }
+
+  // Excluir do app. A OC é espelho do Tiny: um DELETE seria reinserido pelo
+  // compras-sync na rodada seguinte (janela de 90 dias). Por isso é exclusão
+  // lógica — kanban_status 'excluida' + arquivada, campos que o sync não toca.
+  // As NFs casadas com ela voltam a ficar livres. Não exclui no Tiny.
+  async function excluirOrdem() {
+    if (!ordem) return;
+    setExcluindo(true);
+    try {
+      const { error } = await supabaseExternal.from("compras_ordens").update({
+        kanban_status: "excluida",
+        arquivada_em: new Date().toISOString(),
+        observacao_recebimento: [ordem.observacao_recebimento?.trim(), `Excluída do app${perfil?.nome ? ` por ${perfil.nome}` : ""}`]
+          .filter(Boolean).join(" · "),
+      }).eq("tiny_id", tinyId);
+      if (error) throw error;
+      await supabaseExternal.from("compras_nf_entrada").update({
+        ordem_tiny_id: null, match_metodo: null, match_score: null,
+        conciliado_por: perfil?.nome ?? null, conciliado_em: new Date().toISOString(),
+      }).eq("ordem_tiny_id", tinyId);
+      toast.success(`OC #${ordem.numero ?? tinyId} excluída do app`);
+      void qc.invalidateQueries({ queryKey: ["compras"] });
+      onVoltar();
+    } catch (e) {
+      toast.error("Falha ao excluir", { description: (e as Error).message });
+    } finally {
+      setExcluindo(false);
+      setConfirmaExcluir(false);
+    }
+  }
+
   if (ordemQ.isLoading || itensQ.isLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -596,6 +660,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-extrabold font-mono">OC #{ordem.numero ?? tinyId}</h1>
               {sit && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", sit.cls)}>{sit.label} no Tiny</span>}
+              {tinyId < 0 && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", SELO_APP)}>Entrada por NF · só no app</span>}
             </div>
             <span className="text-sm text-muted-foreground">
               {fornecedorDe(ordem)} · pedido {dataBR(ordem.data_pedido)}
@@ -613,6 +678,15 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
               <div className="h-full rounded" style={{ width: `${pct}%`, background: completo ? "#0E8A5F" : "#B7791F" }} />
             </div>
           </div>
+          <Button variant="outline" size="sm" onClick={() => void arquivarOrdem()} className="gap-1.5" title="Tirar do quadro (nada muda no Tiny)">
+            <Archive className="h-4 w-4" /> Arquivar
+          </Button>
+          {ehAdm && (
+            <Button variant="outline" size="sm" onClick={() => setConfirmaExcluir(true)} disabled={excluindo}
+              className="gap-1.5 text-red-700 hover:text-red-700 dark:text-red-400" title="Excluir esta ordem do app">
+              {excluindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Excluir
+            </Button>
+          )}
           <Button onClick={() => void concluir()} disabled={salvandoFim || itens.length === 0} className="gap-2">
             {salvandoFim ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             {completo ? "Concluir recebimento" : "Concluir com divergência"}
@@ -631,6 +705,10 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             onCommit={(v) => void salvarOrdem({ nf_numero: v })}
             className="w-[300px]"
           />
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setXmlAberto(true)} disabled={itens.length === 0}
+            title="Nova entrada de recebimento lendo o XML da NF-e do fornecedor">
+            <FileUp className="h-3.5 w-3.5" /> Entrada pelo XML da NF
+          </Button>
         </div>
         <div className="flex items-center gap-2 flex-1 min-w-[280px]">
           <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground whitespace-nowrap">Observação</span>
@@ -645,6 +723,28 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
 
       {/* NF do fornecedor × OC (conciliação) */}
       <ConciliacaoNf ordemTinyId={tinyId} />
+
+      <EntradaNfXml ordem={ordem} itens={itens} open={xmlAberto} onOpenChange={setXmlAberto} />
+
+      <AlertDialog open={confirmaExcluir} onOpenChange={setConfirmaExcluir}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir a OC #{ordem.numero ?? tinyId}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A ordem sai do quadro e da conferência e não volta com a sincronização. As NFs casadas com
+              ela ficam livres para vincular a outra ordem. <b>Não exclui no Tiny</b> — se a ordem estiver
+              errada lá, exclua ou cancele também no Tiny.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); void excluirOrdem(); }} disabled={excluindo}
+              className="bg-red-600 hover:bg-red-700 text-white">
+              {excluindo && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Itens */}
       <div className="flex flex-col gap-3">
