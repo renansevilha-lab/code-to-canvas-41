@@ -1227,12 +1227,72 @@ aprovado pelo dono → o agente só precisa de ZPL.
 - Medido (24/set, agente de teste): job pego **0,5 s** após entrar na fila,
   concluído em 1,3 s (PrintNode: mediana 4–7 s).
 
-**Fase 2 (pendente):** rotear `shopee-sync-ads imprimir`, `ml-etiqueta`
-(passar a pedir ZPL), `fulfillment-inbound imprimir` e `separacao-imprimir`
-por `impressoras.usar_proprio`; `confirmar-impressao` ler `print_jobs`
-(impresso→done, erro→error, pegou 25 min→preso); PDFs do Fulfillment viram
-ZPL no navegador (pdf.js → ^GFA); seletor de impressora no front com as duas
-origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
+**Agente instalado (30/set):** `bancada-1` no **RENANPC**, ZD220 USB =
+`impressoras.id 2`. Instalar a partir da pasta do repositório: arquivo
+baixado da internet fica "bloqueado" e a política padrão do Windows recusa o
+script **em silêncio** (tarefa e `C:\OttzImpressao` não aparecem). Comando:
+`powershell -NoProfile -ExecutionPolicy Bypass -File <repo>	ools\ottz-impressao\instalar.ps1`
+com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
+
+**Fase 2 — LIGADA em 30/set (piloto só na ZD220 do RENANPC):**
+- **O front NÃO muda:** continua mandando o `printer_id` do **PrintNode**. O
+  servidor decide por impressora: `impressoras.printnode_id` (RENANPC =
+  75043468) + `usar_proprio=true` + agente vivo (<90 s) → fila própria; senão
+  PrintNode (**reserva automática, temporária** — decisão do dono). RPC única
+  **`print_enfileirar_se_proprio(p_printnode_id, p_b64, p_titulo, p_origem)`**
+  → id do job ou NULL. Só ZPL; PDF segue no PrintNode.
+- **Quem chama:** `shopee-sync-ads imprimir` v66 (deploy 68; lote = 1 job por
+  TAG/loja, igual ao PrintNode — opção A do dono, **sem limite de lote**),
+  `ml-etiqueta` v16 (1 pedido/job, responde `enviado:true, fila_propria:true`),
+  `fulfillment-inbound imprimir` v15 (identificadora/ZPL; `copias` = ZPL
+  repetido). `separacao-imprimir`/`separacao-multi` não imprimem (só TAG).
+- **Controle = o mesmo de antes, por pedido:** `impressao_etiquetas` ganhou
+  **`print_job_id`** (fila própria) ao lado do `printnode_job_id` (um OU
+  outro). Dedup "nunca reimprimir", forçado, preso e liberação para embalar
+  leem a mesma tabela/estados.
+- **Confirmação no banco, na hora:** trigger **`trg_print_jobs_espelha`**
+  (impresso→`done`+`confirmado_em`; erro/cancelado→`error`; só mexe em
+  sent/preso). Cron **133 `print-jobs-vigiar`** (`1-59/2`,
+  `print_jobs_vigiar()`): `pendente` 25+ min (agente fora) → `cancelado`
+  (nunca chegou à impressora, pode reimprimir); `pegou` 25+ min sem resposta →
+  `preso` + TAG removida só no app (situação 1) + Discord canal pedidos — mesma
+  regra do PrintNode. `confirmar-impressao` ignora linhas da fila própria no
+  PrintNode e soma as ainda `sent` em `jobs_ainda_sent` (contador da tela).
+- **Medido:** agente pega em 0,6 s; "impresso" ~10 s depois (espera o Windows
+  esvaziar a fila USB; o papel sai em 1–2 s).
+- **Deploy dessas funções via MCP:** não há CLI/token no PC — o arquivo inteiro
+  vai colado; conferir SEMPRE baixando a versão no ar e comparando sha256 com
+  o local (feito na `shopee-sync-ads`: idêntico).
+- **1º dia de uso (30/set) — três armadilhas que NÃO eram do software:**
+  (1) a tela do Full **não tem seletor de impressora**: usa a mesma
+  `localStorage separacao.printerId` da Separação — se lá está outra ZD220, o
+  Full imprime nela pelo PrintNode (lote de 80 KB "sumiu" assim); (2) depois de
+  trocar o papel, a Zebra não aceitou o job: fila do Windows presa em
+  "Excluindo, Imprimindo" (0 bytes) — o agente cancelou em 60 s (job `erro`,
+  pedido liberado para reimprimir), mas o `Get-CimInstance Win32_Printer` do
+  heartbeat **travou junto** e o agente ficou sem sinal (~2 min) até a Zebra
+  voltar (luz verde fixa); **corrigir no agente: heartbeat não pode depender do
+  spooler**; (3) formato errado = mídia da Zebra (a etiqueta Shopee é uma
+  imagem `~DGR` 816×1218 = 10×15 cm SEM `^PW/^LL` — vale o tamanho gravado na
+  impressora; os bytes da fila são idênticos ao `etiquetas_cache`). Calibrar
+  (segurar o avanço até 2 piscadas) resolveu.
+- **Correções do mesmo dia (30/set):** agente **v1.1.0** — toda consulta ao
+  spooler (`Get-CimInstance Win32_Printer`, `Get-PrintJob`, `Remove-PrintJob`)
+  roda num runspace com prazo (`ComTempo`, 10–15 s); estourou = spooler travado:
+  o heartbeat segue e manda as impressoras como **offline** (o servidor para de
+  enfileirar → reserva PrintNode) e loga "spooler voltou ao normal" quando
+  normaliza. Atualizar um agente instalado = parar a tarefa, copiar o `.ps1`
+  para `C:\OttzImpressao` e iniciar a tarefa (o `.ps1` precisa manter o **BOM**).
+  **Apelido de impressora:** `impressoras.apelido` → `view_impressoras_apelidos`
+  (printnode_id → apelido, grant anon/authenticated) → `aplicarApelidos()` em
+  `src/lib/impressoras.ts`, usado pelas 4 listas (Separação, Multi SKU, Risco/A
+  enviar, Full) DEPOIS do filtro "zd220" (que roda no nome original do PrintNode).
+  RENANPC = **"Zebra Fundos (PC RENAN)"**. Full: o seletor de impressora ficava
+  dentro do bloco "tem ZPL anexado" — agora aparece sempre no rodapé do envio.
+- **Pendente:** 2ª Zebra (outro PC); tirar a reserva do PrintNode depois de ~1
+  semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
+  próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
+  como estão — decisão do dono.
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
@@ -1313,7 +1373,7 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
 
 | Função | Versão | Papel |
 |---|---|---|
-| `shopee-sync-ads` | v65 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1 |
+| `shopee-sync-ads` | v66 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1. v66: `imprimir` usa a fila própria quando a impressora é nossa (§5.9) |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
@@ -1327,13 +1387,13 @@ origens. Testar 1 semana em uma estação com PrintNode de reserva → cancelar.
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `ml-sync` | v21 | Pedidos ML (Orders API direto, `fonte='api'`) — ver seção 9 |
 | `ml-sync-ads` | v3 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario`) |
-| `ml-etiqueta` | v14 | Etiqueta ML (ZPL via PrintNode) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
+| `ml-etiqueta` | v16 | Etiqueta ML (ZPL via PrintNode ou fila própria §5.9) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
 | `fulfillment-sync` | v2 | Estoque nos CDs |
 | `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
-| `fulfillment-inbound` | v14 | Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
+| `fulfillment-inbound` | v15 | **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
 | `nf-devolucao` | v3.21 (deploy 36) | Devoluções: `varrer-cancelados` (cron), `pendentes`, `emitir`, `criar` (SVL aceita reembolso aceito, itens parciais com kit aberto, anti-duplicata), `clonar`/`clonar-lote` — ver seções 5.2 e 5.2.3 |
-| `devolucao-auto` | v1 | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), `status` — ver §5.2.3 |
+| `devolucao-auto` | v2 | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), `status` — ver §5.2.3 |
 | `etiquetas-saude` | v5 | **Quadro do dia e alerta de risco de cancelamento vão para o canal `atualizacoes`** (#atualizações-projeto, pedido do dono 16/set); token e pipeline degradado seguem em `erros`. Texto do risco = UMA linha por loja (tudo que já venceu ou cancela hoje somado). `resumo` / `discord` (quadro 2×/dia) / `verificar` (watchdog 20 min) / **`entrega-rapida`** (cron jobid 103, 12h10 BRT): lista pedidos Shopee **Entrega Rápida** ainda não entregues ao motorista com prazo hoje/vencido, via `view_entrega_rapida_pendentes` (status Shopee pré-envio E situação Tiny não enviada, janela 10 dias — o espelho da Shopee tem 1.204 fantasmas em PROCESSED de mai–jul). Silêncio se não há pendente; `&sempre=1` força |
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
 | `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |

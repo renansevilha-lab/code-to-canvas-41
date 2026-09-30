@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# Ottz Impressao — agente de impressao propria (substituto do PrintNode)  v1.0.0
+# Ottz Impressao — agente de impressao propria (substituto do PrintNode)  v1.1.0
 # ----------------------------------------------------------------------------
 # Roda no PC da bancada. Pega os jobs da fila (funcao `impressao` no Supabase)
 # e manda o ZPL CRU para a impressora pelo spooler do Windows (datatype RAW) —
@@ -25,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$VERSAO = '1.0.0'
+$VERSAO = '1.1.0'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $cfg = Get-Content -Raw -Path $Config | ConvertFrom-Json
@@ -85,22 +85,49 @@ public static class OttzRaw {
 }
 '@
 
+# v1.1 (30/set): toda consulta ao spooler roda com PRAZO. Com a fila do Windows
+# presa ("Excluindo, Imprimindo" depois de trocar o papel), Get-CimInstance e
+# Get-PrintJob travavam o agente inteiro: sem heartbeat e sem fila por minutos.
+# Agora cada consulta roda num runspace separado; estourou o prazo = spooler
+# travado (o runspace preso e abandonado, o agente segue).
+function ComTempo([scriptblock]$Bloco, [object[]]$Argumentos = @(), [int]$Segundos = 10) {
+  $ps = [powershell]::Create()
+  [void]$ps.AddScript($Bloco)
+  foreach ($a in $Argumentos) { [void]$ps.AddArgument($a) }
+  $h = $ps.BeginInvoke()
+  if ($h.AsyncWaitHandle.WaitOne($Segundos * 1000)) {
+    try { return ,@($ps.EndInvoke($h)) } finally { $ps.Dispose() }
+  }
+  try { [void]$ps.BeginStop($null, $null) } catch { }
+  throw "spooler do Windows nao respondeu em $Segundos s"
+}
+
+$script:UltimasImpressoras = @()
+$script:SpoolerTravado = $false
+
 function Impressoras {
-  Get-CimInstance Win32_Printer |
-    Where-Object { $_.Name -match $Filtro -or $_.DriverName -match $Filtro } |
-    ForEach-Object {
-      [pscustomobject]@{
-        nome    = $_.Name
-        driver  = $_.DriverName
-        status  = $_.PrinterStatus
-        offline = [bool]($_.WorkOffline -or $_.PrinterStatus -eq 7)
+  $lista = ComTempo {
+    param($f)
+    Get-CimInstance Win32_Printer |
+      Where-Object { $_.Name -match $f -or $_.DriverName -match $f } |
+      ForEach-Object {
+        [pscustomobject]@{
+          nome    = $_.Name
+          driver  = $_.DriverName
+          status  = $_.PrinterStatus
+          offline = [bool]($_.WorkOffline -or $_.PrinterStatus -eq 7)
+        }
       }
-    }
+  } @($Filtro) 10
+  $script:UltimasImpressoras = @($lista)
+  return $lista
 }
 
 function Imprimir($job) {
   $nome = [string]$job.impressora
-  $p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq $nome }
+  try {
+    $p = @(ComTempo { param($n) Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq $n } } @($nome) 10) | Select-Object -First 1
+  } catch { return @{ id = $job.id; ok = $false; erro = "spooler travado (nada enviado): $($_.Exception.Message)" } }
   if (-not $p) { return @{ id = $job.id; ok = $false; erro = "impressora '$nome' nao existe neste PC" } }
   if ($p.WorkOffline -or $p.PrinterStatus -eq 7) { return @{ id = $job.id; ok = $false; erro = 'impressora offline (nada enviado)' } }
 
@@ -111,16 +138,21 @@ function Imprimir($job) {
 
   # Espera o spooler entregar os dados a impressora (sai da fila do Windows).
   $limite = (Get-Date).AddSeconds(60)
+  $remover = { param($n, $i) Remove-PrintJob -PrinterName $n -ID $i -ErrorAction SilentlyContinue }
   while ((Get-Date) -lt $limite) {
-    $pj = Get-PrintJob -PrinterName $nome -ID $spool -ErrorAction SilentlyContinue
+    try {
+      $pj = @(ComTempo { param($n, $i) Get-PrintJob -PrinterName $n -ID $i -ErrorAction SilentlyContinue } @($nome, $spool) 10) | Select-Object -First 1
+    } catch {
+      return @{ id = $job.id; ok = $false; erro = "spooler travado depois do envio — conferir na bancada se saiu: $($_.Exception.Message)" }
+    }
     if (-not $pj) { return @{ id = $job.id; ok = $true } }
     if ([string]$pj.JobStatus -match 'Error|Offline|PaperOut|Blocked|UserIntervention') {
-      Remove-PrintJob -PrinterName $nome -ID $spool -ErrorAction SilentlyContinue
+      try { [void](ComTempo $remover @($nome, $spool) 15) } catch { }
       return @{ id = $job.id; ok = $false; erro = "impressora: $($pj.JobStatus) — job cancelado no Windows, conferir na bancada" }
     }
     Start-Sleep -Milliseconds 500
   }
-  Remove-PrintJob -PrinterName $nome -ID $spool -ErrorAction SilentlyContinue
+  try { [void](ComTempo $remover @($nome, $spool) 15) } catch { }
   return @{ id = $job.id; ok = $false; erro = 'nao saiu da fila do Windows em 60 s — job cancelado, conferir na bancada' }
 }
 
@@ -133,7 +165,18 @@ function Chamar([string]$modulo, $corpo = $null, [int]$timeout = 20, [string]$ex
 }
 
 function Heartbeat {
-  $lista = @(Impressoras)
+  $travado = $null
+  try { $lista = @(Impressoras) }
+  catch {
+    $travado = $_.Exception.Message
+    # Spooler preso: avisa as impressoras conhecidas como OFFLINE. O servidor
+    # para de mandar jobs para ca (a impressao cai na reserva) ate normalizar.
+    $lista = @($script:UltimasImpressoras | ForEach-Object {
+      [pscustomobject]@{ nome = $_.nome; driver = $_.driver; status = 'spooler travado'; offline = $true }
+    })
+  }
+  if ($travado -and -not $script:SpoolerTravado) { Log "AVISO: $travado — impressoras informadas como OFFLINE ate o spooler voltar"; $script:SpoolerTravado = $true }
+  elseif (-not $travado -and $script:SpoolerTravado) { Log 'spooler voltou ao normal'; $script:SpoolerTravado = $false }
   $r = Chamar 'heartbeat' @{ computador = $env:COMPUTERNAME; versao = $VERSAO; impressoras = $lista }
   return $r
 }

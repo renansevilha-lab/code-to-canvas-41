@@ -63,6 +63,7 @@ import {
   EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { aplicarApelidos } from "@/lib/impressoras";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -1211,7 +1212,7 @@ function useImpressorasFF(enabled: boolean) {
       );
       const data = (await resp.json().catch(() => ({}))) as { impressoras?: ImpressoraFF[] };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return (data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220"));
+      return aplicarApelidos((data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220")));
     },
   });
 }
@@ -2648,9 +2649,10 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                 if (f) void anexarEtiquetas(f);
               }}
             />
-            {temEtiquetas ? (
-              <>
-                <Select value={printerId ? String(printerId) : undefined} onValueChange={(v) => setPrinterId(Number(v))}>
+            {/* Seletor SEMPRE visível: vale para etiquetas ZPL, PDFs e etiqueta por SKU
+                (antes só aparecia com ZPL anexado e o Full imprimia "às cegas" na
+                impressora escolhida na Separação — mesmo localStorage). */}
+            <Select value={printerId ? String(printerId) : undefined} onValueChange={(v) => setPrinterId(Number(v))}>
                   <SelectTrigger className="h-9 w-[240px] text-xs">
                     <SelectValue placeholder="Impressora" />
                   </SelectTrigger>
@@ -2670,6 +2672,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                     )}
                   </SelectContent>
                 </Select>
+            {temEtiquetas ? (
+              <>
                 <Button variant="outline" size="sm" className="gap-2 h-9" onClick={() => void imprimirEtiquetas()} disabled={imprimindo}>
                   {imprimindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                   Imprimir etiquetas ({contarCopiasZpl(envio?.etiquetas_zpl)})
