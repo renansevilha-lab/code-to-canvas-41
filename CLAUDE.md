@@ -1217,6 +1217,19 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   imagem `~DGR` 816×1218 = 10×15 cm SEM `^PW/^LL` — vale o tamanho gravado na
   impressora; os bytes da fila são idênticos ao `etiquetas_cache`). Calibrar
   (segurar o avanço até 2 piscadas) resolveu.
+- **Correções do mesmo dia (30/set):** agente **v1.1.0** — toda consulta ao
+  spooler (`Get-CimInstance Win32_Printer`, `Get-PrintJob`, `Remove-PrintJob`)
+  roda num runspace com prazo (`ComTempo`, 10–15 s); estourou = spooler travado:
+  o heartbeat segue e manda as impressoras como **offline** (o servidor para de
+  enfileirar → reserva PrintNode) e loga "spooler voltou ao normal" quando
+  normaliza. Atualizar um agente instalado = parar a tarefa, copiar o `.ps1`
+  para `C:\OttzImpressao` e iniciar a tarefa (o `.ps1` precisa manter o **BOM**).
+  **Apelido de impressora:** `impressoras.apelido` → `view_impressoras_apelidos`
+  (printnode_id → apelido, grant anon/authenticated) → `aplicarApelidos()` em
+  `src/lib/impressoras.ts`, usado pelas 4 listas (Separação, Multi SKU, Risco/A
+  enviar, Full) DEPOIS do filtro "zd220" (que roda no nome original do PrintNode).
+  RENANPC = **"Zebra Fundos (PC RENAN)"**. Full: o seletor de impressora ficava
+  dentro do bloco "tem ZPL anexado" — agora aparece sempre no rodapé do envio.
 - **Pendente:** 2ª Zebra (outro PC); tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam

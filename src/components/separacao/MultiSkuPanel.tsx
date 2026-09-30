@@ -20,6 +20,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
+import { aplicarApelidos } from "@/lib/impressoras";
 import { FAIXAS_PRAZO, faixaPrazo, nivelPrazo, PRAZO_ESTILO } from "@/lib/prazo";
 
 // ============================================================================
@@ -178,7 +179,7 @@ function useImpressoras() {
       const resp = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`, { headers: HEADERS });
       const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return (data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220"));
+      return aplicarApelidos((data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220")));
     },
     refetchInterval: 60_000,
   });

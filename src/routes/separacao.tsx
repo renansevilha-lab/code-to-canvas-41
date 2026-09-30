@@ -64,6 +64,7 @@ import { formatNumber, formatBRL } from "@/lib/format";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { type TagLoteRow, diasAtePrazo, acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
+import { aplicarApelidos } from "@/lib/impressoras";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -142,9 +143,10 @@ function useImpressoras() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       // Somente ZD220 (etiqueta Shopee ZPL). O filtro é pelo NOME — a API não
       // devolve `descricao` (filtrar por ela deixava a lista sempre vazia).
-      return (data.impressoras ?? []).filter((p) =>
+      // O apelido (ex.: "Zebra Fundos (PC RENAN)") troca só o nome exibido.
+      return aplicarApelidos((data.impressoras ?? []).filter((p) =>
         (p.nome ?? "").toLowerCase().includes("zd220"),
-      );
+      ));
     },
     refetchInterval: 60_000,
   });

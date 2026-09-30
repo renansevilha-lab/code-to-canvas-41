@@ -17,6 +17,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi, type TagLoteRow } from "@/lib/identificador";
+import { aplicarApelidos } from "@/lib/impressoras";
 import { Package as PackageIcon, MessageSquare } from "lucide-react";
 import { MensagemLoteDialog, type AlvoMensagem } from "@/components/separacao/MensagemLoteDialog";
 
@@ -144,7 +145,7 @@ function useImpressoras() {
       });
       const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return (data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220"));
+      return aplicarApelidos((data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220")));
     },
     refetchInterval: 60_000,
   });
