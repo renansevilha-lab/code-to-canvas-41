@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { toSPDateKey } from "@/lib/date";
 
 // ============================================================================
 // Conciliação OC × NF do fornecedor (item 1, 10/set/2026).
@@ -32,6 +33,8 @@ interface ItemConc {
   qtd_recebida: number | null; dif_qtd: number | null; dif_preco: number | null; situacao: string;
 }
 interface NfLivre { tiny_id: number; numero: string | null; data_emissao: string | null; valor: number | null; fornecedor_nome: string | null }
+
+const NF_LIVRE_DIAS = 15;
 
 const SIT_LABEL: Record<string, { label: string; cls: string }> = {
   ok: { label: "ok", cls: "text-emerald-700 dark:text-emerald-400" },
@@ -67,7 +70,8 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
       return (data ?? []) as ItemConc[];
     },
   });
-  // NF do mesmo fornecedor ainda sem OC (para vincular na mão)
+  // NF do mesmo fornecedor ainda sem OC (para vincular na mão) — só as dos
+  // últimos 15 dias: as antigas são de compras passadas e só poluíam a lista.
   const livresQ = useQuery({
     queryKey: ["compras", "nf-livres", ordemTinyId],
     queryFn: async (): Promise<NfLivre[]> => {
@@ -77,6 +81,7 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
       const { data, error } = await supabaseExternal
         .from("compras_nf_entrada").select("tiny_id, numero, data_emissao, valor, fornecedor_nome")
         .eq("fornecedor_id", fid).is("ordem_tiny_id", null).eq("ignorar", false)
+        .gte("data_emissao", toSPDateKey(new Date(Date.now() - NF_LIVRE_DIAS * 86_400_000)))
         .order("data_emissao", { ascending: false }).limit(10);
       if (error) throw error;
       return (data ?? []) as NfLivre[];
@@ -198,7 +203,7 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
 
       {livres.length > 0 && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px] text-muted-foreground">NFs deste fornecedor sem ordem vinculada:</span>
+          <span className="text-[11px] text-muted-foreground">NFs deste fornecedor sem ordem vinculada (últimos {NF_LIVRE_DIAS} dias):</span>
           {livres.map((nf) => (
             <div key={nf.tiny_id} className="flex items-center justify-between gap-2 text-xs rounded border border-dashed px-2 py-1">
               <span>
