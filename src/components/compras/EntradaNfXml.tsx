@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { parseNfe, similaridade, soDigitos, tokens, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
 
 // ============================================================================
 // Nova entrada de recebimento pelo XML da NF-e do fornecedor (30/set/2026).
@@ -45,29 +46,6 @@ export interface ItemEntrada {
   emb_unidades: number | null;
 }
 
-interface ItemXml {
-  n: number;
-  cProd: string;
-  ean: string | null;
-  eanTrib: string | null;
-  xProd: string;
-  uCom: string;
-  qCom: number;
-  uTrib: string;
-  qTrib: number;
-  vProd: number;
-}
-interface NfXml {
-  chave: string | null;
-  numero: string; // sem zeros à esquerda
-  numeroBruto: string; // como veio no nNF
-  serie: string;
-  emissao: string | null;
-  emitente: string;
-  cnpj: string;
-  valor: number;
-  itens: ItemXml[];
-}
 interface Linha {
   xml: ItemXml;
   itemId: string | null; // item da OC; null = ignorar
@@ -77,59 +55,6 @@ interface Linha {
 }
 
 const IGNORAR = "__ignorar__";
-
-const n = (s: string | null | undefined): number => {
-  const v = Number(String(s ?? "").replace(",", "."));
-  return Number.isFinite(v) ? v : 0;
-};
-const soDigitos = (s: string | null | undefined): string | null => {
-  const d = String(s ?? "").replace(/\D/g, "").replace(/^0+/, "");
-  return d.length >= 8 ? d : null; // "SEM GTIN", vazio, lixo
-};
-const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const tokens = (s: string | null | undefined) =>
-  new Set(semAcento(String(s ?? "")).split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
-const UNIDADE = /^(UN|UND|UNID|UNIDADE|PC|PCS|PÇ|PEC|PECA|PEÇA)$/i;
-
-function parseNfe(texto: string): NfXml {
-  const doc = new DOMParser().parseFromString(texto, "application/xml");
-  if (doc.getElementsByTagName("parsererror").length > 0) throw new Error("Arquivo não é um XML válido.");
-  const inf = doc.getElementsByTagName("infNFe")[0];
-  if (!inf) throw new Error("Não é o XML de uma NF-e (sem infNFe).");
-  const t = (el: Element | undefined, tag: string) => el?.getElementsByTagName(tag)[0]?.textContent?.trim() ?? "";
-  const ide = inf.getElementsByTagName("ide")[0];
-  const emit = inf.getElementsByTagName("emit")[0];
-  const tot = inf.getElementsByTagName("ICMSTot")[0];
-  const itens: ItemXml[] = Array.from(inf.getElementsByTagName("det")).map((det, i) => {
-    const p = det.getElementsByTagName("prod")[0];
-    return {
-      n: Number(det.getAttribute("nItem") ?? i + 1),
-      cProd: t(p, "cProd"),
-      ean: soDigitos(t(p, "cEAN")),
-      eanTrib: soDigitos(t(p, "cEANTrib")),
-      xProd: t(p, "xProd"),
-      uCom: t(p, "uCom"),
-      qCom: n(t(p, "qCom")),
-      uTrib: t(p, "uTrib"),
-      qTrib: n(t(p, "qTrib")),
-      vProd: n(t(p, "vProd")),
-    };
-  });
-  if (itens.length === 0) throw new Error("A NF-e não tem itens.");
-  const id = inf.getAttribute("Id") ?? "";
-  const emissao = (t(ide, "dhEmi") || t(ide, "dEmi")).slice(0, 10) || null;
-  return {
-    chave: /\d{44}/.exec(id)?.[0] ?? null,
-    numero: String(Number(t(ide, "nNF")) || t(ide, "nNF")),
-    numeroBruto: t(ide, "nNF"),
-    serie: t(ide, "serie"),
-    emissao,
-    emitente: t(emit, "xFant") || t(emit, "xNome"),
-    cnpj: t(emit, "CNPJ") || t(emit, "CPF"),
-    valor: n(t(tot, "vNF")),
-    itens,
-  };
-}
 
 // Casa um item da NF com um item da OC: EAN (comercial ou tributável) →
 // código do fornecedor igual ao nosso SKU → descrição parecida (conferir).
@@ -143,33 +68,14 @@ function casar(x: ItemXml, oc: ItemEntrada[]): { item: ItemEntrada | null; metod
   const cod = x.cProd.trim().toUpperCase();
   const porCod = oc.find((it) => (it.sku ?? "").trim().toUpperCase() === cod && cod !== "");
   if (porCod) return { item: porCod, metodo: "codigo", viaTrib: false };
-  const tx = tokens(x.xProd);
   let melhor: ItemEntrada | null = null;
   let score = 0;
   for (const it of oc) {
-    const ti = tokens(it.descricao);
-    if (ti.size === 0 || tx.size === 0) continue;
-    let hits = 0;
-    for (const w of tx) if (ti.has(w)) hits++;
-    const s = hits / Math.min(tx.size, ti.size);
-    if (s > score) { score = s; melhor = it; }
+    const sc = similaridade(x.xProd, it.descricao);
+    if (sc > score) { score = sc; melhor = it; }
   }
   if (melhor && score >= 0.6) return { item: melhor, metodo: "descricao", viaTrib: false };
   return { item: null, metodo: null, viaTrib: false };
-}
-
-// Quantas UNIDADES essa linha da NF representa. A NF pode vir em caixa/fardo:
-// usa a unidade tributável quando ela é "UN", senão o encaixotamento do item.
-function unidadesDe(x: ItemXml, item: ItemEntrada | null, viaTrib: boolean): { q: number; nota: string | null } {
-  if (viaTrib && x.qTrib > 0) return { q: x.qTrib, nota: `${formatNumber(x.qCom)} ${x.uCom} = ${formatNumber(x.qTrib)} ${x.uTrib}` };
-  if (UNIDADE.test(x.uCom) || x.uCom === "") return { q: x.qCom, nota: null };
-  if (UNIDADE.test(x.uTrib) && x.qTrib > 0 && x.qTrib !== x.qCom) {
-    return { q: x.qTrib, nota: `${formatNumber(x.qCom)} ${x.uCom} = ${formatNumber(x.qTrib)} ${x.uTrib}` };
-  }
-  if (item?.emb_unidades && item.emb_unidades > 1) {
-    return { q: x.qCom * item.emb_unidades, nota: `${formatNumber(x.qCom)} ${x.uCom} × ${item.emb_unidades} (encaixotamento do SKU) — confira` };
-  }
-  return { q: x.qCom, nota: `NF em "${x.uCom}" — confira se são unidades` };
 }
 
 export function EntradaNfXml({
@@ -202,7 +108,7 @@ export function EntradaNfXml({
       setNf(nota);
       setLinhas(nota.itens.map((x) => {
         const m = casar(x, itens);
-        const u = unidadesDe(x, m.item, m.viaTrib);
+        const u = unidadesDe(x, m.viaTrib, m.item?.emb_unidades);
         return { xml: x, itemId: m.item?.id ?? null, metodo: m.metodo, unidades: u.q, nota: u.nota };
       }));
     } catch (e) {
@@ -215,7 +121,7 @@ export function EntradaNfXml({
     setLinhas((ls) => ls.map((l, i) => {
       if (i !== idx) return l;
       const item = itens.find((it) => it.id === itemId) ?? null;
-      const u = unidadesDe(l.xml, item, false);
+      const u = unidadesDe(l.xml, false, item?.emb_unidades);
       return { ...l, itemId, metodo: itemId ? l.metodo : null, unidades: u.q, nota: u.nota };
     }));
   }

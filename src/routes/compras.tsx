@@ -21,6 +21,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { ConciliacaoNf } from "@/components/compras/ConciliacaoNf";
 import { EntradaNfXml } from "@/components/compras/EntradaNfXml";
+import { NovaEntradaNf } from "@/components/compras/NovaEntradaNf";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -95,6 +96,9 @@ const SIT_TINY: Record<string, { label: string; cls: string }> = {
   "2": { label: "Cancelada", cls: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300" },
   "3": { label: "Em andamento", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
 };
+
+// Entrada criada no app a partir da NF (tiny_id negativo — não existe no Tiny).
+const SELO_APP = "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
 
 // Colunas do RECEBIMENTO (mesmo desenho do quadro do Fulfillment).
 const STAGES: Array<{ id: string; label: string; curto: string; col: string; tint: string }> = [
@@ -190,6 +194,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
+  const [novaNf, setNovaNf] = useState(false);
 
   const ordensQ = useQuery({
     queryKey: ["compras", "ordens"],
@@ -306,11 +311,18 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
             Ordens de compra do Tiny · conferência física na chegada
           </span>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void sincronizar()} disabled={sincronizando} className="gap-2">
-          {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Atualizar do Tiny
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setNovaNf(true)} className="gap-2"
+            title="Mercadoria chegou com nota e sem ordem de compra: cria a entrada a partir do XML da NF-e">
+            <FileUp className="h-3.5 w-3.5" /> Nova entrada por NF
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void sincronizar()} disabled={sincronizando} className="gap-2">
+            {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Atualizar do Tiny
+          </Button>
+        </div>
       </div>
+      <NovaEntradaNf open={novaNf} onOpenChange={setNovaNf} onCriada={onAbrir} />
 
       {/* Contadores */}
       <div className="flex items-center gap-2.5 flex-wrap">
@@ -392,6 +404,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                           <span className="text-[13px] font-extrabold font-mono">OC #{o.numero ?? o.tiny_id}</span>
                           <div className="flex-1" />
                           {sit && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", sit.cls)}>{sit.label}</span>}
+                          {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>NF · app</span>}
                         </div>
                         <span className="text-[12.5px] font-semibold leading-snug line-clamp-2">{fornecedorDe(o)}</span>
                         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -647,6 +660,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-extrabold font-mono">OC #{ordem.numero ?? tinyId}</h1>
               {sit && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", sit.cls)}>{sit.label} no Tiny</span>}
+              {tinyId < 0 && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", SELO_APP)}>Entrada por NF · só no app</span>}
             </div>
             <span className="text-sm text-muted-foreground">
               {fornecedorDe(ordem)} · pedido {dataBR(ordem.data_pedido)}
