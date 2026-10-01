@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  AMBER, FAIXAS_MC, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, useTarifaShopee, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 
@@ -251,18 +251,28 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
       const r = await chamarPromocoes(`modulo=atualizar-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1`,
         { item_list: previa.itemList });
       const falhas = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
+      // Recusa é POR variação: o resto da lista é aplicado normalmente.
+      const falhou = (l: Linha) => falhas.some((f) => Number(f.item_id) === l.item_id && (!f.model_id || Number(f.model_id) === l.model_id));
+      const nOk = r.erro ? 0 : previa.mudancas.filter(({ l }) => !falhou(l)).length;
       if (r.erro) {
-        toast.error("A Shopee recusou", { description: `${r.erro.error}: ${r.erro.message ?? ""}`, duration: 12000 });
+        toast.error("A Shopee recusou tudo — nada foi alterado", { description: `${r.erro.error}: ${traduzirErroShopee(r.erro.message)}`, duration: 12000 });
       } else if (falhas.length > 0) {
-        toast.warning(`${falhas.length} item(ns) recusado(s)`, {
-          description: falhas.slice(0, 5).map((f) => `${f.item_id}${f.model_id ? `/${f.model_id}` : ""}: ${f.fail_message ?? f.fail_error}`).join("\n"),
-          duration: 15000,
+        toast.warning(`${nOk} alteração(ões) aplicada(s) · ${falhas.length} recusada(s)`, {
+          description: falhas.slice(0, 5).map((f) => {
+            const l = linhas.find((x) => x.item_id === Number(f.item_id) && (!f.model_id || x.model_id === Number(f.model_id)));
+            return `${l?.sku ?? f.item_id}: ${traduzirErroShopee(f.fail_message ?? f.fail_error)}`;
+          }).join("\n") + "\nAs recusadas continuam marcadas na tabela para você ajustar.",
+          duration: 20000,
         });
       } else {
         toast.success(`Promoção atualizada na Shopee — ${previa.mudancas.length} alteração(ões)`);
       }
       setPrevia(null);
-      setPrecos(new Map()); setLimites(new Map());
+      // mantém o rascunho só do que a Shopee recusou (o resto já é o valor real)
+      if (r.erro) { /* nada aplicado: mantém tudo */ } else {
+        setPrecos((m) => new Map([...m].filter(([k]) => { const l = linhas.find((x) => x.key === k); return !!l && falhou(l); })));
+        setLimites((m) => new Map([...m].filter(([id]) => falhas.some((f) => Number(f.item_id) === id))));
+      }
       void qc.invalidateQueries({ queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id] });
     } catch (e) {
       toast.error("Falha ao aplicar", { description: (e as Error).message });

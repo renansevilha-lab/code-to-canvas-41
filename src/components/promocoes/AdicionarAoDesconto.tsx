@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  FAIXAS_MC, Foto, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, useTarifaShopee, type McBase,
+  FAIXAS_MC, Foto, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -186,7 +186,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
         const errs = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
         for (const e of errs) {
           const l = selecionadas.find((x) => x.item_id === Number(e.item_id) && (!e.model_id || x.model_id === Number(e.model_id)));
-          falhas.push(`${l?.sku ?? e.item_id}: ${e.fail_message ?? e.fail_error}`);
+          falhas.push(`${l?.sku ?? e.item_id}: ${traduzirErroShopee(e.fail_message ?? e.fail_error)}`);
         }
         ok += lote.length - new Set(errs.map((e) => e.item_id)).size;
       }

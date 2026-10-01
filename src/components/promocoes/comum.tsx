@@ -152,3 +152,15 @@ export async function chamarPromocoes(qs: string, body?: unknown): Promise<any> 
   if (!r.ok) throw new Error(j?.erro ?? `HTTP ${r.status}`);
   return j;
 }
+
+/** Traduz as recusas mais comuns da API de promoções da Shopee. */
+export function traduzirErroShopee(msg: string | null | undefined): string {
+  const m = String(msg ?? "");
+  if (/difference between the maximum price and the minimum price/i.test(m)) {
+    return "diferença entre a variação mais cara e a mais barata do anúncio ficou grande demais (a Shopee limita) — aproxime os preços promo das variações";
+  }
+  if (/price.*(higher|greater).*original|promotion price.*original/i.test(m)) return "preço promo precisa ser menor que o preço cheio";
+  if (/already.*(exist|in).*promotion|in other promotion|conflict/i.test(m)) return "produto já está em outra promoção no mesmo período";
+  if (/stock/i.test(m)) return `estoque: ${m}`;
+  return m || "recusado pela Shopee";
+}
