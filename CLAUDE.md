@@ -1289,7 +1289,17 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   enviar, Full) DEPOIS do filtro "zd220" (que roda no nome original do PrintNode).
   RENANPC = **"Zebra Fundos (PC RENAN)"**. Full: o seletor de impressora ficava
   dentro do bloco "tem ZPL anexado" — agora aparece sempre no rodapé do envio.
-- **Pendente:** 2ª Zebra (outro PC); tirar a reserva do PrintNode depois de ~1
+- **2ª Zebra (01/out):** agente `bancada-2` no **JUSSARAPC** (PC da Tânia). O
+  Windows de lá tem DUAS entradas da ZD220: a original ("ZDesigner ZD220-203dpi
+  ZPL", `impressoras.id 151`) NÃO imprime (job preso na fila do Windows); a que
+  funciona é a **"(Copiar 1)"** = `impressoras.id 150` = PrintNode **75108254**,
+  apelido **"Zebra Frente (PC Tânia)"**, `usar_proprio=true`. A mesma Zebra
+  compartilhada em rede no DESKTOP-SEPARACAO (`\jussarapc\…(Copiar 1)`,
+  PrintNode 75573931) NÃO está mapeada — escolhida lá, segue pelo PrintNode.
+  **Vigia:** o `instalar.ps1` agenda, além do logon, um gatilho a cada 5 min
+  (tarefa já rodando = nada acontece); o agente do RENANPC morreu em 30/set
+  (0xC000013A) e só voltou na mão.
+- **Pendente:** tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
   como estão — decisão do dono.
