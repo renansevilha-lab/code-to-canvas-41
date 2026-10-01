@@ -16,7 +16,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
-  AMBER, Foto, GREEN, LOJAS, RED, calcMc, chamarFlashsale, corMc, num, tetoRelampago, tituloMc, type McBase,
+  AMBER, Foto, GREEN, LOJAS, RED, calcMc, chamarFlashsale, corMc, num, tetoRelampago, tituloMc, useTarifaShopee, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -71,6 +71,7 @@ function CampoNum({ valor, largura, onSalvar, decimais = 2 }: {
 
 export function Relampago({ shopId }: { shopId: number }) {
   const qc = useQueryClient();
+  const tarifa = useTarifaShopee().data;
   const { perfil } = usePerfil();
   const [dlgAdd, setDlgAdd] = useState(false);
   const [dlgPrev, setDlgPrev] = useState<null | { dia: string; resultados: any[] }>(null);
@@ -219,7 +220,7 @@ export function Relampago({ shopId }: { shopId: number }) {
               <th className="text-right font-medium px-2 py-2">Preço relâmpago</th>
               <th className="text-right font-medium px-2 py-2">Desc.</th>
               <th className="text-right font-medium px-2 py-2"
-                title="Margem de contribuição estimada no preço relâmpago: comissão e imposto efetivos medidos nos seus pedidos (60 dias) + custo atual do produto">MC promo</th>
+                title="Margem de contribuição estimada no preço relâmpago: comissão pela tabela Shopee vigente (20% + R$ 4,50/un abaixo de R$ 80 desde 01/10) + imposto efetivo dos seus pedidos (60 dias) + custo atual do produto">MC promo</th>
               <th className="text-right font-medium px-2 py-2">Estoque promo</th>
               <th className="text-right font-medium px-2 py-2" title="0 = sem limite por comprador">Limite</th>
               <th className="text-center font-medium px-2 py-2">Ativo</th>
@@ -238,7 +239,7 @@ export function Relampago({ shopId }: { shopId: number }) {
               const desc = orig > 0 ? 1 - num(p.preco_promo) / orig : null;
               const alerta = orig > 0 && (num(p.preco_promo) >= orig || num(p.preco_promo) < orig * 0.5);
               const base = p.sku ? mcMap.get(p.sku) : undefined;
-              const mc = calcMc(base, num(p.preco_promo));
+              const mc = calcMc(base, num(p.preco_promo), tarifa);
               return (
                 <tr key={p.id} className={cn("border-b last:border-0", !p.ativo && "opacity-50")}>
                   <td className="px-3 py-2">
@@ -304,7 +305,7 @@ export function Relampago({ shopId }: { shopId: number }) {
         <p className="text-[11.5px] text-muted-foreground -mt-2">
           {ativos.length} de {prog.length} item(ns) ativos · 1 promoção por dia com até 50 produtos (limite Shopee) ·
           desconto mínimo do critério: ~1% (1 centavo é recusado) · estoque promo precisa existir no anúncio ·
-          MC estimada com taxas reais dos últimos 60 dias.
+          MC estimada com a tabela de comissão Shopee vigente e imposto real dos últimos 60 dias.
         </p>
       )}
 
@@ -360,7 +361,7 @@ export function Relampago({ shopId }: { shopId: number }) {
           <li><b>Desconto mínimo ~1%</b>: promo "1 centavo abaixo" é recusada pelo critério de preço da Shopee (foi a causa da maioria das falhas). E a promo não pode ficar acima do <b>menor preço dos últimos 7 dias</b> do item.</li>
           <li>Blocos que você desativar no Seller Center continuam desativados — o sistema não religa promoção desligada na mão.</li>
           <li>Proteção de preço: item com promo <b>maior/igual ao preço atual</b> ou <b>abaixo de 50%</b> dele é pulado e reportado no Discord.</li>
-          <li><b>MC promo</b> é estimada: comissão e imposto <b>efetivos</b> medidos nos seus pedidos dos últimos 60 dias (por SKU; sem histórico, média da loja) + CMV atual do cadastro. Passe o mouse para ver a conta.</li>
+          <li><b>MC promo</b> é estimada: comissão pela <b>tabela Shopee vigente</b> (abaixo de R$ 80: 20% + R$ 4,50 por unidade desde 01/10/2026; acima: 14% + R$ 16/20/26) + imposto efetivo dos seus pedidos dos últimos 60 dias + CMV atual do cadastro. Passe o mouse para ver a conta.</li>
           <li>Preço atual é o registrado quando o produto entrou na lista; se mudar o preço no Seller Center, ajuste aqui também.</li>
         </ul>
       </details>
@@ -447,6 +448,7 @@ function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, 
   const [ordem, setOrdem] = useState<"vendas" | "recentes">("vendas");
   const [pagina, setPagina] = useState(0);
   const [salvandoKey, setSalvandoKey] = useState<string | null>(null);
+  const tarifa = useTarifaShopee().data;
 
   // debounce simples da busca; volta para a 1ª página a cada filtro novo
   useEffect(() => {
@@ -584,7 +586,7 @@ function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, 
                   const base = sku ? bases.get(sku) : undefined;
                   const preco = num(v?.preco ?? a.preco_min);
                   const t = tetoRelampago(preco, base?.menor_preco_7d != null ? num(base.menor_preco_7d) : null);
-                  const mc = t ? calcMc(base, t.teto) : null;
+                  const mc = t ? calcMc(base, t.teto, tarifa) : null;
                   return (
                     <tr key={key}>
                       <td className="px-3 py-1.5">

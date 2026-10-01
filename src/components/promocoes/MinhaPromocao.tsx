@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarRange, Loader2, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarRange, Loader2, Plus, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,18 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  AMBER, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, tituloMc, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, useTarifaShopee, type McBase,
 } from "./comum";
+import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 
 // ============================================================================
 // Minha Promoção (Shopee) — os DESCONTOS da loja (v2.discount), com CMV, MC e
 // desconto por item. Fonte: edge fn shopee-promocoes (ao vivo na Shopee) +
 // espelho shopee_anuncios(_variacao) p/ foto e SKU + RPC promo_mc_base
-// (CMV kit-aware, comissão/imposto efetivos 60d, vendas 30d).
+// (CMV kit-aware, imposto efetivo 60d, vendas 30d) + comissão pela TABELA
+// Shopee vigente (shopee_tarifa: <R$80 = 20% + R$4,50/un desde 01/10/2026).
+// Filtro por faixa de MC e "Adicionar produtos" (só os que não estão em
+// nenhuma campanha — get_item_promotion via modulo=em-campanha).
 // EDITAR funciona no desconto EM ANDAMENTO (update_discount_item): preço
 // promocional e limite por comprador, sem recriar a promoção. Toda escrita
 // passa por prévia + confirmação — muda o preço público na hora.
@@ -130,6 +134,9 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
   const [previa, setPrevia] = useState<null | { itemList: unknown[]; mudancas: Array<{ l: Linha; de: number; para: number; limDe: number; limPara: number }> }>(null);
   const [aplicando, setAplicando] = useState(false);
   const [removendo, setRemovendo] = useState<string | null>(null);
+  const [faixa, setFaixa] = useState("todas");
+  const [dlgAdd, setDlgAdd] = useState(false);
+  const tarifa = useTarifaShopee().data;
 
   const detQ = useQuery({
     queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id],
@@ -201,11 +208,11 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
   const resumo = useMemo(() => {
     let neg = 0; let semBase = 0;
     for (const l of linhas) {
-      const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, precos.get(l.key) ?? l.promo);
+      const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, precos.get(l.key) ?? l.promo, tarifa);
       if (!mc) semBase++; else if (mc.mc < 0) neg++;
     }
     return { neg, semBase };
-  }, [linhas, bases, precos]);
+  }, [linhas, bases, precos, tarifa]);
 
   function montarPrevia() {
     const erros: string[] = [];
@@ -284,6 +291,11 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
           {resumo.semBase > 0 && !baseQ.isLoading && <span> · {resumo.semBase} sem custo/base</span>}
         </span>
         <div className="flex-1" />
+        {editavel && (
+          <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => setDlgAdd(true)}>
+            <Plus className="h-3.5 w-3.5" /> Adicionar produtos
+          </Button>
+        )}
         {editavel && alterados.length > 0 && (
           <>
             <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setPrecos(new Map()); setLimites(new Map()); }}>
@@ -296,6 +308,20 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11.5px] text-muted-foreground mr-1">Margem de contribuição:</span>
+        {FAIXAS_MC.map((f) => {
+          const n = f.id === "todas" ? linhas.length
+            : linhas.filter((l) => passaFaixa(f.id, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))).length;
+          return (
+            <Button key={f.id} size="sm" variant={faixa === f.id ? "default" : "outline"} className="h-7 text-[11.5px] px-2.5"
+              onClick={() => setFaixa(f.id)}>
+              {f.rotulo} <span className="ml-1 opacity-70 tabular-nums">{n}</span>
+            </Button>
+          );
+        })}
+      </div>
+
       <div className="rounded-lg border overflow-x-auto">
         <table className="w-full text-[12.5px]">
           <thead>
@@ -305,7 +331,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               <th className="text-right font-medium px-2 py-2">Preço promo</th>
               <th className="text-right font-medium px-2 py-2">Desc.</th>
               <th className="text-right font-medium px-2 py-2" title="Custo do produto (kit = soma dos componentes)">CMV</th>
-              <th className="text-right font-medium px-2 py-2" title="Comissão + imposto efetivos (mediana 60 dias, deste SKU ou da loja)">Taxas</th>
+              <th className="text-right font-medium px-2 py-2" title="Comissão Shopee pela tabela vigente (por unidade, no preço promo) + imposto efetivo (mediana 60 dias)">Comissão + imp.</th>
               <th className="text-right font-medium px-2 py-2" title="Margem de contribuição por unidade no preço promo">MC R$</th>
               <th className="text-right font-medium px-2 py-2">MC %</th>
               <th className="text-right font-medium px-2 py-2" title="Unidades vendidas nos últimos 30 dias (nossos pedidos)">Vendas 30d</th>
@@ -319,13 +345,13 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando itens da Shopee…</td></tr>
             ) : detQ.isError ? (
               <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
-            ) : linhas.map((l) => {
+            ) : linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))).map((l) => {
               const base = l.sku ? bases.get(l.sku) : undefined;
               const p = precoDe(l);
-              const mc = calcMc(base, p);
+              const mc = calcMc(base, p, tarifa);
               const desc = l.original > 0 ? 1 - p / l.original : null;
               const mudou = p !== l.promo;
-              const taxas = base && base.com_pct != null && base.imp_pct != null ? num(base.com_pct) + num(base.imp_pct) : null;
+              const taxas = mc && base ? mc.comissao + p * num(base.imp_pct) : null;
               return (
                 <tr key={l.key} className={cn("border-b last:border-0", mudou && "bg-amber-500/5")}>
                   <td className="px-3 py-1.5">
@@ -354,8 +380,8 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
                     {base?.cmv != null ? formatBRL(num(base.cmv)) : baseQ.isLoading ? "…" : "—"}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums font-mono text-muted-foreground"
-                    title={base ? `comissão ${(num(base.com_pct) * 100).toFixed(1)}% + imposto ${(num(base.imp_pct) * 100).toFixed(1)}% · ${base.fonte === "sku" ? `${base.n_pedidos} pedidos deste SKU` : "média da loja"}` : undefined}>
-                    {taxas != null ? `${(taxas * 100).toFixed(1)}%` : "—"}
+                    title={mc && base ? `${mc.regra} = ${formatBRL(mc.comissao)} + imposto ${(num(base.imp_pct) * 100).toFixed(1)}% = ${formatBRL(p * num(base.imp_pct))}` : undefined}>
+                    {taxas != null ? formatBRL(taxas) : "—"}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums font-mono" style={{ color: mc ? corMc(mc.pct) : undefined }}
                     title={tituloMc(base, mc)}>
@@ -393,8 +419,13 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
         {editavel
           ? "Edite o preço promo e o limite direto na tabela — nada vai para a Shopee até \"Revisar e aplicar\". A promoção continua a mesma (não precisa recriar)."
           : "Promoção encerrada — só consulta."}
-        {" "}MC = preço × (1 − comissão − imposto) − CMV, com taxas efetivas dos seus pedidos dos últimos 60 dias.
+        {" "}MC = preço − comissão Shopee (tabela vigente: abaixo de R$ 80 = 20% + R$ 4,50 por unidade) − imposto (efetivo 60 dias) − CMV.
       </p>
+
+      {dlgAdd && (
+        <AdicionarAoDesconto shopId={shopId} desconto={desconto} onFechar={() => setDlgAdd(false)}
+          onAdicionou={() => void qc.invalidateQueries({ queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id] })} />
+      )}
 
       <Dialog open={previa !== null} onOpenChange={(v) => { if (!v) setPrevia(null); }}>
         <DialogContent className="max-w-2xl">
@@ -406,7 +437,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
           </DialogHeader>
           <div className="max-h-[360px] overflow-y-auto rounded-md border divide-y text-[12.5px]">
             {previa?.mudancas.map(({ l, de, para, limDe, limPara }) => {
-              const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para);
+              const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para, tarifa);
               return (
                 <div key={l.key} className="flex items-center gap-3 px-3 py-1.5">
                   <span className="flex-1 min-w-0 truncate">{l.sku ?? l.nome}{l.variacao ? ` · ${l.variacao}` : ""}</span>
@@ -419,7 +450,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               );
             })}
           </div>
-          {previa?.mudancas.some(({ l, para }) => { const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para); return mc != null && mc.mc < 0; }) && (
+          {previa?.mudancas.some(({ l, para }) => { const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para, tarifa); return mc != null && mc.mc < 0; }) && (
             <p className="text-[12px] flex items-center gap-1.5" style={{ color: RED }}>
               <AlertTriangle className="h-3.5 w-3.5" /> Há item com MC negativa no preço novo.
             </p>

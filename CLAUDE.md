@@ -1311,6 +1311,18 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
 - **RPC `shopee_anuncios_busca(shop_id, busca, ordem 'vendas'|'recentes', offset, limit)`**:
   `shopee_anuncios.vendas` é SEMPRE nulo no espelho — vendas 30d vêm dos nossos pedidos por
   `sku_pai` (casa 614/617).
+- **Comissão Shopee com vigência — `shopee_tarifa`** (+ `shopee_tarifa_vigente(dia)`, padrão
+  AMANHÃ; `shopee_comissao(preco, dia)`). Validada nos pedidos (60 d, mono-unidade): <R$80 =
+  **20% + fixo por UNIDADE** (2 un = 2× fixo); 80–99,99 = 14% + 16; 100–199,99 = 14% + 20;
+  200+ = 14% + 26. **01/10/2026: fixo <R$80 de R$4,00 → R$4,50** (demais iguais). Degrau: R$79,99
+  paga 20,50 e R$80 paga 27,20. As ESTIMATIVAS de MC (Minha Promoção + Relâmpago, `calcMc` em
+  `promocoes/comum.tsx`) usam a tabela; imposto segue a % efetiva histórica. Pedidos reais (PI,
+  Dashboard, DRE) usam a taxa do escrow e já refletem a mudança sozinhos. Nova mudança da
+  Shopee = inserir linhas com a nova `vigencia_inicio` (não editar as antigas).
+- **Adicionar a um desconto** (`promocoes/AdicionarAoDesconto.tsx`): `shopee-promocoes v3
+  ?modulo=em-campanha` (get_item_promotion de todos os anúncios ativos, lotes de 50, orçamento
+  24 s) → `shopee_anuncios_busca(..., p_excluir)` tira os que já estão em campanha; preço promo =
+  cheio − desconto padrão; filtros de MC (<10, 10–15, 15–20, 20–25, >25%); `add-itens` em lotes de 50.
 - **Teto da relâmpago** (`tetoRelampago` em `promocoes/comum.tsx`): `get_item_criteria` da loja =
   `min_discount 1`, `need_lowest_price false`, mas o erro **10014** (acima do menor preço de 7 dias)
   existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Zap } from "lucide-react";
 
 import {
@@ -24,20 +25,77 @@ export interface McBase {
   menor_preco_7d?: number | null; vendas_30d?: number | null;
 }
 
+/** Faixa da tabela de comissão Shopee (shopee_tarifa — vigência no banco). */
+export interface Tarifa { vigencia_inicio: string; preco_min: number; preco_max: number | null; pct: number; fixo_unidade: number }
+
+/**
+ * Tabela de comissão vigente AMANHÃ (as promoções valem daqui pra frente).
+ * Regra no banco (shopee_tarifa_vigente); o front só aplica pct·p + fixo.
+ */
+export function useTarifaShopee() {
+  return useQuery({
+    queryKey: ["shopee-tarifa"],
+    staleTime: 60 * 60_000,
+    queryFn: async (): Promise<Tarifa[]> => {
+      const { data, error } = await supabaseExternal.rpc("shopee_tarifa_vigente");
+      if (error) throw error;
+      return ((data ?? []) as Tarifa[]).map((t) => ({ ...t, preco_min: num(t.preco_min), preco_max: t.preco_max == null ? null : num(t.preco_max), pct: num(t.pct), fixo_unidade: num(t.fixo_unidade) }));
+    },
+  });
+}
+
+/** Comissão + serviço Shopee de 1 unidade ao preço p; null sem tabela. */
+export function comissaoShopee(preco: number, tarifa: Tarifa[] | undefined): { valor: number; faixa: Tarifa } | null {
+  if (!tarifa || tarifa.length === 0 || preco <= 0) return null;
+  const f = tarifa.find((t) => preco >= t.preco_min && (t.preco_max == null || preco < t.preco_max + 0.01));
+  if (!f) return null;
+  return { valor: Math.round((preco * f.pct + f.fixo_unidade) * 100) / 100, faixa: f };
+}
+
+export interface Mc { mc: number; pct: number; comissao: number; regra: string }
+
 // MC estimada no preço dado; null quando falta base (sem CMV ou sem taxas).
-export function calcMc(base: McBase | undefined, preco: number): { mc: number; pct: number } | null {
-  if (!base || base.cmv == null || base.com_pct == null || base.imp_pct == null || preco <= 0) return null;
-  const mc = preco * (1 - num(base.com_pct) - num(base.imp_pct)) - num(base.cmv);
-  return { mc, pct: mc / preco };
+// Comissão: tabela Shopee vigente (pct + fixo POR UNIDADE) quando houver;
+// senão a % efetiva histórica do SKU. Imposto: % efetiva histórica.
+export function calcMc(base: McBase | undefined, preco: number, tarifa?: Tarifa[]): Mc | null {
+  if (!base || base.cmv == null || base.imp_pct == null || preco <= 0) return null;
+  const tab = comissaoShopee(preco, tarifa);
+  let comissao: number; let regra: string;
+  if (tab) {
+    comissao = tab.valor;
+    regra = `comissão Shopee ${(tab.faixa.pct * 100).toFixed(0)}% + R$ ${tab.faixa.fixo_unidade.toFixed(2).replace(".", ",")}/un (tabela de ${tab.faixa.vigencia_inicio.split("-").reverse().join("/")})`;
+  } else {
+    if (base.com_pct == null) return null;
+    comissao = preco * num(base.com_pct);
+    regra = `comissão ${(num(base.com_pct) * 100).toFixed(1)}% (histórico)`;
+  }
+  const mc = preco - comissao - preco * num(base.imp_pct) - num(base.cmv);
+  return { mc, pct: mc / preco, comissao, regra };
 }
 export function corMc(pct: number): string {
   return pct < 0 ? RED : pct < 0.1 ? AMBER : GREEN;
 }
-export function tituloMc(base: McBase | undefined, mc: { mc: number; pct: number } | null): string {
+export function tituloMc(base: McBase | undefined, mc: Mc | null): string {
   if (mc && base) {
-    return `MC estimada ${mc.mc.toFixed(2).replace(".", ",")} por unidade · comissão ${(num(base.com_pct) * 100).toFixed(1)}% + imposto ${(num(base.imp_pct) * 100).toFixed(1)}% (${base.fonte === "sku" ? `medidos em ${base.n_pedidos} pedidos deste SKU` : "média da loja — SKU sem pedidos recentes"}) · CMV ${num(base.cmv).toFixed(2).replace(".", ",")}`;
+    const br = (x: number) => x.toFixed(2).replace(".", ",");
+    return `MC estimada R$ ${br(mc.mc)} por unidade · ${mc.regra} = R$ ${br(mc.comissao)} · imposto ${(num(base.imp_pct) * 100).toFixed(1)}% (${base.fonte === "sku" ? `medido em ${base.n_pedidos} pedidos deste SKU` : "média da loja"}) · CMV R$ ${br(num(base.cmv))}`;
   }
   return base && base.cmv == null ? "Produto sem custo cadastrado — sem MC" : "Sem base para estimar";
+}
+
+/** Filtros de margem de contribuição (MC % no preço da promoção). */
+export const FAIXAS_MC: Array<{ id: string; rotulo: string; testa: (pct: number) => boolean }> = [
+  { id: "todas", rotulo: "Todas", testa: () => true },
+  { id: "lt10", rotulo: "MC < 10%", testa: (p) => p < 0.10 },
+  { id: "10a15", rotulo: "10–15%", testa: (p) => p >= 0.10 && p < 0.15 },
+  { id: "15a20", rotulo: "15–20%", testa: (p) => p >= 0.15 && p < 0.20 },
+  { id: "20a25", rotulo: "20–25%", testa: (p) => p >= 0.20 && p < 0.25 },
+  { id: "gt25", rotulo: "> 25%", testa: (p) => p >= 0.25 },
+];
+export function passaFaixa(faixa: string, mc: Mc | null): boolean {
+  if (faixa === "todas") return true;
+  if (!mc) return false;
+  return (FAIXAS_MC.find((f) => f.id === faixa) ?? FAIXAS_MC[0]).testa(mc.pct);
 }
 
 /**
