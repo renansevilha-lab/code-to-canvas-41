@@ -28,7 +28,11 @@ export interface NfXml {
   cnpj: string;
   valor: number;
   itens: ItemXml[];
+  /** Duplicatas (boletos) da cobrança: cobr/dup — nº, vencimento, valor. Opcional:
+   *  NF montada a partir do espelho do Tiny não traz (lá vem de /notas/{id}.parcelas). */
+  duplicatas?: Duplicata[];
 }
+export interface Duplicata { numero: string; vencimento: string | null; valor: number }
 
 const n = (s: string | null | undefined): number => {
   const v = Number(String(s ?? "").replace(",", "."));
@@ -84,6 +88,14 @@ export function parseNfe(texto: string): NfXml {
   const id = inf.getAttribute("Id") ?? "";
   const emissao = (t(ide, "dhEmi") || t(ide, "dEmi")).slice(0, 10) || null;
   const razaoSocial = t(emit, "xNome");
+  const cobr = inf.getElementsByTagName("cobr")[0];
+  const duplicatas: Duplicata[] = cobr
+    ? Array.from(cobr.getElementsByTagName("dup")).map((d, i) => ({
+      numero: t(d, "nDup") || String(i + 1),
+      vencimento: t(d, "dVenc").slice(0, 10) || null,
+      valor: n(t(d, "vDup")),
+    }))
+    : [];
   return {
     chave: /\d{44}/.exec(id)?.[0] ?? null,
     numero: String(Number(t(ide, "nNF")) || t(ide, "nNF")),
@@ -95,6 +107,7 @@ export function parseNfe(texto: string): NfXml {
     cnpj: t(emit, "CNPJ") || t(emit, "CPF"),
     valor: n(t(tot, "vNF")),
     itens,
+    duplicatas,
   };
 }
 

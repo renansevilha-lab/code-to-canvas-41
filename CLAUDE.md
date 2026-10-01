@@ -1362,6 +1362,14 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   (`LancarEstoqueTiny.tsx`); `compras_ordens.estoque_lancado_em/_por`. **A equipe não deve mais
   lançar estoque pela NF no Tiny** (dobra).
 
+- **Contas a pagar da NF** (botão "Contas da NF" na OC, `ContasDaNf.tsx`): parcelas da NF do Tiny
+  (`tiny-contas-pagar` **v7** `?modulo=nf-parcelas&nf_tiny_id=` → GET /notas/{id}.`parcelas`
+  {dias, data, valor}) ou do XML (`cobr/dup` → `NfXml.duplicatas`, parse em `src/lib/nfe.ts`).
+  Lança cada parcela com `modulo=criar` usando o histórico IGUAL ao do Tiny ("Ref. a NF nº N,
+  FORNECEDOR (parcela i/N)"); antes, procura em `contas_pagar` (descrição `NF nº N` + CNPJ) e
+  bloqueia parcela já lançada (pelo Tiny ou pelo app). Limite: o espelho `contas_pagar` atualiza
+  a cada 15 min — conta lançada no Tiny nesse intervalo ainda não aparece.
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
