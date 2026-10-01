@@ -1,0 +1,461 @@
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CalendarRange, Loader2, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { formatBRL } from "@/lib/format";
+import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  AMBER, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, tituloMc, type McBase,
+} from "./comum";
+
+// ============================================================================
+// Minha Promoção (Shopee) — os DESCONTOS da loja (v2.discount), com CMV, MC e
+// desconto por item. Fonte: edge fn shopee-promocoes (ao vivo na Shopee) +
+// espelho shopee_anuncios(_variacao) p/ foto e SKU + RPC promo_mc_base
+// (CMV kit-aware, comissão/imposto efetivos 60d, vendas 30d).
+// EDITAR funciona no desconto EM ANDAMENTO (update_discount_item): preço
+// promocional e limite por comprador, sem recriar a promoção. Toda escrita
+// passa por prévia + confirmação — muda o preço público na hora.
+// ============================================================================
+
+interface Desconto {
+  discount_id: number; discount_name: string; start_time: number; end_time: number; status: string; source?: number;
+}
+interface ModeloApi {
+  model_id: number; model_name?: string; status?: number;
+  model_original_price: number; model_promotion_price: number;
+  model_promotion_stock?: number; model_normal_stock?: number;
+}
+interface ItemApi {
+  item_id: number; item_name: string; purchase_limit: number;
+  item_original_price?: number; item_promotion_price?: number;
+  item_promotion_stock?: number; normal_stock?: number;
+  model_list?: ModeloApi[];
+}
+interface Linha {
+  key: string; item_id: number; model_id: number; nome: string; variacao: string | null;
+  original: number; promo: number; estoque: number | null; limite: number;
+  sku: string | null; imagem: string | null; primeiraDoItem: boolean;
+}
+
+const STATUS: Array<{ id: string; rotulo: string }> = [
+  { id: "ongoing", rotulo: "Em andamento" },
+  { id: "upcoming", rotulo: "Próximas" },
+  { id: "expired", rotulo: "Encerradas" },
+];
+const dataHora = (epoch: number) =>
+  new Date(epoch * 1000).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+export function MinhaPromocao({ shopId }: { shopId: number }) {
+  const [status, setStatus] = useState("ongoing");
+  const [selId, setSelId] = useState<number | null>(null);
+
+  const listaQ = useQuery({
+    queryKey: ["promo-shopee", "lista", shopId, status],
+    staleTime: 2 * 60_000,
+    queryFn: async (): Promise<Desconto[]> => {
+      const r = await chamarPromocoes(`modulo=list&shop_id=${shopId}&status=${status}`);
+      if (r.erro) throw new Error(`${r.erro.error}: ${r.erro.message ?? ""}`);
+      return ((r.descontos ?? []) as Desconto[]).sort((a, b) => b.start_time - a.start_time);
+    },
+  });
+  const descontos = listaQ.data ?? [];
+  const sel = descontos.find((d) => d.discount_id === selId) ?? null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        {STATUS.map((s) => (
+          <Button key={s.id} size="sm" variant={status === s.id ? "default" : "outline"} className="h-8 text-xs"
+            onClick={() => { setStatus(s.id); setSelId(null); }}>
+            {s.rotulo}
+          </Button>
+        ))}
+        <div className="flex-1" />
+        <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" disabled={listaQ.isFetching}
+          onClick={() => void listaQ.refetch()}>
+          <RefreshCw className={cn("h-3.5 w-3.5", listaQ.isFetching && "animate-spin")} /> Atualizar da Shopee
+        </Button>
+      </div>
+
+      {listaQ.isLoading ? (
+        <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
+          <Loader2 className="h-4 w-4 animate-spin mr-2" /> Buscando promoções na Shopee…
+        </div>
+      ) : listaQ.isError ? (
+        <p className="text-sm" style={{ color: RED }}>Falha ao listar: {(listaQ.error as Error).message}</p>
+      ) : descontos.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-6 text-center">Nenhuma promoção {STATUS.find((s) => s.id === status)?.rotulo.toLowerCase()} nesta loja.</p>
+      ) : (
+        <div className="rounded-lg border divide-y">
+          {descontos.map((d) => (
+            <button key={d.discount_id} type="button"
+              onClick={() => setSelId(selId === d.discount_id ? null : d.discount_id)}
+              className={cn("w-full text-left px-3 py-2.5 flex items-center gap-3 text-[13px] hover:bg-muted/40",
+                selId === d.discount_id && "bg-muted/50")}>
+              <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="font-medium flex-1 min-w-0 truncate">{d.discount_name}</span>
+              <span className="text-[11.5px] text-muted-foreground whitespace-nowrap flex items-center gap-1">
+                <CalendarRange className="h-3.5 w-3.5" /> {dataHora(d.start_time)} → {dataHora(d.end_time)}
+              </span>
+              <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded"
+                style={{ background: d.status === "ongoing" ? `${GREEN}18` : d.status === "upcoming" ? `${AMBER}18` : "#94A3B822",
+                  color: d.status === "ongoing" ? GREEN : d.status === "upcoming" ? AMBER : "#64748B" }}>
+                {d.status === "ongoing" ? "Em andamento" : d.status === "upcoming" ? "Próxima" : "Encerrada"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {sel && <DetalheDesconto key={sel.discount_id} shopId={shopId} desconto={sel} />}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+
+function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desconto }) {
+  const qc = useQueryClient();
+  const editavel = desconto.status === "ongoing" || desconto.status === "upcoming";
+  const [precos, setPrecos] = useState<Map<string, number>>(new Map());
+  const [limites, setLimites] = useState<Map<number, number>>(new Map());
+  const [previa, setPrevia] = useState<null | { itemList: unknown[]; mudancas: Array<{ l: Linha; de: number; para: number; limDe: number; limPara: number }> }>(null);
+  const [aplicando, setAplicando] = useState(false);
+  const [removendo, setRemovendo] = useState<string | null>(null);
+
+  const detQ = useQuery({
+    queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id],
+    staleTime: 60_000,
+    queryFn: async (): Promise<Linha[]> => {
+      const r = await chamarPromocoes(`modulo=detalhe&shop_id=${shopId}&discount_id=${desconto.discount_id}`);
+      if (r.erro) throw new Error(`${r.erro.error}: ${r.erro.message ?? ""}`);
+      const itens = (r.itens ?? []) as ItemApi[];
+      const ids = [...new Set(itens.map((i) => i.item_id))];
+      // foto + SKU pelo espelho do catálogo
+      const anun = new Map<number, { imagem_url: string | null; sku_pai: string | null }>();
+      const vars = new Map<number, { sku: string | null; nome_variacao: string | null }>();
+      for (let i = 0; i < ids.length; i += 200) {
+        const lote = ids.slice(i, i + 200);
+        const [{ data: a }, { data: v }] = await Promise.all([
+          supabaseExternal.from("shopee_anuncios").select("item_id, imagem_url, sku_pai").eq("shop_id", shopId).in("item_id", lote),
+          supabaseExternal.from("shopee_anuncios_variacao").select("model_id, sku, nome_variacao").eq("shop_id", shopId).in("item_id", lote),
+        ]);
+        for (const x of (a ?? []) as { item_id: number; imagem_url: string | null; sku_pai: string | null }[]) anun.set(x.item_id, x);
+        for (const x of (v ?? []) as { model_id: number; sku: string | null; nome_variacao: string | null }[]) vars.set(x.model_id, x);
+      }
+      const linhas: Linha[] = [];
+      for (const it of itens) {
+        const an = anun.get(it.item_id);
+        const modelos = it.model_list ?? [];
+        if (modelos.length > 0) {
+          modelos.forEach((m, idx) => {
+            const vv = vars.get(m.model_id);
+            linhas.push({
+              key: `${it.item_id}:${m.model_id}`, item_id: it.item_id, model_id: m.model_id,
+              nome: it.item_name, variacao: m.model_name || vv?.nome_variacao || null,
+              original: num(m.model_original_price), promo: num(m.model_promotion_price),
+              estoque: m.model_normal_stock ?? null, limite: num(it.purchase_limit),
+              sku: vv?.sku ?? an?.sku_pai ?? null, imagem: an?.imagem_url ?? null, primeiraDoItem: idx === 0,
+            });
+          });
+        } else {
+          linhas.push({
+            key: `${it.item_id}:0`, item_id: it.item_id, model_id: 0, nome: it.item_name, variacao: null,
+            original: num(it.item_original_price), promo: num(it.item_promotion_price),
+            estoque: it.normal_stock ?? null, limite: num(it.purchase_limit),
+            sku: an?.sku_pai ?? null, imagem: an?.imagem_url ?? null, primeiraDoItem: true,
+          });
+        }
+      }
+      return linhas;
+    },
+  });
+  const linhas = useMemo(() => detQ.data ?? [], [detQ.data]);
+
+  const skus = useMemo(() => [...new Set(linhas.map((l) => l.sku).filter((s): s is string => !!s))].sort(), [linhas]);
+  const baseQ = useQuery({
+    queryKey: ["promo-shopee", "mc", shopId, skus],
+    enabled: skus.length > 0,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<Map<string, McBase>> => {
+      const { data, error } = await supabaseExternal.rpc("promo_mc_base", { p_shop_id: shopId, p_skus: skus });
+      if (error) throw error;
+      return new Map(((data ?? []) as McBase[]).map((r) => [r.sku, r]));
+    },
+  });
+  const bases = baseQ.data ?? new Map<string, McBase>();
+
+  const precoDe = (l: Linha) => precos.get(l.key) ?? l.promo;
+  const limiteDe = (l: Linha) => limites.get(l.item_id) ?? l.limite;
+  const alterados = linhas.filter((l) => precoDe(l) !== l.promo || limiteDe(l) !== l.limite);
+
+  // resumo no preço atual/digitado
+  const resumo = useMemo(() => {
+    let neg = 0; let semBase = 0;
+    for (const l of linhas) {
+      const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, precos.get(l.key) ?? l.promo);
+      if (!mc) semBase++; else if (mc.mc < 0) neg++;
+    }
+    return { neg, semBase };
+  }, [linhas, bases, precos]);
+
+  function montarPrevia() {
+    const erros: string[] = [];
+    const porItem = new Map<number, Linha[]>();
+    for (const l of linhas) {
+      if (!alterados.some((a) => a.item_id === l.item_id)) continue;
+      if (!porItem.has(l.item_id)) porItem.set(l.item_id, []);
+      porItem.get(l.item_id)!.push(l);
+    }
+    const itemList: unknown[] = [];
+    for (const [itemId, ls] of porItem) {
+      for (const l of ls) {
+        const p = precoDe(l);
+        if (!(p > 0)) erros.push(`${l.sku ?? l.nome}: preço inválido`);
+        else if (l.original > 0 && p >= l.original) erros.push(`${l.sku ?? l.nome}: promo precisa ser menor que o preço cheio (${formatBRL(l.original)})`);
+      }
+      const lim = limiteDe(ls[0]);
+      if (ls[0].model_id) {
+        itemList.push({ item_id: itemId, purchase_limit: lim, model_list: ls.map((l) => ({ model_id: l.model_id, model_promotion_price: precoDe(l) })) });
+      } else {
+        itemList.push({ item_id: itemId, purchase_limit: lim, item_promotion_price: precoDe(ls[0]) });
+      }
+    }
+    if (erros.length) { toast.error("Corrija antes de aplicar", { description: erros.slice(0, 5).join("\n") }); return; }
+    setPrevia({
+      itemList,
+      mudancas: alterados.map((l) => ({ l, de: l.promo, para: precoDe(l), limDe: l.limite, limPara: limiteDe(l) })),
+    });
+  }
+
+  async function aplicar() {
+    if (!previa) return;
+    setAplicando(true);
+    try {
+      const r = await chamarPromocoes(`modulo=atualizar-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1`,
+        { item_list: previa.itemList });
+      const falhas = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
+      if (r.erro) {
+        toast.error("A Shopee recusou", { description: `${r.erro.error}: ${r.erro.message ?? ""}`, duration: 12000 });
+      } else if (falhas.length > 0) {
+        toast.warning(`${falhas.length} item(ns) recusado(s)`, {
+          description: falhas.slice(0, 5).map((f) => `${f.item_id}${f.model_id ? `/${f.model_id}` : ""}: ${f.fail_message ?? f.fail_error}`).join("\n"),
+          duration: 15000,
+        });
+      } else {
+        toast.success(`Promoção atualizada na Shopee — ${previa.mudancas.length} alteração(ões)`);
+      }
+      setPrevia(null);
+      setPrecos(new Map()); setLimites(new Map());
+      void qc.invalidateQueries({ queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id] });
+    } catch (e) {
+      toast.error("Falha ao aplicar", { description: (e as Error).message });
+    } finally { setAplicando(false); }
+  }
+
+  async function remover(l: Linha) {
+    if (!window.confirm(`Tirar "${l.nome}${l.variacao ? ` — ${l.variacao}` : ""}" desta promoção na Shopee? O preço volta ao cheio (${formatBRL(l.original)}) na hora.`)) return;
+    setRemovendo(l.key);
+    try {
+      const r = await chamarPromocoes(`modulo=remover-item&shop_id=${shopId}&discount_id=${desconto.discount_id}&item_id=${l.item_id}&model_id=${l.model_id}&confirmar=1`, {});
+      if (r.erro) throw new Error(`${r.erro.error}: ${r.erro.message ?? ""}`);
+      toast.success("Item removido da promoção");
+      void qc.invalidateQueries({ queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id] });
+    } catch (e) {
+      toast.error("Falha ao remover", { description: (e as Error).message });
+    } finally { setRemovendo(null); }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-[14px] font-semibold">{desconto.discount_name}</h3>
+        <span className="text-[12px] text-muted-foreground">
+          {linhas.length} item(ns)
+          {resumo.neg > 0 && <span style={{ color: RED }}> · {resumo.neg} com MC negativa</span>}
+          {resumo.semBase > 0 && !baseQ.isLoading && <span> · {resumo.semBase} sem custo/base</span>}
+        </span>
+        <div className="flex-1" />
+        {editavel && alterados.length > 0 && (
+          <>
+            <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setPrecos(new Map()); setLimites(new Map()); }}>
+              <Undo2 className="h-3.5 w-3.5" /> Descartar
+            </Button>
+            <Button size="sm" className="h-8 gap-1.5" onClick={montarPrevia}>
+              <Save className="h-3.5 w-3.5" /> Revisar e aplicar ({alterados.length})
+            </Button>
+          </>
+        )}
+      </div>
+
+      <div className="rounded-lg border overflow-x-auto">
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="border-b bg-muted/40 text-muted-foreground text-[10.5px] uppercase tracking-wide">
+              <th className="text-left font-medium px-3 py-2">Produto</th>
+              <th className="text-right font-medium px-2 py-2">Preço cheio</th>
+              <th className="text-right font-medium px-2 py-2">Preço promo</th>
+              <th className="text-right font-medium px-2 py-2">Desc.</th>
+              <th className="text-right font-medium px-2 py-2" title="Custo do produto (kit = soma dos componentes)">CMV</th>
+              <th className="text-right font-medium px-2 py-2" title="Comissão + imposto efetivos (mediana 60 dias, deste SKU ou da loja)">Taxas</th>
+              <th className="text-right font-medium px-2 py-2" title="Margem de contribuição por unidade no preço promo">MC R$</th>
+              <th className="text-right font-medium px-2 py-2">MC %</th>
+              <th className="text-right font-medium px-2 py-2" title="Unidades vendidas nos últimos 30 dias (nossos pedidos)">Vendas 30d</th>
+              <th className="text-right font-medium px-2 py-2">Estoque</th>
+              <th className="text-right font-medium px-2 py-2" title="Limite por comprador (0 = sem limite) — vale para o anúncio todo">Limite</th>
+              <th className="px-2 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {detQ.isLoading ? (
+              <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando itens da Shopee…</td></tr>
+            ) : detQ.isError ? (
+              <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
+            ) : linhas.map((l) => {
+              const base = l.sku ? bases.get(l.sku) : undefined;
+              const p = precoDe(l);
+              const mc = calcMc(base, p);
+              const desc = l.original > 0 ? 1 - p / l.original : null;
+              const mudou = p !== l.promo;
+              const taxas = base && base.com_pct != null && base.imp_pct != null ? num(base.com_pct) + num(base.imp_pct) : null;
+              return (
+                <tr key={l.key} className={cn("border-b last:border-0", mudou && "bg-amber-500/5")}>
+                  <td className="px-3 py-1.5">
+                    <div className="flex items-center gap-2.5 min-w-[240px]">
+                      <Foto url={l.imagem} size={38} />
+                      <div className="min-w-0">
+                        <div className="truncate max-w-[320px] font-medium" title={l.nome}>{l.nome}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono text-muted-foreground">{formatBRL(l.original)}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {editavel ? (
+                      <CampoPreco valor={p} alterado={mudou}
+                        onMudar={(v) => setPrecos((m) => { const n = new Map(m); if (v === l.promo) n.delete(l.key); else n.set(l.key, v); return n; })} />
+                    ) : <span className="tabular-nums font-mono">{formatBRL(p)}</span>}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono"
+                    style={{ color: desc == null || desc <= 0 ? RED : undefined }}>
+                    {desc != null ? `${(desc * 100).toFixed(0)}%` : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono text-muted-foreground">
+                    {base?.cmv != null ? formatBRL(num(base.cmv)) : baseQ.isLoading ? "…" : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono text-muted-foreground"
+                    title={base ? `comissão ${(num(base.com_pct) * 100).toFixed(1)}% + imposto ${(num(base.imp_pct) * 100).toFixed(1)}% · ${base.fonte === "sku" ? `${base.n_pedidos} pedidos deste SKU` : "média da loja"}` : undefined}>
+                    {taxas != null ? `${(taxas * 100).toFixed(1)}%` : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono" style={{ color: mc ? corMc(mc.pct) : undefined }}
+                    title={tituloMc(base, mc)}>
+                    {mc ? formatBRL(mc.mc) : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono font-semibold" style={{ color: mc ? corMc(mc.pct) : undefined }}
+                    title={tituloMc(base, mc)}>
+                    {mc ? `${(mc.pct * 100).toFixed(1)}%` : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                    {base ? num(base.vendas_30d) : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{l.estoque ?? "—"}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {editavel && l.primeiraDoItem ? (
+                      <CampoPreco valor={limiteDe(l)} inteiro alterado={limiteDe(l) !== l.limite}
+                        onMudar={(v) => setLimites((m) => { const n = new Map(m); if (v === l.limite) n.delete(l.item_id); else n.set(l.item_id, Math.max(0, Math.round(v))); return n; })} />
+                    ) : <span className="tabular-nums text-muted-foreground">{l.primeiraDoItem ? (l.limite || "—") : ""}</span>}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    {editavel && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Tirar da promoção"
+                        disabled={removendo === l.key} onClick={() => void remover(l)}>
+                        {removendo === l.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11.5px] text-muted-foreground">
+        {editavel
+          ? "Edite o preço promo e o limite direto na tabela — nada vai para a Shopee até \"Revisar e aplicar\". A promoção continua a mesma (não precisa recriar)."
+          : "Promoção encerrada — só consulta."}
+        {" "}MC = preço × (1 − comissão − imposto) − CMV, com taxas efetivas dos seus pedidos dos últimos 60 dias.
+      </p>
+
+      <Dialog open={previa !== null} onOpenChange={(v) => { if (!v) setPrevia(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Aplicar na Shopee?</DialogTitle>
+            <DialogDescription>
+              “{desconto.discount_name}” — o preço público muda <b>na hora</b>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[360px] overflow-y-auto rounded-md border divide-y text-[12.5px]">
+            {previa?.mudancas.map(({ l, de, para, limDe, limPara }) => {
+              const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para);
+              return (
+                <div key={l.key} className="flex items-center gap-3 px-3 py-1.5">
+                  <span className="flex-1 min-w-0 truncate">{l.sku ?? l.nome}{l.variacao ? ` · ${l.variacao}` : ""}</span>
+                  {de !== para && <span className="tabular-nums font-mono whitespace-nowrap">{formatBRL(de)} → <b>{formatBRL(para)}</b></span>}
+                  {limDe !== limPara && l.primeiraDoItem && <span className="text-muted-foreground whitespace-nowrap">limite {limDe || "∞"} → <b>{limPara || "∞"}</b></span>}
+                  <span className="tabular-nums font-mono w-[64px] text-right" style={{ color: mc ? corMc(mc.pct) : undefined }}>
+                    {mc ? `${(mc.pct * 100).toFixed(1)}%` : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {previa?.mudancas.some(({ l, para }) => { const mc = calcMc(l.sku ? bases.get(l.sku) : undefined, para); return mc != null && mc.mc < 0; }) && (
+            <p className="text-[12px] flex items-center gap-1.5" style={{ color: RED }}>
+              <AlertTriangle className="h-3.5 w-3.5" /> Há item com MC negativa no preço novo.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPrevia(null)}>Cancelar</Button>
+            <Button size="sm" className="gap-1.5" disabled={aplicando} onClick={() => void aplicar()}>
+              {aplicando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Aplicar na Shopee
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Campo numérico com edição local; confirma no blur/Enter.
+function CampoPreco({ valor, onMudar, alterado, inteiro }: {
+  valor: number; onMudar: (v: number) => void; alterado?: boolean; inteiro?: boolean;
+}) {
+  const [txt, setTxt] = useState<string | null>(null);
+  const mostrado = txt ?? (inteiro ? String(valor) : valor.toFixed(2));
+  return (
+    <Input
+      className={cn("h-7 text-[12.5px] tabular-nums font-mono text-right px-1.5 ml-auto", inteiro ? "w-[56px]" : "w-[84px]",
+        alterado && "border-amber-500 bg-amber-500/10")}
+      inputMode="decimal" value={mostrado}
+      onChange={(e) => setTxt(e.target.value)}
+      onBlur={() => {
+        if (txt === null) return;
+        const v = Number(txt.replace(",", "."));
+        setTxt(null);
+        if (Number.isFinite(v) && v >= 0) onMudar(inteiro ? Math.round(v) : Math.round(v * 100) / 100);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}

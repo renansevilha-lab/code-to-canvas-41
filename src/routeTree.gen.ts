@@ -35,6 +35,7 @@ import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as PromocoesRouteImport } from './routes/promocoes'
 import { Route as PromocoesMlRouteImport } from './routes/promocoes-ml'
+import { Route as PromocoesShopeeRouteImport } from './routes/promocoes-shopee'
 import { Route as RegistroHorasRouteImport } from './routes/registro-horas'
 import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
 import { Route as RiscoCancelamentoRouteImport } from './routes/risco-cancelamento'
@@ -174,6 +175,11 @@ const PromocoesMlRoute = PromocoesMlRouteImport.update({
   path: '/promocoes-ml',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PromocoesShopeeRoute = PromocoesShopeeRouteImport.update({
+  id: '/promocoes-shopee',
+  path: '/promocoes-shopee',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RegistroHorasRoute = RegistroHorasRouteImport.update({
   id: '/registro-horas',
   path: '/registro-horas',
@@ -242,6 +248,7 @@ export interface FileRoutesByFullPath {
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/promocoes-shopee': typeof PromocoesShopeeRoute
   '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
@@ -278,6 +285,7 @@ export interface FileRoutesByTo {
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/promocoes-shopee': typeof PromocoesShopeeRoute
   '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
@@ -315,6 +323,7 @@ export interface FileRoutesById {
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
   '/promocoes-ml': typeof PromocoesMlRoute
+  '/promocoes-shopee': typeof PromocoesShopeeRoute
   '/registro-horas': typeof RegistroHorasRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
@@ -353,6 +362,7 @@ export interface FileRouteTypes {
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/promocoes-shopee'
     | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
@@ -389,6 +399,7 @@ export interface FileRouteTypes {
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/promocoes-shopee'
     | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
@@ -425,6 +436,7 @@ export interface FileRouteTypes {
     | '/produtos-margem'
     | '/promocoes'
     | '/promocoes-ml'
+    | '/promocoes-shopee'
     | '/registro-horas'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
@@ -462,6 +474,7 @@ export interface RootRouteChildren {
   ProdutosMargemRoute: typeof ProdutosMargemRoute
   PromocoesRoute: typeof PromocoesRoute
   PromocoesMlRoute: typeof PromocoesMlRoute
+  PromocoesShopeeRoute: typeof PromocoesShopeeRoute
   RegistroHorasRoute: typeof RegistroHorasRoute
   ReprocessarCmvRoute: typeof ReprocessarCmvRoute
   RiscoCancelamentoRoute: typeof RiscoCancelamentoRoute
@@ -656,6 +669,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PromocoesMlRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/promocoes-shopee': {
+      id: '/promocoes-shopee'
+      path: '/promocoes-shopee'
+      fullPath: '/promocoes-shopee'
+      preLoaderRoute: typeof PromocoesShopeeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/registro-horas': {
       id: '/registro-horas'
       path: '/registro-horas'
@@ -742,6 +762,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProdutosMargemRoute: ProdutosMargemRoute,
   PromocoesRoute: PromocoesRoute,
   PromocoesMlRoute: PromocoesMlRoute,
+  PromocoesShopeeRoute: PromocoesShopeeRoute,
   RegistroHorasRoute: RegistroHorasRoute,
   ReprocessarCmvRoute: ReprocessarCmvRoute,
   RiscoCancelamentoRoute: RiscoCancelamentoRoute,

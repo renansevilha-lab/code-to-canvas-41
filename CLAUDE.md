@@ -1235,6 +1235,28 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
   como estão — decisão do dono.
 
+## 5.9.1 Promoções Shopee — Minha Promoção + Relâmpago (30/set/2026)
+
+Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
+`/flash-sale` redireciona para a aba Relâmpago.
+- **Minha Promoção** = módulo **`v2.discount`** da Open API. Edge fn **`shopee-promocoes`**
+  (verify_jwt + exige JWT `authenticated`/service role — chave publicável e o Bearer anon dos
+  crons dão 401): `list` / `detalhe` / `item-promo` (leitura) e, com `confirmar=1`,
+  `atualizar-itens` (update_discount_item: preço promo + purchase_limit no desconto EM ANDAMENTO,
+  sem recriar), `add-itens`, `remover-item`, `editar` (em andamento só o fim), `criar`, `encerrar`.
+  Front: `src/components/promocoes/MinhaPromocao.tsx` — edição local → prévia "de → para" + MC →
+  aplicar. **Write ainda não testado ao vivo.**
+- **RPC `promo_mc_base(shop_id, skus[])`**: igual à `flashsale_mc_base` (CMV kit-aware,
+  comissão/imposto mediana 60d mono-SKU) + `menor_preco_7d` (menor `subtotal_produto/quantidade`
+  vendido em 7 d, por `coalesce(sku_filho, sku_pai)`) + `vendas_30d`. ~3 s.
+- **RPC `shopee_anuncios_busca(shop_id, busca, ordem 'vendas'|'recentes', offset, limit)`**:
+  `shopee_anuncios.vendas` é SEMPRE nulo no espelho — vendas 30d vêm dos nossos pedidos por
+  `sku_pai` (casa 614/617).
+- **Teto da relâmpago** (`tetoRelampago` em `promocoes/comum.tsx`): `get_item_criteria` da loja =
+  `min_discount 1`, `need_lowest_price false`, mas o erro **10014** (acima do menor preço de 7 dias)
+  existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido
+  em 7 d). Estimativa; recusa continua traduzida no histórico.
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
