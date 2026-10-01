@@ -46,6 +46,7 @@ interface NavItem {
 }
 interface NavGroup {
   label: string;
+  cor: string; // cor do grupo no menu (rótulo, barra e ícones) — contraste sobre o fundo escuro
   items: NavItem[];
 }
 
@@ -53,6 +54,7 @@ interface NavGroup {
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Visão",
+    cor: "#38BDF8",
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard, modulo: "dashboard" },
       { title: "Vendas por produto", url: "/vendas", icon: BarChart3, modulo: "dashboard" },
@@ -63,6 +65,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Pedidos & Operação",
+    cor: "#FBBF24",
     items: [
       { title: "Pedidos", url: "/pedidos", icon: ClipboardList, modulo: "separacao" },
       { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, modulo: "separacao" },
@@ -80,6 +83,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Produtos",
+    cor: "#FB923C",
     items: [
       { title: "Catálogo", url: "/produtos", icon: Package, modulo: "produtos" },
       { title: "Produtos", url: "/produtos-margem", icon: ShoppingBag, modulo: "produtos" },
@@ -88,6 +92,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Mídia & Canais",
+    cor: "#F472B6",
     items: [
       { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone, modulo: "ads" },
       { title: "ADS Mercado Livre", url: "/ads-ml", icon: Megaphone, modulo: "ads" },
@@ -100,6 +105,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Financeiro",
+    cor: "#34D399",
     items: [
       { title: "DRE", url: "/dre", icon: FileBarChart, modulo: "financeiro" },
       { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
@@ -111,6 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Administração",
+    cor: "#A78BFA",
     items: [
       { title: "Usuários e acessos", url: "/usuarios", icon: Users, modulo: "todos" },
     ],
@@ -176,12 +183,12 @@ export function AppSidebar() {
         </div>
         <div className="flex flex-col leading-tight min-w-0">
           <span className="text-white text-sm font-semibold tracking-tight">Ottz Commerce</span>
-          <span className="text-[#6B7483] text-[11px] font-medium">Gestão de vendas</span>
+          <span className="text-[#9AA3B2] text-[11px] font-medium">Gestão de vendas</span>
         </div>
       </Link>
 
       {/* Navegação */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3.5 flex flex-col gap-3.5">
+      <nav className="flex-1 overflow-y-auto px-3 py-3.5 flex flex-col gap-3">
         {NAV_GROUPS.map((g) => {
           const itens = g.items.filter((it) => temAcesso(it.modulo));
           if (itens.length === 0) return null;
@@ -190,10 +197,12 @@ export function AppSidebar() {
             <div key={g.label} className="flex flex-col gap-0.5">
               <button
                 onClick={() => setAbertos((a) => ({ ...a, [g.label]: !a[g.label] }))}
-                className="flex items-center justify-between w-full px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-[#5D6675] hover:text-[#8B95A5] transition-colors"
+                className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.09em] hover:brightness-125 transition"
+                style={{ color: g.cor }}
               >
-                <span>{g.label}</span>
-                <ChevronDown className={cn("h-3 w-3 transition-transform", !aberto && "-rotate-90")} />
+                <span className="h-3 w-[3px] rounded-full shrink-0" style={{ background: g.cor }} />
+                <span className="flex-1 text-left">{g.label}</span>
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !aberto && "-rotate-90")} />
               </button>
               {aberto && (
                 <div className="flex flex-col gap-px">
@@ -206,10 +215,12 @@ export function AppSidebar() {
                         to={it.url}
                         className={cn(
                           "flex items-center gap-2.5 px-3 py-2 rounded-[9px] text-[13.5px] font-medium tracking-tight transition-colors",
-                          ativo ? "bg-primary text-white" : "text-[#98A1AF] hover:bg-[#1A1F27] hover:text-[#E8EBF0]",
+                          ativo
+                            ? "bg-primary text-white font-semibold shadow-[inset_3px_0_0_rgba(255,255,255,.85)]"
+                            : "text-[#E2E6EC] hover:bg-[#1F252E] hover:text-white",
                         )}
                       >
-                        <it.icon className="h-4 w-4 shrink-0 opacity-90" />
+                        <it.icon className="h-4 w-4 shrink-0" style={{ color: ativo ? "#FFFFFF" : g.cor }} />
                         <span className="flex-1 truncate">{it.title}</span>
                         {badge != null && (
                           <span className="bg-[#3A1D1D] text-[#F08A7A] text-[10px] font-semibold px-1.5 py-0.5 rounded-full font-mono">
@@ -233,7 +244,7 @@ export function AppSidebar() {
         </div>
         <div className="flex-1 min-w-0 flex flex-col">
           <span className="text-[#D5DAE2] text-[12.5px] font-medium truncate">{email ? email.split("@")[0] : "Usuário"}</span>
-          <span className="text-[#5D6675] text-[11px] truncate">{email || "—"}</span>
+          <span className="text-[#9AA3B2] text-[11px] truncate">{email || "—"}</span>
         </div>
       </div>
     </aside>

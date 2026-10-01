@@ -104,15 +104,27 @@ export function parseNfe(texto: string): NfXml {
  * EAN tributável), senão o encaixotamento lembrado do SKU.
  */
 export function unidadesDe(
-  x: ItemXml, viaTrib: boolean, embUnidades: number | null | undefined,
+  x: ItemXml, viaTrib: boolean, embUnidades: number | null | undefined, precoOc?: number | null,
 ): { q: number; nota: string | null } {
   if (viaTrib && x.qTrib > 0) return { q: x.qTrib, nota: `${formatNumber(x.qCom)} ${x.uCom} = ${formatNumber(x.qTrib)} ${x.uTrib}` };
-  if (UNIDADE.test(x.uCom) || x.uCom === "") return { q: x.qCom, nota: null };
+  if (UNIDADE.test(x.uCom)) return { q: x.qCom, nota: null };
   if (UNIDADE.test(x.uTrib) && x.qTrib > 0 && x.qTrib !== x.qCom) {
     return { q: x.qTrib, nota: `${formatNumber(x.qCom)} ${x.uCom} = ${formatNumber(x.qTrib)} ${x.uTrib}` };
   }
-  if (embUnidades && embUnidades > 1) {
+  if (x.uCom !== "" && embUnidades && embUnidades > 1) {
     return { q: x.qCom * embUnidades, nota: `${formatNumber(x.qCom)} ${x.uCom} × ${embUnidades} (encaixotamento do SKU) — confira` };
   }
+  // NF do espelho do Tiny não traz a unidade: a NF pode vir em fardo/caixa
+  // (ex.: R$ 23,70 o fardo × R$ 4,74 a unidade na OC = fardo de 5). Preço
+  // unitário da NF múltiplo inteiro do preço da OC → sugere a conversão.
+  const vUn = x.qCom > 0 ? x.vProd / x.qCom : 0;
+  if (precoOc && precoOc > 0 && vUn > 0) {
+    const r = vUn / precoOc;
+    const k = Math.round(r);
+    if (k >= 2 && Math.abs(r - k) <= 0.03 * k) {
+      return { q: x.qCom * k, nota: `${formatNumber(x.qCom)} × ${k} (preço na NF = ${k}× o da OC: embalagem de ${k}?) — confira` };
+    }
+  }
+  if (x.uCom === "") return { q: x.qCom, nota: null };
   return { q: x.qCom, nota: `NF em "${x.uCom}" — confira se são unidades` };
 }

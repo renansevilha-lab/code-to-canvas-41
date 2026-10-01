@@ -29,10 +29,15 @@ $acao = New-ScheduledTaskAction -Execute 'powershell.exe' `
   -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Destino\ottz-impressao.ps1`"" `
   -WorkingDirectory $Destino
 $gatilho = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+# Vigia (30/set): a cada 5 min tenta subir o agente; se ele ja esta rodando, o
+# Windows ignora (MultipleInstances IgnoreNew + mutex no agente). Religa sozinho
+# se o processo for encerrado de fora (morreu com 0xC000013A e ficou 30 min parado;
+# o "RestartCount" da tarefa nao cobre esse caso).
+$vigia = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $config = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
   -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $config `
+Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger @($gatilho, $vigia) -Settings $config `
   -Description 'Agente de impressao propria da Ottz (substitui o PrintNode)' -Force | Out-Null
 Start-ScheduledTask -TaskName $Tarefa
 
