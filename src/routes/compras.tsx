@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Archive, ArrowLeft, Boxes, Check, CheckCircle2, FileText, FileUp, Layers, Loader2,
+  AlertTriangle, Archive, ArrowLeft, Boxes, Check, CheckCircle2, FileText, FileUp, Layers, Loader2,
   Package as PackageIcon, PackagePlus, RefreshCw, Trash2, Truck,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import { usePerfil } from "@/hooks/usePerfil";
 import { ConciliacaoNf } from "@/components/compras/ConciliacaoNf";
 import { EntradaNfXml } from "@/components/compras/EntradaNfXml";
 import { NovaEntradaNf } from "@/components/compras/NovaEntradaNf";
+import type { NfPronta } from "@/components/compras/EntradaNfXml";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -56,6 +57,22 @@ interface Ordem {
   arquivada_em: string | null;
   observacao_recebimento: string | null;
   nf_numero: string | null;
+  // Divergência OC × NF (gravada pela RPC compras_aplicar_nf). null = sem NF aplicada.
+  divergencia_oc_nf: boolean | null;
+  divergencia_oc_nf_detalhe: DivergenciaItem[] | null;
+  divergencia_oc_nf_nfs: string | null;
+  divergencia_oc_nf_em: string | null;
+  divergencia_oc_nf_por: string | null;
+}
+
+interface DivergenciaItem {
+  item_id: string;
+  sku: string | null;
+  descricao: string | null;
+  qtd_oc: number;
+  qtd_nf: number;
+  dif: number;
+  tipo: "qtd" | "nao_veio" | "so_na_nf";
 }
 
 interface ItemOrdem {
@@ -74,6 +91,8 @@ interface ItemOrdem {
   pallet_altura: number | null;
   pallets: number | null;
   observacao: string | null;
+  qtd_nf: number | null; // unidades das NFs aplicadas; null = vale a quantidade da OC
+  so_na_nf: boolean;
 }
 
 interface EmbalagemSku {
@@ -89,6 +108,11 @@ const num = (x: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// Quantidade que vale para a conferência: a da NF quando há NF aplicada à OC
+// (compras_aplicar_nf), senão a da ordem de compra.
+const esperado = (i: { qtd_nf: number | null; quantidade: number }): number =>
+  i.qtd_nf != null ? num(i.qtd_nf) : num(i.quantidade);
+
 // Situação da ordem NO TINY (selo informativo; o fluxo do kanban é nosso).
 const SIT_TINY: Record<string, { label: string; cls: string }> = {
   "0": { label: "Em aberto", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
@@ -99,6 +123,8 @@ const SIT_TINY: Record<string, { label: string; cls: string }> = {
 
 // Entrada criada no app a partir da NF (tiny_id negativo — não existe no Tiny).
 const SELO_APP = "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
+// Divergência OC × NF gravada na ordem.
+const SELO_DIV = "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
 
 // Colunas do RECEBIMENTO (mesmo desenho do quadro do Fulfillment).
 const STAGES: Array<{ id: string; label: string; curto: string; col: string; tint: string }> = [
@@ -215,13 +241,13 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
     queryFn: async (): Promise<Map<number, { ped: number; rec: number }>> => {
       const { data, error } = await supabaseExternal
         .from("compra_ordem_itens")
-        .select("ordem_tiny_id, quantidade, qtd_recebida")
+        .select("ordem_tiny_id, quantidade, qtd_nf, qtd_recebida")
         .limit(5000);
       if (error) throw error;
       const map = new Map<number, { ped: number; rec: number }>();
-      for (const r of (data ?? []) as { ordem_tiny_id: number; quantidade: number; qtd_recebida: number }[]) {
+      for (const r of (data ?? []) as { ordem_tiny_id: number; quantidade: number; qtd_nf: number | null; qtd_recebida: number }[]) {
         const g = map.get(r.ordem_tiny_id) ?? { ped: 0, rec: 0 };
-        g.ped += num(r.quantidade);
+        g.ped += esperado(r);
         g.rec += num(r.qtd_recebida);
         map.set(r.ordem_tiny_id, g);
       }
@@ -406,6 +432,12 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                           {sit && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", sit.cls)}>{sit.label}</span>}
                           {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>NF · app</span>}
                         </div>
+                        {o.divergencia_oc_nf && (
+                          <span className={cn("self-start text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_DIV)}
+                            title={`Quantidades da OC diferem da NF ${o.divergencia_oc_nf_nfs ?? ""} — a conferência usa a NF`}>
+                            OC ≠ NF · {o.divergencia_oc_nf_detalhe?.length ?? 0} item(ns)
+                          </span>
+                        )}
                         <span className="text-[12.5px] font-semibold leading-snug line-clamp-2">{fornecedorDe(o)}</span>
                         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                           <Truck className="h-3 w-3 shrink-0" />
@@ -454,6 +486,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
   const ehAdm = !!perfil?.modulos.includes("todos");
   const [salvandoFim, setSalvandoFim] = useState(false);
   const [xmlAberto, setXmlAberto] = useState(false);
+  const [nfPronta, setNfPronta] = useState<NfPronta | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [confirmaExcluir, setConfirmaExcluir] = useState(false);
 
@@ -500,10 +533,11 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
   });
 
   const ordem = ordemQ.data;
-  const ped = itens.reduce((s, i) => s + num(i.quantidade), 0);
+  const ped = itens.reduce((s, i) => s + esperado(i), 0);
   const rec = itens.reduce((s, i) => s + num(i.qtd_recebida), 0);
   const pct = ped > 0 ? Math.min(100, (rec / ped) * 100) : 0;
-  const completo = ped > 0 && rec >= ped && itens.every((i) => num(i.qtd_recebida) === num(i.quantidade));
+  const completo = ped > 0 && rec >= ped && itens.every((i) => num(i.qtd_recebida) === esperado(i));
+  const pelaNf = itens.some((i) => i.qtd_nf != null);
 
   function patchLocal(id: string, patch: Partial<ItemOrdem>) {
     qc.setQueryData<ItemOrdem[]>(["compras", "itens", tinyId], (old) =>
@@ -566,7 +600,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
     if (!ordem) return;
     const divergente = !completo;
     if (divergente && !window.confirm(
-      `Recebido ${formatNumber(rec)} de ${formatNumber(ped)} unidades — há divergência. Concluir mesmo assim (vai para a coluna Divergência)?`,
+      `Recebido ${formatNumber(rec)} de ${formatNumber(ped)} unidades${pelaNf ? " da NF" : ""} — há divergência. Concluir mesmo assim (vai para a coluna Divergência)?`,
     )) return;
     setSalvandoFim(true);
     try {
@@ -672,7 +706,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
         <div className="flex items-center gap-3">
           <div className="flex flex-col items-end">
             <span className="text-lg font-extrabold tabular-nums leading-none">
-              {formatNumber(rec)} <span className="text-muted-foreground font-semibold text-sm">/ {formatNumber(ped)} un</span>
+              {formatNumber(rec)} <span className="text-muted-foreground font-semibold text-sm">/ {formatNumber(ped)} un{pelaNf ? " da NF" : ""}</span>
             </span>
             <div className="h-1.5 w-36 rounded bg-muted overflow-hidden mt-1.5">
               <div className="h-full rounded" style={{ width: `${pct}%`, background: completo ? "#0E8A5F" : "#B7791F" }} />
@@ -707,7 +741,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
           />
           <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setXmlAberto(true)} disabled={itens.length === 0}
             title="Nova entrada de recebimento lendo o XML da NF-e do fornecedor">
-            <FileUp className="h-3.5 w-3.5" /> Entrada pelo XML da NF
+            <FileUp className="h-3.5 w-3.5" /> Aplicar NF pelo XML
           </Button>
         </div>
         <div className="flex items-center gap-2 flex-1 min-w-[280px]">
@@ -721,10 +755,14 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
         </div>
       </Card>
 
-      {/* NF do fornecedor × OC (conciliação) */}
-      <ConciliacaoNf ordemTinyId={tinyId} />
+      {/* Divergência OC × NF gravada na ordem (as quantidades da NF valem para a conferência) */}
+      <DivergenciaOcNf ordem={ordem} />
 
-      <EntradaNfXml ordem={ordem} itens={itens} open={xmlAberto} onOpenChange={setXmlAberto} />
+      {/* NF do fornecedor × OC (conciliação) */}
+      <ConciliacaoNf ordemTinyId={tinyId} onAplicar={(nf) => { setNfPronta(nf); setXmlAberto(true); }} />
+
+      <EntradaNfXml ordem={ordem} itens={itens} open={xmlAberto} nfPronta={nfPronta}
+        onOpenChange={(o) => { setXmlAberto(o); if (!o) setNfPronta(null); }} />
 
       <AlertDialog open={confirmaExcluir} onOpenChange={setConfirmaExcluir}>
         <AlertDialogContent>
@@ -769,6 +807,67 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
   );
 }
 
+// ---- divergência OC × NF gravada na ordem ----------------------------------
+
+function DivergenciaOcNf({ ordem }: { ordem: Ordem }) {
+  if (ordem.divergencia_oc_nf == null) return null;
+  const quando = ordem.divergencia_oc_nf_em
+    ? new Date(ordem.divergencia_oc_nf_em).toLocaleString("pt-BR", {
+        timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+      })
+    : null;
+  const rodape = `NF ${ordem.divergencia_oc_nf_nfs ?? "—"}${quando ? ` · ${quando}` : ""}${ordem.divergencia_oc_nf_por ? ` · ${ordem.divergencia_oc_nf_por}` : ""}`;
+  if (!ordem.divergencia_oc_nf) {
+    return (
+      <Card className="p-3 flex items-center gap-2 text-sm border-emerald-300 dark:border-emerald-900 bg-emerald-500/5">
+        <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
+        <span className="font-semibold text-emerald-800 dark:text-emerald-300">OC e NF conferem</span>
+        <span className="text-xs text-muted-foreground">· a conferência usa as quantidades da NF · {rodape}</span>
+      </Card>
+    );
+  }
+  const det = ordem.divergencia_oc_nf_detalhe ?? [];
+  const rotulo: Record<string, string> = { qtd: "qtd diferente", nao_veio: "não veio na NF", so_na_nf: "só na NF" };
+  return (
+    <Card className="p-3 flex flex-col gap-2 border-red-300 dark:border-red-900 bg-red-500/5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <AlertTriangle className="h-4 w-4 text-red-700 dark:text-red-400 shrink-0" />
+        <span className="text-sm font-bold text-red-800 dark:text-red-300">Divergência OC × NF em {det.length} item(ns)</span>
+        <span className="text-xs text-muted-foreground">· a conferência usa as quantidades da NF · {rodape}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[10px] uppercase text-muted-foreground border-b">
+              <th className="py-1 pr-2 font-medium">SKU</th>
+              <th className="py-1 pr-2 font-medium">Produto</th>
+              <th className="py-1 pr-2 font-medium text-right">Qtd OC</th>
+              <th className="py-1 pr-2 font-medium text-right">Qtd NF</th>
+              <th className="py-1 pr-2 font-medium text-right">Diferença</th>
+              <th className="py-1 font-medium">Situação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {det.map((d) => (
+              <tr key={d.item_id} className="border-b last:border-0">
+                <td className="py-1 pr-2 font-mono">{d.sku || "—"}</td>
+                <td className="py-1 pr-2 max-w-[320px] truncate" title={d.descricao ?? ""}>{d.descricao ?? "—"}</td>
+                <td className="py-1 pr-2 text-right tabular-nums">{formatNumber(num(d.qtd_oc))}</td>
+                <td className="py-1 pr-2 text-right tabular-nums font-semibold">{formatNumber(num(d.qtd_nf))}</td>
+                <td className={cn("py-1 pr-2 text-right tabular-nums font-semibold",
+                  num(d.dif) < 0 ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400")}>
+                  {num(d.dif) > 0 ? "+" : ""}{formatNumber(num(d.dif))}
+                </td>
+                <td className="py-1 text-muted-foreground">{rotulo[d.tipo] ?? d.tipo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 // ---- linha de item: entrada unitária + entrada por encaixotamento -----------
 
 function ItemConferencia({
@@ -787,7 +886,9 @@ function ItemConferencia({
   const lastro = item.pallet_lastro ?? lembrada?.pallet_lastro ?? null;
   const altura = item.pallet_altura ?? lembrada?.pallet_altura ?? null;
 
-  const ok = num(item.qtd_recebida) === num(item.quantidade) && item.conferido;
+  const alvo = esperado(item);
+  const ok = num(item.qtd_recebida) === alvo && item.conferido;
+  const nfDifere = item.qtd_nf != null && num(item.qtd_nf) !== num(item.quantidade);
   const caixasPorPallet = lastro && altura ? lastro * altura : null;
   const rotuloEmb = embTipo === "fardo" ? "fardo" : "caixa";
 
@@ -831,6 +932,15 @@ function ItemConferencia({
           <span className="text-[11px] text-muted-foreground font-mono">
             SKU {item.sku || "—"}{item.gtin ? ` · EAN ${item.gtin}` : ""}
           </span>
+          {(item.so_na_nf || nfDifere) && (
+            <span className={cn("self-start text-[10.5px] font-bold px-2 py-0.5 rounded-full", item.so_na_nf ? SELO_APP : SELO_DIV)}>
+              {item.so_na_nf
+                ? `Só na NF · ${formatNumber(num(item.qtd_nf))} un (não está na OC)`
+                : num(item.qtd_nf) === 0
+                  ? `Não veio na NF · OC ${formatNumber(num(item.quantidade))} un`
+                  : `OC ${formatNumber(num(item.quantidade))} · NF ${formatNumber(num(item.qtd_nf))} un (vale a NF)`}
+            </span>
+          )}
         </div>
 
         {/* ENTRADA UNITÁRIA */}
@@ -849,11 +959,13 @@ function ItemConferencia({
             />
             <Button variant="outline" size="sm" className="h-9 w-9 p-0 text-base font-bold"
               onClick={() => onQtd(num(item.qtd_recebida) + 1)}>+</Button>
-            <span className="text-[12px] text-muted-foreground font-mono whitespace-nowrap">/ {formatNumber(num(item.quantidade))} un</span>
+            <span className="text-[12px] text-muted-foreground font-mono whitespace-nowrap">
+              / {formatNumber(alvo)} un{item.qtd_nf != null ? " (NF)" : ""}
+            </span>
             <Button
               variant={ok ? "default" : "outline"} size="sm" className="h-9 gap-1.5"
-              onClick={() => onQtd(num(item.quantidade))}
-              title="Recebeu tudo — marca a quantidade pedida"
+              onClick={() => onQtd(alvo)}
+              title={item.qtd_nf != null ? "Recebeu tudo — marca a quantidade da NF" : "Recebeu tudo — marca a quantidade pedida"}
             >
               <Check className="h-3.5 w-3.5" /> Tudo
             </Button>

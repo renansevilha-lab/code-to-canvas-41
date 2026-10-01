@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileCheck2, Link2, Loader2, Unlink } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, Link2, Loader2, Unlink } from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { toSPDateKey } from "@/lib/date";
+import type { NfXml } from "@/lib/nfe";
+import type { NfPronta } from "@/components/compras/EntradaNfXml";
 
 // ============================================================================
 // Conciliação OC × NF do fornecedor (item 1, 10/set/2026).
@@ -18,6 +20,9 @@ import { toSPDateKey } from "@/lib/date";
 // A conciliação automática casa por fornecedor + SKUs; aqui o operador vê a
 // NF casada, item a item (qtd/preço OC × NF), e pode vincular/desvincular
 // manualmente uma NF do mesmo fornecedor.
+// 01/out/2026: vincular abre "Aplicar NF à conferência" (as quantidades da NF
+// passam a valer na conferência; divergência OC × NF gravada na ordem). NF
+// casada pelo cron fica com o botão "Aplicar à conferência" até alguém aplicar.
 // ============================================================================
 
 interface NfConciliada {
@@ -35,6 +40,35 @@ interface ItemConc {
 interface NfLivre { tiny_id: number; numero: string | null; data_emissao: string | null; valor: number | null; fornecedor_nome: string | null }
 
 const NF_LIVRE_DIAS = 15;
+const normNf = (s: string | null | undefined) => String(s ?? "").trim().replace(/^0+/, "");
+
+// Monta a NF do espelho do Tiny no mesmo formato do XML (sem unidade/EAN).
+async function carregarNfTiny(nfTinyId: number): Promise<NfPronta> {
+  const [cab, its] = await Promise.all([
+    supabaseExternal.from("compras_nf_entrada")
+      .select("tiny_id, numero, serie, chave_acesso, data_emissao, fornecedor_nome, fornecedor_cnpj, valor")
+      .eq("tiny_id", nfTinyId).maybeSingle(),
+    supabaseExternal.from("compras_nf_itens")
+      .select("id_item, sku, descricao, quantidade, valor_total").eq("nf_tiny_id", nfTinyId).order("id_item"),
+  ]);
+  if (cab.error) throw cab.error;
+  if (its.error) throw its.error;
+  const c = cab.data as { numero: string | null; serie: string | null; chave_acesso: string | null; data_emissao: string | null;
+    fornecedor_nome: string | null; fornecedor_cnpj: string | null; valor: number | null } | null;
+  if (!c) throw new Error("NF não encontrada no espelho");
+  const itens = (its.data ?? []) as { sku: string | null; descricao: string | null; quantidade: number | null; valor_total: number | null }[];
+  if (itens.length === 0) throw new Error("Os itens desta NF ainda não foram lidos do Tiny — tente de novo em alguns minutos");
+  const nf: NfXml = {
+    chave: c.chave_acesso, numero: normNf(c.numero) || String(c.numero ?? ""), numeroBruto: String(c.numero ?? ""),
+    serie: c.serie ?? "", emissao: c.data_emissao, emitente: c.fornecedor_nome ?? "", razaoSocial: c.fornecedor_nome ?? "",
+    cnpj: c.fornecedor_cnpj ?? "", valor: Number(c.valor ?? 0),
+    itens: itens.map((i, idx) => ({
+      n: idx + 1, cProd: i.sku ?? "", ean: null, eanTrib: null, xProd: i.descricao ?? "", uCom: "",
+      qCom: Number(i.quantidade ?? 0), uTrib: "", qTrib: 0, vProd: Number(i.valor_total ?? 0),
+    })),
+  };
+  return { nf, nfTinyId };
+}
 
 const SIT_LABEL: Record<string, { label: string; cls: string }> = {
   ok: { label: "ok", cls: "text-emerald-700 dark:text-emerald-400" },
@@ -45,10 +79,34 @@ const SIT_LABEL: Record<string, { label: string; cls: string }> = {
   so_na_oc: { label: "só na OC", cls: "text-red-700 dark:text-red-400" },
 };
 
-export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
+export function ConciliacaoNf({ ordemTinyId, onAplicar }: { ordemTinyId: number; onAplicar: (nf: NfPronta) => void }) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const [vinculando, setVinculando] = useState<number | null>(null);
+  const [abrindo, setAbrindo] = useState<number | null>(null);
+
+  // NFs já aplicadas à conferência desta OC (por número, sem zeros à esquerda).
+  const aplicadasQ = useQuery({
+    queryKey: ["compras", "nf-qtd", ordemTinyId],
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal
+        .from("compra_ordem_nf_qtd").select("nf_numero, item_id, qtd").eq("ordem_tiny_id", ordemTinyId);
+      if (error) throw error;
+      return (data ?? []) as { nf_numero: string; item_id: string; qtd: number }[];
+    },
+  });
+  const aplicadas = new Set((aplicadasQ.data ?? []).map((r) => normNf(r.nf_numero)));
+
+  async function abrirAplicar(nfTinyId: number) {
+    setAbrindo(nfTinyId);
+    try {
+      onAplicar(await carregarNfTiny(nfTinyId));
+    } catch (e) {
+      toast.error("Não deu para abrir a NF", { description: (e as Error).message });
+    } finally {
+      setAbrindo(null);
+    }
+  }
 
   const nfsQ = useQuery({
     queryKey: ["compras", "conciliacao", ordemTinyId],
@@ -88,9 +146,16 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
     },
   });
 
-  async function vincular(nfTinyId: number, desvincular = false) {
+  async function vincular(nfTinyId: number, desvincular = false, nfNumero?: string | null) {
     setVinculando(nfTinyId);
     try {
+      // Desvincular uma NF já aplicada tira as quantidades dela da conferência.
+      if (desvincular && nfNumero && aplicadas.has(normNf(nfNumero))) {
+        const { error: eRm } = await supabaseExternal.rpc("compras_remover_nf", {
+          p_ordem: ordemTinyId, p_nf_numero: nfNumero, p_por: perfil?.nome ?? null,
+        });
+        if (eRm) throw eRm;
+      }
       const { error } = await supabaseExternal.from("compras_nf_entrada").update({
         ordem_tiny_id: desvincular ? null : ordemTinyId,
         match_metodo: desvincular ? null : "manual",
@@ -99,10 +164,9 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
         conciliado_em: new Date().toISOString(),
       }).eq("tiny_id", nfTinyId);
       if (error) throw error;
-      toast.success(desvincular ? "NF desvinculada da ordem" : "NF vinculada à ordem");
-      void qc.invalidateQueries({ queryKey: ["compras", "conciliacao", ordemTinyId] });
-      void qc.invalidateQueries({ queryKey: ["compras", "nf-livres", ordemTinyId] });
-      void qc.invalidateQueries({ queryKey: ["compras", "ordem", ordemTinyId] });
+      toast.success(desvincular ? "NF desvinculada da ordem" : "NF vinculada à ordem — confira as quantidades e aplique");
+      void qc.invalidateQueries({ queryKey: ["compras"] });
+      if (!desvincular) void abrirAplicar(nfTinyId);
     } catch (e) {
       toast.error("Falha ao vincular NF", { description: (e as Error).message });
     } finally {
@@ -157,13 +221,30 @@ export function ConciliacaoNf({ ordemTinyId }: { ordemTinyId: number }) {
                 <span className={cn("tabular-nums font-mono font-semibold", Math.abs(Number(nf.dif_valor ?? 0)) > 0.5 ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400")}>
                   Δ {formatBRL(Number(nf.dif_valor ?? 0))}
                 </span>
-                <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-muted-foreground" disabled={vinculando === nf.nf_tiny_id} onClick={() => void vincular(nf.nf_tiny_id, true)} title="Desvincular esta NF da ordem">
+                {aplicadas.has(normNf(nf.nf_numero)) ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                    <ClipboardCheck className="h-3.5 w-3.5" /> aplicada à conferência
+                  </span>
+                ) : null}
+                <Button
+                  variant={aplicadas.has(normNf(nf.nf_numero)) ? "ghost" : "default"} size="sm" className="h-7 text-xs gap-1"
+                  disabled={abrindo === nf.nf_tiny_id} onClick={() => void abrirAplicar(nf.nf_tiny_id)}
+                  title="As quantidades desta NF passam a valer na conferência">
+                  {abrindo === nf.nf_tiny_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
+                  {aplicadas.has(normNf(nf.nf_numero)) ? "reaplicar" : "Aplicar à conferência"}
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-muted-foreground" disabled={vinculando === nf.nf_tiny_id} onClick={() => void vincular(nf.nf_tiny_id, true, nf.nf_numero)} title="Desvincular esta NF da ordem">
                   <Unlink className="h-3 w-3" /> desvincular
                 </Button>
               </span>
             </div>
-            {itens.length > 0 && (
+            {aplicadas.has(normNf(nf.nf_numero)) ? (
+              <span className="text-[11px] text-muted-foreground">
+                Quantidades desta NF aplicadas à conferência (em unidades) — as diferenças com a OC estão no quadro "Divergência OC × NF".
+              </span>
+            ) : itens.length > 0 && (
               <div className="overflow-x-auto">
+                <span className="text-[10.5px] text-muted-foreground">Como a NF está no Tiny (quantidade na unidade da nota — pode ser caixa/fardo). Ainda não vale para a conferência.</span>
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-left text-[10px] uppercase text-muted-foreground border-b">
