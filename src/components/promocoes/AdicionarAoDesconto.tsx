@@ -205,7 +205,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
-      <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(1400px,96vw)] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Adicionar produtos — {desconto.discount_name}</DialogTitle>
           <DialogDescription>
@@ -281,7 +281,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
                       <div className="flex items-center gap-2.5 min-w-0">
                         <Foto url={l.imagem} size={34} />
                         <div className="min-w-0">
-                          <div className="truncate max-w-[330px]" title={l.nome}>{l.nome}</div>
+                          <div className="truncate max-w-[520px]" title={l.nome}>{l.nome}</div>
                           <div className="text-[11px] text-muted-foreground">
                             {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""} · estoque {l.estoque}
                           </div>

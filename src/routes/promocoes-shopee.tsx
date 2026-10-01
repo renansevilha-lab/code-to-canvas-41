@@ -24,7 +24,7 @@ function PromocoesShopeePage() {
   const set = (patch: Partial<SearchParams>) => navigate({ search: (s: SearchParams) => ({ ...s, ...patch }), replace: true });
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1320px]">
+    <div className="p-4 md:p-6 space-y-5 w-full">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-[19px] font-semibold tracking-[-0.02em] flex items-center gap-2">

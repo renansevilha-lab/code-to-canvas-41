@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarRange, Loader2, Plus, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Loader2, Plus, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -135,6 +135,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
   const [aplicando, setAplicando] = useState(false);
   const [removendo, setRemovendo] = useState<string | null>(null);
   const [faixa, setFaixa] = useState("todas");
+  const [ord, setOrd] = useState<{ col: ColOrd; dir: 1 | -1 }>({ col: "vendas", dir: -1 });
   const [dlgAdd, setDlgAdd] = useState(false);
   const tarifa = useTarifaShopee().data;
 
@@ -327,15 +328,15 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
           <thead>
             <tr className="border-b bg-muted/40 text-muted-foreground text-[10.5px] uppercase tracking-wide">
               <th className="text-left font-medium px-3 py-2">Produto</th>
-              <th className="text-right font-medium px-2 py-2">Preço cheio</th>
-              <th className="text-right font-medium px-2 py-2">Preço promo</th>
-              <th className="text-right font-medium px-2 py-2">Desc.</th>
-              <th className="text-right font-medium px-2 py-2" title="Custo do produto (kit = soma dos componentes)">CMV</th>
+              <ThOrd col="cheio" ord={ord} setOrd={setOrd}>Preço cheio</ThOrd>
+              <ThOrd col="promo" ord={ord} setOrd={setOrd}>Preço promo</ThOrd>
+              <ThOrd col="desc" ord={ord} setOrd={setOrd}>Desc.</ThOrd>
+              <ThOrd col="cmv" ord={ord} setOrd={setOrd} title="Custo do produto (kit = soma dos componentes)">CMV</ThOrd>
               <th className="text-right font-medium px-2 py-2" title="Comissão Shopee pela tabela vigente (por unidade, no preço promo) + imposto efetivo (mediana 60 dias)">Comissão + imp.</th>
-              <th className="text-right font-medium px-2 py-2" title="Margem de contribuição por unidade no preço promo">MC R$</th>
-              <th className="text-right font-medium px-2 py-2">MC %</th>
-              <th className="text-right font-medium px-2 py-2" title="Unidades vendidas nos últimos 30 dias (nossos pedidos)">Vendas 30d</th>
-              <th className="text-right font-medium px-2 py-2">Estoque</th>
+              <ThOrd col="mc" ord={ord} setOrd={setOrd} title="Margem de contribuição por unidade no preço promo">MC R$</ThOrd>
+              <ThOrd col="mcpct" ord={ord} setOrd={setOrd}>MC %</ThOrd>
+              <ThOrd col="vendas" ord={ord} setOrd={setOrd} title="Unidades vendidas nos últimos 30 dias (nossos pedidos)">Vendas 30d</ThOrd>
+              <ThOrd col="estoque" ord={ord} setOrd={setOrd}>Estoque</ThOrd>
               <th className="text-right font-medium px-2 py-2" title="Limite por comprador (0 = sem limite) — vale para o anúncio todo">Limite</th>
               <th className="px-2 py-2" />
             </tr>
@@ -345,7 +346,9 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando itens da Shopee…</td></tr>
             ) : detQ.isError ? (
               <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
-            ) : linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))).map((l) => {
+            ) : ordenar(linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
+                (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa)), ord.dir)
+              .map((l) => {
               const base = l.sku ? bases.get(l.sku) : undefined;
               const p = precoDe(l);
               const mc = calcMc(base, p, tarifa);
@@ -355,10 +358,10 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               return (
                 <tr key={l.key} className={cn("border-b last:border-0", mudou && "bg-amber-500/5")}>
                   <td className="px-3 py-1.5">
-                    <div className="flex items-center gap-2.5 min-w-[240px]">
+                    <div className="flex items-center gap-2.5 min-w-[280px]">
                       <Foto url={l.imagem} size={38} />
                       <div className="min-w-0">
-                        <div className="truncate max-w-[320px] font-medium" title={l.nome}>{l.nome}</div>
+                        <div className="truncate max-w-[560px] font-medium" title={l.nome}>{l.nome}</div>
                         <div className="text-[11px] text-muted-foreground">
                           {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
                         </div>
@@ -488,5 +491,48 @@ function CampoPreco({ valor, onMudar, alterado, inteiro }: {
       }}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
     />
+  );
+}
+
+// ---- ordenação da tabela (padrão: mais vendidos nos últimos 30 dias) --------
+type ColOrd = "vendas" | "mcpct" | "mc" | "desc" | "cheio" | "promo" | "cmv" | "estoque";
+
+function valorOrd(col: ColOrd, l: Linha, base: McBase | undefined, promo: number, mc: ReturnType<typeof calcMc>): number | null {
+  switch (col) {
+    case "vendas": return base ? num(base.vendas_30d) : null;
+    case "mcpct": return mc ? mc.pct : null;
+    case "mc": return mc ? mc.mc : null;
+    case "desc": return l.original > 0 ? 1 - promo / l.original : null;
+    case "cheio": return l.original;
+    case "promo": return promo;
+    case "cmv": return base?.cmv != null ? num(base.cmv) : null;
+    case "estoque": return l.estoque;
+  }
+}
+
+// Ordena por valor (sem valor vai para o fim, nos dois sentidos); empate = nome.
+function ordenar<T extends { nome: string }>(xs: T[], val: (x: T) => number | null, dir: 1 | -1): T[] {
+  return [...xs].sort((a, b) => {
+    const va = val(a); const vb = val(b);
+    if (va == null && vb == null) return a.nome.localeCompare(b.nome);
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return va === vb ? a.nome.localeCompare(b.nome) : (va - vb) * dir;
+  });
+}
+
+function ThOrd({ col, ord, setOrd, title, children }: {
+  col: ColOrd; ord: { col: ColOrd; dir: 1 | -1 }; setOrd: (o: { col: ColOrd; dir: 1 | -1 }) => void;
+  title?: string; children: React.ReactNode;
+}) {
+  const ativo = ord.col === col;
+  return (
+    <th className="text-right font-medium px-2 py-2" title={title}>
+      <button type="button" className={cn("inline-flex items-center gap-0.5 uppercase hover:text-foreground", ativo && "text-foreground")}
+        onClick={() => setOrd({ col, dir: ativo ? (ord.dir === -1 ? 1 : -1) : -1 })}>
+        {children}
+        {ativo && (ord.dir === -1 ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
+      </button>
+    </th>
   );
 }
