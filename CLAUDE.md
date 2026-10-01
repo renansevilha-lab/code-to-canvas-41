@@ -1328,6 +1328,30 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido
   em 7 d). Estimativa; recusa continua traduzida no histórico.
 
+## 5.9.2 Compras — de-para do fornecedor e estoque no Tiny (01/out/2026)
+
+- **Problema:** fornecedor fatura em FARDO/CAIXA com a descrição DELE (Santa Lucia
+  "FARINHA DE MAND. FINA CRUA (4X5) 20 KG" FD; Alfapet "... 5X4KG" 340 FD = 1.700 un do 14758).
+  O Tiny às vezes nem vincula o produto (`compras_nf_itens.sku` nulo) e, quando vincula, a qtd
+  vem em fardos — lançar o estoque pela NF no Tiny entra errado.
+- **`compras_depara_fornecedor`**: (fornecedor_id do Tiny | CNPJ) + `descricao_norm`
+  (`compras_norm_desc` = espaços colapsados, trim, MAIÚSCULAS — o front usa a MESMA regra em
+  `src/lib/comprasDepara.ts`) → nosso `sku` + `fator` (un do SKU por 1 un da NF). Aprendido no
+  recebimento por XML (coluna "Un. por FD/CX" + "lembrar", padrão ligado) nas duas telas
+  (`EntradaNfXml`, `NovaEntradaNf`). Pré-carregados: Alfapet ×5 (4 itens) e Santa Lucia
+  (4X2)→15984 ×2, (4X3)→15984 ×3. **Faltam** os MYA da Santa Lucia (SKU a confirmar).
+- **`view_compras_conciliacao_itens`** converte a NF pelo de-para e SOMA linhas da NF que viram o
+  mesmo SKU (antes o FULL JOIN duplicava a qtd da OC em 4 NFs). Baseline: fora dessas 4,
+  idêntica ao centavo.
+- **Estoque no Tiny = o APP lança, MANUAL** (decisão do dono): edge fn **`compras-estoque`**
+  (verify_jwt + exige JWT de usuário) `preview`/`lancar&confirmar=1` → POST /estoque tipo **E** no
+  depósito **Geral 604130012** com o **conferido** (`qtd_recebida`, já em unidades), preço = preço
+  da OC; kit explodido; linha de OC do Tiny sem produto (`tiny_produto_id<=0`, ex. "[Fardo com 5]")
+  fica FORA (aviso). Ledger **`compras_estoque_lancamentos`** → relança só o delta; nunca
+  estorna. Token Tiny `conta='ottz'`. Botão "Lançar estoque no Tiny" no cabeçalho da OC
+  (`LancarEstoqueTiny.tsx`); `compras_ordens.estoque_lancado_em/_por`. **A equipe não deve mais
+  lançar estoque pela NF no Tiny** (dobra).
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,

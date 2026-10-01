@@ -22,6 +22,7 @@ import { usePerfil } from "@/hooks/usePerfil";
 import { ConciliacaoNf } from "@/components/compras/ConciliacaoNf";
 import { EntradaNfXml } from "@/components/compras/EntradaNfXml";
 import { NovaEntradaNf } from "@/components/compras/NovaEntradaNf";
+import { LancarEstoqueTiny } from "@/components/compras/LancarEstoqueTiny";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -56,11 +57,13 @@ interface Ordem {
   arquivada_em: string | null;
   observacao_recebimento: string | null;
   nf_numero: string | null;
+  estoque_lancado_em: string | null;
 }
 
 interface ItemOrdem {
   id: string;
   ordem_tiny_id: number;
+  tiny_produto_id: number | null;
   sku: string | null;
   descricao: string | null;
   gtin: string | null;
@@ -678,6 +681,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
               <div className="h-full rounded" style={{ width: `${pct}%`, background: completo ? "#0E8A5F" : "#B7791F" }} />
             </div>
           </div>
+          <LancarEstoqueTiny ordemTinyId={tinyId} numero={ordem.numero} lancadoEm={ordem.estoque_lancado_em} />
           <Button variant="outline" size="sm" onClick={() => void arquivarOrdem()} className="gap-1.5" title="Tirar do quadro (nada muda no Tiny)">
             <Archive className="h-4 w-4" /> Arquivar
           </Button>

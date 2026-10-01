@@ -14,6 +14,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { parseNfe, similaridade, soDigitos, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
+import { buscarDepara, normDesc, salvarDepara } from "@/lib/comprasDepara";
 
 // ============================================================================
 // Nova entrada de recebimento a partir da NF-e (30/set/2026) — para mercadoria
@@ -30,7 +31,8 @@ import { parseNfe, similaridade, soDigitos, unidadesDe, type ItemXml, type NfXml
 interface Linha {
   xml: ItemXml;
   sku: string;
-  metodo: "ean" | "codigo" | "descricao" | "manual" | null;
+  metodo: "ean" | "codigo" | "descricao" | "manual" | "depara" | null;
+  fator: number; // unidades do SKU por 1 unidade da NF (fardo com 5 = 5)
   unidades: number;
   nota: string | null;
   incluir: boolean;
@@ -72,6 +74,7 @@ export function NovaEntradaNf({
   const [lendo, setLendo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [jaRecebido, setJaRecebido] = useState(false);
+  const [lembrar, setLembrar] = useState(true);
   const [salvando, setSalvando] = useState(false);
 
   function limpar() {
@@ -131,7 +134,12 @@ export function NovaEntradaNf({
         for (const p of (data ?? []) as { sku: string }[]) skusCod.add(p.sku);
       }
 
-      const casadas = nota.itens.map((x): Omit<Linha, "unidades" | "nota"> & { viaTrib: boolean } => {
+      // 0) De-para salvo deste fornecedor (descrição da NF → nosso SKU + fator) ganha de tudo.
+      const dp = await buscarDepara(forn?.fornecedor_id, nota.cnpj, nota.itens.map((x) => x.xProd));
+
+      const casadas = nota.itens.map((x): Omit<Linha, "unidades" | "nota" | "fator"> & { viaTrib: boolean; fatorDp?: number } => {
+        const d = dp.get(normDesc(x.xProd));
+        if (d) return { xml: x, sku: d.sku, metodo: "depara", incluir: true, viaTrib: false, fatorDp: d.fator };
         if (x.ean && skuPorEan.has(x.ean)) return { xml: x, sku: skuPorEan.get(x.ean)!, metodo: "ean", incluir: true, viaTrib: false };
         if (x.eanTrib && skuPorEan.has(x.eanTrib)) return { xml: x, sku: skuPorEan.get(x.eanTrib)!, metodo: "ean", incluir: true, viaTrib: true };
         if (skusCod.has(x.cProd.trim())) return { xml: x, sku: x.cProd.trim(), metodo: "codigo", incluir: true, viaTrib: false };
@@ -174,9 +182,13 @@ export function NovaEntradaNf({
       setNf(nota);
       setFornecedor(forn);
       setAvisos(av);
-      setLinhas(casadas.map((c) => {
+      setLinhas(casadas.map((c): Linha => {
+        if (c.fatorDp) {
+          return { xml: c.xml, sku: c.sku, metodo: c.metodo, incluir: c.incluir, fator: c.fatorDp, unidades: c.xml.qCom * c.fatorDp,
+            nota: `${c.xml.qCom} ${c.xml.uCom} × ${c.fatorDp} (de-para salvo)` };
+        }
         const u = unidadesDe(c.xml, c.viaTrib, c.sku ? emb.get(c.sku) : null);
-        return { xml: c.xml, sku: c.sku, metodo: c.metodo, incluir: c.incluir, unidades: u.q, nota: u.nota };
+        return { xml: c.xml, sku: c.sku, metodo: c.metodo, incluir: c.incluir, fator: c.xml.qCom > 0 ? u.q / c.xml.qCom : 1, unidades: u.q, nota: u.nota };
       }));
     } catch (e) {
       limpar();
@@ -280,8 +292,16 @@ export function NovaEntradaNf({
           .in("numero", [...new Set([nf.numero, nf.numeroBruto])]).is("ordem_tiny_id", null);
       }
 
+      let lembrados = 0;
+      if (lembrar) {
+        const novos = incluidas
+          .filter((l) => l.sku.trim() && l.fator > 0 && ((l.metodo !== "ean" && l.metodo !== "codigo") || l.fator !== 1))
+          .map((l) => ({ descricao: l.xml.xProd, codigo: l.xml.cProd, unidade: l.xml.uCom, sku: l.sku.trim(), fator: l.fator }));
+        if (novos.length) lembrados = await salvarDepara(fornecedor?.fornecedor_id, nf.cnpj, novos, perfil?.nome ?? null);
+      }
+
       toast.success(`Entrada NF-${nf.numero} criada`, {
-        description: `${porSku.size} item(ns) · ${formatNumber(totalUn)} un — já na coluna Conferência`,
+        description: `${porSku.size} item(ns) · ${formatNumber(totalUn)} un — já na coluna Conferência${lembrados ? ` · ${lembrados} de-para salvo(s)` : ""}`,
       });
       void qc.invalidateQueries({ queryKey: ["compras"] });
       limpar();
@@ -351,6 +371,7 @@ export function NovaEntradaNf({
                     <th className="py-1 pr-2 font-medium">Item da NF</th>
                     <th className="py-1 pr-2 font-medium text-right">Qtd NF</th>
                     <th className="py-1 pr-2 font-medium">Nosso SKU</th>
+                    <th className="py-1 pr-2 font-medium text-right" title="Quantas unidades do nosso SKU vêm em 1 unidade da NF (fardo com 5 = 5)">Un. por FD/CX</th>
                     <th className="py-1 pr-2 font-medium text-right">Unidades</th>
                   </tr>
                 </thead>
@@ -385,7 +406,7 @@ export function NovaEntradaNf({
                               <span className="text-amber-700 dark:text-amber-400 font-semibold">sem SKU — entra só com a descrição da NF</span>
                             ) : p ? (
                               <span className="text-muted-foreground" title={p.nome ?? ""}>
-                                {l.metodo === "ean" ? "pelo EAN · " : l.metodo === "codigo" ? "pelo código · " : ""}
+                                {l.metodo === "ean" ? "pelo EAN · " : l.metodo === "codigo" ? "pelo código · " : l.metodo === "depara" ? "de-para salvo · " : ""}
                                 {l.metodo === "descricao" && <span className="text-amber-700 dark:text-amber-400 font-semibold">pela descrição, confira · </span>}
                                 {p.nome}
                               </span>
@@ -396,13 +417,27 @@ export function NovaEntradaNf({
                             )}
                           </div>
                         </td>
+                        <td className="py-1.5 pr-2 text-right">
+                          <Input
+                            value={String(Math.round(l.fator * 1000) / 1000)}
+                            disabled={!l.incluir}
+                            onChange={(e) => {
+                              const v = Number(e.target.value.replace(",", "."));
+                              const f = Number.isFinite(v) && v > 0 ? v : 0;
+                              setLinha(idx, { fator: f, unidades: l.xml.qCom * f, nota: f !== 1 ? `${l.xml.qCom} ${l.xml.uCom} × ${f}` : null });
+                            }}
+                            className="h-8 w-16 ml-auto text-center font-mono text-xs"
+                            inputMode="decimal"
+                          />
+                        </td>
                         <td className="py-1.5 text-right">
                           <Input
                             value={String(l.unidades)}
                             disabled={!l.incluir}
                             onChange={(e) => {
                               const v = Number(e.target.value.replace(",", "."));
-                              setLinha(idx, { unidades: Number.isFinite(v) && v >= 0 ? v : 0 });
+                              const u = Number.isFinite(v) && v >= 0 ? v : 0;
+                              setLinha(idx, { unidades: u, fator: l.xml.qCom > 0 ? u / l.xml.qCom : l.fator });
                             }}
                             className="h-8 w-24 ml-auto text-center font-mono text-xs"
                             inputMode="numeric"
@@ -427,10 +462,16 @@ export function NovaEntradaNf({
 
         <DialogFooter className="gap-3 sm:justify-between items-center">
           {nf ? (
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <Checkbox checked={jaRecebido} onCheckedChange={(v) => setJaRecebido(v === true)} />
-              Já conferi — lançar as quantidades da NF como recebidas
-            </label>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <Checkbox checked={jaRecebido} onCheckedChange={(v) => setJaRecebido(v === true)} />
+                Já conferi — lançar as quantidades da NF como recebidas
+              </label>
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <Checkbox checked={lembrar} onCheckedChange={(v) => setLembrar(v === true)} />
+                Lembrar o de-para (produto e fator) para as próximas notas deste fornecedor
+              </label>
+            </div>
           ) : <span />}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>

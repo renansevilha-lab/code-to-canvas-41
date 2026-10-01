@@ -17,6 +17,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { parseNfe, similaridade, soDigitos, tokens, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
+import { buscarDepara, normDesc, salvarDepara } from "@/lib/comprasDepara";
 
 // ============================================================================
 // Nova entrada de recebimento pelo XML da NF-e do fornecedor (30/set/2026).
@@ -24,7 +25,11 @@ import { parseNfe, similaridade, soDigitos, tokens, unidadesDe, type ItemXml, ty
 // item da OC (EAN → código = SKU → descrição) e SOMA as unidades ao já
 // recebido — uma OC pode chegar em várias notas. Tudo é revisável antes de
 // gravar. Grava só no app (compra_ordem_itens.qtd_recebida + nº da NF na OC);
-// não mexe no Tiny nem no estoque.
+// não mexe no Tiny nem no estoque (o lançamento no Tiny é o botão da OC).
+// De-para do fornecedor (01/out): fornecedor que fatura em FARDO/CAIXA com a
+// descrição dele (Santa Lucia "(4X5) 20 KG" FD = 5 un do nosso SKU) — o
+// de-para salvo (compras_depara_fornecedor) casa o SKU e aplica o FATOR; o
+// operador ajusta e marca "lembrar" para as próximas notas.
 // ============================================================================
 
 export interface OrdemEntrada {
@@ -44,12 +49,14 @@ export interface ItemEntrada {
   quantidade: number;
   qtd_recebida: number;
   emb_unidades: number | null;
+  tiny_produto_id?: number | null;
 }
 
 interface Linha {
   xml: ItemXml;
   itemId: string | null; // item da OC; null = ignorar
-  metodo: "ean" | "codigo" | "descricao" | null;
+  metodo: "ean" | "codigo" | "descricao" | "depara" | "manual" | null;
+  fator: number; // unidades do SKU por 1 unidade da NF
   unidades: number;
   nota: string | null; // conversão de unidade aplicada / aviso
 }
@@ -94,6 +101,7 @@ export function EntradaNfXml({
   const [somar, setSomar] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [lembrar, setLembrar] = useState(true);
 
   function limpar() {
     setNf(null); setLinhas([]); setErro(null); setSomar(true);
@@ -105,11 +113,25 @@ export function EntradaNfXml({
     setErro(null);
     try {
       const nota = parseNfe(await f.text());
+      const dp = await buscarDepara(ordem.fornecedor_id, nota.cnpj, nota.itens.map((x) => x.xProd));
+      // linha "de verdade" da OC (com produto do Tiny) ganha da linha de fardo digitada à mão
+      const itemDoSku = (sku: string) => {
+        const cands = itens.filter((it) => (it.sku ?? "").trim() === sku);
+        return cands.find((it) => Number(it.tiny_produto_id ?? 1) > 0) ?? cands[0] ?? null;
+      };
       setNf(nota);
-      setLinhas(nota.itens.map((x) => {
+      setLinhas(nota.itens.map((x): Linha => {
+        const d = dp.get(normDesc(x.xProd));
+        if (d) {
+          const item = itemDoSku(d.sku);
+          return {
+            xml: x, itemId: item?.id ?? null, metodo: "depara", fator: d.fator, unidades: x.qCom * d.fator,
+            nota: item ? `${formatNumber(x.qCom)} ${x.uCom} × ${d.fator} (de-para salvo → ${d.sku})` : `de-para aponta o SKU ${d.sku}, que não está nesta OC`,
+          };
+        }
         const m = casar(x, itens);
         const u = unidadesDe(x, m.viaTrib, m.item?.emb_unidades);
-        return { xml: x, itemId: m.item?.id ?? null, metodo: m.metodo, unidades: u.q, nota: u.nota };
+        return { xml: x, itemId: m.item?.id ?? null, metodo: m.metodo, fator: x.qCom > 0 ? u.q / x.qCom : 1, unidades: u.q, nota: u.nota };
       }));
     } catch (e) {
       setNf(null); setLinhas([]);
@@ -122,7 +144,7 @@ export function EntradaNfXml({
       if (i !== idx) return l;
       const item = itens.find((it) => it.id === itemId) ?? null;
       const u = unidadesDe(l.xml, false, item?.emb_unidades);
-      return { ...l, itemId, metodo: itemId ? l.metodo : null, unidades: u.q, nota: u.nota };
+      return { ...l, itemId, metodo: itemId ? "manual" : null, fator: l.xml.qCom > 0 ? u.q / l.xml.qCom : 1, unidades: u.q, nota: u.nota };
     }));
   }
 
@@ -171,9 +193,19 @@ export function EntradaNfXml({
         }).eq("fornecedor_id", ordem.fornecedor_id).in("numero", [...new Set([nf.numero, nf.numeroBruto])])
           .is("ordem_tiny_id", null);
       }
+      // lembra o de-para do que não é óbvio (casado à mão/descrição ou com fator ≠ 1)
+      let lembrados = 0;
+      if (lembrar) {
+        const novos = linhas
+          .filter((l) => l.itemId && l.fator > 0 && ((l.metodo !== "ean" && l.metodo !== "codigo") || l.fator !== 1))
+          .map((l) => ({ l, it: itens.find((x) => x.id === l.itemId) }))
+          .filter((x) => !!x.it?.sku?.trim())
+          .map(({ l, it }) => ({ descricao: l.xml.xProd, codigo: l.xml.cProd, unidade: l.xml.uCom, sku: (it?.sku ?? "").trim(), fator: l.fator }));
+        if (novos.length) lembrados = await salvarDepara(ordem.fornecedor_id, nf.cnpj, novos, perfil?.nome ?? null);
+      }
       const total = [...porItem.values()].reduce((s, v) => s + v, 0);
       toast.success(`Entrada da NF ${nf.numero} lançada`, {
-        description: `${formatNumber(total)} un em ${porItem.size} item(ns)${semCasar ? ` · ${semCasar} linha(s) da NF ignorada(s)` : ""}`,
+        description: `${formatNumber(total)} un em ${porItem.size} item(ns)${semCasar ? ` · ${semCasar} linha(s) da NF ignorada(s)` : ""}${lembrados ? ` · ${lembrados} de-para salvo(s) para as próximas notas` : ""}`,
       });
       void qc.invalidateQueries({ queryKey: ["compras"] });
       limpar();
@@ -193,7 +225,7 @@ export function EntradaNfXml({
           <DialogTitle>Entrada de recebimento pelo XML da NF</DialogTitle>
           <DialogDescription>
             OC #{ordem.numero ?? ordem.tiny_id} · os itens da nota são casados com os da ordem e as
-            unidades entram no recebido. Revise antes de lançar. Não altera o Tiny nem o estoque.
+            unidades entram no recebido. Revise antes de lançar. O estoque no Tiny é lançado depois, pelo botão da OC.
           </DialogDescription>
         </DialogHeader>
 
@@ -241,6 +273,7 @@ export function EntradaNfXml({
                     <th className="py-1 pr-2 font-medium">Item da NF</th>
                     <th className="py-1 pr-2 font-medium text-right">Qtd NF</th>
                     <th className="py-1 pr-2 font-medium">Item da OC</th>
+                    <th className="py-1 pr-2 font-medium text-right" title="Quantas unidades do nosso SKU vêm em 1 unidade da NF (fardo com 5 = 5)">Un. por FD/CX</th>
                     <th className="py-1 pr-2 font-medium text-right">Unidades</th>
                   </tr>
                 </thead>
@@ -270,9 +303,22 @@ export function EntradaNfXml({
                         </Select>
                         {l.itemId && l.metodo && (
                           <span className={cn("text-[10px]", l.metodo === "descricao" ? "text-amber-700 dark:text-amber-400 font-semibold" : "text-muted-foreground")}>
-                            {l.metodo === "ean" ? "casado pelo EAN" : l.metodo === "codigo" ? "casado pelo código" : "casado pela descrição — confira"}
+                            {l.metodo === "ean" ? "casado pelo EAN" : l.metodo === "codigo" ? "casado pelo código" : l.metodo === "depara" ? "de-para salvo deste fornecedor" : l.metodo === "manual" ? "escolhido à mão" : "casado pela descrição — confira"}
                           </span>
                         )}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right">
+                        <Input
+                          value={String(Math.round(l.fator * 1000) / 1000)}
+                          disabled={!l.itemId}
+                          onChange={(e) => {
+                            const v = Number(e.target.value.replace(",", "."));
+                            const f = Number.isFinite(v) && v > 0 ? v : 0;
+                            setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, fator: f, unidades: x.xml.qCom * f, nota: f !== 1 ? `${formatNumber(x.xml.qCom)} ${x.xml.uCom} × ${f}` : null } : x)));
+                          }}
+                          className="h-8 w-16 ml-auto text-center font-mono text-xs"
+                          inputMode="decimal"
+                        />
                       </td>
                       <td className="py-1.5 text-right">
                         <Input
@@ -280,7 +326,8 @@ export function EntradaNfXml({
                           disabled={!l.itemId}
                           onChange={(e) => {
                             const v = Number(e.target.value.replace(",", "."));
-                            setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, unidades: Number.isFinite(v) && v >= 0 ? v : 0 } : x)));
+                            const u = Number.isFinite(v) && v >= 0 ? v : 0;
+                            setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, unidades: u, fator: x.xml.qCom > 0 ? u / x.xml.qCom : x.fator } : x)));
                           }}
                           className="h-8 w-24 ml-auto text-center font-mono text-xs"
                           inputMode="numeric"
@@ -316,10 +363,16 @@ export function EntradaNfXml({
 
         <DialogFooter className="gap-3 sm:justify-between items-center">
           {nf ? (
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <Checkbox checked={somar} onCheckedChange={(v) => setSomar(v === true)} />
-              Somar ao já recebido (desmarcado = substitui)
-            </label>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <Checkbox checked={somar} onCheckedChange={(v) => setSomar(v === true)} />
+                Somar ao já recebido (desmarcado = substitui)
+              </label>
+              <label className="flex items-center gap-2 text-xs cursor-pointer" title="Grava produto + fator por fornecedor e descrição da NF; a próxima nota igual já vem convertida, e a conferência NF × OC também usa">
+                <Checkbox checked={lembrar} onCheckedChange={(v) => setLembrar(v === true)} />
+                Lembrar o de-para (produto e fator) para as próximas notas deste fornecedor
+              </label>
+            </div>
           ) : <span />}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
