@@ -346,9 +346,10 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando itens da Shopee…</td></tr>
             ) : detQ.isError ? (
               <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
-            ) : ordenar(linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
-                (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa)), ord.dir)
-              .map((l) => {
+            ) : agruparOrdenar(linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
+                (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa)),
+                (l) => (l.sku ? bases.get(l.sku) : undefined)?.vendas_30d ?? null, ord.col, ord.dir)
+              .map(({ l, primeiro, ultimo, nGrupo, vendasGrupo }) => {
               const base = l.sku ? bases.get(l.sku) : undefined;
               const p = precoDe(l);
               const mc = calcMc(base, p, tarifa);
@@ -356,17 +357,25 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               const mudou = p !== l.promo;
               const taxas = mc && base ? mc.comissao + p * num(base.imp_pct) : null;
               return (
-                <tr key={l.key} className={cn("border-b last:border-0", mudou && "bg-amber-500/5")}>
+                <tr key={l.key} className={cn(ultimo ? "border-b last:border-0" : "border-b border-dashed border-border/40", mudou && "bg-amber-500/5")}>
                   <td className="px-3 py-1.5">
-                    <div className="flex items-center gap-2.5 min-w-[280px]">
-                      <Foto url={l.imagem} size={38} />
-                      <div className="min-w-0">
-                        <div className="truncate max-w-[560px] font-medium" title={l.nome}>{l.nome}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
+                    {primeiro ? (
+                      <div className="flex items-center gap-2.5 min-w-[280px]">
+                        <Foto url={l.imagem} size={38} />
+                        <div className="min-w-0">
+                          <div className="truncate max-w-[560px] font-medium" title={l.nome}>{l.nome}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
+                            {nGrupo > 1 && <span className="ml-1.5 text-[10.5px] rounded bg-muted px-1.5 py-px">{nGrupo} variações</span>}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      // demais variações do mesmo anúncio: só o que muda, recuado sob a foto
+                      <div className="pl-[48px] text-[11.5px] text-muted-foreground min-w-[280px]">
+                        <span className="font-mono">{l.sku ?? "sem SKU"}</span>{l.variacao ? ` · ${l.variacao}` : ""}
+                      </div>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums font-mono text-muted-foreground">{formatBRL(l.original)}</td>
                   <td className="px-2 py-1.5 text-right">
@@ -396,13 +405,16 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
                     {base ? num(base.vendas_30d) : "—"}
+                    {primeiro && nGrupo > 1 && vendasGrupo != null && (
+                      <div className="text-[10.5px] font-semibold text-foreground" title="Soma das variações do anúncio (usada na ordenação)">anúncio: {vendasGrupo}</div>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{l.estoque ?? "—"}</td>
                   <td className="px-2 py-1.5 text-right">
-                    {editavel && l.primeiraDoItem ? (
+                    {editavel && primeiro ? (
                       <CampoPreco valor={limiteDe(l)} inteiro alterado={limiteDe(l) !== l.limite}
                         onMudar={(v) => setLimites((m) => { const n = new Map(m); if (v === l.limite) n.delete(l.item_id); else n.set(l.item_id, Math.max(0, Math.round(v))); return n; })} />
-                    ) : <span className="tabular-nums text-muted-foreground">{l.primeiraDoItem ? (l.limite || "—") : ""}</span>}
+                    ) : <span className="tabular-nums text-muted-foreground">{primeiro ? (l.limite || "—") : ""}</span>}
                   </td>
                   <td className="px-2 py-1.5">
                     {editavel && (
@@ -510,15 +522,33 @@ function valorOrd(col: ColOrd, l: Linha, base: McBase | undefined, promo: number
   }
 }
 
-// Ordena por valor (sem valor vai para o fim, nos dois sentidos); empate = nome.
-function ordenar<T extends { nome: string }>(xs: T[], val: (x: T) => number | null, dir: 1 | -1): T[] {
-  return [...xs].sort((a, b) => {
-    const va = val(a); const vb = val(b);
-    if (va == null && vb == null) return a.nome.localeCompare(b.nome);
+// Agrupa as variações do MESMO anúncio e ordena os grupos: em "vendas" pela
+// SOMA das variações; nas demais colunas pelo melhor valor do grupo no sentido
+// escolhido. Dentro do grupo, as variações seguem a mesma coluna. Sem valor
+// vai para o fim; empate = nome.
+function agruparOrdenar<T extends { nome: string; item_id: number }>(
+  xs: T[], val: (x: T) => number | null, vendas: (x: T) => number | null, col: ColOrd, dir: 1 | -1,
+): Array<{ l: T; primeiro: boolean; ultimo: boolean; nGrupo: number; vendasGrupo: number | null }> {
+  const cmp = (va: number | null, vb: number | null, na: string, nb: string) => {
+    if (va == null && vb == null) return na.localeCompare(nb);
     if (va == null) return 1;
     if (vb == null) return -1;
-    return va === vb ? a.nome.localeCompare(b.nome) : (va - vb) * dir;
+    return va === vb ? na.localeCompare(nb) : (va - vb) * dir;
+  };
+  const grupos = new Map<number, T[]>();
+  for (const x of xs) { if (!grupos.has(x.item_id)) grupos.set(x.item_id, []); grupos.get(x.item_id)!.push(x); }
+  const lista = [...grupos.values()].map((ls) => {
+    ls.sort((a, b) => cmp(val(a), val(b), a.nome, b.nome));
+    const vs = ls.map(vendas).filter((v): v is number => v != null).map(Number);
+    const vendasGrupo = vs.length ? vs.reduce((s, v) => s + v, 0) : null;
+    const vals = ls.map(val).filter((v): v is number => v != null);
+    const chave = col === "vendas" ? vendasGrupo : vals.length ? (dir === -1 ? Math.max(...vals) : Math.min(...vals)) : null;
+    return { ls, chave, vendasGrupo, nome: ls[0].nome };
   });
+  lista.sort((a, b) => cmp(a.chave, b.chave, a.nome, b.nome));
+  return lista.flatMap((g) => g.ls.map((l, i) => ({
+    l, primeiro: i === 0, ultimo: i === g.ls.length - 1, nGrupo: g.ls.length, vendasGrupo: g.vendasGrupo,
+  })));
 }
 
 function ThOrd({ col, ord, setOrd, title, children }: {
