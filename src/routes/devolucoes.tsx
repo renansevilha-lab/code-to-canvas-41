@@ -25,6 +25,8 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DevolucoesRecebidas } from "@/components/DevolucoesRecebidas";
 import { DevolucoesShopeeAbertas } from "@/components/DevolucoesShopeeAbertas";
 import { DevolucoesShopeePerdas } from "@/components/DevolucoesShopeePerdas";
+import { DevolucaoAutoSvlPainel } from "@/components/DevolucaoAutoSvlPainel";
+import { CASO_DEVOLUCAO_PT, type DevolucaoAuto } from "@/lib/devolucaoAuto";
 import { rotuloCanal } from "@/lib/canais";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1056,6 +1058,23 @@ function SvlDevolucoes() {
   const total = listQuery.data?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // Notas desta página criadas pela automação (devolucao-auto): pedido + caso.
+  const idsPagina = rows.map((r) => r.id_nota);
+  const autoQuery = useQuery({
+    queryKey: ["devolucoes", "svl", "auto", "pagina", idsPagina],
+    enabled: idsPagina.length > 0,
+    queryFn: async (): Promise<Record<number, DevolucaoAuto>> => {
+      const { data, error } = await supabaseExternal.from("devolucao_auto")
+        .select("order_sn,caso,estado,id_nota_devolucao,numero_nota,itens_parcial,detalhe,atualizado_em")
+        .eq("conta", "svl").eq("estado", "criada").in("id_nota_devolucao", idsPagina);
+      if (error) throw error;
+      const map: Record<number, DevolucaoAuto> = {};
+      for (const a of (data ?? []) as DevolucaoAuto[]) if (a.id_nota_devolucao) map[a.id_nota_devolucao] = a;
+      return map;
+    },
+  });
+  const autoPorNota = autoQuery.data ?? {};
+
   const statsQuery = useQuery({
     queryKey: ["devolucoes", "svl", "stats"],
     queryFn: async () => {
@@ -1256,6 +1275,8 @@ function SvlDevolucoes() {
         </div>
       </div>
 
+      <DevolucaoAutoSvlPainel />
+
       {error && (
         <Card className="p-4 border-red-500/40 bg-red-500/5 text-sm text-red-600 dark:text-red-300">
           Erro ao carregar: {error}
@@ -1353,7 +1374,17 @@ function SvlDevolucoes() {
                       <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
                         {r.numero ?? "—"}/{r.serie ?? "—"}
                       </td>
-                      <td className="px-3 py-2 text-xs max-w-[280px] truncate">{r.cliente_nome ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs max-w-[280px]">
+                        <div className="truncate">{r.cliente_nome ?? "—"}</div>
+                        {autoPorNota[r.id_nota] && (
+                          <div className="text-[10.5px] text-blue-700 dark:text-blue-300 truncate"
+                            title="Criada pela automação a partir do pedido do marketplace">
+                            automática · {CASO_DEVOLUCAO_PT[autoPorNota[r.id_nota].caso] ?? autoPorNota[r.id_nota].caso}
+                            {autoPorNota[r.id_nota].itens_parcial ? " · parcial" : ""} · pedido{" "}
+                            <span className="font-mono">{autoPorNota[r.id_nota].order_sn}</span>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">{r.valor != null ? formatBRL(r.valor) : "—"}</td>
                       <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground">
                         {r.data_emissao ? format(parseISO(r.data_emissao), "dd/MM/yyyy") : "—"}
