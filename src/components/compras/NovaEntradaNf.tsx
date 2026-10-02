@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FileUp, Loader2 } from "lucide-react";
+import { AlertTriangle, FileUp, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { parseNfe, similaridade, soDigitos, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
 import { buscarDepara, normDesc, salvarDepara } from "@/lib/comprasDepara";
+import { buscarNfTiny, carregarNfTiny, normNf, type NfEncontrada } from "@/lib/nfTiny";
 
 // ============================================================================
 // Nova entrada de recebimento a partir da NF-e (30/set/2026) — para mercadoria
@@ -74,19 +75,54 @@ export function NovaEntradaNf({
   const [lendo, setLendo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [jaRecebido, setJaRecebido] = useState(false);
+  const [termo, setTermo] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [encontradas, setEncontradas] = useState<NfEncontrada[] | null>(null);
+  const [nfTinyId, setNfTinyId] = useState<number | null>(null);
   const [lembrar, setLembrar] = useState(true);
   const [salvando, setSalvando] = useState(false);
 
   function limpar() {
     setNf(null); setLinhas([]); setFornecedor(null); setAvisos([]); setErro(null); setJaRecebido(false);
+    setEncontradas(null); setNfTinyId(null);
   }
 
   async function lerArquivo(f: File | undefined) {
     if (!f) return;
     setErro(null); setLendo(true);
+    let nota: NfXml;
+    try { nota = parseNfe(await f.text()); }
+    catch (e) { limpar(); setErro((e as Error).message); setLendo(false); return; }
+    setNfTinyId(null);
+    await processar(nota);
+  }
+
+  // NF já no espelho do Tiny, achada pelo número ou pela chave (sem precisar do XML)
+  async function buscar() {
+    setErro(null); setEncontradas(null);
+    if (!termo.trim()) return;
+    setBuscando(true);
     try {
-      const nota = parseNfe(await f.text());
+      const r = await buscarNfTiny(termo);
+      setEncontradas(r);
+      if (r.length === 1) await usarNfTiny(r[0]);
+    } catch (e) { setErro((e as Error).message); }
+    finally { setBuscando(false); }
+  }
+  async function usarNfTiny(n: NfEncontrada) {
+    setErro(null); setLendo(true);
+    try {
+      const { nf: nota } = await carregarNfTiny(n.tiny_id);
+      setNfTinyId(n.tiny_id);
+      await processar(nota, n.ordem_tiny_id);
+    } catch (e) { setErro((e as Error).message); setLendo(false); }
+  }
+
+  async function processar(nota: NfXml, ordemJaVinculada: number | null = null) {
+    setLendo(true);
+    try {
       const av: string[] = [];
+      if (ordemJaVinculada) av.push(`Esta NF já está vinculada à OC ${ordemJaVinculada > 0 ? "do Tiny" : "do app"} (id ${ordemJaVinculada}) — se for essa compra, aplique a NF dentro dela em vez de criar outra entrada.`);
 
       // 1) Fornecedor: OC mais parecida pelo nome (dá o fornecedor_id do Tiny,
       //    que a conciliação automática de NFs usa) + os itens que ele já vendeu.
@@ -283,8 +319,15 @@ export function NovaEntradaNf({
         throw eIt;
       }
 
+      // NF escolhida do espelho do Tiny: vincula direto pelo id.
+      if (nfTinyId) {
+        await supabaseExternal.from("compras_nf_entrada").update({
+          ordem_tiny_id: tinyId, match_metodo: "manual", match_score: null,
+          conciliado_por: perfil?.nome ?? null, conciliado_em: agora,
+        }).eq("tiny_id", nfTinyId).is("ordem_tiny_id", null);
+      }
       // Se a NF já está no espelho do Tiny sem OC, casa com esta entrada.
-      if (fornecedor?.fornecedor_id) {
+      if (!nfTinyId && fornecedor?.fornecedor_id) {
         await supabaseExternal.from("compras_nf_entrada").update({
           ordem_tiny_id: tinyId, match_metodo: "manual", match_score: null,
           conciliado_por: perfil?.nome ?? null, conciliado_em: agora,
@@ -330,6 +373,33 @@ export function NovaEntradaNf({
         </DialogHeader>
 
         {!nf && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Buscar a NF pelo número ou pela chave</span>
+              <div className="flex gap-2">
+                <Input value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="ex.: 16648 ou a chave de 44 dígitos"
+                  className="h-9 font-mono text-sm" onKeyDown={(e) => { if (e.key === "Enter") void buscar(); }} disabled={lendo} />
+                <Button variant="outline" className="h-9 gap-1.5" onClick={() => void buscar()} disabled={buscando || lendo || !termo.trim()}>
+                  {buscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Buscar
+                </Button>
+              </div>
+              <span className="text-[11px] text-muted-foreground">Procura nas NFs de entrada que já estão no Tiny (atualizadas a cada 30 min). Nota que ainda não entrou no Tiny: use o XML.</span>
+              {encontradas && encontradas.length === 0 && (
+                <span className="text-xs text-amber-700 dark:text-amber-400">Nenhuma NF com esse número/chave no Tiny ainda — use o XML abaixo.</span>
+              )}
+              {encontradas && encontradas.length > 1 && (
+                <div className="rounded-md border divide-y">
+                  {encontradas.map((n) => (
+                    <button key={n.tiny_id} type="button" disabled={lendo} onClick={() => void usarNfTiny(n)}
+                      className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40">
+                      <span className="min-w-0 truncate"><b>NF {normNf(n.numero)}</b> · {n.fornecedor_nome} · {n.data_emissao ? n.data_emissao.split("-").reverse().join("/") : "—"}</span>
+                      <span className="font-mono tabular-nums shrink-0">{formatBRL(Number(n.valor ?? 0))}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground"><div className="h-px flex-1 bg-border" />ou<div className="h-px flex-1 bg-border" /></div>
           <label
             className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-sm text-muted-foreground cursor-pointer hover:bg-muted/40"
             onDragOver={(e) => e.preventDefault()}
@@ -340,6 +410,7 @@ export function NovaEntradaNf({
             <input type="file" accept=".xml,text/xml,application/xml" className="hidden" disabled={lendo}
               onChange={(e) => { void lerArquivo(e.target.files?.[0]); e.target.value = ""; }} />
           </label>
+          </div>
         )}
         {erro && <div className="text-sm text-red-700 dark:text-red-400 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {erro}</div>}
 

@@ -12,6 +12,7 @@ import { usePerfil } from "@/hooks/usePerfil";
 import { toSPDateKey } from "@/lib/date";
 import type { NfXml } from "@/lib/nfe";
 import type { NfPronta } from "@/components/compras/EntradaNfXml";
+import { carregarNfTiny, normNf } from "@/lib/nfTiny";
 
 // ============================================================================
 // Conciliação OC × NF do fornecedor (item 1, 10/set/2026).
@@ -40,35 +41,6 @@ interface ItemConc {
 interface NfLivre { tiny_id: number; numero: string | null; data_emissao: string | null; valor: number | null; fornecedor_nome: string | null }
 
 const NF_LIVRE_DIAS = 15;
-const normNf = (s: string | null | undefined) => String(s ?? "").trim().replace(/^0+/, "");
-
-// Monta a NF do espelho do Tiny no mesmo formato do XML (sem unidade/EAN).
-async function carregarNfTiny(nfTinyId: number): Promise<NfPronta> {
-  const [cab, its] = await Promise.all([
-    supabaseExternal.from("compras_nf_entrada")
-      .select("tiny_id, numero, serie, chave_acesso, data_emissao, fornecedor_nome, fornecedor_cnpj, valor")
-      .eq("tiny_id", nfTinyId).maybeSingle(),
-    supabaseExternal.from("compras_nf_itens")
-      .select("id_item, sku, descricao, quantidade, valor_total").eq("nf_tiny_id", nfTinyId).order("id_item"),
-  ]);
-  if (cab.error) throw cab.error;
-  if (its.error) throw its.error;
-  const c = cab.data as { numero: string | null; serie: string | null; chave_acesso: string | null; data_emissao: string | null;
-    fornecedor_nome: string | null; fornecedor_cnpj: string | null; valor: number | null } | null;
-  if (!c) throw new Error("NF não encontrada no espelho");
-  const itens = (its.data ?? []) as { sku: string | null; descricao: string | null; quantidade: number | null; valor_total: number | null }[];
-  if (itens.length === 0) throw new Error("Os itens desta NF ainda não foram lidos do Tiny — tente de novo em alguns minutos");
-  const nf: NfXml = {
-    chave: c.chave_acesso, numero: normNf(c.numero) || String(c.numero ?? ""), numeroBruto: String(c.numero ?? ""),
-    serie: c.serie ?? "", emissao: c.data_emissao, emitente: c.fornecedor_nome ?? "", razaoSocial: c.fornecedor_nome ?? "",
-    cnpj: c.fornecedor_cnpj ?? "", valor: Number(c.valor ?? 0),
-    itens: itens.map((i, idx) => ({
-      n: idx + 1, cProd: i.sku ?? "", ean: null, eanTrib: null, xProd: i.descricao ?? "", uCom: "",
-      qCom: Number(i.quantidade ?? 0), uTrib: "", qTrib: 0, vProd: Number(i.valor_total ?? 0),
-    })),
-  };
-  return { nf, nfTinyId };
-}
 
 const SIT_LABEL: Record<string, { label: string; cls: string }> = {
   ok: { label: "ok", cls: "text-emerald-700 dark:text-emerald-400" },
