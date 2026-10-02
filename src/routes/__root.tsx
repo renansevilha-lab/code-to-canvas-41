@@ -36,34 +36,27 @@ function NotFoundComponent() {
   );
 }
 
+const FAVICON_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>" +
+  "<rect width='64' height='64' rx='14' fill='#6E56CF'/>" +
+  "<circle cx='32' cy='32' r='14' fill='none' stroke='white' stroke-width='7'/></svg>";
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Shopee Analytics — Dashboard do vendedor" },
-      {
-        name: "description",
-        content:
-          "Plataforma visual para consolidar vendas, anúncios e carteira da Shopee. Faça upload dos seus relatórios e veja KPIs, gráficos e análises por SKU, UF e tipo de envio.",
-      },
-      { name: "author", content: "Shopee Analytics" },
-      { property: "og:title", content: "Shopee Analytics — Dashboard do vendedor" },
-      {
-        property: "og:description",
-        content:
-          "Consolide vendas, anúncios e carteira da Shopee em um dashboard interativo. Sem instalação.",
-      },
+      { title: "Ottz Commerce" },
+      { name: "description", content: "Ottz Commerce — gestão de vendas, separação, compras e finanças multi-canal." },
+      { name: "author", content: "Ottz Pet" },
+      { property: "og:title", content: "Ottz Commerce" },
+      { property: "og:description", content: "Gestão de vendas, separação, compras e finanças multi-canal." },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:title", content: "Shopee Analytics — Dashboard do vendedor" },
-      { name: "description", content: "Claude Canvas transforms Python applications into interactive visual platforms." },
-      { property: "og:description", content: "Claude Canvas transforms Python applications into interactive visual platforms." },
-      { name: "twitter:description", content: "Claude Canvas transforms Python applications into interactive visual platforms." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/0d44f6ee-fdd1-4555-aeb7-95fd13673d3a/id-preview-989d8d31--9ab2b945-8c61-48ed-a57b-8e3dad41e56b.lovable.app-1779150306487.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/0d44f6ee-fdd1-4555-aeb7-95fd13673d3a/id-preview-989d8d31--9ab2b945-8c61-48ed-a57b-8e3dad41e56b.lovable.app-1779150306487.png" },
+      { name: "robots", content: "noindex, nofollow" },
     ],
     links: [
+      // Ícone da aba: o mesmo "O" roxo do menu lateral, embutido (sem arquivo).
+      { rel: "icon", type: "image/svg+xml", href: `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}` },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -160,6 +153,10 @@ function AppShell() {
   useLogoutInatividade(signOut);
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { grupo, titulo } = crumbDaRota(pathname);
+  // Título da aba = tela atual (várias abas do sistema abertas ficam distinguíveis).
+  useEffect(() => {
+    document.title = titulo ? `${titulo} · Ottz Commerce` : "Ottz Commerce";
+  }, [titulo]);
   // Menu recolhível (persistido). Inicia aberto no SSR/primeiro render e lê o
   // localStorage após montar — evita mismatch de hidratação.
   const [navAberto, setNavAberto] = useState(true);
