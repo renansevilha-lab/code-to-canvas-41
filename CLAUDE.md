@@ -1392,6 +1392,9 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   /produtos/{id}/preco` NÃO aceita custo.) Só tipo S (variação/kit fica de fora). Em seguida
   atualiza `produtos.custo` na hora. Tabelas `compras_custo_formacao` (extras por OC; `extras`
   jsonb reservado p/ créditos do lucro real) e `compras_custo_itens` (de→para, quem, erro).
+  **v6:** despesa MANUAL por unidade por SKU (coluna "+ Despesa un." com motivo, ex. etiqueta
+  R$0,40/un) — `&ajustes={"sku":{"valor_un":0.4,"motivo":"etiqueta"}}`, soma DEPOIS do rateio;
+  salva em `compras_custo_formacao.ajustes` e `compras_custo_itens.ajuste_unit/_motivo`.
   `custo-teste&sku=` regrava o MESMO custo (diagnóstico). Vendas já feitas mantêm o CMV congelado
   — corrigir período com `/reprocessar-cmv`.
 
