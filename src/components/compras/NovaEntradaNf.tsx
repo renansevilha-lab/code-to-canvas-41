@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FileUp, Loader2, Search } from "lucide-react";
+import { AlertTriangle, FileUp, Loader2, Package as PackageIcon, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,19 @@ interface Fornecedor {
   fornecedor_fantasia: string | null;
 }
 interface ItemHist { sku: string | null; gtin: string | null; descricao: string | null }
-interface Produto { sku: string; nome: string | null; id_tiny: number | null }
+interface Produto { sku: string; nome: string | null; id_tiny: number | null; foto_capa: string | null }
+
+function Foto({ url }: { url?: string | null }) {
+  const [erro, setErro] = useState(false);
+  if (!url || erro) {
+    return (
+      <div className="h-14 w-14 rounded-lg bg-muted flex items-center justify-center shrink-0">
+        <PackageIcon className="h-5 w-5 text-muted-foreground" />
+      </div>
+    );
+  }
+  return <img src={url} alt="" loading="lazy" onError={() => setErro(true)} className="h-14 w-14 rounded-lg object-cover bg-muted shrink-0 border" />;
+}
 
 // Palavras que não identificam fornecedor ("X COMERCIO LTDA" × "Y COMERCIO LTDA").
 const GENERICAS = new Set([
@@ -114,15 +126,14 @@ export function NovaEntradaNf({
     try {
       const { nf: nota } = await carregarNfTiny(n.tiny_id);
       setNfTinyId(n.tiny_id);
-      await processar(nota, n.ordem_tiny_id);
+      await processar(nota);
     } catch (e) { setErro((e as Error).message); setLendo(false); }
   }
 
-  async function processar(nota: NfXml, ordemJaVinculada: number | null = null) {
+  async function processar(nota: NfXml) {
     setLendo(true);
     try {
       const av: string[] = [];
-      if (ordemJaVinculada) av.push(`Esta NF já está vinculada à OC ${ordemJaVinculada > 0 ? "do Tiny" : "do app"} (id ${ordemJaVinculada}) — se for essa compra, aplique a NF dentro dela em vez de criar outra entrada.`);
 
       // 1) Fornecedor: OC mais parecida pelo nome (dá o fornecedor_id do Tiny,
       //    que a conciliação automática de NFs usa) + os itens que ele já vendeu.
@@ -244,7 +255,7 @@ export function NovaEntradaNf({
     enabled: skusLinhas.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<Record<string, Produto>> => {
-      const { data, error } = await supabaseExternal.from("produtos").select("sku, nome, id_tiny").in("sku", skusLinhas);
+      const { data, error } = await supabaseExternal.from("produtos").select("sku, nome, id_tiny, foto_capa").in("sku", skusLinhas);
       if (error) throw error;
       return Object.fromEntries(((data ?? []) as Produto[]).map((p) => [p.sku, p]));
     },
@@ -363,7 +374,7 @@ export function NovaEntradaNf({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) limpar(); onOpenChange(o); }}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(1320px,96vw)] w-full max-h-[92vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Nova entrada de recebimento pela NF</DialogTitle>
           <DialogDescription>
@@ -455,8 +466,8 @@ export function NovaEntradaNf({
                         <td className="py-2 pr-2">
                           <Checkbox checked={l.incluir} onCheckedChange={(v) => setLinha(idx, { incluir: v === true })} />
                         </td>
-                        <td className="py-1.5 pr-2 max-w-[300px]">
-                          <div className="truncate" title={l.xml.xProd}>{l.xml.xProd}</div>
+                        <td className="py-2 pr-3 w-[34%]">
+                          <div className="text-[13px] font-medium leading-snug break-words">{l.xml.xProd}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">
                             cód {l.xml.cProd || "—"}{l.xml.ean ? ` · EAN ${l.xml.ean}` : ""} · {formatBRL(l.xml.vProd)}
                           </div>
@@ -464,19 +475,22 @@ export function NovaEntradaNf({
                         <td className="py-1.5 pr-2 text-right tabular-nums whitespace-nowrap">
                           {formatNumber(l.xml.qCom)} {l.xml.uCom}
                         </td>
-                        <td className="py-1.5 pr-2 min-w-[220px]">
+                        <td className="py-2 pr-3">
+                          <div className="flex items-start gap-3">
+                          <Foto url={p?.foto_capa} />
+                          <div className="min-w-0 flex-1">
                           <Input
                             value={l.sku}
                             placeholder="SKU (ex.: 15102)"
                             disabled={!l.incluir}
                             onChange={(e) => setLinha(idx, { sku: e.target.value, metodo: "manual" })}
-                            className="h-8 font-mono text-xs"
+                            className="h-8 w-40 font-mono text-xs"
                           />
-                          <div className="text-[10px] mt-0.5 truncate max-w-[260px]">
+                          <div className="text-[11.5px] mt-1 leading-snug break-words">
                             {!sku ? (
                               <span className="text-amber-700 dark:text-amber-400 font-semibold">sem SKU — entra só com a descrição da NF</span>
                             ) : p ? (
-                              <span className="text-muted-foreground" title={p.nome ?? ""}>
+                              <span className="text-foreground/80">
                                 {l.metodo === "ean" ? "pelo EAN · " : l.metodo === "codigo" ? "pelo código · " : l.metodo === "depara" ? "de-para salvo · " : ""}
                                 {l.metodo === "descricao" && <span className="text-amber-700 dark:text-amber-400 font-semibold">pela descrição, confira · </span>}
                                 {p.nome}
@@ -486,6 +500,8 @@ export function NovaEntradaNf({
                             ) : (
                               <span className="text-red-700 dark:text-red-400 font-semibold">SKU não encontrado no cadastro</span>
                             )}
+                          </div>
+                          </div>
                           </div>
                         </td>
                         <td className="py-1.5 pr-2 text-right">
