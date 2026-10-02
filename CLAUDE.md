@@ -1713,6 +1713,14 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   search_path próprio: a `cmv_manual_vigente` sem isso derrubou o
   `refresh-kpi-pedidos-dia` ("relation cmv_manual does not exist") e o KPI do
   Pedidos Integrados congelou por ~30 min (27/ago) enquanto a lista seguia viva.
+- **Queda de 01/out/2026 (19h10–21h BRT): app sem login, API 503 `PGRST002`.** A instância
+  de 1 GB saturou (dia de muitas migrations de 2 sessões + backfill `ml-hist-tmp` a cada minuto +
+  refresh das matviews) e o PostgREST não conseguia recarregar o schema cache (estoura o
+  `statement_timeout` do role `authenticator`). Cada DDL dispara esse reload. Medido: 8–11 s com
+  cache frio logo após restart, 1,4 s aquecido → **`authenticator` ficou com 30s** (era 8s).
+  Cortes de cron em 02/out: 95 e 113 desligados, 111 pausado, 104 → 2×/dia, 109 → 15 min,
+  26 → 10 min, 62 → 30 min. Regra: **DDL/migrations e backfills fora do horário comercial**;
+  diagnóstico: `query_logs` postgrest_logs "schema cache".
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
   transaction block"). `TRUNCATE` libera espaço na hora.
 
