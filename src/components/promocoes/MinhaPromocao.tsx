@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Loader2, Plus, RefreshCw, Save, Tag, Trash2, Undo2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,15 @@ interface Linha {
   key: string; item_id: number; model_id: number; nome: string; variacao: string | null;
   original: number; promo: number; estoque: number | null; limite: number;
   sku: string | null; imagem: string | null; primeiraDoItem: boolean;
+}
+
+// Busca por palavras soltas, sem acento e em qualquer ordem: "areia bumi" acha
+// "Areia Bumi Pet 4kg…" (todas as palavras precisam aparecer no nome/variação/SKU).
+const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+function passaBusca(l: Linha, termos: string[]) {
+  if (termos.length === 0) return true;
+  const alvo = semAcento(`${l.nome} ${l.variacao ?? ""} ${l.sku ?? ""} ${l.item_id}`);
+  return termos.every((t) => alvo.includes(t));
 }
 
 const STATUS: Array<{ id: string; rotulo: string }> = [
@@ -138,6 +147,8 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
   const [aplicando, setAplicando] = useState(false);
   const [removendo, setRemovendo] = useState<string | null>(null);
   const [faixa, setFaixa] = useState("todas");
+  const [busca, setBusca] = useState("");
+  const termos = useMemo(() => semAcento(busca).split(/\s+/).filter(Boolean), [busca]);
   const [ord, setOrd] = useState<{ col: ColOrd; dir: 1 | -1 }>({ col: "vendas", dir: -1 });
   const [dlgAdd, setDlgAdd] = useState(false);
   const tarifa = useTarifaShopee().data;
@@ -327,10 +338,20 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        <div className="relative mr-2">
+          <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar produto (ex.: areia bumi)"
+            className="h-7 w-[260px] pl-8 pr-7 text-[12px]" />
+          {busca && (
+            <button type="button" onClick={() => setBusca("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Limpar">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <span className="text-[11.5px] text-muted-foreground mr-1">Margem de contribuição:</span>
         {FAIXAS_MC.map((f) => {
-          const n = f.id === "todas" ? linhas.length
-            : linhas.filter((l) => passaFaixa(f.id, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))).length;
+          const n = f.id === "todas" ? linhas.filter((l) => passaBusca(l, termos)).length
+            : linhas.filter((l) => passaBusca(l, termos) && passaFaixa(f.id, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))).length;
           return (
             <Button key={f.id} size="sm" variant={faixa === f.id ? "default" : "outline"} className="h-7 text-[11.5px] px-2.5"
               onClick={() => setFaixa(f.id)}>
@@ -363,7 +384,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando itens da Shopee…</td></tr>
             ) : detQ.isError ? (
               <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
-            ) : agruparOrdenar(linhas.filter((l) => passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
+            ) : agruparOrdenar(linhas.filter((l) => passaBusca(l, termos) && passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
                 (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa)),
                 (l) => (l.sku ? bases.get(l.sku) : undefined)?.vendas_30d ?? null, ord.col, ord.dir)
               .map(({ l, primeiro, ultimo, nGrupo, vendasGrupo }) => {
