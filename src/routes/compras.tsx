@@ -60,6 +60,9 @@ interface Ordem {
   observacao_recebimento: string | null;
   nf_numero: string | null;
   estoque_lancado_em: string | null;
+  estoque_lancado_por: string | null;
+  contas_lancadas_em: string | null;
+  contas_lancadas_por: string | null;
   // Divergência OC × NF (gravada pela RPC compras_aplicar_nf). null = sem NF aplicada.
   divergencia_oc_nf: boolean | null;
   divergencia_oc_nf_detalhe: DivergenciaItem[] | null;
@@ -126,6 +129,25 @@ const SIT_TINY: Record<string, { label: string; cls: string }> = {
 };
 
 // Entrada criada no app a partir da NF (tiny_id negativo — não existe no Tiny).
+// Selos "E" (estoque lançado no Tiny pelo app) e "C" (contas da NF lançadas).
+function SelosEC({ o }: { o: Pick<Ordem, "estoque_lancado_em" | "estoque_lancado_por" | "contas_lancadas_em" | "contas_lancadas_por"> }) {
+  if (!o.estoque_lancado_em && !o.contas_lancadas_em) return null;
+  const quando = (d: string) => new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  const cls = "h-5 w-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0";
+  return (
+    <span className="flex items-center gap-1">
+      {o.estoque_lancado_em && (
+        <span className={cn(cls, "bg-emerald-600 text-white")}
+          title={`Estoque lançado no Tiny${o.estoque_lancado_por ? ` por ${o.estoque_lancado_por}` : ""} em ${quando(o.estoque_lancado_em)}`}>E</span>
+      )}
+      {o.contas_lancadas_em && (
+        <span className={cn(cls, "bg-sky-600 text-white")}
+          title={`Contas a pagar da NF lançadas${o.contas_lancadas_por ? ` (${o.contas_lancadas_por})` : ""} em ${quando(o.contas_lancadas_em)}`}>C</span>
+      )}
+    </span>
+  );
+}
+
 const SELO_APP = "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
 // Divergência OC × NF gravada na ordem.
 const SELO_DIV = "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
@@ -435,6 +457,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                           <div className="flex-1" />
                           {sit && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", sit.cls)}>{sit.label}</span>}
                           {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>NF · app</span>}
+                          <SelosEC o={o} />
                         </div>
                         {o.divergencia_oc_nf && (
                           <span className={cn("self-start text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_DIV)}
@@ -717,7 +740,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             </div>
           </div>
           <ContasDaNf ordemTinyId={tinyId} fornecedorId={ordem.fornecedor_id} />
-          <LancarEstoqueTiny ordemTinyId={tinyId} numero={ordem.numero} lancadoEm={ordem.estoque_lancado_em} />
+          <LancarEstoqueTiny ordemTinyId={tinyId} numero={ordem.numero} lancadoEm={ordem.estoque_lancado_em} lancadoPor={ordem.estoque_lancado_por} />
           <Button variant="outline" size="sm" onClick={() => void arquivarOrdem()} className="gap-1.5" title="Tirar do quadro (nada muda no Tiny)">
             <Archive className="h-4 w-4" /> Arquivar
           </Button>

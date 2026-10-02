@@ -74,6 +74,17 @@ export function ContasDaNf({ ordemTinyId, fornecedorId }: { ordemTinyId: number;
 
   function limpar() { setFonte(null); setParcelas([]); setContatos([]); setBuscaContato(""); }
 
+  // Selo "C" no kanban: contas da NF lançadas (pelo app, com o nome de quem lançou)
+  // ou já existentes no Tiny (só marca se ainda não estava marcada).
+  async function marcarContasOc(por: string, soSeVazio: boolean) {
+    let q = supabaseExternal.from("compras_ordens")
+      .update({ contas_lancadas_em: new Date().toISOString(), contas_lancadas_por: por }).eq("tiny_id", ordemTinyId);
+    if (soSeVazio) q = q.is("contas_lancadas_em", null);
+    await q;
+    void qc.invalidateQueries({ queryKey: ["compras", "ordens"] });
+    void qc.invalidateQueries({ queryKey: ["compras", "ordem", ordemTinyId] });
+  }
+
   // contas que já existem para esta NF (lançadas pelo Tiny OU pelo app)
   async function marcarExistentes(f: Fonte, ps: Array<Omit<Parcela, "existe" | "incluir">>): Promise<Parcela[]> {
     const num = semZeros(f.numero);
@@ -82,11 +93,13 @@ export function ContasDaNf({ ordemTinyId, fornecedorId }: { ordemTinyId: number;
     const re = new RegExp(`NF n[ºo°.]?\\s*0*${num}(?!\\d)`, "i");
     const ja = ((data ?? []) as Array<{ descricao: string | null; fornecedor_cnpj_cpf: string | null; data_vencimento: string | null; valor_total: number }>)
       .filter((c) => re.test(c.descricao ?? "") && (!f.cnpj || !dig(c.fornecedor_cnpj_cpf) || dig(c.fornecedor_cnpj_cpf) === dig(f.cnpj)));
-    return ps.map((p) => {
+    const res = ps.map((p) => {
       const existe = ja.some((c) => c.data_vencimento === p.vencimento && Math.abs(Number(c.valor_total) - p.valor) < 0.02)
         || (ja.length >= ps.length && ps.length > 0); // NF inteira já lançada (datas podem ter sido ajustadas)
       return { ...p, existe, incluir: !existe };
     });
+    if (res.length > 0 && res.every((p) => p.existe)) void marcarContasOc("já existiam no Tiny", true);
+    return res;
   }
 
   async function usarNfTiny(nf: NfLinkada) {
@@ -164,6 +177,7 @@ export function ContasDaNf({ ordemTinyId, fornecedorId }: { ordemTinyId: number;
       }
     }
     setLancando(false);
+    if (ok > 0 && erros.length === 0) await marcarContasOc(perfil?.nome ?? "app", false);
     if (erros.length === 0) toast.success(`${ok} conta(s) lançada(s) no Tiny — NF ${num}`);
     else toast.warning(`${ok} lançada(s) · ${erros.length} erro(s)`, { description: erros.slice(0, 4).join("\n"), duration: 15000 });
     void qc.invalidateQueries({ queryKey: ["contas-pagar"] });
