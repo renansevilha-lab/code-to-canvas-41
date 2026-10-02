@@ -24,6 +24,7 @@ import { EntradaNfXml } from "@/components/compras/EntradaNfXml";
 import { NovaEntradaNf } from "@/components/compras/NovaEntradaNf";
 import { LancarEstoqueTiny } from "@/components/compras/LancarEstoqueTiny";
 import { ContasDaNf } from "@/components/compras/ContasDaNf";
+import { FormacaoCusto } from "@/components/compras/FormacaoCusto";
 import type { NfPronta } from "@/components/compras/EntradaNfXml";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -740,6 +741,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
             </div>
           </div>
           <ContasDaNf ordemTinyId={tinyId} fornecedorId={ordem.fornecedor_id} />
+          <FormacaoCusto ordemTinyId={tinyId} numero={ordem.numero} />
           <LancarEstoqueTiny ordemTinyId={tinyId} numero={ordem.numero} lancadoEm={ordem.estoque_lancado_em} lancadoPor={ordem.estoque_lancado_por} />
           <Button variant="outline" size="sm" onClick={() => void arquivarOrdem()} className="gap-1.5" title="Tirar do quadro (nada muda no Tiny)">
             <Archive className="h-4 w-4" /> Arquivar

@@ -1380,6 +1380,20 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   sem erro); C = `contas_lancadas_em/_por` — gravado pelo `ContasDaNf` ao lançar (nome do
   usuário) ou ao detectar que todas as parcelas já existem no Tiny ("já existiam no Tiny";
   backfill de 02/out marcou 10 OCs por NF casada + `contas_pagar`).
+- **Formação de custo (02/out/2026, `FormacaoCusto.tsx`, botão na OC):** o lançamento de estoque
+  **NÃO** muda custo no Tiny (nem `precoCusto` nem `precoCustoMedio` — medido) e o app copia
+  `precos.precoCusto` do Tiny no sync `tiny-sync-produtos?modulo=produtos` (cron 19, **05:00 BRT**).
+  Por isso o custo é gravado NO TINY: `compras-estoque` **v5** `custo-preview` / `custo-aplicar`
+  (cálculo no servidor): custo = (valor do SKU na NF + rateio de frete+IPI+ST+outras−desconto,
+  por valor ou quantidade, resto do arredondamento no último) ÷ unidades — preço DESTA nota, não
+  média. Gravação: `PUT /produtos/{id}` exige `sku`+`descricao` e é PUT — o app faz GET, **reenvia
+  todos os campos** (`corpoProduto`) trocando só `precoCusto`, faz GET de novo e compara
+  (`assinatura`); se outro campo mudou, **restaura automaticamente** e marca erro. (`PUT
+  /produtos/{id}/preco` NÃO aceita custo.) Só tipo S (variação/kit fica de fora). Em seguida
+  atualiza `produtos.custo` na hora. Tabelas `compras_custo_formacao` (extras por OC; `extras`
+  jsonb reservado p/ créditos do lucro real) e `compras_custo_itens` (de→para, quem, erro).
+  `custo-teste&sku=` regrava o MESMO custo (diagnóstico). Vendas já feitas mantêm o CMV congelado
+  — corrigir período com `/reprocessar-cmv`.
 
 - **Contas a pagar da NF** (botão "Contas da NF" na OC, `ContasDaNf.tsx`): parcelas da NF do Tiny
   (`tiny-contas-pagar` **v7** `?modulo=nf-parcelas&nf_tiny_id=` → GET /notas/{id}.`parcelas`
