@@ -15,6 +15,7 @@ import {
   AMBER, FAIXAS_MC, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
+import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
 
 // ============================================================================
 // Minha Promoção (Shopee) — os DESCONTOS da loja (v2.discount), com CMV, MC e
@@ -88,6 +89,8 @@ export function MinhaPromocao({ shopId }: { shopId: number }) {
           <RefreshCw className={cn("h-3.5 w-3.5", listaQ.isFetching && "animate-spin")} /> Atualizar da Shopee
         </Button>
       </div>
+
+      <PainelPromoDiaria shopId={shopId} />
 
       {listaQ.isLoading ? (
         <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
@@ -302,6 +305,10 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
           {resumo.semBase > 0 && !baseQ.isLoading && <span> · {resumo.semBase} sem custo/base</span>}
         </span>
         <div className="flex-1" />
+        {editavel && linhas.length > 0 && (
+          <RepetirDiario shopId={shopId} desconto={desconto}
+            linhas={linhas.map((l) => ({ item_id: l.item_id, model_id: l.model_id, promo: l.promo, limite: l.limite }))} />
+        )}
         {editavel && (
           <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => setDlgAdd(true)}>
             <Plus className="h-3.5 w-3.5" /> Adicionar produtos

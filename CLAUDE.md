@@ -1333,6 +1333,16 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   ?modulo=em-campanha` (get_item_promotion de todos os anúncios ativos, lotes de 50, orçamento
   24 s) → `shopee_anuncios_busca(..., p_excluir)` tira os que já estão em campanha; preço promo =
   cheio − desconto padrão; filtros de MC (<10, 10–15, 15–20, 20–25, >25%); `add-itens` em lotes de 50.
+- **Promoção DIÁRIA (02/out/2026, dono escolheu "uma promoção nova por dia"):** botão "Repetir todo
+  dia" no detalhe de um desconto (`promocoes/PromoDiaria.tsx`) grava em **`promo_recorrente`** o
+  snapshot `itens` (formato do add_discount_item, preços/limite de AGORA), `hora_inicio` (BRT; padrão =
+  1 min após o fim da promoção de origem), `dias_antecedencia` (3) e `primeiro_inicio` (fim da origem —
+  não sobrepõe). `shopee-promocoes` **v4** `?modulo=recorrente-programar[&id=][&confirmar=1]` cria um
+  desconto por dia ("nome dd/mm", janela 24 h − 1 min) até N dias à frente; idempotente por
+  **`promo_recorrente_criadas`** (unique recorrente+dia) + nome existente na Shopee; recusa por item
+  vai em `detalhe.falhas`. Único módulo que aceita o Bearer anon (cron **137**
+  `promo-recorrente-programar`, `23 9,21 * * *`). Pausar/excluir no painel "Promoções diárias" não
+  encerra as já criadas na Shopee. **Write ainda não testado ao vivo.**
 - **Teto da relâmpago** (`tetoRelampago` em `promocoes/comum.tsx`): `get_item_criteria` da loja =
   `min_discount 1`, `need_lowest_price false`, mas o erro **10014** (acima do menor preço de 7 dias)
   existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido
