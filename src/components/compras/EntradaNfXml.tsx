@@ -118,6 +118,7 @@ export function EntradaNfXml({
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [lembrar, setLembrar] = useState(true);
+  const [nomesSku, setNomesSku] = useState<Record<string, string>>({});
   const origem: "xml" | "tiny" = nfPronta ? "tiny" : "xml";
   const itensOc = useMemo(() => itens.filter((it) => !it.so_na_nf), [itens]);
 
@@ -134,6 +135,11 @@ export function EntradaNfXml({
       const cands = itensOc.filter((it) => (it.sku ?? "").trim() === sku);
       return cands.find((it) => Number(it.tiny_produto_id ?? 1) > 0) ?? cands[0] ?? null;
     };
+    const foraDaOc = [...new Set([...dp.values()].map((d) => d.sku).filter((sku) => !itemDoSku(sku)))];
+    if (foraDaOc.length) {
+      const { data } = await supabaseExternal.from("produtos").select("sku, nome").in("sku", foraDaOc);
+      setNomesSku(Object.fromEntries(((data ?? []) as { sku: string; nome: string | null }[]).map((p) => [p.sku, p.nome ?? ""])));
+    }
     setNf(nota);
     setLinhas(nota.itens.map((x): Linha => {
       const d = dp.get(normDesc(x.xProd));
@@ -319,7 +325,7 @@ export function EntradaNfXml({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) limpar(); onOpenChange(o); }}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[min(1180px,96vw)] w-full max-h-[92vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Aplicar NF à conferência{origem === "tiny" ? " (NF do Tiny)" : " (XML da NF-e)"}</DialogTitle>
           <DialogDescription>
@@ -367,95 +373,104 @@ export function EntradaNfXml({
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-[10px] uppercase text-muted-foreground border-b">
-                    <th className="py-1 pr-2 font-medium">Item da NF</th>
-                    <th className="py-1 pr-2 font-medium text-right">Qtd NF</th>
-                    <th className="py-1 pr-2 font-medium">Item da OC</th>
-                    <th className="py-1 pr-2 font-medium text-right" title="Quantas unidades do nosso SKU vêm em 1 unidade da NF (fardo com 5 = 5)">Un. por FD/CX</th>
-                    <th className="py-1 pr-2 font-medium text-right">Unidades</th>
-                    <th className="py-1 font-medium text-right">Qtd OC</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhas.map((l, idx) => {
-                    const it = itens.find((x) => x.id === l.destino);
-                    const ocQ = it ? Number(it.quantidade ?? 0) : null;
-                    const difere = ocQ != null && (porItem.get(l.destino) ?? 0) !== ocQ;
-                    return (
-                      <tr key={idx} className={cn("border-b last:border-0 align-top",
-                        l.destino === IGNORAR && "bg-muted/40",
-                        l.destino === NOVO && "bg-violet-500/5")}>
-                        <td className="py-1.5 pr-2 max-w-[260px]">
-                          <div className="truncate" title={l.xml.xProd}>{l.xml.xProd}</div>
-                          <div className="text-[10px] text-muted-foreground font-mono">
-                            cód {l.xml.cProd || "—"}{l.xml.ean ? ` · EAN ${l.xml.ean}` : ""}
-                          </div>
-                        </td>
-                        <td className="py-1.5 pr-2 text-right tabular-nums whitespace-nowrap">
-                          {formatNumber(l.xml.qCom)} {l.xml.uCom}
-                        </td>
-                        <td className="py-1.5 pr-2 min-w-[240px]">
-                          <Select value={l.destino} onValueChange={(v) => trocarDestino(idx, v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NOVO} className="text-xs">— só na NF: incluir na conferência —</SelectItem>
-                              <SelectItem value={IGNORAR} className="text-xs">— ignorar esta linha —</SelectItem>
-                              {itensOc.map((x) => (
-                                <SelectItem key={x.id} value={x.id} className="text-xs">
-                                  {x.sku ? `${x.sku} · ` : ""}{x.descricao ?? "—"}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {it && l.metodo && (
-                            <span className={cn("text-[10px]", l.metodo === "descricao" ? "text-amber-700 dark:text-amber-400 font-semibold" : "text-muted-foreground")}>
-                              {l.metodo === "ean" ? "casado pelo EAN" : l.metodo === "codigo" ? "casado pelo código" : l.metodo === "depara" ? "de-para salvo deste fornecedor" : l.metodo === "manual" ? "escolhido à mão" : "casado pela descrição — confira"}
-                            </span>
-                          )}
-                          {l.destino === NOVO && (
-                            <span className="text-[10px] text-violet-700 dark:text-violet-300 font-semibold">
-                              não está na OC — entra como item novo{l.skuDepara ? ` (SKU ${l.skuDepara} pelo de-para)` : ""}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-1.5 pr-2 text-right">
-                          <Input
-                            value={String(Math.round(l.fator * 1000) / 1000)}
-                            disabled={l.destino === IGNORAR}
-                            onChange={(e) => {
-                              const v = Number(e.target.value.replace(",", "."));
-                              const f = Number.isFinite(v) && v > 0 ? v : 0;
-                              setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, fator: f, unidades: x.xml.qCom * f, nota: f !== 1 ? `${formatNumber(x.xml.qCom)} ${x.xml.uCom} × ${f}` : null } : x)));
-                            }}
-                            className="h-8 w-16 ml-auto text-center font-mono text-xs"
-                            inputMode="decimal"
-                          />
-                        </td>
-                        <td className="py-1.5 pr-2 text-right">
-                          <Input
-                            value={String(l.unidades)}
-                            disabled={l.destino === IGNORAR}
-                            onChange={(e) => {
-                              const v = Number(e.target.value.replace(",", "."));
-                              const u = Number.isFinite(v) && v >= 0 ? v : 0;
-                              setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, unidades: u, fator: x.xml.qCom > 0 ? u / x.xml.qCom : x.fator } : x)));
-                            }}
-                            className="h-8 w-24 ml-auto text-center font-mono text-xs"
-                            inputMode="numeric"
-                          />
-                          {l.nota && l.destino !== IGNORAR && <div className="text-[10px] text-muted-foreground mt-0.5 max-w-[180px] ml-auto">{l.nota}</div>}
-                        </td>
-                        <td className={cn("py-1.5 text-right tabular-nums font-mono whitespace-nowrap", difere ? "text-amber-700 dark:text-amber-400 font-semibold" : "text-muted-foreground")}>
-                          {ocQ != null ? formatNumber(ocQ) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="flex flex-col gap-2">
+              <div className="hidden md:grid grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_250px] gap-3 px-3 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                <span>Item da nota</span><span>Vira qual produto nosso</span><span>Conversão para unidades</span>
+              </div>
+              {linhas.map((l, idx) => {
+                const it = itens.find((x) => x.id === l.destino);
+                const ocQ = it ? Number(it.quantidade ?? 0) : null;
+                const totalItem = porItem.get(l.destino) ?? 0;
+                const difere = ocQ != null && totalItem !== ocQ;
+                const unitNf = l.xml.qCom > 0 ? l.xml.vProd / l.xml.qCom : 0;
+                const metodoTxt = l.metodo === "ean" ? "pelo EAN" : l.metodo === "codigo" ? "pelo código" : l.metodo === "depara" ? "de-para salvo" : l.metodo === "manual" ? "escolhido à mão" : l.metodo === "descricao" ? "pela descrição — confira" : null;
+                return (
+                  <div key={idx} className={cn(
+                    "grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_250px] gap-3 items-start rounded-lg border p-3",
+                    l.destino === IGNORAR && "opacity-55 bg-muted/40",
+                    l.destino === NOVO && "border-violet-300 dark:border-violet-800 bg-violet-500/5",
+                  )}>
+                    {/* item da NF */}
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium leading-snug break-words">{l.xml.xProd}</div>
+                      <div className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
+                        <span className="font-semibold text-foreground tabular-nums">{formatNumber(l.xml.qCom)} {l.xml.uCom || "un"}</span>
+                        {unitNf > 0 && <span className="tabular-nums">· {formatBRL(unitNf)}/{l.xml.uCom || "un"}</span>}
+                        {l.xml.cProd && <span className="font-mono">· cód {l.xml.cProd}</span>}
+                        {l.xml.ean && <span className="font-mono">· EAN {l.xml.ean}</span>}
+                      </div>
+                    </div>
+
+                    {/* destino */}
+                    <div className="min-w-0 flex flex-col gap-1">
+                      <Select value={l.destino} onValueChange={(v) => trocarDestino(idx, v)}>
+                        <SelectTrigger className="h-9 text-xs w-full [&>span]:truncate"><SelectValue /></SelectTrigger>
+                        <SelectContent className="max-w-[min(560px,90vw)]">
+                          <SelectItem value={NOVO} className="text-xs">Não está na OC — incluir na conferência</SelectItem>
+                          <SelectItem value={IGNORAR} className="text-xs">Ignorar esta linha</SelectItem>
+                          {itensOc.map((x) => (
+                            <SelectItem key={x.id} value={x.id} className="text-xs">
+                              {x.sku ? `${x.sku} · ` : ""}{x.descricao ?? "—"}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10.5px]">
+                        {l.destino === NOVO ? (
+                          <span className="rounded px-1.5 py-0.5 bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300 font-semibold">
+                            {l.skuDepara ? `entra como item novo · ${l.skuDepara}${nomesSku[l.skuDepara] ? ` · ${nomesSku[l.skuDepara]}` : ""}` : "entra como item novo"}
+                          </span>
+                        ) : l.destino !== IGNORAR && metodoTxt ? (
+                          <span className={cn("rounded px-1.5 py-0.5",
+                            l.metodo === "descricao" ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                              : l.metodo === "depara" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                : "bg-muted text-muted-foreground")}>
+                            {metodoTxt}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* conversão */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="tabular-nums font-semibold w-[46px] text-right">{formatNumber(l.xml.qCom)}</span>
+                        <span className="text-muted-foreground">×</span>
+                        <Input
+                          value={String(Math.round(l.fator * 1000) / 1000)}
+                          disabled={l.destino === IGNORAR}
+                          title="Unidades do nosso produto em 1 unidade da nota (fardo com 5 = 5)"
+                          onChange={(e) => {
+                            const v = Number(e.target.value.replace(",", "."));
+                            const f = Number.isFinite(v) && v > 0 ? v : 0;
+                            setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, fator: f, unidades: x.xml.qCom * f, nota: null } : x)));
+                          }}
+                          className="h-8 w-14 text-center font-mono text-xs"
+                          inputMode="decimal"
+                        />
+                        <span className="text-muted-foreground">=</span>
+                        <Input
+                          value={String(l.unidades)}
+                          disabled={l.destino === IGNORAR}
+                          onChange={(e) => {
+                            const v = Number(e.target.value.replace(",", "."));
+                            const u = Number.isFinite(v) && v >= 0 ? v : 0;
+                            setLinhas((ls) => ls.map((x, i) => (i === idx ? { ...x, unidades: u, fator: x.xml.qCom > 0 ? u / x.xml.qCom : x.fator, nota: null } : x)));
+                          }}
+                          className="h-8 w-20 text-center font-mono text-xs font-semibold"
+                          inputMode="numeric"
+                        />
+                        <span className="text-muted-foreground text-[11px]">un</span>
+                      </div>
+                      {ocQ != null && (
+                        <span className={cn("text-[11px] tabular-nums", difere ? "text-amber-700 dark:text-amber-400 font-semibold" : "text-emerald-700 dark:text-emerald-400")}>
+                          OC pediu {formatNumber(ocQ)} un{difere ? ` · diferença ${totalItem - ocQ > 0 ? "+" : ""}${formatNumber(totalItem - ocQ)}` : " · confere"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Diferenças OC × NF */}
@@ -464,7 +479,7 @@ export function EntradaNfXml({
                 <CheckCircle2 className="h-4 w-4 shrink-0" /> OC e NF conferem: mesmas quantidades em todos os itens.
               </div>
             ) : (
-              <div className="rounded-md border border-red-300 dark:border-red-900 bg-red-500/5 p-2.5 text-xs flex flex-col gap-1">
+              <div className="rounded-md border border-red-300 dark:border-red-900 bg-red-500/5 p-3 text-xs flex flex-col gap-2">
                 <span className="font-bold text-red-800 dark:text-red-300 flex items-center gap-1.5">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   Divergência OC × NF em {difs.length} item(ns) — a conferência vai usar a quantidade da NF
@@ -472,18 +487,30 @@ export function EntradaNfXml({
                 {outrasNfs.length > 0 && (
                   <span className="text-muted-foreground">Somando as NFs já aplicadas a esta OC: {outrasNfs.join(", ")}.</span>
                 )}
-                {difs.map((d) => (
-                  <div key={d.chave} className="flex justify-between gap-3">
-                    <span className="truncate">{d.rotulo}</span>
-                    <span className="font-mono tabular-nums whitespace-nowrap">
-                      OC {formatNumber(d.oc)} · NF <b>{formatNumber(d.nf)}</b>{" "}
-                      <span className={cn("font-semibold", d.nf - d.oc < 0 ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400")}>
-                        ({d.nf - d.oc > 0 ? "+" : ""}{formatNumber(d.nf - d.oc)})
-                      </span>{" "}
-                      <span className="text-muted-foreground">{rotuloTipo[d.tipo]}</span>
-                    </span>
-                  </div>
-                ))}
+                <table className="w-full table-fixed">
+                  <thead>
+                    <tr className="text-[10px] uppercase text-muted-foreground text-left">
+                      <th className="font-medium pb-1">Produto</th>
+                      <th className="font-medium pb-1 text-right w-[70px]">OC</th>
+                      <th className="font-medium pb-1 text-right w-[70px]">NF</th>
+                      <th className="font-medium pb-1 text-right w-[80px]">Diferença</th>
+                      <th className="font-medium pb-1 pl-3 w-[110px]">Situação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {difs.map((d) => (
+                      <tr key={d.chave} className="border-t border-red-200/60 dark:border-red-900/40">
+                        <td className="py-1 pr-2 truncate" title={d.rotulo}>{d.rotulo}</td>
+                        <td className="py-1 text-right tabular-nums font-mono">{formatNumber(d.oc)}</td>
+                        <td className="py-1 text-right tabular-nums font-mono font-semibold">{formatNumber(d.nf)}</td>
+                        <td className={cn("py-1 text-right tabular-nums font-mono font-semibold", d.nf - d.oc < 0 ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400")}>
+                          {d.nf - d.oc > 0 ? "+" : ""}{formatNumber(d.nf - d.oc)}
+                        </td>
+                        <td className="py-1 pl-3 text-muted-foreground">{rotuloTipo[d.tipo]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
             {ignorados > 0 && <span className="text-[11px] text-muted-foreground">{ignorados} linha(s) da NF ignorada(s).</span>}
