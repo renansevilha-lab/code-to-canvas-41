@@ -1718,7 +1718,7 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   refresh das matviews) e o PostgREST não conseguia recarregar o schema cache (estoura o
   `statement_timeout` do role `authenticator`). Cada DDL dispara esse reload. Medido: 8–11 s com
   cache frio logo após restart, 1,4 s aquecido → **`authenticator` ficou com 30s** (era 8s).
-  Cortes de cron em 02/out: 95 e 113 desligados, 111 pausado, 104 → 2×/dia, 109 → 15 min,
+  Cortes de cron em 02/out: 95 desligado, 113 → a cada 2 h (peso é lido 1× por SKU; só pega produto novo), 111 pausado, 104 → 2×/dia, 109 → 15 min,
   26 → 10 min, 62 → 30 min. Regra: **DDL/migrations e backfills fora do horário comercial**;
   diagnóstico: `query_logs` postgrest_logs "schema cache".
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
