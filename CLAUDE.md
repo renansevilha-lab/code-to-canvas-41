@@ -1318,6 +1318,11 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
 - **RPC `promo_mc_base(shop_id, skus[])`**: igual à `flashsale_mc_base` (CMV kit-aware,
   comissão/imposto mediana 60d mono-SKU) + `menor_preco_7d` (menor `subtotal_produto/quantidade`
   vendido em 7 d, por `coalesce(sku_filho, sku_pai)`) + `vendas_30d`. ~3 s.
+  **Fix 02/out/2026 (as DUAS RPCs):** `imp_pct`/`com_pct` eram medidos sobre `venda_bruta` (preço
+  cheio inflado, ~30–40% acima), mas o imposto incide sobre `venda` e o front aplica o % sobre o
+  preço promo → imposto subestimado (ACZ 7,1% × real 10%; SVL 4,1% × real 7,5%) e **MC da tela de
+  promoção mais alta que a do Pedidos Integrados**. Base agora = `venda`. Validado: 16246 a
+  R$68,03 → tela R$8,12 × pedido real R$8,13. **Percentual de pedido sempre sobre `venda`.**
 - **RPC `shopee_anuncios_busca(shop_id, busca, ordem 'vendas'|'recentes', offset, limit)`**:
   `shopee_anuncios.vendas` é SEMPRE nulo no espelho — vendas 30d vêm dos nossos pedidos por
   `sku_pai` (casa 614/617).
