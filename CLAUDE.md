@@ -1389,7 +1389,9 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   média. Gravação: `PUT /produtos/{id}` exige `sku`+`descricao` e é PUT — o app faz GET, **reenvia
   todos os campos** (`corpoProduto`) trocando só `precoCusto`, faz GET de novo e compara
   (`assinatura`); se outro campo mudou, **restaura automaticamente** e marca erro. (`PUT
-  /produtos/{id}/preco` NÃO aceita custo.) Só tipo S (variação/kit fica de fora). Em seguida
+  /produtos/{id}/preco` NÃO aceita custo.) **Pegadinha (v7):** o PUT exige
+  `fornecedores[].padrao` não-nulo, mas o GET NÃO devolve `padrao` → 400 "Este valor não deve ser
+  nulo". O app manda `padrao: true` no 1º fornecedor (todos os SKUs testados têm 1 só). Só tipo S (variação/kit fica de fora). Em seguida
   atualiza `produtos.custo` na hora. Tabelas `compras_custo_formacao` (extras por OC; `extras`
   jsonb reservado p/ créditos do lucro real) e `compras_custo_itens` (de→para, quem, erro).
   **v6:** despesa MANUAL por unidade por SKU (coluna "+ Despesa un." com motivo, ex. etiqueta
