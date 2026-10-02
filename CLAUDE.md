@@ -1371,6 +1371,15 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   estorna. Token Tiny `conta='ottz'`. Botão "Lançar estoque no Tiny" no cabeçalho da OC
   (`LancarEstoqueTiny.tsx`); `compras_ordens.estoque_lancado_em/_por`. **A equipe não deve mais
   lançar estoque pela NF no Tiny** (dobra).
+  **v4 (02/out/2026) — SEM conferência liberado (dono):** `&base=nf` usa `coalesce(qtd_nf,
+  quantidade)` (OC "NF · app" já está em unidades; OC do Tiny sem NF = qtd pedida, com aviso). O
+  diálogo abre direto em "Pela NF" quando nada foi conferido. Ledger grava `lancado_por` + `base`
+  (`conferido|nf`); a observação no Tiny leva o nome. O delta vale entre bases (lançar pela NF e
+  depois conferir não duplica; conferido MENOR que o lançado só avisa, não estorna).
+- **Selos E / C no card do kanban:** E = `compras_ordens.estoque_lancado_em` (só com lançamento
+  sem erro); C = `contas_lancadas_em/_por` — gravado pelo `ContasDaNf` ao lançar (nome do
+  usuário) ou ao detectar que todas as parcelas já existem no Tiny ("já existiam no Tiny";
+  backfill de 02/out marcou 10 OCs por NF casada + `contas_pagar`).
 
 - **Contas a pagar da NF** (botão "Contas da NF" na OC, `ContasDaNf.tsx`): parcelas da NF do Tiny
   (`tiny-contas-pagar` **v7** `?modulo=nf-parcelas&nf_tiny_id=` → GET /notas/{id}.`parcelas`
