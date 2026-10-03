@@ -178,17 +178,30 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
     setSalvando(true);
     const falhas: string[] = [];
     let ok = 0;
+    // v5: se o desconto é de uma promoção diária, o servidor também leva os
+    // produtos para a lista da diária e para os dias já programados.
+    let diaria: string | null = null; let diasProp = 0; const falhasProp = new Set<string>();
     try {
       for (let i = 0; i < itemList.length; i += 50) {
         const lote = itemList.slice(i, i + 50);
-        const r = await chamarPromocoes(`modulo=add-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1`, { item_list: lote });
+        const r = await chamarPromocoes(`modulo=add-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1&propagar=1`, { item_list: lote });
         if (r.erro) { falhas.push(`${r.erro.error}: ${r.erro.message ?? ""}`); continue; }
+        if (r.propagacao?.recorrente) {
+          diaria = r.propagacao.recorrente;
+          const ds = (r.propagacao.dias ?? []) as Array<{ dia: string; falhas: unknown[] }>;
+          diasProp = Math.max(diasProp, ds.length);
+          for (const d of ds) if (d.falhas.length) falhasProp.add(d.dia.split("-").reverse().slice(0, 2).join("/"));
+        }
         const errs = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
         for (const e of errs) {
           const l = selecionadas.find((x) => x.item_id === Number(e.item_id) && (!e.model_id || x.model_id === Number(e.model_id)));
           falhas.push(`${l?.sku ?? e.item_id}: ${traduzirErroShopee(e.fail_message ?? e.fail_error)}`);
         }
         ok += lote.length - new Set(errs.map((e) => e.item_id)).size;
+      }
+      if (diaria) {
+        if (falhasProp.size === 0) toast.success(`Também incluído(s) na promoção diária "${diaria}"`, { description: `${diasProp} dia(s) já programado(s) atualizados.` });
+        else toast.warning(`Promoção diária "${diaria}": recusa em ${falhasProp.size} dia(s)`, { description: `Dias: ${[...falhasProp].join(", ")} — veja o motivo passando o mouse nos dias do painel.`, duration: 15000 });
       }
       if (falhas.length === 0) toast.success(`${ok} produto(s) adicionados à promoção`);
       else toast.warning(`${ok} adicionado(s) · ${falhas.length} recusa(s)`, { description: falhas.slice(0, 6).join("\n"), duration: 15000 });

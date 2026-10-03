@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Loader2, Repeat, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, RefreshCcw, Repeat, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -27,8 +27,9 @@ export interface LinhaSnapshot { item_id: number; model_id: number; promo: numbe
 interface Recorrente {
   id: number; shop_id: number; nome: string; hora_inicio: string; dias_antecedencia: number;
   n_itens: number; ativo: boolean; primeiro_inicio: string | null; criado_por: string | null;
+  origem_discount_id: number | null;
 }
-interface Criada { recorrente_id: number; dia: string; status: string; itens_ok: number; itens_falha: number; detalhe: { falhas?: Array<{ item_id: number; motivo: string }> } | null }
+interface Criada { recorrente_id: number; dia: string; discount_id: number | null; status: string; itens_ok: number; itens_falha: number; detalhe: { falhas?: Array<{ item_id: number; motivo: string }> } | null }
 
 const horaBR = (epoch: number) =>
   new Date(epoch * 1000).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
@@ -182,7 +183,7 @@ export function PainelPromoDiaria({ shopId }: { shopId: number }) {
       if (regras.length) {
         const desde = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
         const { data: c } = await supabaseExternal.from("promo_recorrente_criadas")
-          .select("recorrente_id, dia, status, itens_ok, itens_falha, detalhe").in("recorrente_id", regras.map((r) => r.id)).gte("dia", desde).order("dia");
+          .select("recorrente_id, dia, discount_id, status, itens_ok, itens_falha, detalhe").in("recorrente_id", regras.map((r) => r.id)).gte("dia", desde).order("dia");
         criadas = (c ?? []) as Criada[];
       }
       return { regras, criadas };
@@ -203,6 +204,31 @@ export function PainelPromoDiaria({ shopId }: { shopId: number }) {
     if (error) toast.error("Falha", { description: error.message });
     void qc.invalidateQueries({ queryKey: ["promo-shopee", "recorrentes", shopId] });
   }
+  // Produto adicionado no desconto de HOJE (antes da v5, ou pela Shopee) → leva
+  // para a lista da diária e para os dias já programados (servidor faz o merge).
+  async function sincronizar(r: Recorrente) {
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const deHoje = (q.data?.criadas ?? []).find((c) => c.recorrente_id === r.id && c.dia === hoje && c.discount_id);
+    const fonte = deHoje?.discount_id ?? r.origem_discount_id;
+    if (!fonte) { toast.error("Não achei o desconto de hoje desta promoção"); return; }
+    setRodando(r.id);
+    try {
+      const prev = await chamarPromocoes(`modulo=recorrente-sincronizar&id=${r.id}&fonte_discount_id=${fonte}`);
+      const novos = (prev.novos ?? []) as unknown[];
+      if (novos.length === 0) { toast.success("Nada a sincronizar — os dias programados já têm os mesmos produtos"); return; }
+      if (!window.confirm(`${novos.length} anúncio(s) estão no desconto de hoje e não na promoção diária "${r.nome}".
+
+Incluir na lista da diária e em todos os dias já programados (com o mesmo preço de hoje)?`)) return;
+      const res = await chamarPromocoes(`modulo=recorrente-sincronizar&id=${r.id}&fonte_discount_id=${fonte}&confirmar=1`);
+      const dias = (res.dias ?? []) as Array<{ dia: string; falhas: unknown[] }>;
+      const comFalha = dias.filter((d) => d.falhas.length);
+      if (comFalha.length === 0) toast.success(`${res.novos} anúncio(s) incluídos em ${dias.length} dia(s) programado(s)`);
+      else toast.warning(`${res.novos} anúncio(s) · ${comFalha.length} dia(s) com recusa`, { description: "Passe o mouse nos dias marcados para ver o motivo.", duration: 12000 });
+      void qc.invalidateQueries({ queryKey: ["promo-shopee"] });
+    } catch (e) { toast.error("Falha ao sincronizar", { description: (e as Error).message }); }
+    finally { setRodando(null); }
+  }
+
   async function programarAgora(r: Recorrente) {
     setRodando(r.id);
     try {
@@ -237,6 +263,10 @@ export function PainelPromoDiaria({ shopId }: { shopId: number }) {
               ))}
             </div>
             <div className="flex-1" />
+            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={rodando === r.id} onClick={() => void sincronizar(r)}
+              title="Leva para os dias programados os produtos que estão no desconto de hoje e faltam na promoção diária">
+              <RefreshCcw className="h-3 w-3" /> Sincronizar produtos
+            </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={rodando === r.id || !r.ativo} onClick={() => void programarAgora(r)}>
               {rodando === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CalendarClock className="h-3 w-3" />} Programar agora
             </Button>

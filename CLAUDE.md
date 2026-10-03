@@ -1348,6 +1348,13 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   vai em `detalhe.falhas`. Único módulo que aceita o Bearer anon (cron **137**
   `promo-recorrente-programar`, `23 9,21 * * *`). Pausar/excluir no painel "Promoções diárias" não
   encerra as já criadas na Shopee. **Write ainda não testado ao vivo.**
+  **v5 (03/out/2026) — produto adicionado depois:** os dias futuros são DESCONTOS SEPARADOS já
+  criados com o snapshot; adicionar num deles só mexia nele. Agora `add-itens&propagar=1` (o
+  "Adicionar produtos" sempre manda) acha a diária do desconto (origem ou `promo_recorrente_criadas`),
+  mescla o que entrou no snapshot (`itens`/`n_itens`) e faz `add_discount_item` em cada dia
+  programado que ainda NÃO começou (os já começados a Shopee não deixa). Botão "Sincronizar produtos"
+  no painel = `recorrente-sincronizar&id=&fonte_discount_id=` (fonte = desconto de hoje) — prévia →
+  confirma. **Só ADIÇÃO propaga**; mudar preço ou remover num dia continua valendo só naquele dia.
 - **Teto da relâmpago** (`tetoRelampago` em `promocoes/comum.tsx`): `get_item_criteria` da loja =
   `min_discount 1`, `need_lowest_price false`, mas o erro **10014** (acima do menor preço de 7 dias)
   existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido
