@@ -343,6 +343,20 @@ percentual entre empresas ou canais dá número errado.
 LEFT JOIN LATERAL na ordem `sku_mapeamento` → `sku_filho` → `sku_pai`, pegando o
 primeiro que **existe**. `COALESCE` simples não serve.
 
+**Vínculo novo em `sku_mapeamento` (Amazon) não corrige o passado (05/out/2026):**
+o `amazon-sync-pedidos` aplica o de-para ao gravar `pedido_itens.sku_pai` e o
+`fulfillment-sync` ao gravar `estoque_fulfillment.sku`, mas só nas próximas
+gravações. A reposição (`view_reposicao_full`) usa `pedido_itens.sku_pai` CRU
+na velocidade — anúncio com código da Amazon (ex.: `DF-CLWD-07BZ`) ficava sem
+produto, sem estoque da empresa e com sugestão sempre 0. Ao criar vínculo,
+atualizar também `estoque_fulfillment.sku` (por `sku_marketplace`) e
+`pedido_itens.sku_pai` dos pedidos Amazon com `sku_pai = sku_origem`. Feito em
+05/out para 14 vínculos novos (pelo nome + marca/preço no catálogo da Amazon) e
+os 3 antigos (108 itens de pedido). Sem vínculo, de propósito: `GR-N80P-XE7D`
+(Kit 2 areia mandioca 2kg, marca "Genérico" — Bumi 16034 ou Mya Cat 16011?),
+kits Wisecat+Bumi 6kg (`P5-…`/`VV-…`: 15864 ou 15889 têm composições
+diferentes) e os TRUQYS (não existem mais no cadastro).
+
 ### Custo de kit
 Fonte da verdade: `produtos.tipo = 'K'` → somar `produto_kits` × `produtos.custo`.
 A tabela `kits_composicao` é concorrente e **incompleta** — não usar. O campo
