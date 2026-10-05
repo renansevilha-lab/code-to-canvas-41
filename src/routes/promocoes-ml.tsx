@@ -210,6 +210,8 @@ function PromocoesMLPage() {
       if (statusFiltro !== "todas" && i.status !== statusFiltro) return false;
       if (soPrejuizo && !i.mc_negativa) return false;
       if (soFull && i.logistic_type !== "fulfillment") return false;
+      // Relâmpago só para anúncios que vendem (decisão do dono, 05/out): candidata sem venda some
+      if ((i.promocao_tipo ?? "").toUpperCase() === "LIGHTNING" && i.status !== "started" && vendasDe(i) === 0) return false;
       if (b && !(`${i.sku ?? ""} ${i.mlb} ${i.titulo ?? ""}`.toLowerCase().includes(b))) return false;
       return true;
     });
@@ -255,7 +257,11 @@ function PromocoesMLPage() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.erro) throw new Error(d.erro ?? `HTTP ${r.status}`);
-      toast.success(`Sincronizado: ${d.gravados ?? 0} itens atualizados`);
+      // Relâmpago: só anúncios com venda no ML em 30 dias, conferidos ao vivo (modulo=relampago)
+      const rl = await chamarML("modulo=relampago").catch(() => null);
+      toast.success(`Sincronizado: ${d.gravados ?? 0} itens atualizados`, {
+        description: rl && !rl.erro ? `Relâmpago: ${rl.verificados} anúncios com venda conferidos · ${rl.com_relampago} com oferta disponível` : undefined,
+      });
       await qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
     } catch (e) {
       toast.error("Falha ao sincronizar", { description: (e as Error).message });
