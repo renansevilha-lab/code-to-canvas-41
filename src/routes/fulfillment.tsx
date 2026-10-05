@@ -30,6 +30,7 @@ import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
+import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1448,6 +1449,14 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
             : `${envios.length} envios abertos · ${formatNumber(totPlan)} unidades planejadas · arraste os cartões entre as colunas para mudar o estágio`}
         </p>
         <div className="flex items-center gap-2">
+          {!mostrarArquivados && (
+            <LancarEstoqueEmMassa
+              envios={envios}
+              embalado={(id) => progressoQ.data?.get(id)?.sep ?? 0}
+              nomeUsuario={perfil?.nome ?? null}
+              onConcluido={recarregar}
+            />
+          )}
           <Button
             size="sm"
             variant={mostrarArquivados ? "default" : "outline"}
