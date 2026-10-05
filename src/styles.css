@@ -175,3 +175,48 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* Relatórios dos agentes — "Ver versão completa" (RelatorioHtmlModal).
+   O HTML é de e-mail, com estilos inline: aqui a fonte, a largura das tabelas
+   e as bordas passam a seguir o app; no modo escuro, fundo e texto também
+   (o fundo branco/texto escuro do e-mail ficaria ilegível). */
+.relatorio-html {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-foreground);
+}
+.relatorio-html * {
+  font-family: inherit !important;
+  max-width: 100%;
+}
+.relatorio-html table {
+  width: 100% !important;
+  border-collapse: collapse;
+}
+.relatorio-html th,
+.relatorio-html td {
+  border-color: var(--color-border) !important;
+  padding: 4px 8px;
+  vertical-align: top;
+}
+.relatorio-html h1,
+.relatorio-html h2,
+.relatorio-html h3 {
+  font-weight: 700;
+  margin: 12px 0 6px;
+}
+.relatorio-html h1 { font-size: 18px; }
+.relatorio-html h2 { font-size: 15px; }
+.relatorio-html h3 { font-size: 14px; }
+.relatorio-html p { margin: 6px 0; }
+.relatorio-html ul,
+.relatorio-html ol { padding-left: 20px; margin: 6px 0; }
+.relatorio-html ul { list-style: disc; }
+.relatorio-html ol { list-style: decimal; }
+.relatorio-html img { height: auto; }
+.dark .relatorio-html *:not(img) {
+  background-color: transparent !important;
+  color: inherit !important;
+  border-color: var(--color-border) !important;
+}

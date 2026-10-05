@@ -111,7 +111,6 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/devolucoes", "devolucoes"],
   ["/reprocessar-cmv", "financeiro"],
   ["/dre", "financeiro"],
-  ["/relatorios-agentes", "financeiro"],
   ["/produtos-margem", "produtos"],
   ["/mapeamento-skus", "produtos"],
   ["/amazon", "produtos"],

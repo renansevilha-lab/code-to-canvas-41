@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   TrendingUp,
@@ -45,8 +45,13 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
+import { RelatoriosSection } from "@/components/relatorios/RelatoriosSection";
 
 export const Route = createFileRoute("/")({
+  // ?rel= = aba da seção Relatórios (financeiro | compras | marketing)
+  validateSearch: (s: Record<string, unknown>): { rel?: string } => ({
+    rel: typeof s.rel === "string" && s.rel ? s.rel : undefined,
+  }),
   component: Dashboard,
 });
 
@@ -239,6 +244,8 @@ function sparkPoints(vals: number[]): string {
 // Component
 // ============================================================
 function Dashboard() {
+  const { rel: relSlug } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   // Definição do dono (20/ago/2026): a Dashboard SEMPRE abre no dia de hoje.
   const [preset, setPreset] = useState<PresetKey>("hoje");
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
@@ -780,6 +787,12 @@ function Dashboard() {
           </div>
         </section>
       )}
+
+      {/* Relatórios dos agentes (financeiro, compras, marketing) */}
+      <RelatoriosSection
+        relSlug={relSlug}
+        onRelChange={(slug) => navigate({ search: (prev) => ({ ...prev, rel: slug }), hash: "relatorios", replace: true, resetScroll: false })}
+      />
     </div>
   );
 }
