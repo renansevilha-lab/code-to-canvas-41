@@ -352,10 +352,10 @@ produto, sem estoque da empresa e com sugestão sempre 0. Ao criar vínculo,
 atualizar também `estoque_fulfillment.sku` (por `sku_marketplace`) e
 `pedido_itens.sku_pai` dos pedidos Amazon com `sku_pai = sku_origem`. Feito em
 05/out para 14 vínculos novos (pelo nome + marca/preço no catálogo da Amazon) e
-os 3 antigos (108 itens de pedido). Sem vínculo, de propósito: `GR-N80P-XE7D`
-(Kit 2 areia mandioca 2kg, marca "Genérico" — Bumi 16034 ou Mya Cat 16011?),
-kits Wisecat+Bumi 6kg (`P5-…`/`VV-…`: 15864 ou 15889 têm composições
-diferentes) e os TRUQYS (não existem mais no cadastro).
+os 3 antigos (108 itens de pedido). `GR-N80P-XE7D` (Kit 2 areia mandioca 2kg,
+"Genérico") = **Mya Cat 16011** (confirmado pelo dono). Sem vínculo, por decisão
+do dono: kits Wisecat+Bumi 6kg (`P5-…`/`VV-…`) e os anúncios TRUQYS — podem
+aparecer como "sem cadastro" na reposição, ignorar.
 
 ### Custo de kit
 Fonte da verdade: `produtos.tipo = 'K'` → somar `produto_kits` × `produtos.custo`.
