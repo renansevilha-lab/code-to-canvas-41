@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Zap, Loader2, RefreshCw, Search, AlertTriangle, ExternalLink, X, TrendingDown, TrendingUp } from "lucide-react";
+import { Zap, Loader2, RefreshCw, Search, AlertTriangle, ExternalLink, X, TrendingDown, TrendingUp, ArrowDown, ArrowUp } from "lucide-react";
 import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
@@ -67,6 +67,25 @@ function Foto({ url, nome, size = 54 }: { url: string | null; nome: string | nul
   );
 }
 
+type ColOrd = "vendas" | "criado" | "preco" | "desconto" | "mc_atual" | "mc_promo" | "mcpct" | "delta";
+
+function ThOrd({ col, ord, setOrd, children, className, title, primeiro = -1 }: {
+  col: ColOrd; ord: { col: ColOrd; dir: 1 | -1 }; setOrd: (o: { col: ColOrd; dir: 1 | -1 }) => void;
+  children: React.ReactNode; className?: string; title?: string; primeiro?: 1 | -1;
+}) {
+  const ativo = ord.col === col;
+  return (
+    <th className={cn("px-3 py-2.5 font-semibold text-right whitespace-nowrap", className)} title={title}>
+      <button type="button" onClick={() => setOrd({ col, dir: ativo ? (ord.dir === 1 ? -1 : 1) : primeiro })}
+        className={cn("inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground", ativo && "text-foreground")}>
+        {children}
+        {ativo && (ord.dir === -1 ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
+      </button>
+    </th>
+  );
+}
+const dataBR = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", timeZone: "America/Sao_Paulo" }) : "—");
+
 function PromocoesMLPage() {
   const qc = useQueryClient();
   const [promoSel, setPromoSel] = useState<string>("todas");
@@ -74,7 +93,7 @@ function PromocoesMLPage() {
   const [soPrejuizo, setSoPrejuizo] = useState(false);
   const [soFull, setSoFull] = useState(false);
   const [busca, setBusca] = useState("");
-  const [ordem, setOrdem] = useState<"delta" | "mc_promo" | "desconto" | "vendas" | "recentes">("delta");
+  const [ord, setOrd] = useState<{ col: ColOrd; dir: 1 | -1 }>({ col: "vendas", dir: -1 });
   const [sincronizando, setSincronizando] = useState(false);
   const [buscandoElegiveis, setBuscandoElegiveis] = useState(false);
   const [confirmar, setConfirmar] = useState<{ item: PromoItem; acao: "aplicar" | "remover" } | null>(null);
@@ -125,6 +144,20 @@ function PromocoesMLPage() {
     staleTime: 5 * 60_000, refetchOnWindowFocus: false,
   });
 
+  // Unidades vendidas no ML em 30 dias por SKU (nossos pedidos válidos) — o
+  // sold_quantity do ML é vitalício e impreciso. RPC ml_vendas_30d_sku (~0,1 s).
+  const vendasQ = useQuery({
+    queryKey: ["promocoes-ml", "vendas30d"],
+    queryFn: async (): Promise<Map<string, number>> => {
+      const { data, error } = await supabaseExternal.rpc("ml_vendas_30d_sku");
+      if (error) throw error;
+      return new Map(((data ?? []) as Array<{ sku: string; unidades: number }>).map((r) => [r.sku, Number(r.unidades)]));
+    },
+    staleTime: 10 * 60_000, refetchOnWindowFocus: false,
+  });
+  const vendas30 = vendasQ.data ?? new Map<string, number>();
+  const vendasDe = (i: PromoItem) => (i.sku ? vendas30.get(i.sku) ?? 0 : 0);
+
   const promos = promosQ.data ?? [];
   const itens = itensQ.data ?? [];
 
@@ -138,15 +171,29 @@ function PromocoesMLPage() {
       if (b && !(`${i.sku ?? ""} ${i.mlb} ${i.titulo ?? ""}`.toLowerCase().includes(b))) return false;
       return true;
     });
+    const val = (i: PromoItem): number | string | null => {
+      switch (ord.col) {
+        case "vendas": return vendasDe(i);
+        case "criado": return i.date_created ?? null;
+        case "preco": return i.promo_price;
+        case "desconto": return i.desconto_pct;
+        case "mc_atual": return i.mc_atual;
+        case "mc_promo": return i.mc_promo;
+        case "mcpct": return i.mc_promo_pct;
+        default: return i.delta_mc;
+      }
+    };
     arr = arr.sort((a, z) => {
-      if (ordem === "mc_promo") return num(a.mc_promo) - num(z.mc_promo);
-      if (ordem === "desconto") return num(z.desconto_pct) - num(a.desconto_pct);
-      if (ordem === "vendas") return num(z.sold_quantity) - num(a.sold_quantity);
-      if (ordem === "recentes") return (z.date_created ?? "").localeCompare(a.date_created ?? "");
-      return num(a.delta_mc) - num(z.delta_mc); // delta: mais negativo primeiro
+      const va = val(a), vz = val(z);
+      if (va == null && vz == null) return 0;
+      if (va == null) return 1; // vazios sempre no fim
+      if (vz == null) return -1;
+      const c = typeof va === "string" ? va.localeCompare(String(vz)) : va - Number(vz);
+      return c * ord.dir || vendasDe(z) - vendasDe(a);
     });
     return arr;
-  }, [itens, promoSel, statusFiltro, soPrejuizo, soFull, busca, ordem]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, promoSel, statusFiltro, soPrejuizo, soFull, busca, ord, vendas30]);
 
   const resumo = useMemo(() => {
     const comMc = filtrados.filter((i) => i.mc_promo != null);
@@ -302,14 +349,14 @@ function PromocoesMLPage() {
           <option value="started">Aplicadas</option>
           <option value="candidate">Candidatas</option>
         </select>
-        <select value={ordem} onChange={(e) => setOrdem(e.target.value as typeof ordem)}
-          className="h-9 rounded-md border border-border bg-background px-2 text-sm">
-          <option value="delta">Ordenar: maior queda de MC</option>
-          <option value="mc_promo">Ordenar: menor MC na promo</option>
-          <option value="desconto">Ordenar: maior desconto</option>
-          <option value="vendas">Ordenar: mais vendas</option>
-          <option value="recentes">Ordenar: anúncios mais recentes</option>
-        </select>
+        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-card">
+          {([["vendas", -1, "Mais vendidos (30d)"], ["criado", -1, "Anúncios mais novos"], ["delta", 1, "Maior queda de MC"], ["mc_promo", 1, "Menor MC na promo"]] as const).map(([col, dir, rot]) => (
+            <button key={col} type="button" onClick={() => setOrd({ col, dir })}
+              className={cn("px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap", ord.col === col ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+              {rot}
+            </button>
+          ))}
+        </div>
         <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
           <input type="checkbox" checked={soFull} onChange={(e) => setSoFull(e.target.checked)} className="accent-primary" />
           Só Fulfillment
@@ -340,107 +387,124 @@ function PromocoesMLPage() {
         </div>
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-x-auto">
-          <div className="min-w-[1140px] flex flex-col">
-            {filtrados.map((i) => {
-              const ti = tipoInfo(i.promocao_tipo);
-              const mcNull = i.mc_promo == null;
-              const mcCor = i.mc_negativa ? RED : GREEN;
-              const deltaNeg = num(i.delta_mc) < 0;
-              return (
-                <div
-                  key={`${i.promocao_id}|${i.mlb}`}
-                  className="grid border-b border-border last:border-b-0"
-                  style={{ gridTemplateColumns: "minmax(240px,1fr) 1px 140px 1px 150px 1px 320px 1px 150px", background: i.mc_negativa ? RED + "0A" : undefined }}
-                >
-                  {/* Produto */}
-                  <div className="flex items-center gap-3.5 px-5 py-4 min-w-0">
-                    <Foto url={i.foto} nome={i.titulo} />
-                    <div className="flex flex-col gap-1.5 min-w-0">
-                      <span className="text-[14.5px] font-semibold leading-tight truncate">{i.titulo ?? "—"}</span>
-                      <a href={i.permalink ?? undefined} target="_blank" rel="noreferrer"
-                        className="text-xs text-muted-foreground hover:text-primary inline-flex items-center gap-1 min-w-0">
-                        <span className="font-mono truncate">SKU {i.sku ?? "—"} · {i.mlb}</span>
-                        {i.permalink && <ExternalLink className="h-3 w-3 shrink-0" />}
-                      </a>
-                      <span className="self-start text-[11px] font-semibold px-2 py-0.5 rounded" style={{ background: ti.cor + "18", color: ti.cor }}>{ti.nome}</span>
-                    </div>
-                  </div>
-                  <div className="bg-border" />
-                  {/* Preço → promo */}
-                  <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Preço → promo</span>
-                    <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-                      <span className="text-xs text-muted-foreground line-through tabular-nums">{formatBRL(num(i.original_price))}</span>
-                      <span className="text-base font-bold tabular-nums">{formatBRL(num(i.promo_price))}</span>
-                    </div>
-                    <span className="text-xs font-bold tabular-nums" style={{ color: RED }}>−{num(i.desconto_pct).toFixed(0)}%</span>
-                  </div>
-                  <div className="bg-border" />
-                  {/* Custos (na promo): CMV + tarifas ML + imposto */}
-                  <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Custos (promo)</span>
-                    {mcNull && i.cmv == null ? (
-                      <span className="text-xs text-muted-foreground">sem CMV</span>
-                    ) : (
-                      <div className="flex flex-col gap-1 text-xs tabular-nums">
-                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">CMV</span><span className="font-semibold">{i.cmv == null ? "—" : formatBRL(i.cmv)}</span></div>
-                        <div className="flex justify-between gap-2" title={`Comissão ${formatBRL(num(i.comissao_promo))} + Frete ${formatBRL(num(i.frete))}${i.frete_estimado ? " (estim.)" : ""}`}>
-                          <span className="text-muted-foreground">Tarifas ML</span>
-                          <span className="font-semibold">{i.comissao_promo == null ? "—" : formatBRL(num(i.comissao_promo) + num(i.frete))}</span>
-                        </div>
-                        <div className="flex justify-between gap-2"><span className="text-muted-foreground">Imposto</span><span className="font-semibold">{i.imposto_promo == null ? "—" : formatBRL(i.imposto_promo)}</span></div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="bg-border" />
-                  {/* Margem de contribuição */}
-                  <div className="flex flex-col justify-center gap-2 px-5 py-4">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Margem de contribuição</span>
-                    {mcNull ? (
-                      <span className="text-[13.5px] italic text-muted-foreground">sem CMV — margem não calculada</span>
-                    ) : (
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex flex-col gap-0.5 rounded-lg px-3 py-1.5 bg-muted">
-                          <span className="text-sm font-semibold text-muted-foreground tabular-nums whitespace-nowrap">{i.mc_atual == null ? "—" : formatBRL(i.mc_atual)}</span>
-                          <span className="text-[11px] text-muted-foreground whitespace-nowrap">{pct(i.mc_atual_pct)}</span>
-                        </div>
-                        <span className="text-muted-foreground text-sm">→</span>
-                        <div className="flex flex-col gap-0.5 rounded-lg px-3.5 py-2" style={{ background: mcCor + "14" }}>
-                          <span className="text-lg font-extrabold tabular-nums whitespace-nowrap" style={{ color: mcCor }}>{formatBRL(num(i.mc_promo))}</span>
-                          <span className="text-xs font-semibold whitespace-nowrap" style={{ color: mcCor }}>{pct(i.mc_promo_pct)}</span>
-                        </div>
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className="text-xs font-semibold whitespace-nowrap inline-flex items-center gap-0.5" style={{ color: deltaNeg ? RED : GREEN }}>
-                            {deltaNeg ? <TrendingDown className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}{formatBRL(num(i.delta_mc))}
-                          </span>
-                          {i.frete_estimado && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: AMBER + "1c", color: AMBER }} title="Frete estimado pela mediana (≥R$79 sem histórico de venda)">frete estim.</span>}
+          <table className="w-full min-w-[1280px] text-[13px]">
+            <thead>
+              <tr className="border-b bg-muted/40 text-[10.5px] text-muted-foreground">
+                <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wide">Anúncio</th>
+                <ThOrd col="vendas" ord={ord} setOrd={setOrd} title="Unidades vendidas no Mercado Livre nos últimos 30 dias (nossos pedidos, pelo SKU)">Vendas 30d</ThOrd>
+                <ThOrd col="criado" ord={ord} setOrd={setOrd} title="Data de criação do anúncio no Mercado Livre">Criado em</ThOrd>
+                <ThOrd col="preco" ord={ord} setOrd={setOrd}>Preço → promo</ThOrd>
+                <ThOrd col="desconto" ord={ord} setOrd={setOrd}>Desc.</ThOrd>
+                <th className="px-3 py-2.5 text-right font-semibold uppercase tracking-wide" title="CMV + tarifas do ML (comissão + frete) + imposto, no preço da promoção">Custos na promo</th>
+                <ThOrd col="mc_atual" ord={ord} setOrd={setOrd} title="Margem de contribuição no preço atual">MC hoje</ThOrd>
+                <ThOrd col="mc_promo" ord={ord} setOrd={setOrd} primeiro={1} title="Margem de contribuição no preço da promoção">MC na promo</ThOrd>
+                <ThOrd col="delta" ord={ord} setOrd={setOrd} primeiro={1} title="Quanto a margem por unidade muda ao entrar na promoção">Variação</ThOrd>
+                <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wide">Situação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((i) => {
+                const ti = tipoInfo(i.promocao_tipo);
+                const mcNull = i.mc_promo == null;
+                const mcCor = i.mc_negativa ? RED : GREEN;
+                const deltaNeg = num(i.delta_mc) < 0;
+                const v30 = vendasDe(i);
+                const tarifas = i.comissao_promo == null ? null : num(i.comissao_promo) + num(i.frete);
+                const custo = i.cmv == null || tarifas == null ? null : num(i.cmv) + tarifas + num(i.imposto_promo);
+                return (
+                  <tr key={`${i.promocao_id}|${i.mlb}`} className="border-b last:border-0 align-middle hover:bg-muted/30"
+                    style={{ background: i.mc_negativa ? RED + "0A" : undefined }}>
+                    {/* Anúncio */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-[300px] max-w-[440px]">
+                        <Foto url={i.foto} nome={i.titulo} size={48} />
+                        <div className="flex flex-col gap-1 min-w-0">
+                          <span className="text-[13.5px] font-semibold leading-snug line-clamp-2">{i.titulo ?? "—"}</span>
+                          <a href={i.permalink ?? undefined} target="_blank" rel="noreferrer"
+                            className="text-[11px] text-muted-foreground hover:text-primary inline-flex items-center gap-1 font-mono">
+                            SKU {i.sku ?? "—"} · {i.mlb}{i.permalink && <ExternalLink className="h-3 w-3 shrink-0" />}
+                          </a>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded" style={{ background: ti.cor + "18", color: ti.cor }}>{ti.nome}</span>
+                            {promoSel === "todas" && i.promocao_nome && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground truncate max-w-[220px]" title={i.promocao_nome}>{i.promocao_nome}</span>}
+                            {i.logistic_type === "fulfillment" && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Full</span>}
+                          </div>
                         </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="bg-border" />
-                  {/* Status + Ação */}
-                  <div className="flex flex-col justify-center items-start gap-2.5 px-5 py-4">
-                    {i.status === "started" ? (
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap" style={{ background: GREEN + "18", color: GREEN }}>Aplicada</span>
-                    ) : (
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground whitespace-nowrap">Candidata</span>
-                    )}
-                    {mcNull ? (
-                      <span className="text-xs text-muted-foreground">Ação indisponível</span>
-                    ) : i.status === "started" ? (
-                      <Button size="sm" variant="outline" className="text-muted-foreground hover:text-red-600" onClick={() => setConfirmar({ item: i, acao: "remover" })}>Remover</Button>
-                    ) : (
-                      <Button size="sm" variant={i.mc_negativa ? "outline" : "default"}
-                        className={i.mc_negativa ? "border-[1.5px]" : ""}
-                        style={i.mc_negativa ? { borderColor: RED, color: RED } : undefined}
-                        onClick={() => setConfirmar({ item: i, acao: "aplicar" })}>Aplicar</Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                    </td>
+                    {/* Vendas 30d */}
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      <span className={cn("font-semibold", v30 === 0 && "text-muted-foreground font-normal")}>{v30.toLocaleString("pt-BR")}</span>
+                    </td>
+                    {/* Criado em */}
+                    <td className="px-3 py-3 text-right tabular-nums text-muted-foreground whitespace-nowrap">{dataBR(i.date_created)}</td>
+                    {/* Preço → promo */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <div className="text-[11px] text-muted-foreground line-through tabular-nums">{formatBRL(num(i.original_price))}</div>
+                      <div className="text-[14px] font-bold tabular-nums">{formatBRL(num(i.promo_price))}</div>
+                    </td>
+                    {/* Desconto */}
+                    <td className="px-3 py-3 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: RED }}>−{num(i.desconto_pct).toFixed(0)}%</td>
+                    {/* Custos */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      {custo == null ? <span className="text-xs text-muted-foreground">sem CMV</span> : (
+                        <div className="inline-flex flex-col items-end gap-0.5 tabular-nums"
+                          title={`CMV ${formatBRL(num(i.cmv))} · Comissão ${formatBRL(num(i.comissao_promo))} · Frete ${formatBRL(num(i.frete))}${i.frete_estimado ? " (estimado)" : ""} · Imposto ${formatBRL(num(i.imposto_promo))}`}>
+                          <span className="font-semibold">{formatBRL(custo)}</span>
+                          <span className="text-[10.5px] text-muted-foreground">CMV {formatBRL(num(i.cmv))} · ML {formatBRL(tarifas ?? 0)}</span>
+                          {i.frete_estimado && <span className="text-[10px] font-semibold" style={{ color: AMBER }}>frete estimado</span>}
+                        </div>
+                      )}
+                    </td>
+                    {/* MC hoje */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap tabular-nums">
+                      {i.mc_atual == null ? <span className="text-muted-foreground">—</span> : (
+                        <>
+                          <div className="font-semibold text-muted-foreground">{formatBRL(i.mc_atual)}</div>
+                          <div className="text-[11px] text-muted-foreground">{pct(i.mc_atual_pct)}</div>
+                        </>
+                      )}
+                    </td>
+                    {/* MC na promo */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap tabular-nums">
+                      {mcNull ? <span className="text-xs italic text-muted-foreground">sem CMV</span> : (
+                        <div className="inline-flex flex-col items-end rounded-lg px-2.5 py-1" style={{ background: mcCor + "14" }}>
+                          <span className="text-[15px] font-extrabold" style={{ color: mcCor }}>{formatBRL(num(i.mc_promo))}</span>
+                          <span className="text-[11px] font-semibold" style={{ color: mcCor }}>{pct(i.mc_promo_pct)}</span>
+                        </div>
+                      )}
+                    </td>
+                    {/* Variação */}
+                    <td className="px-3 py-3 text-right whitespace-nowrap tabular-nums">
+                      {mcNull ? <span className="text-muted-foreground">—</span> : (
+                        <span className="text-xs font-semibold inline-flex items-center gap-0.5" style={{ color: deltaNeg ? RED : GREEN }}>
+                          {deltaNeg ? <TrendingDown className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}{formatBRL(num(i.delta_mc))}
+                        </span>
+                      )}
+                    </td>
+                    {/* Situação + ação */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        {i.status === "started" ? (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ background: GREEN + "18", color: GREEN }}>Aplicada</span>
+                        ) : (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Candidata</span>
+                        )}
+                        {mcNull ? null : i.status === "started" ? (
+                          <Button size="sm" variant="outline" className="h-7 text-xs text-muted-foreground hover:text-red-600" onClick={() => setConfirmar({ item: i, acao: "remover" })}>Remover</Button>
+                        ) : (
+                          <Button size="sm" variant={i.mc_negativa ? "outline" : "default"}
+                            className={cn("h-7 text-xs", i.mc_negativa && "border-[1.5px]")}
+                            style={i.mc_negativa ? { borderColor: RED, color: RED } : undefined}
+                            onClick={() => setConfirmar({ item: i, acao: "aplicar" })}>Aplicar</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
