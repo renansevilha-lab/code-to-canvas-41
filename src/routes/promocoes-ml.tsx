@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { PainelRegraAuto, useDecisoesML, type Decisao, type LinhaDecisao } from "@/components/promocoes/RegraAutoML";
 
 // Escrita no ML (aplicar/remover/elegíveis) exige a sessão do usuário (ml-promocoes v18+);
 // leitura (sync/simular/estado) segue com a chave publicável.
@@ -110,6 +111,8 @@ function PromocoesMLPage() {
   const [statusFiltro, setStatusFiltro] = useState<"todas" | "started" | "candidate">("todas");
   const [soPrejuizo, setSoPrejuizo] = useState(false);
   const [soFull, setSoFull] = useState(false);
+  const [filtroDecisao, setFiltroDecisao] = useState<"todas" | Decisao>("todas");
+  const [trocando, setTrocando] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [ord, setOrd] = useState<{ col: ColOrd; dir: 1 | -1 }>({ col: "vendas", dir: -1 });
   const [sincronizando, setSincronizando] = useState(false);
@@ -198,6 +201,10 @@ function PromocoesMLPage() {
     staleTime: 10 * 60_000, refetchOnWindowFocus: false,
   });
   const vendas30 = vendasQ.data ?? new Map<string, number>();
+  // decisão da regra por (promoção, anúncio) — vem pronta do banco (view_ml_promo_decisao)
+  const decisoesQ = useDecisoesML();
+  const decisoes = decisoesQ.data ?? new Map<string, LinhaDecisao>();
+  const decisaoDe = (i: PromoItem) => decisoes.get(`${i.promocao_id}|${i.mlb}`);
   const vendasDe = (i: PromoItem) => (i.sku ? vendas30.get(i.sku) ?? 0 : 0);
 
   const promos = promosQ.data ?? [];
@@ -210,6 +217,7 @@ function PromocoesMLPage() {
       if (statusFiltro !== "todas" && i.status !== statusFiltro) return false;
       if (soPrejuizo && !i.mc_negativa) return false;
       if (soFull && i.logistic_type !== "fulfillment") return false;
+      if (filtroDecisao !== "todas" && decisaoDe(i)?.decisao !== filtroDecisao) return false;
       // Relâmpago só para anúncios que vendem (decisão do dono, 05/out): candidata sem venda some
       if ((i.promocao_tipo ?? "").toUpperCase() === "LIGHTNING" && i.status !== "started" && vendasDe(i) === 0) return false;
       if (b && !(`${i.sku ?? ""} ${i.mlb} ${i.titulo ?? ""}`.toLowerCase().includes(b))) return false;
@@ -237,7 +245,7 @@ function PromocoesMLPage() {
     });
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itens, promoSel, statusFiltro, soPrejuizo, soFull, busca, ord, vendas30]);
+  }, [itens, promoSel, statusFiltro, soPrejuizo, soFull, busca, ord, vendas30, filtroDecisao, decisoes]);
 
   const resumo = useMemo(() => {
     const comMc = filtrados.filter((i) => i.mc_promo != null);
@@ -299,6 +307,27 @@ function PromocoesMLPage() {
     }
   }
 
+  // Sugestão de troca: sai da promoção atual e entra na de MC melhor (volta se a nova recusar).
+  async function trocar(i: PromoItem, d: LinhaDecisao) {
+    if (!d.ativo_promocao_id || !d.ativo_tipo) return;
+    if (!window.confirm(
+      `Trocar a promoção deste anúncio?\n\n${i.titulo ?? i.mlb}\n\nSai de: ${d.ativo_nome ?? d.ativo_promocao_id} (MC ${d.ativo_mc == null ? "—" : formatBRL(d.ativo_mc)}/un)\nEntra em: ${i.promocao_nome ?? i.promocao_id} (MC ${formatBRL(num(i.mc_promo))}/un${d.ganho_troca != null ? `, +${formatBRL(d.ganho_troca)}` : ""})\n\nMuda o preço público no Mercado Livre. Se a nova recusar, o app tenta voltar para a anterior.`,
+    )) return;
+    const k = `${i.promocao_id}|${i.mlb}`;
+    setTrocando(k);
+    try {
+      const p = new URLSearchParams({ modulo: "trocar", mlb: i.mlb, de_promocao_id: d.ativo_promocao_id, de_tipo: d.ativo_tipo, para_promocao_id: i.promocao_id, para_tipo: i.promocao_tipo ?? "", confirmar: "1" });
+      if (i.offer_id) p.set("offer_id", i.offer_id); else if (i.promo_price != null) p.set("deal_price", String(i.promo_price));
+      if (perfil?.nome) p.set("por", perfil.nome);
+      const r = await chamarML(p.toString(), true);
+      if (r.erro) throw new Error(r.erro);
+      if (r.ok) toast.success(r.mensagem ?? "Troca feita");
+      else toast.error("Troca não feita", { description: r.mensagem, duration: 15000 });
+      await qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
+    } catch (e) { toast.error("Falha na troca", { description: (e as Error).message }); }
+    finally { setTrocando(null); }
+  }
+
   async function executar() {
     if (!confirmar || executando) return;
     const { item, acao } = confirmar;
@@ -354,6 +383,8 @@ function PromocoesMLPage() {
         </div>
       </div>
 
+      <PainelRegraAuto decisoes={decisoes} chamarML={chamarML} nomeUsuario={perfil?.nome ?? null} />
+
       {/* Chips de promoção */}
       <div className="flex gap-2 flex-wrap items-center">
         <button
@@ -399,6 +430,14 @@ function PromocoesMLPage() {
           <option value="todas">Todos os status</option>
           <option value="started">Aplicadas</option>
           <option value="candidate">Candidatas</option>
+        </select>
+        <select value={filtroDecisao} onChange={(e) => setFiltroDecisao(e.target.value as typeof filtroDecisao)}
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm" title="Decisão da regra de entrada automática">
+          <option value="todas">Todas as decisões</option>
+          <option value="auto">Entram automático (≥ regra)</option>
+          <option value="confirmar">Aguardando confirmação</option>
+          <option value="trocar">Sugestão de troca</option>
+          <option value="outra_melhor">Há promoção melhor</option>
         </select>
         <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-card">
           {([["vendas", -1, "Mais vendidos (30d)"], ["criado", -1, "Anúncios mais novos"], ["delta", 1, "Maior queda de MC"], ["mc_promo", 1, "Menor MC na promo"]] as const).map(([col, dir, rot]) => (
@@ -542,6 +581,23 @@ function PromocoesMLPage() {
                         ) : (
                           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Candidata</span>
                         )}
+                        {(() => {
+                          const d = decisaoDe(i);
+                          if (!d || i.status === "started") return null;
+                          if (d.decisao === "auto") return <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" title="Passa na regra: entra sozinho quando a entrada automática estiver ligada">Automático</span>;
+                          if (d.decisao === "confirmar") return <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400" title="Abaixo da regra: só entra se você confirmar">Confirmar</span>;
+                          if (d.decisao === "outra_melhor") return <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Este anúncio rende mais em outra promoção desta lista">Há melhor</span>;
+                          if (d.decisao === "manter_atual") return <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title={`Já está em ${d.ativo_nome ?? "outra promoção"}, que rende igual ou mais`}>Já em outra</span>;
+                          if (d.decisao === "trocar") return (
+                            <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1 border-violet-400 text-violet-700 dark:text-violet-300" disabled={trocando === `${i.promocao_id}|${i.mlb}`}
+                              title={`Sai de ${d.ativo_nome ?? "promoção atual"} (MC ${d.ativo_mc == null ? "—" : formatBRL(d.ativo_mc)}) e entra nesta`}
+                              onClick={() => void trocar(i, d)}>
+                              {trocando === `${i.promocao_id}|${i.mlb}` ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                              Trocar {d.ganho_troca != null ? `+${formatBRL(d.ganho_troca)}` : ""}
+                            </Button>
+                          );
+                          return null;
+                        })()}
                         {mcNull ? null : i.status === "started" ? (
                           <Button size="sm" variant="outline" className="h-7 text-xs text-muted-foreground hover:text-red-600" onClick={() => setConfirmar({ item: i, acao: "remover" })}>Remover</Button>
                         ) : (
