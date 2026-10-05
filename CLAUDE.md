@@ -1354,7 +1354,9 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   mescla o que entrou no snapshot (`itens`/`n_itens`) e faz `add_discount_item` em cada dia
   programado que ainda NÃO começou (os já começados a Shopee não deixa). Botão "Sincronizar produtos"
   no painel = `recorrente-sincronizar&id=&fonte_discount_id=` (fonte = desconto de hoje) — prévia →
-  confirma. **Só ADIÇÃO propaga**; mudar preço ou remover num dia continua valendo só naquele dia.
+  confirma. **v6 (05/out):** PREÇO/LIMITE também propaga — "Revisar e aplicar" manda
+  `atualizar-itens&propagar=1` e o sincronizar compara (`compararComSnapshot` → novos = add,
+  alterados = `update_discount_item`). **REMOVER ainda NÃO propaga** (vale só naquele dia).
 - **Teto da relâmpago** (`tetoRelampago` em `promocoes/comum.tsx`): `get_item_criteria` da loja =
   `min_discount 1`, `need_lowest_price false`, mas o erro **10014** (acima do menor preço de 7 dias)
   existe e a API não expõe esse piso → teto = min(1% abaixo do preço atual, menor preço vendido

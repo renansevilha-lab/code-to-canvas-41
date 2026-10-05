@@ -262,8 +262,17 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
     if (!previa) return;
     setAplicando(true);
     try {
-      const r = await chamarPromocoes(`modulo=atualizar-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1`,
+      // propagar=1: se este desconto é de uma promoção diária, o preço/limite aplicado
+      // vai também para a lista da diária e para os dias já programados (servidor).
+      const r = await chamarPromocoes(`modulo=atualizar-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1&propagar=1`,
         { item_list: previa.itemList });
+      if (r.propagacao?.recorrente) {
+        const ds = (r.propagacao.dias ?? []) as Array<{ dia: string; falhas: unknown[] }>;
+        const comFalha = ds.filter((d) => d.falhas.length).map((d) => d.dia.split("-").reverse().slice(0, 2).join("/"));
+        if (r.propagacao.erro) toast.error(`Promoção diária "${r.propagacao.recorrente}": não propagou`, { description: r.propagacao.erro });
+        else if (comFalha.length) toast.warning(`Promoção diária "${r.propagacao.recorrente}": recusa em ${comFalha.length} dia(s)`, { description: `Dias: ${comFalha.join(", ")} — veja o motivo nos dias do painel.`, duration: 15000 });
+        else if (ds.length) toast.success(`Também aplicado nos ${ds.length} dia(s) programado(s) da promoção diária "${r.propagacao.recorrente}"`);
+      }
       const falhas = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
       // Recusa é POR variação: o resto da lista é aplicado normalmente.
       const falhou = (l: Linha) => falhas.some((f) => Number(f.item_id) === l.item_id && (!f.model_id || Number(f.model_id) === l.model_id));

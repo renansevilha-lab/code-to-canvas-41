@@ -215,15 +215,19 @@ export function PainelPromoDiaria({ shopId }: { shopId: number }) {
     try {
       const prev = await chamarPromocoes(`modulo=recorrente-sincronizar&id=${r.id}&fonte_discount_id=${fonte}`);
       const novos = (prev.novos ?? []) as unknown[];
-      if (novos.length === 0) { toast.success("Nada a sincronizar — os dias programados já têm os mesmos produtos"); return; }
-      if (!window.confirm(`${novos.length} anúncio(s) estão no desconto de hoje e não na promoção diária "${r.nome}".
-
-Incluir na lista da diária e em todos os dias já programados (com o mesmo preço de hoje)?`)) return;
+      const alterados = (prev.alterados ?? []) as unknown[];
+      if (novos.length === 0 && alterados.length === 0) { toast.success("Nada a sincronizar — os dias programados já têm os mesmos produtos e preços de hoje"); return; }
+      const partes = [
+        novos.length ? `${novos.length} anúncio(s) estão no desconto de hoje e não na promoção diária` : "",
+        alterados.length ? `${alterados.length} anúncio(s) com preço/limite diferente do de hoje` : "",
+      ].filter(Boolean).join("\n");
+      if (!window.confirm(`Promoção diária "${r.nome}":\n${partes}\n\nAplicar em todos os dias já programados (iguais ao desconto de hoje)?`)) return;
       const res = await chamarPromocoes(`modulo=recorrente-sincronizar&id=${r.id}&fonte_discount_id=${fonte}&confirmar=1`);
       const dias = (res.dias ?? []) as Array<{ dia: string; falhas: unknown[] }>;
       const comFalha = dias.filter((d) => d.falhas.length);
-      if (comFalha.length === 0) toast.success(`${res.novos} anúncio(s) incluídos em ${dias.length} dia(s) programado(s)`);
-      else toast.warning(`${res.novos} anúncio(s) · ${comFalha.length} dia(s) com recusa`, { description: "Passe o mouse nos dias marcados para ver o motivo.", duration: 12000 });
+      const oq = [res.novos ? `${res.novos} incluído(s)` : "", res.alterados ? `${res.alterados} com preço atualizado` : ""].filter(Boolean).join(" · ");
+      if (comFalha.length === 0) toast.success(`${oq} em ${dias.length} dia(s) programado(s)`);
+      else toast.warning(`${oq} · ${comFalha.length} dia(s) com recusa`, { description: "Passe o mouse nos dias marcados para ver o motivo.", duration: 12000 });
       void qc.invalidateQueries({ queryKey: ["promo-shopee"] });
     } catch (e) { toast.error("Falha ao sincronizar", { description: (e as Error).message }); }
     finally { setRodando(null); }
@@ -264,7 +268,7 @@ Incluir na lista da diária e em todos os dias já programados (com o mesmo pre�
             </div>
             <div className="flex-1" />
             <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={rodando === r.id} onClick={() => void sincronizar(r)}
-              title="Leva para os dias programados os produtos que estão no desconto de hoje e faltam na promoção diária">
+              title="Deixa os dias programados iguais ao desconto de hoje: inclui produtos que faltam e corrige preço/limite">
               <RefreshCcw className="h-3 w-3" /> Sincronizar produtos
             </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={rodando === r.id || !r.ativo} onClick={() => void programarAgora(r)}>
