@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   Truck,
   FileBarChart,
+  FileText,
   Warehouse,
   PackagePlus,
   Radar,
@@ -108,6 +109,7 @@ export const NAV_GROUPS: NavGroup[] = [
     cor: "#34D399",
     items: [
       { title: "DRE", url: "/dre", icon: FileBarChart, modulo: "financeiro" },
+      { title: "Relatórios dos agentes", url: "/relatorios-agentes", icon: FileText, modulo: "financeiro" },
       { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
       { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
       { title: "Reprocessar CMV", url: "/reprocessar-cmv", icon: Calculator, modulo: "financeiro" },
