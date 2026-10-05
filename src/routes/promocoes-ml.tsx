@@ -437,10 +437,11 @@ function PromocoesMLPage() {
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-border bg-card overflow-x-auto">
+        <div className="rounded-2xl border border-border bg-card overflow-auto max-h-[calc(100vh-150px)]">
           <table className="w-full min-w-[1280px] text-[13px]">
-            <thead>
-              <tr className="border-b bg-muted/40 text-[10.5px] text-muted-foreground">
+            {/* cabeçalho fixo ao rolar (fundo opaco + sombra pra separar das linhas) */}
+            <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_var(--border)]">
+              <tr className="bg-muted/40 text-[10.5px] text-muted-foreground">
                 <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wide">Anúncio</th>
                 <ThOrd col="vendas" ord={ord} setOrd={setOrd} title="Unidades vendidas no Mercado Livre nos últimos 30 dias (nossos pedidos, pelo SKU)">Vendas 30d</ThOrd>
                 <ThOrd col="criado" ord={ord} setOrd={setOrd} title="Data de criação do anúncio no Mercado Livre">Criado em</ThOrd>
