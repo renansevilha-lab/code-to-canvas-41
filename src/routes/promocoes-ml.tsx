@@ -9,6 +9,24 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
+import { usePerfil } from "@/hooks/usePerfil";
+
+// Escrita no ML (aplicar/remover/elegíveis) exige a sessão do usuário (ml-promocoes v18+);
+// leitura (sync/simular/estado) segue com a chave publicável.
+async function chamarML(qs: string, escrita = false): Promise<any> {
+  let bearer = EXTERNAL_PUBLISHABLE_KEY;
+  if (escrita) {
+    const { data } = await supabaseExternal.auth.getSession();
+    if (!data.session?.access_token) throw new Error("Sessão expirada — entre de novo no app.");
+    bearer = data.session.access_token;
+  }
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?${qs}`, { headers: { Authorization: `Bearer ${bearer}`, apikey: EXTERNAL_PUBLISHABLE_KEY } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok && !d.mensagem) throw new Error(d.erro ?? `HTTP ${r.status}`);
+  return d;
+}
+// Estado AO VIVO da promoção no ML para o item (faixa de preço, estoque do Relâmpago, situação).
+interface Vivo { status: string | null; min: number | null; max: number | null; sugerido: number | null; preco: number | null; estoque_min: number | null; estoque_max: number | null; inicio: string | null; fim: string | null }
 
 // ============================================================================
 // Central de Promoções — Mercado Livre (com Margem de Contribuição).
@@ -102,9 +120,33 @@ function PromocoesMLPage() {
   const [simPreco, setSimPreco] = useState<number | null>(null);
   const [simResult, setSimResult] = useState<{ mc: number | null; mc_pct: number | null } | null>(null);
   const [simLoading, setSimLoading] = useState(false);
+  const { perfil } = usePerfil();
+  // Ao abrir "Aplicar": confere no ML se a promoção ainda está disponível e com que faixa/estoque.
+  const [vivo, setVivo] = useState<Vivo | null | "ausente">(null);
+  const [vivoLoading, setVivoLoading] = useState(false);
+  const [estoqueRes, setEstoqueRes] = useState<number | null>(null);
 
   useEffect(() => {
-    if (confirmar?.acao === "aplicar") { setSimPreco(confirmar.item.promo_price ?? null); setSimResult(null); }
+    if (confirmar?.acao !== "aplicar") { setVivo(null); return; }
+    const it = confirmar.item;
+    setSimPreco(it.promo_price ?? null); setSimResult(null); setVivo(null); setEstoqueRes(null);
+    let cancelado = false;
+    setVivoLoading(true);
+    chamarML(`modulo=estado&mlb=${it.mlb}&promocao_id=${encodeURIComponent(it.promocao_id)}&tipo=${it.promocao_tipo ?? ""}`)
+      .then((d) => {
+        if (cancelado) return;
+        const p = d.promocao as Vivo | null;
+        if (!p) { setVivo("ausente"); return; }
+        setVivo(p);
+        // preço dentro da faixa que o ML aceita AGORA (o sugerido pode passar do máximo)
+        const base = it.promo_price ?? p.sugerido ?? p.preco ?? null;
+        if (base != null && p.max != null && base > p.max) setSimPreco(p.max);
+        else if (base != null && p.min != null && base < p.min) setSimPreco(p.min);
+        if (p.estoque_min != null) setEstoqueRes(p.estoque_min);
+      })
+      .catch(() => { if (!cancelado) setVivo(null); })
+      .finally(() => { if (!cancelado) setVivoLoading(false); });
+    return () => { cancelado = true; };
   }, [confirmar]);
 
   useEffect(() => {
@@ -126,7 +168,7 @@ function PromocoesMLPage() {
     queryKey: ["promocoes-ml", "promos"],
     queryFn: async (): Promise<Promo[]> => {
       const { data, error } = await supabaseExternal.from("ml_promocoes")
-        .select("promocao_id, tipo, nome, status, finish_date, n_itens").order("n_itens", { ascending: false });
+        .select("promocao_id, tipo, nome, status, finish_date, n_itens").neq("status", "finished").order("n_itens", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Promo[];
     },
@@ -238,8 +280,7 @@ function PromocoesMLPage() {
       if (mlbs.length === 0) { toast.warning("Nenhum anúncio ML encontrado para esse SKU/MLB."); return; }
       let add = 0;
       for (const mlb of mlbs) {
-        const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?modulo=item&mlb=${mlb}`, { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } });
-        const d = await r.json().catch(() => ({}));
+        const d = await chamarML(`modulo=item&mlb=${mlb}`, true);
         if (d.erro) throw new Error(d.erro);
         add += d.adicionados ?? 0;
       }
@@ -258,18 +299,22 @@ function PromocoesMLPage() {
     setExecutando(true);
     try {
       const p = new URLSearchParams({ modulo: acao, mlb: item.mlb, promocao_id: item.promocao_id, tipo: item.promocao_tipo ?? "", confirmar: "1" });
+      if (perfil?.nome) p.set("por", perfil.nome);
       if (acao === "aplicar") {
         if (item.offer_id) p.set("offer_id", item.offer_id);
         else { const dp = simPreco ?? item.promo_price; if (dp != null) p.set("deal_price", String(dp)); }
+        if (estoqueRes != null) p.set("stock", String(estoqueRes));
       }
-      const r = await fetch(`${EXTERNAL_URL}/functions/v1/ml-promocoes?${p.toString()}`, {
-        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || d.erro || (d.status && d.status >= 400)) {
-        throw new Error(d.erro ?? (d.body ? JSON.stringify(d.body).slice(0, 160) : `HTTP ${r.status}`));
+      const d = await chamarML(p.toString(), true);
+      if (d.erro) throw new Error(d.erro);
+      if (!d.ok) {
+        // recusa do ML (ou lista desatualizada) — motivo já vem em português da função
+        toast.error(acao === "aplicar" ? "O Mercado Livre não aceitou" : "Não foi possível remover", { description: d.mensagem ?? "sem detalhe", duration: 15000 });
+        if (d.desatualizado) { setConfirmar(null); await qc.invalidateQueries({ queryKey: ["promocoes-ml"] }); }
+        return;
       }
-      toast.success(acao === "aplicar" ? `Promoção aplicada em ${item.mlb}` : `Promoção removida de ${item.mlb}`);
+      if (d.ja_estava) toast.info(d.mensagem ?? "Este anúncio já estava nesta promoção.");
+      else toast.success(acao === "aplicar" ? `Promoção aplicada em ${item.mlb}` : `Promoção removida de ${item.mlb}`);
       setConfirmar(null);
       await qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
     } catch (e) {
@@ -512,7 +557,12 @@ function PromocoesMLPage() {
       {confirmar && (() => {
         const item = confirmar.item;
         const ehAplicar = confirmar.acao === "aplicar";
-        const ajustavel = ehAplicar && item.preco_min != null && item.preco_max != null && !item.offer_id;
+        const vv = vivo && vivo !== "ausente" ? vivo : null;
+        const fMin = vv?.min ?? item.preco_min, fMax = vv?.max ?? item.preco_max;
+        const ajustavel = ehAplicar && fMin != null && fMax != null && !item.offer_id;
+        const relampago = (item.promocao_tipo ?? "").toUpperCase() === "LIGHTNING";
+        const indisponivel = ehAplicar && vivo === "ausente";
+        const foraFaixa = ehAplicar && simPreco != null && ((fMin != null && simPreco < fMin - 0.001) || (fMax != null && simPreco > fMax + 0.001));
         const usandoSim = ajustavel && simResult != null && simPreco != null && simPreco !== item.promo_price;
         const precoShow = simPreco ?? item.promo_price;
         const mcShow = usandoSim ? simResult!.mc : item.mc_promo;
@@ -537,17 +587,35 @@ function PromocoesMLPage() {
                 <>
                   {ajustavel && (
                     <div className="flex flex-col gap-2">
-                      <span className="text-xs font-semibold text-muted-foreground">Preço da promoção — você escolhe (entre {formatBRL(num(item.preco_min))} e {formatBRL(num(item.preco_max))})</span>
+                      <span className="text-xs font-semibold text-muted-foreground">Preço da promoção — você escolhe (entre {formatBRL(num(fMin))} e {formatBRL(num(fMax))}{vv ? ", conferido agora no ML" : ""})</span>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Input type="number" step="0.01" min={item.preco_min ?? undefined} max={item.preco_max ?? undefined}
                           value={simPreco ?? ""} onChange={(e) => { const v = Number(e.target.value); setSimPreco(Number.isFinite(v) && v > 0 ? v : null); }}
                           className="w-28 font-mono" />
                         {item.preco_sugerido != null && <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_sugerido)}>Sugerido</button>}
-                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_min)}>Mín</button>
-                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(item.preco_max)}>Máx</button>
+                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(fMin)}>Mín</button>
+                        <button className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted" onClick={() => setSimPreco(fMax)}>Máx</button>
                       </div>
                     </div>
                   )}
+                  {vivoLoading && <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Conferindo a promoção no Mercado Livre…</span>}
+                  {indisponivel && (
+                    <div className="rounded-lg p-3 text-sm font-medium flex items-start gap-2" style={{ background: AMBER + "14", border: `1px solid ${AMBER}40`, color: AMBER }}>
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>O Mercado Livre <strong>não oferece mais</strong> esta promoção para este anúncio — a lista estava desatualizada. Feche e sincronize.</span>
+                    </div>
+                  )}
+                  {relampago && vv && (
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs font-semibold text-muted-foreground">
+                        Unidades reservadas para o Relâmpago{vv.estoque_min != null ? ` (mín. ${vv.estoque_min}${vv.estoque_max != null ? `, máx. ${vv.estoque_max}` : ""})` : ""} — quando acabam, a oferta encerra
+                      </span>
+                      <Input type="number" min={vv.estoque_min ?? 1} max={vv.estoque_max ?? undefined} value={estoqueRes ?? ""} className="w-28 font-mono"
+                        onChange={(e) => { const v = Math.floor(Number(e.target.value)); setEstoqueRes(Number.isFinite(v) && v > 0 ? v : null); }} />
+                      {vv.inicio && <span className="text-[11px] text-muted-foreground">Janela: {new Date(vv.inicio).toLocaleString("pt-BR")}{vv.fim ? ` → ${new Date(vv.fim).toLocaleString("pt-BR")}` : ""}</span>}
+                    </div>
+                  )}
+                  {foraFaixa && <span className="text-xs font-semibold" style={{ color: RED }}>Preço fora da faixa aceita pelo ML ({formatBRL(num(fMin))} a {formatBRL(num(fMax))}).</span>}
                   <div className="bg-muted rounded-xl p-4 flex flex-col gap-3">
                     <div className="flex justify-between items-center gap-2">
                       <span className="text-sm text-muted-foreground">Preço público</span>
@@ -571,7 +639,8 @@ function PromocoesMLPage() {
               <p className="text-xs text-muted-foreground">Esta ação altera o preço público do anúncio no Mercado Livre imediatamente.</p>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => setConfirmar(null)} disabled={executando}>Cancelar</Button>
-                <Button variant={ehAplicar && neg ? "destructive" : "default"} onClick={() => void executar()} disabled={executando || simLoading}>
+                <Button variant={ehAplicar && neg ? "destructive" : "default"} onClick={() => void executar()}
+                  disabled={executando || simLoading || (ehAplicar && (vivoLoading || indisponivel || foraFaixa || (relampago && !estoqueRes)))}>
                   {executando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {ehAplicar ? "Confirmar e aplicar" : "Confirmar remoção"}
                 </Button>
