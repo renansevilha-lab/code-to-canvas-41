@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { brl, horaSP, iconeDaCategoria, obj, type RelatorioLista } from "./comum";
 import { RelatorioFinanceiro, venceEm7d } from "./RelatorioFinanceiro";
 import { RelatorioCompras, resumoCompras } from "./RelatorioCompras";
+import { RelatorioAds, resumoAds } from "./RelatorioAds";
 import { RelatorioHtmlModal } from "./RelatorioHtmlModal";
 
 // Mapa agente → mini-KPIs do card fechado + componente do card aberto.
@@ -39,6 +40,18 @@ const AGENTES: Record<string, AgenteDef> = {
       ];
     },
     Detalhe: RelatorioCompras,
+  },
+  ads: {
+    mini: (rel) => {
+      const a = resumoAds(rel.resumo);
+      if (a.v0) return [];
+      return [
+        { label: "Gasto ontem", valor: brl(a.gastoOntem) },
+        { label: "ROAS ontem", valor: a.roasOntem == null ? "—" : `${a.roasOntem.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}x` },
+        { label: "Alertas", valor: String(a.alertas), tom: a.alta > 0 ? "red" : undefined },
+      ];
+    },
+    Detalhe: RelatorioAds,
   },
 };
 

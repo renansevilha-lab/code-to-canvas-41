@@ -38,7 +38,7 @@ export const CATEGORIAS: { slug: string; nome: string; icone: LucideIcon; vazio:
   },
   {
     slug: "marketing", nome: "Marketing e ADS", icone: Megaphone,
-    vazio: "Nenhum relatório de Marketing e ADS ainda. O agente desta área ainda não foi criado.",
+    vazio: "Nenhum relatório de Marketing e ADS neste período.",
   },
 ];
 export const slugDaCategoria = (nome: string) => CATEGORIAS.find((c) => c.nome === nome)?.slug ?? nome;
