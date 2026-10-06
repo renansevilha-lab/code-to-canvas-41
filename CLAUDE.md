@@ -1317,6 +1317,16 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   **Vigia:** o `instalar.ps1` agenda, além do logon, um gatilho a cada 5 min
   (tarefa já rodando = nada acontece); o agente do RENANPC morreu em 30/set
   (0xC000013A) e só voltou na mão.
+- **Zebra mudou de PC (06/out):** o agente `bancada-1` foi para o **NIKOLASPC**
+  (mesmo token/config; subiu na versão **1.0.0** — sem a correção do spooler da
+  v1.1.0, atualizar o `.ps1`). Lá a fila do Windows que imprime é **"ZDesigner
+  ZD220-203dpi [nikolaspc]"** (`impressoras.id 10540`); a "ZDesigner ZD220-203dpi
+  ZPL" do mesmo PC fica offline. A ligação foi movida: `10540` ganhou
+  `printnode_id 75043468` (o id que o app já mandava para a antiga "Zebra
+  Fundos"), `usar_proprio=true`, apelido **"Zebra 2 (PC Nikolas)"**; o `id 2`
+  ficou sem `printnode_id`/apelido. O roteamento é SÓ por `printnode_id` +
+  agente vivo — impressora nova vista pelo agente nasce com `usar_proprio=false`
+  e o app não a enxerga até alguém fazer essa ligação.
 - **Pendente:** tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
