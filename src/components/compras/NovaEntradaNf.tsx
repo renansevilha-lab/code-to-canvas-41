@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
-import { parseNfe, similaridade, soDigitos, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
+import { parseNfe, similaridade, soDigitos, unidadesDe, valorLiquido, type ItemXml, type NfXml } from "@/lib/nfe";
 import { buscarDepara, normDesc, salvarDepara } from "@/lib/comprasDepara";
 import { buscarNfTiny, carregarNfTiny, normNf, type NfEncontrada } from "@/lib/nfTiny";
 
@@ -279,11 +279,12 @@ export function NovaEntradaNf({
         const sku = l.sku.trim() || null;
         const chave = sku ?? `__sem_sku_${i}`;
         const g = porSku.get(chave);
-        if (g) { g.qtd += l.unidades; g.valor += l.xml.vProd; return; }
+        // valor LÍQUIDO da linha (vProd − desconto do item): o preço da entrada já sai com o desconto
+        if (g) { g.qtd += l.unidades; g.valor += valorLiquido(l.xml); return; }
         const p = sku ? prods[sku] : undefined;
         porSku.set(chave, {
           sku, descricao: p?.nome ?? l.xml.xProd, gtin: l.xml.ean ?? l.xml.eanTrib,
-          qtd: l.unidades, valor: l.xml.vProd, tinyProd: p?.id_tiny ?? 0,
+          qtd: l.unidades, valor: valorLiquido(l.xml), tinyProd: p?.id_tiny ?? 0,
         });
       });
       const totalUn = [...porSku.values()].reduce((s, g) => s + g.qtd, 0);
@@ -329,6 +330,20 @@ export function NovaEntradaNf({
         await supabaseExternal.from("compras_ordens").delete().eq("tiny_id", tinyId);
         throw eIt;
       }
+
+      // Cabeçalho da NF (frete, IPI, ST, outras, desconto) para a formação de custo.
+      // XML: totais da nota; o desconto dos itens já está no preço. NF do Tiny:
+      // o servidor lê o cabeçalho na API (lá o desconto só existe no total).
+      // todas as linhas da nota: o desconto de linha ignorada também não é do cabeçalho
+      const descItens = Math.round(nf.itens.reduce((s2, x) => s2 + (x.vDesc ?? 0), 0) * 100) / 100;
+      const { error: eCab } = await supabaseExternal.from("compras_nf_aplicada").upsert({
+        ordem_tiny_id: tinyId, nf_numero: nf.numero.replace(/^0+/, "") || nf.numero,
+        origem: nf.totais ? "xml" : "tiny", nf_tiny_id: nfTinyId,
+        frete: nf.totais?.frete ?? null, ipi: nf.totais?.ipi ?? null, st: nf.totais?.st ?? null,
+        outras: nf.totais?.outras ?? null, desconto_total: nf.totais?.desconto ?? null,
+        desconto_itens: nf.totais ? descItens : 0, lido_em: nf.totais ? agora : null,
+      }, { onConflict: "ordem_tiny_id,nf_numero" });
+      if (eCab) console.warn("cabeçalho da NF não gravado:", eCab.message);
 
       // NF escolhida do espelho do Tiny: vincula direto pelo id.
       if (nfTinyId) {

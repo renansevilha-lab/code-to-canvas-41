@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL, formatNumber } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
-import { parseNfe, similaridade, soDigitos, tokens, unidadesDe, type ItemXml, type NfXml } from "@/lib/nfe";
+import { parseNfe, similaridade, soDigitos, tokens, unidadesDe, valorLiquido, type ItemXml, type NfXml } from "@/lib/nfe";
 import { buscarDepara, normDesc, salvarDepara } from "@/lib/comprasDepara";
 
 // ============================================================================
@@ -252,13 +252,31 @@ export function EntradaNfXml({
     setSalvando(true);
     try {
       const agora = new Date().toISOString();
+      // Valor da NF por item da OC (vProd − desconto do item): a formação de custo
+      // usa o preço DA NOTA, não o da OC. NF do Tiny não tem desconto por item —
+      // o desconto total vai como extra (o servidor lê o cabeçalho da nota).
+      const valorPorItem = new Map<string, { valor: number; desconto: number }>();
+      for (const l of linhas) {
+        if (l.destino === IGNORAR || l.destino === NOVO || l.unidades <= 0) continue;
+        const v = valorPorItem.get(l.destino) ?? { valor: 0, desconto: 0 };
+        v.valor += valorLiquido(l.xml); v.desconto += l.xml.vDesc ?? 0;
+        valorPorItem.set(l.destino, v);
+      }
+      const r2 = (x: number) => Math.round(x * 100) / 100;
       const payload = [
-        ...[...porItem].map(([item_id, qtd]) => ({ item_id, qtd })),
-        ...novos.map((l) => ({ item_id: null, sku: l.skuDepara || l.xml.cProd || null, descricao: l.xml.xProd, gtin: l.xml.ean, qtd: l.unidades })),
+        ...[...porItem].map(([item_id, qtd]) => ({
+          item_id, qtd, valor: r2(valorPorItem.get(item_id)?.valor ?? 0), desconto: r2(valorPorItem.get(item_id)?.desconto ?? 0),
+        })),
+        ...novos.map((l) => ({
+          item_id: null, sku: l.skuDepara || l.xml.cProd || null, descricao: l.xml.xProd, gtin: l.xml.ean, qtd: l.unidades,
+          valor: valorLiquido(l.xml), desconto: r2(l.xml.vDesc ?? 0),
+        })),
       ];
       const { data: res, error: eRpc } = await supabaseExternal.rpc("compras_aplicar_nf", {
         p_ordem: ordem.tiny_id, p_nf_numero: nf.numero, p_origem: origem,
         p_nf_tiny_id: nfPronta?.nfTinyId ?? null, p_itens: payload, p_por: perfil?.nome ?? null,
+        // desconto_itens = desconto de TODAS as linhas da nota (linha ignorada também não é desconto de cabeçalho)
+        p_totais: nf.totais ? { ...nf.totais, desconto_itens: r2(nf.itens.reduce((t, x) => t + (x.vDesc ?? 0), 0)) } : null,
       });
       if (eRpc) throw eRpc;
 
@@ -382,7 +400,7 @@ export function EntradaNfXml({
                 const ocQ = it ? Number(it.quantidade ?? 0) : null;
                 const totalItem = porItem.get(l.destino) ?? 0;
                 const difere = ocQ != null && totalItem !== ocQ;
-                const unitNf = l.xml.qCom > 0 ? l.xml.vProd / l.xml.qCom : 0;
+                const unitNf = l.xml.qCom > 0 ? valorLiquido(l.xml) / l.xml.qCom : 0; // já sem o desconto do item
                 const metodoTxt = l.metodo === "ean" ? "pelo EAN" : l.metodo === "codigo" ? "pelo código" : l.metodo === "depara" ? "de-para salvo" : l.metodo === "manual" ? "escolhido à mão" : l.metodo === "descricao" ? "pela descrição — confira" : null;
                 return (
                   <div key={idx} className={cn(
@@ -396,6 +414,11 @@ export function EntradaNfXml({
                       <div className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
                         <span className="font-semibold text-foreground tabular-nums">{formatNumber(l.xml.qCom)} {l.xml.uCom || "un"}</span>
                         {unitNf > 0 && <span className="tabular-nums">· {formatBRL(unitNf)}/{l.xml.uCom || "un"}</span>}
+                        {(l.xml.vDesc ?? 0) > 0 && (
+                          <span className="tabular-nums text-emerald-700 dark:text-emerald-400" title="Desconto do item na NF — já abatido do preço">
+                            · desc. {formatBRL(l.xml.vDesc ?? 0)}
+                          </span>
+                        )}
                         {l.xml.cProd && <span className="font-mono">· cód {l.xml.cProd}</span>}
                         {l.xml.ean && <span className="font-mono">· EAN {l.xml.ean}</span>}
                       </div>

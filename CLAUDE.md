@@ -1431,6 +1431,24 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   salva em `compras_custo_formacao.ajustes` e `compras_custo_itens.ajuste_unit/_motivo`.
   `custo-teste&sku=` regrava o MESMO custo (diagnóstico). Vendas já feitas mantêm o CMV congelado
   — corrigir período com `/reprocessar-cmv`.
+  **v8 (06/out/2026, pedido do dono) — preço da NF com desconto + custo manual.** Até a v7 o
+  "Preço NF un." era o **preço da OC** (`compra_ordem_itens.preco × qtd`): a nota não entrava
+  (ex.: OC #738, sílica 14,52 na OC × 22,50 na NF 008471; desconto R$ 337,50 e IPI R$ 856,26 da
+  nota ignorados). Agora: (1) aplicar a NF grava o **valor líquido por item** em
+  `compra_ordem_nf_qtd.valor/desconto` (XML: `vProd − vDesc` da linha; NF do Tiny: `vProd` — a API
+  v3 do Tiny só tem `valorDesconto` no cabeçalho, nunca por item); (2) **`compras_nf_aplicada`**
+  guarda o cabeçalho da nota (frete, IPI, ST, outras+seguro, `desconto_total`, `desconto_itens` =
+  já abatido nas linhas). XML manda pelo `p_totais` da RPC `compras_aplicar_nf` (7º parâmetro,
+  default null); NF do Tiny é lida pela formação (`GET /notas/{id}`) e gravada (`lido_em`). A
+  "Nova entrada por NF" grava o preço líquido nos itens e o cabeçalho também; (3) a formação usa o
+  valor da NF por item quando existe (`origem_preco` nf/oc/misto; linha aplicada antes da v8 =
+  `valor` NULL → preço da OC + aviso "reaplique") e, sem formação salva, pré-preenche os extras com
+  o cabeçalho (desconto = `desconto_total − desconto_itens`, rateado). Botão "usar os valores da NF".
+  NF vinculada mas NÃO aplicada → aviso no topo (preço segue o da OC); (4) **custo manual** por SKU
+  (`&manuais={"sku":{"custo":x,"motivo":".."}}`) substitui o calculado; grava
+  `compras_custo_formacao.manuais` e `compras_custo_itens.custo_calculado/manual/manual_motivo/
+  origem_preco`. Desconto do Tiny rateado por valor pode cair no item errado (ex.: desconto que era
+  só da sílica) — aí o operador corrige com o custo manual.
 
 - **Contas a pagar da NF** (botão "Contas da NF" na OC, `ContasDaNf.tsx`): parcelas da NF do Tiny
   (`tiny-contas-pagar` **v7** `?modulo=nf-parcelas&nf_tiny_id=` → GET /notas/{id}.`parcelas`

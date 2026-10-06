@@ -16,7 +16,12 @@ export interface ItemXml {
   uTrib: string;
   qTrib: number;
   vProd: number;
+  /** Desconto da linha (det/prod/vDesc). O valor líquido da linha é vProd − vDesc.
+   *  NF montada do espelho do Tiny: 0 (a API só dá o desconto total no cabeçalho). */
+  vDesc?: number;
 }
+/** Totais do cabeçalho (ICMSTot) que entram na formação de custo. */
+export interface TotaisNf { frete: number; ipi: number; st: number; outras: number; desconto: number }
 export interface NfXml {
   chave: string | null;
   numero: string; // sem zeros à esquerda
@@ -31,6 +36,8 @@ export interface NfXml {
   /** Duplicatas (boletos) da cobrança: cobr/dup — nº, vencimento, valor. Opcional:
    *  NF montada a partir do espelho do Tiny não traz (lá vem de /notas/{id}.parcelas). */
   duplicatas?: Duplicata[];
+  /** Totais do XML (frete, IPI, ST, outras+seguro, desconto). Ausente na NF do Tiny. */
+  totais?: TotaisNf;
 }
 export interface Duplicata { numero: string; vencimento: string | null; valor: number }
 
@@ -82,6 +89,7 @@ export function parseNfe(texto: string): NfXml {
       uTrib: t(p, "uTrib"),
       qTrib: n(t(p, "qTrib")),
       vProd: n(t(p, "vProd")),
+      vDesc: n(t(p, "vDesc")),
     };
   });
   if (itens.length === 0) throw new Error("A NF-e não tem itens.");
@@ -107,9 +115,16 @@ export function parseNfe(texto: string): NfXml {
     cnpj: t(emit, "CNPJ") || t(emit, "CPF"),
     valor: n(t(tot, "vNF")),
     itens,
+    totais: {
+      frete: n(t(tot, "vFrete")), ipi: n(t(tot, "vIPI")), st: n(t(tot, "vST")),
+      outras: n(t(tot, "vOutro")) + n(t(tot, "vSeg")), desconto: n(t(tot, "vDesc")),
+    },
     duplicatas,
   };
 }
+
+/** Valor líquido da linha da NF (vProd − desconto do item). */
+export const valorLiquido = (x: ItemXml): number => Math.round((x.vProd - (x.vDesc ?? 0)) * 100) / 100;
 
 /**
  * Quantas UNIDADES essa linha da NF representa. A NF pode vir em caixa/fardo:
