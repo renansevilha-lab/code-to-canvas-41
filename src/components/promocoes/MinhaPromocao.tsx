@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Clock, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, TrendingUp, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  AMBER, FAIXAS_MC, Foto, GREEN, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
@@ -74,6 +74,8 @@ const dataHora = (epoch: number) =>
 export function MinhaPromocao({ shopId }: { shopId: number }) {
   const [status, setStatus] = useState("ongoing");
   const [selId, setSelId] = useState<number | null>(null);
+  // "Atualizar da Shopee" também relê a promoção aberta + o catálogo dos anúncios dela
+  const [recarga, setRecarga] = useState(0);
 
   const listaQ = useQuery({
     queryKey: ["promo-shopee", "lista", shopId, status],
@@ -98,7 +100,8 @@ export function MinhaPromocao({ shopId }: { shopId: number }) {
         ))}
         <div className="flex-1" />
         <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" disabled={listaQ.isFetching}
-          onClick={() => void listaQ.refetch()}>
+          onClick={() => { void listaQ.refetch(); if (selId != null) setRecarga((n) => n + 1); }}
+          title="Relê as promoções e, na promoção aberta, os itens e o cadastro dos anúncios (SKU/foto) direto da Shopee">
           <RefreshCw className={cn("h-3.5 w-3.5", listaQ.isFetching && "animate-spin")} /> Atualizar da Shopee
         </Button>
       </div>
@@ -135,14 +138,14 @@ export function MinhaPromocao({ shopId }: { shopId: number }) {
         </div>
       )}
 
-      {sel && <DetalheDesconto key={sel.discount_id} shopId={shopId} desconto={sel} />}
+      {sel && <DetalheDesconto key={sel.discount_id} shopId={shopId} desconto={sel} recarga={recarga} />}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------------
 
-function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desconto }) {
+function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; desconto: Desconto; recarga: number }) {
   const qc = useQueryClient();
   const editavel = desconto.status === "ongoing" || desconto.status === "upcoming";
   const [precos, setPrecos] = useState<Map<string, number>>(new Map());
@@ -237,6 +240,33 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
     },
   });
   const vistos = vistoQ.data ?? new Map<string, Visto>();
+
+  // Recarga completa (botão "Atualizar da Shopee"): itens da promoção → catálogo
+  // desses anúncios (SKU/foto alterados no Seller Center) → itens de novo, já com
+  // o espelho atualizado. Sem isso o SKU só muda no catálogo noturno.
+  const [catalogo, setCatalogo] = useState<null | { feitos: number; total: number }>(null);
+  const ultimaRecarga = useRef(recarga);
+  useEffect(() => {
+    if (recarga === ultimaRecarga.current) return;
+    ultimaRecarga.current = recarga;
+    void recarregarTudo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recarga]);
+  async function recarregarTudo() {
+    if (catalogo) return;
+    try {
+      const r1 = await detQ.refetch();
+      const ids = [...new Set((r1.data ?? []).map((l) => l.item_id))];
+      if (ids.length === 0) return;
+      setCatalogo({ feitos: 0, total: ids.length });
+      const res = await atualizarCatalogoShopee(shopId, ids, (f) => setCatalogo({ feitos: f, total: ids.length }));
+      await detQ.refetch();
+      if (res.erros.length) toast.warning(`Cadastro de ${res.feitos}/${ids.length} anúncio(s) atualizado`, { description: res.erros.slice(0, 4).join("\n"), duration: 12000 });
+      else toast.success(`Atualizado da Shopee: ${res.feitos} anúncio(s), ${res.variacoes} variação(ões)`);
+    } catch (e) {
+      toast.error("Falha ao atualizar da Shopee", { description: (e as Error).message });
+    } finally { setCatalogo(null); }
+  }
 
   const precoDe = (l: Linha) => precos.get(l.key) ?? l.promo;
   const limiteDe = (l: Linha) => limites.get(l.item_id) ?? l.limite;
@@ -347,6 +377,11 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
           {resumo.neg > 0 && <span style={{ color: RED }}> · {resumo.neg} com MC negativa</span>}
           {resumo.semBase > 0 && !baseQ.isLoading && <span> · {resumo.semBase} sem custo/base</span>}
         </span>
+        {catalogo && (
+          <span className="text-[12px] text-muted-foreground flex items-center gap-1.5">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Atualizando cadastro dos anúncios na Shopee… {catalogo.feitos}/{catalogo.total}
+          </span>
+        )}
         <div className="flex-1" />
         {editavel && linhas.length > 0 && (
           <RepetirDiario shopId={shopId} desconto={desconto}

@@ -1336,6 +1336,11 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 
 Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
 `/flash-sale` redireciona para a aba Relâmpago.
+- **"Atualizar da Shopee" (06/out/2026):** além da lista de promoções, relê os itens da promoção
+  aberta e o **cadastro desses anúncios** (SKU/foto das variações) pela edge fn
+  **`shopee-catalogo-itens`**, depois relê os itens. Antes, SKU alterado no Seller Center só aparecia
+  depois do catálogo noturno (crons 38/39/141–146, 00h–01h45 BRT, só anúncios não lidos há 24 h),
+  e a lista de itens ficava em cache até o F5 (`refetchOnMount: false`).
 - **Ordenar (06/out/2026):** "Mais vendidos" (vendas 30d, soma das variações — padrão) ou
   "Últimos adicionados". A `get_discount` **não informa quando o item entrou** no desconto, então
   a tela chama a RPC **`promo_itens_vistos(shop, discount, itens)`** a cada leitura: grava a 1ª vez
@@ -1624,6 +1629,7 @@ clone em `C:\dev\an-ncio-m-gico`) vem para dentro da gestão em 4 fases. Fase 1
 |---|---|---|
 | `shopee-sync-ads` | v66 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1. v66: `imprimir` usa a fila própria quando a impressora é nossa (§5.9) |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
+| `shopee-catalogo-itens` | v1 | Relê do catálogo Shopee **só os anúncios pedidos** (≤30/chamada, `pendentes` = reenviar) e faz upsert no espelho com o MESMO mapeamento do `shopee-sync-ads?modulo=catalogo`. Só leitura na Shopee; JWT de usuário. Usado pelo "Atualizar da Shopee" da Minha Promoção — ver seção 5.9.1 |
 | `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |

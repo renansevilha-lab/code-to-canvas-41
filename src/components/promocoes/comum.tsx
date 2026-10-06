@@ -153,6 +153,38 @@ export async function chamarPromocoes(qs: string, body?: unknown): Promise<any> 
   return j;
 }
 
+/** Relê do catálogo Shopee só estes anúncios (SKU/foto das variações) e
+ *  atualiza o espelho — edge fn shopee-catalogo-itens, 30 por chamada; o que
+ *  não coube no orçamento de tempo volta em `pendentes` e é reenviado. */
+export async function atualizarCatalogoShopee(
+  shopId: number, itemIds: number[], onProgresso?: (feitos: number) => void,
+): Promise<{ feitos: number; variacoes: number; erros: string[] }> {
+  const { data } = await supabaseExternal.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Sessão expirada — entre de novo no app.");
+  let fila = [...new Set(itemIds)];
+  let feitos = 0; let variacoes = 0;
+  const erros: string[] = [];
+  for (let volta = 0; fila.length > 0 && volta < 60; volta++) {
+    const lote = fila.slice(0, 30);
+    const r = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-catalogo-itens?shop_id=${shopId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: lote }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.erro ?? `HTTP ${r.status}`);
+    const pend = ((j.pendentes ?? []) as unknown[]).map(Number);
+    erros.push(...((j.erros ?? []) as string[]));
+    variacoes += Number(j.variacoes ?? 0);
+    if (pend.length === lote.length) { erros.push("catálogo: sem progresso (Shopee lenta) — tente de novo"); break; }
+    feitos += lote.length - pend.length;
+    fila = [...pend, ...fila.slice(30)];
+    onProgresso?.(feitos);
+  }
+  return { feitos, variacoes, erros };
+}
+
 /** Traduz as recusas mais comuns da API de promoções da Shopee. */
 export function traduzirErroShopee(msg: string | null | undefined): string {
   const m = String(msg ?? "");
