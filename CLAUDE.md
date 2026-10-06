@@ -1336,6 +1336,13 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 
 Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
 `/flash-sale` redireciona para a aba Relâmpago.
+- **Ordenar (06/out/2026):** "Mais vendidos" (vendas 30d, soma das variações — padrão) ou
+  "Últimos adicionados". A `get_discount` **não informa quando o item entrou** no desconto, então
+  a tela chama a RPC **`promo_itens_vistos(shop, discount, itens)`** a cada leitura: grava a 1ª vez
+  que cada item/variação apareceu (`shopee_desconto_item_visto`, só via RPC) e apaga o que saiu
+  (re-inclusão conta como nova). Como a tela relê logo após "Adicionar produtos", o horário é
+  ~exato; incluído pelo Seller Center = hora da 1ª abertura seguinte. `inicial` = já estava na 1ª
+  leitura do desconto (data real desconhecida) → vai para o fim, na ordem da Shopee.
 - **Minha Promoção** = módulo **`v2.discount`** da Open API. Edge fn **`shopee-promocoes`**
   (verify_jwt + exige JWT `authenticated`/service role — chave publicável e o Bearer anon dos
   crons dão 401): `list` / `detalhe` / `item-promo` (leitura) e, com `confirmar=1`,

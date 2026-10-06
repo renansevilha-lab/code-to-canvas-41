@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, Undo2, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Clock, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, TrendingUp, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,9 @@ import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
 // EDITAR funciona no desconto EM ANDAMENTO (update_discount_item): preço
 // promocional e limite por comprador, sem recriar a promoção. Toda escrita
 // passa por prévia + confirmação — muda o preço público na hora.
+// Ordenação: "Mais vendidos" (vendas 30d, padrão) ou "Últimos adicionados"
+// (RPC promo_itens_vistos: 1ª vez que o item apareceu no desconto — a API da
+// Shopee não informa a data de inclusão).
 // ============================================================================
 
 interface Desconto {
@@ -48,6 +51,7 @@ interface Linha {
   key: string; item_id: number; model_id: number; nome: string; variacao: string | null;
   original: number; promo: number; estoque: number | null; limite: number;
   sku: string | null; imagem: string | null; primeiraDoItem: boolean;
+  pos: number; // posição na lista da Shopee (desempate de "Últimos adicionados")
 }
 
 // Busca por palavras soltas, sem acento e em qualquer ordem: "areia bumi" acha
@@ -186,6 +190,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
               original: num(m.model_original_price), promo: num(m.model_promotion_price),
               estoque: m.model_normal_stock ?? null, limite: num(it.purchase_limit),
               sku: vv?.sku ?? an?.sku_pai ?? null, imagem: an?.imagem_url ?? null, primeiraDoItem: idx === 0,
+              pos: linhas.length,
             });
           });
         } else {
@@ -194,6 +199,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
             original: num(it.item_original_price), promo: num(it.item_promotion_price),
             estoque: it.normal_stock ?? null, limite: num(it.purchase_limit),
             sku: an?.sku_pai ?? null, imagem: an?.imagem_url ?? null, primeiraDoItem: true,
+            pos: linhas.length,
           });
         }
       }
@@ -214,6 +220,23 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
     },
   });
   const bases = baseQ.data ?? new Map<string, McBase>();
+
+  // "Últimos adicionados": registra/lê a 1ª vez que cada item apareceu no desconto.
+  const vistoQ = useQuery({
+    queryKey: ["promo-shopee", "vistos", shopId, desconto.discount_id, detQ.dataUpdatedAt],
+    enabled: detQ.isSuccess,
+    staleTime: Infinity,
+    queryFn: async (): Promise<Map<string, Visto>> => {
+      const itens = linhas.map((l) => ({ item_id: l.item_id, model_id: l.model_id }));
+      const { data, error } = await supabaseExternal.rpc("promo_itens_vistos", {
+        p_shop_id: shopId, p_discount_id: desconto.discount_id, p_itens: itens,
+      });
+      if (error) throw error;
+      return new Map(((data ?? []) as Array<{ item_id: number; model_id: number; visto_em: string; inicial: boolean }>)
+        .map((r) => [`${r.item_id}:${r.model_id}`, { em: new Date(r.visto_em).getTime(), inicial: r.inicial }]));
+    },
+  });
+  const vistos = vistoQ.data ?? new Map<string, Visto>();
 
   const precoDe = (l: Linha) => precos.get(l.key) ?? l.promo;
   const limiteDe = (l: Linha) => limites.get(l.item_id) ?? l.limite;
@@ -368,6 +391,14 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
             </Button>
           );
         })}
+        <div className="flex-1" />
+        <span className="text-[11.5px] text-muted-foreground mr-1">Ordenar:</span>
+        {ORDENS.map((o) => (
+          <Button key={o.col} size="sm" variant={ord.col === o.col ? "default" : "outline"} className="h-7 text-[11.5px] px-2.5 gap-1"
+            title={o.titulo} onClick={() => setOrd({ col: o.col, dir: -1 })}>
+            <o.icone className="h-3.5 w-3.5" /> {o.rotulo}
+          </Button>
+        ))}
       </div>
 
       <div className="rounded-lg border overflow-x-auto">
@@ -394,7 +425,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
             ) : detQ.isError ? (
               <tr><td colSpan={12} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(detQ.error as Error).message}</td></tr>
             ) : agruparOrdenar(linhas.filter((l) => passaBusca(l, termos) && passaFaixa(faixa, calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa))),
-                (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa)),
+                (l) => valorOrd(ord.col, l, l.sku ? bases.get(l.sku) : undefined, precoDe(l), calcMc(l.sku ? bases.get(l.sku) : undefined, precoDe(l), tarifa), vistos.get(l.key)),
                 (l) => (l.sku ? bases.get(l.sku) : undefined)?.vendas_30d ?? null, ord.col, ord.dir)
               .map(({ l, primeiro, ultimo, nGrupo, vendasGrupo }) => {
               const base = l.sku ? bases.get(l.sku) : undefined;
@@ -414,6 +445,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
                           <div className="text-[11px] text-muted-foreground">
                             {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
                             {nGrupo > 1 && <span className="ml-1.5 text-[10.5px] rounded bg-muted px-1.5 py-px">{nGrupo} variações</span>}
+                            {ord.col === "recentes" && <Entrada v={vistos.get(l.key)} />}
                           </div>
                         </div>
                       </div>
@@ -421,6 +453,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
                       // demais variações do mesmo anúncio: só o que muda, recuado sob a foto
                       <div className="pl-[48px] text-[11.5px] text-muted-foreground min-w-[280px]">
                         <span className="font-mono">{l.sku ?? "sem SKU"}</span>{l.variacao ? ` · ${l.variacao}` : ""}
+                        {ord.col === "recentes" && <Entrada v={vistos.get(l.key)} />}
                       </div>
                     )}
                   </td>
@@ -481,6 +514,7 @@ function DetalheDesconto({ shopId, desconto }: { shopId: number; desconto: Desco
         {editavel
           ? "Edite o preço promo e o limite direto na tabela — nada vai para a Shopee até \"Revisar e aplicar\". A promoção continua a mesma (não precisa recriar)."
           : "Promoção encerrada — só consulta."}
+        {ord.col === "recentes" && " \"Últimos adicionados\" usa a 1ª vez que o app viu o item neste desconto (a Shopee não informa a data de inclusão); os que já estavam na 1ª leitura ficam no fim, na ordem da Shopee."}
         {" "}MC = preço − comissão Shopee (tabela vigente: abaixo de R$ 80 = 20% + R$ 4,50 por unidade) − imposto (efetivo 60 dias) − CMV.
       </p>
 
@@ -554,11 +588,29 @@ function CampoPreco({ valor, onMudar, alterado, inteiro }: {
 }
 
 // ---- ordenação da tabela (padrão: mais vendidos nos últimos 30 dias) --------
-type ColOrd = "vendas" | "mcpct" | "mc" | "desc" | "cheio" | "promo" | "cmv" | "estoque";
+type ColOrd = "vendas" | "recentes" | "mcpct" | "mc" | "desc" | "cheio" | "promo" | "cmv" | "estoque";
+type Visto = { em: number; inicial: boolean };
 
-function valorOrd(col: ColOrd, l: Linha, base: McBase | undefined, promo: number, mc: ReturnType<typeof calcMc>): number | null {
+const ORDENS: Array<{ col: ColOrd; rotulo: string; titulo: string; icone: typeof TrendingUp }> = [
+  { col: "vendas", rotulo: "Mais vendidos", titulo: "Unidades vendidas nos últimos 30 dias (soma das variações do anúncio)", icone: TrendingUp },
+  { col: "recentes", rotulo: "Últimos adicionados", titulo: "Os que entraram por último nesta promoção primeiro", icone: Clock },
+];
+
+const dataCurta = (ms: number) =>
+  new Date(ms).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+function Entrada({ v }: { v: Visto | undefined }) {
+  if (!v) return null;
+  return v.inicial
+    ? <span className="ml-1.5 text-[10.5px] text-muted-foreground" title="Já estava na promoção quando o app leu este desconto pela 1ª vez — data real de inclusão desconhecida">· já estava em {dataCurta(v.em)}</span>
+    : <span className="ml-1.5 text-[10.5px] rounded px-1.5 py-px font-medium" style={{ background: `${GREEN}18`, color: GREEN }} title="Quando o item apareceu neste desconto">entrou {dataCurta(v.em)}</span>;
+}
+
+function valorOrd(col: ColOrd, l: Linha, base: McBase | undefined, promo: number, mc: ReturnType<typeof calcMc>, visto?: Visto): number | null {
   switch (col) {
     case "vendas": return base ? num(base.vendas_30d) : null;
+    // segundos da 1ª leitura (os "inicial" vão para o fim) e, no empate, a ordem da Shopee
+    case "recentes": return visto ? (visto.inicial ? 0 : Math.floor(visto.em / 1000)) * 1e5 + (1e5 - Math.min(l.pos, 99999)) : null;
     case "mcpct": return mc ? mc.pct : null;
     case "mc": return mc ? mc.mc : null;
     case "desc": return l.original > 0 ? 1 - promo / l.original : null;
