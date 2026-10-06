@@ -8,6 +8,7 @@ import appCss from "../styles.css?url";
 import { AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
+import { AvisoSiteAntigo } from "@/components/AvisoSiteAntigo";
 import { useLogoutInatividade } from "@/hooks/useLogoutInatividade";
 import { useAuth } from "@/hooks/useAuth";
 import { PerfilProvider } from "@/hooks/usePerfil";
@@ -135,6 +136,7 @@ const queryClient = new QueryClient({
 function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
+      <AvisoSiteAntigo />
       <AuthGate>
         <PerfilProvider>
           <AppShell />
