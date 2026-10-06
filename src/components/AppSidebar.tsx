@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   Truck,
   FileBarChart,
+  FileText,
   Warehouse,
   PackagePlus,
   Radar,
@@ -58,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard, modulo: "dashboard" },
       { title: "Vendas por produto", url: "/vendas", icon: BarChart3, modulo: "dashboard" },
+      { title: "Relatórios", url: "/relatorios", icon: FileText, modulo: "dashboard" },
       { title: "Metas", url: "/metas", icon: Target, modulo: "dashboard" },
       { title: "Tendências", url: "/tendencias", icon: TrendingUp, modulo: "dashboard" },
       { title: "Anomalias", url: "/anomalias", icon: AlertTriangle, modulo: "dashboard", badgeKey: "anomalias" },
