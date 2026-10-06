@@ -83,6 +83,7 @@ export const MODULOS: Array<{ slug: string; label: string; desc: string }> = [
   { slug: "produtos", label: "Produtos", desc: "Catálogo, Produtos, Mapeamento SKUs, Amazon" },
   { slug: "ads", label: "Mídia & Canais", desc: "ADS Shopee, ADS Mercado Livre, Promoções" },
   { slug: "financeiro", label: "Financeiro", desc: "DRE, Fluxo de Caixa, Contas a Pagar, Carteira (inclui Devoluções)" },
+  { slug: "ia", label: "IA · Anúncios", desc: "Prompts e contextos do gerador de anúncios com IA" },
   { slug: "todos", label: "Administrador", desc: "Acesso total + gestão de usuários" },
 ];
 
@@ -123,6 +124,7 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/promocoes", "ads"],
   ["/flash-sale", "ads"],
   ["/promocoes-shopee", "ads"],
+  ["/ia/", "ia"],
   ["/", "dashboard"],
 ];
 
@@ -143,6 +145,7 @@ export function primeiraRotaPermitida(modulos: string[]): string {
     ["produtos", "/produtos-margem"],
     ["ads", "/ads-shopee"],
     ["devolucoes", "/devolucoes"],
+    ["ia", "/ia/prompts"],
   ];
   if (modulos.includes("todos")) return "/";
   for (const [slug, rota] of preferencia) {

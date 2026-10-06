@@ -46,6 +46,8 @@ import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as VendasRouteImport } from './routes/vendas'
+import { Route as IaContextosRouteImport } from './routes/ia.contextos'
+import { Route as IaPromptsRouteImport } from './routes/ia.prompts'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -232,6 +234,16 @@ const VendasRoute = VendasRouteImport.update({
   path: '/vendas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IaContextosRoute = IaContextosRouteImport.update({
+  id: '/ia/contextos',
+  path: '/ia/contextos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IaPromptsRoute = IaPromptsRouteImport.update({
+  id: '/ia/prompts',
+  path: '/ia/prompts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -271,6 +283,8 @@ export interface FileRoutesByFullPath {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/contextos': typeof IaContextosRoute
+  '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -310,6 +324,8 @@ export interface FileRoutesByTo {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/contextos': typeof IaContextosRoute
+  '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -350,6 +366,8 @@ export interface FileRoutesById {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/contextos': typeof IaContextosRoute
+  '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -391,6 +409,8 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/contextos'
+    | '/ia/prompts'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -430,6 +450,8 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/contextos'
+    | '/ia/prompts'
   id:
     | '__root__'
     | '/'
@@ -469,6 +491,8 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/contextos'
+    | '/ia/prompts'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -509,6 +533,8 @@ export interface RootRouteChildren {
   TendenciasRoute: typeof TendenciasRoute
   UsuariosRoute: typeof UsuariosRoute
   VendasRoute: typeof VendasRoute
+  IaContextosRoute: typeof IaContextosRoute
+  IaPromptsRoute: typeof IaPromptsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -772,6 +798,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ia/contextos': {
+      id: '/ia/contextos'
+      path: '/ia/contextos'
+      fullPath: '/ia/contextos'
+      preLoaderRoute: typeof IaContextosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ia/prompts': {
+      id: '/ia/prompts'
+      path: '/ia/prompts'
+      fullPath: '/ia/prompts'
+      preLoaderRoute: typeof IaPromptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -813,6 +853,8 @@ const rootRouteChildren: RootRouteChildren = {
   TendenciasRoute: TendenciasRoute,
   UsuariosRoute: UsuariosRoute,
   VendasRoute: VendasRoute,
+  IaContextosRoute: IaContextosRoute,
+  IaPromptsRoute: IaPromptsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

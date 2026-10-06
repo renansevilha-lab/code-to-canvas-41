@@ -31,6 +31,8 @@ import {
   Users,
   Clock,
   ChevronDown,
+  Sparkles,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import { usePerfil } from "@/hooks/usePerfil";
@@ -115,6 +117,14 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Reprocessar CMV", url: "/reprocessar-cmv", icon: Calculator, modulo: "financeiro" },
       { title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro" },
       { title: "Saldos MKT", url: "/carteira-saldos", icon: Wallet, modulo: "financeiro" },
+    ],
+  },
+  {
+    label: "IA · Anúncios",
+    cor: "oklch(0.8 0.12 300)",
+    items: [
+      { title: "Prompts", url: "/ia/prompts", icon: Sparkles, modulo: "ia" },
+      { title: "Contextos", url: "/ia/contextos", icon: Layers, modulo: "ia" },
     ],
   },
   {
