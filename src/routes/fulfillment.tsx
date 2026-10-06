@@ -25,12 +25,14 @@ import {
   Pencil,
   Archive,
   ArchiveRestore,
+  ClipboardList,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
+import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -146,7 +148,7 @@ function MKT_SOFT(mkt: string): string {
 }
 
 type MktFiltro = "todos" | "amazon" | "mercadolivre" | "shopee";
-type SubTab = "inventario" | "reposicao" | "envios";
+type SubTab = "inventario" | "reposicao" | "envios" | "tarefas";
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -221,7 +223,7 @@ type SearchParams = { tab: SubTab; mkt: MktFiltro; emp: EmpFiltro; q: string; so
 export const Route = createFileRoute("/fulfillment")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
     // Envios é a aba padrão (pedido do dono, 17/set): é o quadro que a equipe usa todo dia.
-    tab: s.tab === "inventario" ? "inventario" : s.tab === "reposicao" ? "reposicao" : "envios",
+    tab: s.tab === "inventario" ? "inventario" : s.tab === "reposicao" ? "reposicao" : s.tab === "tarefas" ? "tarefas" : "envios",
     emp: (["todas", "ACZ Pet", "SVL Store"].includes(s.emp as string) ? (s.emp as EmpFiltro) : "todas"),
     mkt: (["todos", "amazon", "mercadolivre", "shopee"].includes(s.mkt as string)
       ? (s.mkt as MktFiltro)
@@ -335,9 +337,12 @@ function FulfillmentPage() {
               <TabsTrigger value="envios" className="gap-1.5">
                 <Truck className="h-4 w-4" /> Envios
               </TabsTrigger>
+              <TabsTrigger value="tarefas" className="gap-1.5">
+                <ClipboardList className="h-4 w-4" /> Tarefas
+              </TabsTrigger>
             </TabsList>
 
-            {tab !== "envios" && (
+            {tab !== "envios" && tab !== "tarefas" && (
               <div className="flex flex-wrap items-center gap-2">
                 <MktSegment value={mkt} onChange={(m) => update({ mkt: m })} />
                 <EmpSegment value={search.emp} onChange={(e) => update({ emp: e })} />
@@ -376,6 +381,10 @@ function FulfillmentPage() {
 
           <TabsContent value="envios" className="mt-4">
             <EnviosTab ativo={tab === "envios"} />
+          </TabsContent>
+
+          <TabsContent value="tarefas" className="mt-4">
+            <TarefasTab ativo={tab === "tarefas"} />
           </TabsContent>
         </Tabs>
       </div>

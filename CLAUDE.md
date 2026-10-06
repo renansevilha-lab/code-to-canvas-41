@@ -1458,6 +1458,35 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   bloqueia parcela já lançada (pelo Tiny ou pelo app). Limite: o espelho `contas_pagar` atualiza
   a cada 15 min — conta lançada no Tiny nesse intervalo ainda não aparece.
 
+## 5.9.3 Fulfillment › Tarefas — contagem de inventário e organização (06/out/2026)
+
+Pedido do dono: além dos envios, a aba Fulfillment ganhou a sub-aba **Tarefas**
+(`?tab=tarefas`, `src/components/fulfillment/TarefasTab.tsx`) — quadro A fazer /
+Fazendo / Feito, com responsável (`equipe_membros`), prazo (atrasada em vermelho)
+e aviso no Discord (canal `fulfilment`, marcando o responsável) ao criar e ao
+concluir.
+- **Tipos:** `contagem` (lista de SKUs) · `organizacao` e `outro` (descrição +
+  checklist jsonb).
+- **Contagem:** produtos escolhidos por busca (nome/SKU) + filtros fornecedor /
+  marca / categoria / "só com saldo no Geral" (`view_inventario_produtos` =
+  simples e variações ativos, saldo do Geral do espelho `estoque_tiny`, foto;
+  `view_inventario_filtros`), "selecionar os N filtrados". `qtd_sistema` = saldo do
+  espelho NA CRIAÇÃO. Contagem **cega** por padrão (quem conta não vê o sistema).
+  Divergência pronta em `view_fulfillment_tarefa_itens.diferenca` e contadores no
+  card em `view_fulfillment_tarefas` (LATERAL).
+- **Ajuste no Tiny = passo separado, com confirmação** (decisão do dono): edge fn
+  **`fulfillment-tarefas`** v1 (verify_jwt + exige JWT de usuário) —
+  `ajuste-preview` relê o saldo do Geral AO VIVO (orçamento 20 s, `restantes`);
+  `ajuste-aplicar&confirmar=1` faz **balanço tipo B = quantidade contada** no
+  depósito Geral 604130012 (relê antes; igual = não lança), grava `ajuste_*` no
+  item, atualiza o espelho e avisa no Discord. Depósitos Full nunca são tocados.
+  Concluir a tarefa NÃO mexe no Tiny. Sem desfazer automático.
+- **Armadilha:** pedido já separado/embalado que ainda não baixou no Tiny está no
+  saldo mas não na prateleira — a tela avisa antes do ajuste.
+- Tabelas `fulfillment_tarefas` / `fulfillment_tarefa_itens` (RLS off, grant só
+  `authenticated`). Localização de prateleira NÃO existe no cadastro (só no
+  itens_json dos pedidos) — por isso não há filtro por localização.
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
@@ -1572,6 +1601,7 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
