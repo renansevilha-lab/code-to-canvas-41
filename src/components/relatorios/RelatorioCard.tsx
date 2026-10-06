@@ -1,136 +1,119 @@
-import { useId, useState } from "react";
-import { ChevronDown, FileText } from "lucide-react";
+import { useId } from "react";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { brl, horaSP, iconeDaCategoria, obj, type RelatorioLista } from "./comum";
-import { RelatorioFinanceiro, venceEm7d } from "./RelatorioFinanceiro";
-import { RelatorioCompras, resumoCompras } from "./RelatorioCompras";
-import { RelatorioAds, resumoAds } from "./RelatorioAds";
-import { RelatorioHtmlModal } from "./RelatorioHtmlModal";
+import { Chevron, IconeAgente, IconeRelogio, nomeDoAgente, quandoGerado, type RelatorioLista } from "./comum";
+import { agenteDef, ehV0, kindDe } from "./agentes";
 
-// Mapa agente → mini-KPIs do card fechado + componente do card aberto.
-// Agente novo = uma entrada aqui; sem entrada, o card aberto mostra só o
-// botão "Ver versão completa".
-interface MiniKpi { label: string; valor: string; tom?: "red" }
-interface AgenteDef {
-  mini: (rel: RelatorioLista) => MiniKpi[];
-  Detalhe: React.ComponentType<{ rel: RelatorioLista }>;
-}
-const AGENTES: Record<string, AgenteDef> = {
-  financeiro: {
-    mini: (rel) => {
-      const tot = obj(rel.resumo?.carteira_total);
-      const v7 = venceEm7d(rel.resumo);
-      return [
-        { label: "Saldo em conta", valor: brl(tot.saldo_em_conta) },
-        { label: "A receber", valor: brl(tot.a_receber) },
-        { label: "Vence em 7d", valor: brl(v7.valor), tom: v7.atrasadoQtd > 0 ? "red" : undefined },
-      ];
-    },
-    Detalhe: RelatorioFinanceiro,
-  },
-  compras: {
-    mini: (rel) => {
-      const c = resumoCompras(rel.resumo);
-      return [
-        { label: "Ruptura", valor: String(c.ruptura), tom: c.ruptura > 0 ? "red" : undefined },
-        { label: "Urgente", valor: String(c.urgente) },
-        { label: "Valor parado", valor: brl(c.valorParado) },
-      ];
-    },
-    Detalhe: RelatorioCompras,
-  },
-  ads: {
-    mini: (rel) => {
-      const a = resumoAds(rel.resumo);
-      if (a.v0) return [];
-      return [
-        { label: "Gasto ontem", valor: brl(a.gastoOntem) },
-        { label: "ROAS ontem", valor: a.roasOntem == null ? "—" : `${a.roasOntem.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}x` },
-        { label: "Alertas", valor: String(a.alertas), tom: a.alta > 0 ? "red" : undefined },
-      ];
-    },
-    Detalhe: RelatorioAds,
-  },
-};
+// Card do histórico (design "RelatorioCard"): fechado = ícone, título, hora,
+// destaque e 3 mini-KPIs à direita (embaixo no celular); aberto = o detalhe do
+// agente + rodapé "Gerado às … pelo agente …" e "Ver versão completa".
 
 export function RelatorioCard({
-  rel, aberto, onToggle,
+  rel, aberto, onToggle, onCompleta, mobile,
 }: {
   rel: RelatorioLista;
   aberto: boolean;
   onToggle: () => void;
+  onCompleta: () => void;
+  mobile?: boolean;
 }) {
-  const def = AGENTES[rel.agente];
-  const Icone = iconeDaCategoria(rel.categoria);
+  const def = agenteDef(rel.agente);
+  const v0 = ehV0(rel);
+  const pendente = def?.pendente?.(rel) ?? null;
+  const minis = v0 ? [] : def?.mini(rel) ?? [];
   const corpoId = useId();
-  const [htmlAberto, setHtmlAberto] = useState(false);
-  // monta o conteúdo na primeira abertura e mantém (a transição de fechar fica suave)
-  const [montado, setMontado] = useState(aberto);
-  if (aberto && !montado) setMontado(true);
-  const minis = def?.mini(rel) ?? [];
+  const quando = quandoGerado(rel.gerado_em);
 
   return (
-    <div className={cn(
-      "rounded-xl border bg-card transition-colors",
-      aberto ? "border-primary/60 ring-1 ring-primary/30" : "hover:border-foreground/20",
-    )}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={aberto}
-        aria-controls={corpoId}
-        className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className="h-9 w-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
-          <Icone className="h-4.5 w-4.5" />
-        </span>
-        <span className="flex-1 min-w-0 flex flex-col gap-0.5">
-          <span className="flex items-baseline gap-2 min-w-0">
-            <span className="font-semibold text-sm truncate">{rel.titulo ?? rel.agente}</span>
-            {rel.gerado_em && <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{horaSP(rel.gerado_em)}</span>}
+    <div className="rounded-[10px] bg-(--rl-surface) overflow-hidden border"
+      style={{ borderColor: aberto ? "var(--rl-border-strong)" : "var(--rl-border)" }}>
+      {pendente && (
+        <div className="flex items-center gap-2 px-[18px] py-2 bg-(--rl-amber-soft) text-(--rl-amber) text-[12.5px] font-medium border-b border-(--rl-border)">
+          <IconeRelogio /> <span>{pendente}</span>
+        </div>
+      )}
+      <button type="button" onClick={onToggle} aria-expanded={aberto} aria-controls={corpoId}
+        className="w-full text-left grid gap-3.5 items-start cursor-pointer hover:bg-(--rl-surface-2) text-(--rl-text)"
+        style={{
+          gridTemplateColumns: mobile || minis.length === 0 ? "32px minmax(0,1fr) 18px" : "32px minmax(0,1fr) auto 18px",
+          padding: mobile ? "14px" : "16px 18px",
+        }}>
+        <IconeAgente kind={kindDe(rel)} />
+        <span className="min-w-0 flex flex-col gap-1.5">
+          <span className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[15px] font-semibold tracking-[-0.005em]">{rel.titulo ?? nomeDoAgente(rel.agente)}</span>
+            {quando && <span className="text-[12px] text-(--rl-text-3)">{quando}</span>}
+            {v0 && <span className="text-[11px] font-medium px-[7px] py-px rounded-full bg-(--rl-gray-soft) text-(--rl-text-2)">formato antigo</span>}
           </span>
-          {rel.destaque && (
-            <span className="text-[12.5px] text-muted-foreground line-clamp-2">{rel.destaque}</span>
+          <span className="text-[14px] leading-normal max-w-[74ch] [text-wrap:pretty]" style={{ color: v0 ? "var(--rl-text-3)" : "var(--rl-text)" }}>
+            {v0 ? "Relatório em formato antigo: só a versão completa está disponível." : rel.destaque ?? "—"}
+          </span>
+          {mobile && minis.length > 0 && (
+            <span className="grid grid-cols-3 gap-2.5 mt-1.5 pt-2.5 border-t border-(--rl-border)">
+              {minis.map((k) => (
+                <span key={k.label} className="min-w-0">
+                  <span className="block text-[11.5px] text-(--rl-text-3)">{k.label}</span>
+                  <span className="block text-[15px] font-semibold" style={{ color: k.risco ? "var(--rl-red)" : undefined }}>{k.valor}</span>
+                </span>
+              ))}
+            </span>
           )}
         </span>
-        {minis.length > 0 && (
-          <span className="hidden md:flex items-stretch gap-4 shrink-0">
-            {minis.map((m) => (
-              <span key={m.label} className="flex flex-col items-end">
-                <span className="text-[10.5px] uppercase tracking-wide text-muted-foreground whitespace-nowrap">{m.label}</span>
-                <span className={cn("text-sm font-bold tabular-nums whitespace-nowrap", m.tom === "red" && "text-red-700 dark:text-red-400")}>
-                  {m.valor}
-                </span>
+        {!mobile && minis.length > 0 && (
+          <span className="grid grid-cols-[repeat(3,116px)] gap-3 pt-0.5">
+            {minis.map((k) => (
+              <span key={k.label} className="min-w-0">
+                <span className="block text-[12px] text-(--rl-text-3) whitespace-nowrap">{k.label}</span>
+                <span className="block text-[16px] font-semibold whitespace-nowrap" style={{ color: k.risco ? "var(--rl-red)" : undefined }}>{k.valor}</span>
               </span>
             ))}
           </span>
         )}
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200", aberto && "rotate-180")} />
+        <span className="text-(--rl-text-3) mt-1.5"><Chevron aberto={aberto} /></span>
       </button>
 
-      {/* corpo: transição de altura com grid-rows 0fr → 1fr */}
-      <div
-        id={corpoId}
-        role="region"
-        aria-hidden={!aberto}
-        className={cn("grid transition-[grid-template-rows] duration-300 ease-out", aberto ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
-      >
-        <div className="overflow-hidden min-w-0">
-          {montado && (
-            <div className="border-t px-4 py-4 flex flex-col gap-4" inert={!aberto}>
-              {def ? <def.Detalhe rel={rel} /> : null}
-              <div className="flex justify-end">
-                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => setHtmlAberto(true)}>
-                  <FileText className="h-3.5 w-3.5" /> Ver versão completa
-                </Button>
-              </div>
+      {aberto && (
+        <div id={corpoId} className="border-t border-(--rl-border) flex flex-col gap-6"
+          style={{ padding: mobile ? "16px 14px" : "22px 24px 18px" }}>
+          {v0 || !def ? (
+            <div className="flex gap-3 items-start text-[13.5px] leading-normal text-(--rl-text-2)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-(--rl-text-3)" aria-hidden>
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M16 13H8" /><path d="M16 17H8" />
+              </svg>
+              <span>Este relatório foi gerado antes dos blocos (KPIs, tabelas, alertas). Só existe a versão completa em HTML.</span>
             </div>
+          ) : (
+            <def.Detalhe rel={rel} mobile={mobile} />
           )}
+          <RodapeRelatorio rel={rel} onCompleta={onCompleta} />
         </div>
-      </div>
-      {htmlAberto && <RelatorioHtmlModal rel={rel} open={htmlAberto} onOpenChange={setHtmlAberto} />}
+      )}
     </div>
+  );
+}
+
+export function RodapeRelatorio({ rel, onCompleta }: { rel: RelatorioLista; onCompleta: () => void }) {
+  const quando = quandoGerado(rel.gerado_em).replace(/^gerado /, "");
+  return (
+    <div className="flex justify-between items-center gap-3 flex-wrap pt-4 border-t border-(--rl-border)">
+      <div className="text-[12px] text-(--rl-text-3)">
+        {quando ? `Gerado ${quando} ` : ""}pelo agente {nomeDoAgente(rel.agente)}. Só análise e sugestão; o app não executa nada.
+      </div>
+      <BotaoCompleta onClick={onCompleta} />
+    </div>
+  );
+}
+
+export function BotaoCompleta({ onClick, compacto }: { onClick: () => void; compacto?: boolean }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="flex items-center gap-1.5 text-[13px] font-medium rounded-[7px] border border-(--rl-border-strong) bg-(--rl-surface) text-(--rl-text) cursor-pointer hover:bg-(--rl-surface-2)"
+      style={{ padding: compacto ? "6px 10px" : "7px 12px" }}>
+      Ver versão completa
+      {!compacto && (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        </svg>
+      )}
+    </button>
   );
 }
