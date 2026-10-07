@@ -17,10 +17,11 @@ const CONTEUDO: Record<"amazon" | "tiktok", { nome: string; resumo: string; linh
       { ok: true, texto: "Criar/encerrar preço promocional com agenda (como a Minha Promoção da Shopee), com prévia e confirmação" },
       { ok: true, texto: "Taxas reais da Amazon no cálculo da margem (hoje é estimativa de 12% + FBA por faixa)" },
       { ok: false, texto: "Criar Oferta Relâmpago, Cupom ou desconto Prime — só no Seller Central" },
-      { ok: null, texto: "Campanhas de anúncio (Sponsored Products): a conexão está pronta, mas nenhuma conta foi conectada ainda" },
+      { ok: null, texto: "Campanhas de anúncio (Sponsored Products): a conexão está pronta, mas nenhuma conta foi conectada ainda (teste de 07/out: 0 contas)" },
     ],
     falta: [
-      "Adicionar os papéis \"Pricing\" e \"Product Listing\" nos apps da Amazon (Ottz Analytics e SISTEMINHA I) e reautorizar as duas contas",
+      "Teste de 07/out: leitura de promoções e de preço LIBERADA nas duas contas (ACZ tem descontos, ofertas e cupons ativos; SVL nenhum)",
+      "Para criar preço promocional: o \"Token de comerciante\" (Merchant Token, começa com A…) de cada conta — Seller Central › Configurações › Informações da conta",
       "Para os ADS: criar o app da Amazon Ads API e conectar ACZ e SVL",
     ],
   },

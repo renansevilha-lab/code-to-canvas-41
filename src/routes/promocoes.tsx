@@ -6,6 +6,7 @@ import { LOJAS } from "@/components/promocoes/comum";
 import { PromocoesShopee, type AbaShopee } from "@/components/promocoes/PromocoesShopee";
 import { PromocoesML } from "@/components/promocoes/PromocoesML";
 import { PromocoesEmBreve } from "@/components/promocoes/PromocoesEmBreve";
+import { PromocoesTikTok } from "@/components/promocoes/PromocoesTikTok";
 
 // ============================================================================
 // Promoções — todas as promoções num lugar só (07/out/2026, pedido do dono),
@@ -73,7 +74,7 @@ function PromocoesPage() {
           <PromocoesEmBreve marketplace="amazon" />
         </TabsContent>
         <TabsContent value="tiktok" className="mt-5">
-          <PromocoesEmBreve marketplace="tiktok" />
+          <PromocoesTikTok />
         </TabsContent>
       </Tabs>
     </div>

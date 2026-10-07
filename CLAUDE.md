@@ -1338,7 +1338,29 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Promoção / Relâmpago
 (`?aba=minha|relampago&loja=`; componente `PromocoesShopee`; a antiga "Relâmpago manual" —
 página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Livre** = Central de Promoções
-(`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** e **TikTok** = `PromocoesEmBreve` (estudo).
+(`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** = `PromocoesEmBreve` (estudo) e **TikTok** =
+`PromocoesTikTok` (abaixo).
+- **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
+  `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
+  **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +
+  promoções (`POST /promotion/202309/activities/search`) → **`tiktok_promocoes`** e, das
+  ONGOING/NOT_START, os produtos (`GET /promotion/202309/activities/{id}`) → **`tiktok_promocao_itens`**
+  (PRODUCT ou VARIATION; `sku_id ''` = produto inteiro). `?modulo=sonda` = respostas cruas. Cron
+  **151** `tiktok-promocoes-sync` (`33 10,16,22 * * *`, Bearer publicável) + botão "Sincronizar".
+  Margem em **`view_tiktok_produtos_mc`**: preço × (1 − `taxa_pct` − `imp_pct`) − CMV de hoje
+  (`cmv_na_data`), com taxa/imposto EFETIVOS de **`view_tiktok_taxas`** (120 d da
+  `view_margem_pedido_v2`, marketplace tiktok: taxa = 1 − recebido/venda ≈ 35%, imposto ≈ 10%) e
+  vendas 30d de `tiktok_pedido_itens` (1 linha = 1 unidade, sem brinde/cancelado). Medido: 116 SKUs,
+  115 com CMV; as 4 promoções da loja estavam EXPIRED — promoção encerrada devolve `products` vazio,
+  então o formato dos itens de promoção ATIVA ainda não foi visto ao vivo (conferir no 1º sync com
+  promoção rodando). Ids sempre texto (o parse protege números de 16+ dígitos). **Etapa 2 (criar
+  FIXED_PRICE/DIRECT_DISCOUNT, pôr/tirar produto, desativar) NÃO existe** — exige confirmação do dono.
+- **Amazon — teste de permissões (07/out/2026), edge fn `amazon-promocoes` v2 (só diagnóstico,
+  `?modulo=teste[&conta=acz|svl]`):** Promotions API 2025-12-01 (`marketplaceIds` obrigatório) e
+  Pricing v0 **liberadas** nas duas contas (ACZ com PRICE_DISCOUNT/DEAL/COUPON ativos; SVL 0).
+  Listings Items **não testável**: `oauth_tokens_amazon.seller_id` NÃO é o Merchant Token (`A…`) que a
+  Listings exige no path — falta o dono informar o token de cada conta. `oauth_tokens_amazon_ads`
+  vazio = ADS da Amazon não conectado.
 `/promocoes-shopee`, `/promocoes-ml` e `/flash-sale` só redirecionam (links antigos).
 Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
 `/flash-sale` redirecionava para a aba Relâmpago.
@@ -1686,6 +1708,8 @@ clone em `C:\dev\an-ncio-m-gico`) vem para dentro da gestão em 4 fases. Fase 1
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `tiktok-promocoes` | v1 (deploy 2) | Promoções TikTok ACZ, só leitura: `sync` (catálogo + promoções → espelho) e `sonda`. Cron 151 — ver §5.9.1 |
+| `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
