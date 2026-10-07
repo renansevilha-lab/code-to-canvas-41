@@ -1,22 +1,24 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, Loader2, RefreshCw, Search, Tag, X } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Search, Tag, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { FAIXAS_MC, Foto, GREEN, AMBER, RED, corMc, num } from "./comum";
+import { AdicionarProdutosDialog, ItensPromocao, NovaPromocaoDialog, encerrarPromocao } from "./TikTokAcoes";
 
 // ============================================================================
-// Promoções TikTok Shop — loja ACZ (07/out/2026, etapa 1 = leitura).
+// Promoções TikTok Shop — loja ACZ (07/out/2026; etapa 1 = leitura, etapa 2 =
+// escrita no mesmo dia: criar, pôr/tirar produtos e encerrar — TikTokAcoes.tsx).
 // Espelho gravado pela edge fn tiktok-promocoes?modulo=sync (cron 151, 3×/dia +
 // botão): catálogo ativo (tiktok_produtos) e promoções (tiktok_promocoes /
 // _itens). Margem no banco (view_tiktok_produtos_mc): preço × (1 − taxa
 // efetiva − imposto efetivo, medidos nos pedidos TikTok de 120 dias) − CMV.
-// Criar/editar promoção pela API fica para a etapa 2.
 // ============================================================================
 
 interface ProdutoMc {
@@ -63,6 +65,11 @@ export function PromocoesTikTok() {
   const [faixa, setFaixa] = useState("todas");
   const [ord, setOrd] = useState<Ord>("vendas");
   const [sincronizando, setSincronizando] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [novaAberta, setNovaAberta] = useState(false);
+  const [adicionarAberto, setAdicionarAberto] = useState(false);
+  const [expandida, setExpandida] = useState<string | null>(null);
+  const [encerrando, setEncerrando] = useState<string | null>(null);
   const termos = useMemo(() => semAcento(busca).split(/\s+/).filter(Boolean), [busca]);
 
   const prodQ = useQuery({
@@ -107,6 +114,17 @@ export function PromocoesTikTok() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [produtos, termos, faixa, ord]);
 
+  const porSku = useMemo(() => new Map(produtos.map((p) => [p.sku_id, p])), [produtos]);
+  const porProduto = useMemo(() => {
+    const m = new Map<string, ProdutoMc>();
+    for (const p of produtos) if (!m.has(p.product_id)) m.set(p.product_id, p);
+    return m;
+  }, [produtos]);
+  const selecionados = useMemo(() => produtos.filter((p) => sel.has(p.sku_id)), [produtos, sel]);
+  const todosVisiveisMarcados = lista.length > 0 && lista.every((p) => sel.has(p.sku_id));
+  const alternar = (sku: string) => setSel((s) => { const n = new Set(s); if (n.has(sku)) n.delete(sku); else n.add(sku); return n; });
+  const recarregar = () => { void qc.invalidateQueries({ queryKey: ["promocoes-tiktok"] }); };
+
   async function rodarSync() {
     setSincronizando(true);
     try {
@@ -132,10 +150,15 @@ export function PromocoesTikTok() {
             </span>
           )}
         </div>
-        <Button size="sm" variant="outline" className="h-8 gap-1.5" disabled={sincronizando} onClick={() => void rodarSync()}>
-          {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Sincronizar com o TikTok
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="h-8 gap-1.5" disabled={sincronizando} onClick={() => void rodarSync()}>
+            {sincronizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Sincronizar com o TikTok
+          </Button>
+          <Button size="sm" className="h-8 gap-1.5" onClick={() => setNovaAberta(true)}>
+            <Plus className="h-3.5 w-3.5" />Nova promoção
+          </Button>
+        </div>
       </div>
 
       {/* Promoções da loja */}
@@ -149,13 +172,33 @@ export function PromocoesTikTok() {
           <div className="rounded-lg border divide-y">
             {promocoes.map((p) => {
               const st = STATUS_PROMO[p.status ?? ""] ?? { rotulo: p.status ?? "—", cor: "#64748B" };
+              const aberta = p.status === "ONGOING" || p.status === "NOT_START";
+              const exp = expandida === p.activity_id;
               return (
-                <div key={p.activity_id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-[13px]">
-                  <Tag className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="font-medium flex-1 min-w-0 truncate">{p.titulo ?? p.activity_id}</span>
-                  <span className="text-[11.5px] text-muted-foreground">{TIPO_PROMO[p.tipo ?? ""] ?? p.tipo} · {p.product_level === "VARIATION" ? "por variação" : "por produto"}</span>
-                  <span className="text-[11.5px] text-muted-foreground whitespace-nowrap">{dataBR(p.inicio)} → {dataBR(p.fim)}</span>
-                  <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded" style={{ background: `${st.cor}18`, color: st.cor }}>{st.rotulo}</span>
+                <div key={p.activity_id}>
+                  <div className="flex flex-wrap items-center gap-3 px-3 py-2 text-[13px]">
+                    {aberta ? (
+                      <button type="button" className="text-muted-foreground hover:text-foreground" title="Ver produtos"
+                        onClick={() => setExpandida(exp ? null : p.activity_id)}>
+                        {exp ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
+                    ) : <Tag className="h-4 w-4 text-muted-foreground shrink-0" />}
+                    <span className="font-medium flex-1 min-w-0 truncate">{p.titulo ?? p.activity_id}</span>
+                    <span className="text-[11.5px] text-muted-foreground">{TIPO_PROMO[p.tipo ?? ""] ?? p.tipo} · {p.product_level === "VARIATION" ? "por variação" : "por produto"}</span>
+                    <span className="text-[11.5px] text-muted-foreground whitespace-nowrap">{dataBR(p.inicio)} → {dataBR(p.fim)}</span>
+                    <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded" style={{ background: `${st.cor}18`, color: st.cor }}>{st.rotulo}</span>
+                    {aberta && (
+                      <Button size="sm" variant="outline" className="h-7 text-[11.5px] px-2" disabled={encerrando === p.activity_id}
+                        onClick={async () => {
+                          setEncerrando(p.activity_id);
+                          if (await encerrarPromocao(p)) recarregar();
+                          setEncerrando(null);
+                        }}>
+                        {encerrando === p.activity_id && <Loader2 className="h-3 w-3 animate-spin mr-1" />}Encerrar
+                      </Button>
+                    )}
+                  </div>
+                  {exp && <ItensPromocao promo={p} produtosPorSku={porSku} produtosPorProduto={porProduto} onMudou={recarregar} />}
                 </div>
               );
             })}
@@ -192,10 +235,25 @@ export function PromocoesTikTok() {
           ))}
         </div>
 
+        {sel.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-[12.5px]" style={{ borderColor: AMBER }}>
+            <b>{sel.size} SKU(s) selecionado(s)</b>
+            <Button size="sm" className="h-7 text-[12px]" onClick={() => setAdicionarAberto(true)}>Adicionar à promoção…</Button>
+            <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setSel(new Set())}>Limpar seleção</Button>
+          </div>
+        )}
         <div className="rounded-lg border overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="border-b bg-muted/40 text-muted-foreground text-[10.5px] uppercase tracking-wide">
+                <th className="px-2 py-2 w-8">
+                  <Checkbox checked={todosVisiveisMarcados} title="Selecionar os filtrados"
+                    onCheckedChange={(v) => setSel((s) => {
+                      const n = new Set(s);
+                      for (const p of lista) { if (v === true) n.add(p.sku_id); else n.delete(p.sku_id); }
+                      return n;
+                    })} />
+                </th>
                 <th className="text-left font-medium px-3 py-2">Produto</th>
                 <th className="text-right font-medium px-2 py-2">Preço</th>
                 <th className="text-right font-medium px-2 py-2" title="Custo do produto hoje (kit = soma dos componentes)">CMV</th>
@@ -208,15 +266,16 @@ export function PromocoesTikTok() {
             </thead>
             <tbody>
               {prodQ.isLoading ? (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</td></tr>
+                <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</td></tr>
               ) : prodQ.isError ? (
-                <tr><td colSpan={8} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(prodQ.error as Error).message}</td></tr>
+                <tr><td colSpan={9} className="px-3 py-6 text-center" style={{ color: RED }}>Falha: {(prodQ.error as Error).message}</td></tr>
               ) : lista.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
                   {produtos.length === 0 ? "Nenhum produto — clique em Sincronizar com o TikTok." : "Nada com esses filtros."}
                 </td></tr>
               ) : lista.map((p) => (
-                <tr key={p.sku_id} className="border-b last:border-0">
+                <tr key={p.sku_id} className={cn("border-b last:border-0", sel.has(p.sku_id) && "bg-muted/40")}>
+                  <td className="px-2 py-1.5"><Checkbox checked={sel.has(p.sku_id)} onCheckedChange={() => alternar(p.sku_id)} /></td>
                   <td className="px-3 py-1.5">
                     <div className="flex items-center gap-2.5 min-w-[280px]">
                       <Foto url={p.foto} size={38} />
@@ -255,9 +314,19 @@ export function PromocoesTikTok() {
         </div>
         <p className="text-[11.5px] text-muted-foreground">
           Leitura do TikTok (sincroniza 3×/dia — 07h33, 13h33 e 19h33 — e pelo botão). MC = preço − taxas TikTok efetivas (comissão, frete e taxas, medidas no
-          recebido real) − imposto efetivo − CMV de hoje. Criar e editar promoções por aqui é a próxima etapa.
+          recebido real) − imposto efetivo − CMV de hoje. Toda alteração no TikTok mostra a margem antes e fica registrada.
         </p>
       </div>
+
+      {novaAberta && (
+        <NovaPromocaoDialog onFechar={() => setNovaAberta(false)}
+          onCriada={() => { setNovaAberta(false); recarregar(); }} />
+      )}
+      {adicionarAberto && (
+        <AdicionarProdutosDialog itens={selecionados} promocoes={promocoes}
+          onFechar={() => setAdicionarAberto(false)}
+          onAplicado={() => { setAdicionarAberto(false); setSel(new Set()); recarregar(); }} />
+      )}
     </div>
   );
 }

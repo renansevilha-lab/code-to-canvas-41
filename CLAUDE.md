@@ -1339,7 +1339,7 @@ sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Pro
 (`?aba=minha|relampago&loja=`; componente `PromocoesShopee`; a antiga "Relâmpago manual" —
 página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Livre** = Central de Promoções
 (`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** = `PromocoesEmBreve` (estudo) e **TikTok** =
-`PromocoesTikTok` (abaixo).
+`PromocoesTikTok` + `TikTokAcoes` (abaixo).
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +
@@ -1353,8 +1353,22 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   vendas 30d de `tiktok_pedido_itens` (1 linha = 1 unidade, sem brinde/cancelado). Medido: 116 SKUs,
   115 com CMV; as 4 promoções da loja estavam EXPIRED — promoção encerrada devolve `products` vazio,
   então o formato dos itens de promoção ATIVA ainda não foi visto ao vivo (conferir no 1º sync com
-  promoção rodando). Ids sempre texto (o parse protege números de 16+ dígitos). **Etapa 2 (criar
-  FIXED_PRICE/DIRECT_DISCOUNT, pôr/tirar produto, desativar) NÃO existe** — exige confirmação do dono.
+  promoção rodando). Ids sempre texto (o parse protege números de 16+ dígitos).
+- **TikTok — etapa 2, ESCRITA (07/out/2026, autorizada pelo dono):** `tiktok-promocoes` v2 (deploy 3),
+  POST com body JSON: `criar` (POST /activities: title, activity_type FIXED_PRICE|DIRECT_DISCOUNT,
+  begin/end em segundos, product_level), `editar` (PUT /activities/{id}), `produtos` (PUT
+  /activities/{id}/products, lotes de 300: `{id, skus:[{id, activity_price_amount "x.xx" | discount
+  "N", quantity_limit, quantity_per_user}]}` — `-1` = sem limite; por PRODUTO o valor vai no produto),
+  `remover` (DELETE …/products `{product_ids, sku_ids}`) e `encerrar` (POST …/deactivate, sem volta).
+  **Sem `confirmar=1` = prévia** (MC por item calculada na função com taxa/imposto/CMV da
+  `view_tiktok_produtos_mc`; bloqueia preço ≥ atual e desconto > 50% sem `forcar`; avisa "sai da
+  promoção X"). Com `confirmar=1` exige JWT de usuário (a chave publicável dá 401 — testado), não
+  retenta 5xx (POST repetido criaria promoção em dobro), grava em **`tiktok_promocao_acoes`** (enviado,
+  resposta, usuário) e relê a promoção para o espelho. Nomes dos campos vêm da biblioteca EcomPHP +
+  doc (a página oficial é JS): **o 1º uso real confirma o formato** — se a TikTok recusar, a resposta
+  está em `tiktok_promocao_acoes.resposta`. Front: `src/components/promocoes/TikTokAcoes.tsx`
+  ("Nova promoção", seleção na tabela → "Adicionar à promoção…" com prévia de margem, expandir a
+  promoção → tirar produto, "Encerrar").
 - **Amazon — teste de permissões (07/out/2026), edge fn `amazon-promocoes` v2 (só diagnóstico,
   `?modulo=teste[&conta=acz|svl]`):** Promotions API 2025-12-01 (`marketplaceIds` obrigatório) e
   Pricing v0 **liberadas** nas duas contas (ACZ com PRICE_DISCOUNT/DEAL/COUPON ativos; SVL 0).
@@ -1708,7 +1722,7 @@ clone em `C:\dev\an-ncio-m-gico`) vem para dentro da gestão em 4 fases. Fase 1
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
-| `tiktok-promocoes` | v1 (deploy 2) | Promoções TikTok ACZ, só leitura: `sync` (catálogo + promoções → espelho) e `sonda`. Cron 151 — ver §5.9.1 |
+| `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
