@@ -4,6 +4,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 // Mantida só para links/favoritos antigos.
 export const Route = createFileRoute("/flash-sale")({
   beforeLoad: () => {
-    throw redirect({ to: "/promocoes-shopee", search: { aba: "relampago", loja: 522186766 } });
+    throw redirect({ to: "/promocoes", search: { mkt: "shopee", aba: "relampago", loja: 522186766 } });
   },
 });

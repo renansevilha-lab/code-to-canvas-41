@@ -305,7 +305,7 @@ fantasma** (motivos `buyer_cancel_express`, `mediations`,
 | `produto_embalagem` | Cadastro recorrente de embalagem por SKU — pré-preenche a conferência da próxima compra |
 | `notas_cancelados` | Pedidos **cancelados** do mês (todos os marketplaces), com ou sem NF. Populada pela edge function `nf-devolucao` (varredura por cron). Lista de trabalho da aba **Devoluções** = `finalidade_nf='1' AND id_nota_fiscal IS NOT NULL` (**situação 3 = NF cancelada, não precisa devolução**; 6/7 = viva). Campos: `precisa_devolucao` (marcação), `devolucao_emitida`+`id_nota_devolucao` (preenchidos pelo módulo `emitir`). GRANT select/update p/ anon+authenticated |
 | `view_margem_pedido_v2.modo_envio` | **10/set:** coluna nova (baseline md5 idêntico). Shopee = `opcao_envio` cru (Entrega Rápida, Shopee Xpress, Full, Retirada pelo Comprador, Turbo); ML = rótulo de `logistica_tipo` (fulfillment→**Full**, self_service→**Flex**, xd_drop_off/drop_off→**Agência**, cross_docking→**Coleta**); Amazon = Standard/Expedited (velocidade, não modo). Filtro "Envio" e coluna em Pedidos Integrados |
-| `reprocessar_cmv_periodo(sku, de, ate, custo?, por?, obs?)` | **10/set:** reprocesso de CMV por período honrando `cmv_manual` (vigência). Se `custo` vier, grava em `cmv_manual` desde `de`; recongela `pedido_item_cmv` do SKU (e kits que o contêm) entre as datas com `cmv_na_data(sku, data_pedido)` = manual vigente > cadastro (kit-aware). **Por que existe:** o congelado vence o manual e o cron `cmv-congelar-novos` (15 min) congela tudo — então `cmv_manual` sozinho NUNCA mudava pedido já lançado (a tabela estava vazia, ninguém usava). `fn_cmv_congelar_novos` também passou a usar `cmv_na_data`. DRE/PI mudam na hora (leem a view); `view_kpi_pedidos_dia` (matview) em ≤20 min. A antiga `reprocessar_cmv` (tela `/reprocessar-cmv`) segue ignorando o manual |
+| `reprocessar_cmv_periodo(sku, de, ate, custo?, por?, obs?)` | **10/set:** reprocesso de CMV por período honrando `cmv_manual` (vigência). Se `custo` vier, grava em `cmv_manual` desde `de`; recongela `pedido_item_cmv` do SKU (e kits que o contêm) entre as datas com `cmv_na_data(sku, data_pedido)` = manual vigente > cadastro (kit-aware). **Por que existe:** o congelado vence o manual e o cron `cmv-congelar-novos` (15 min) congela tudo — então `cmv_manual` sozinho NUNCA mudava pedido já lançado (a tabela estava vazia, ninguém usava). `fn_cmv_congelar_novos` também passou a usar `cmv_na_data`. DRE/PI mudam na hora (leem a view); `view_kpi_pedidos_dia` (matview) em ≤20 min. A antiga `reprocessar_cmv` (tela `/reprocessar-cmv`) segue ignorando o manual. **07/out/2026 — timeout corrigido:** a versão anterior varria TODOS os pedidos convertendo o fuso de cada um (sem índice) e calculava `cmv_na_data` por pedido: 5+ s com o banco carregado, estourando os 8 s do `authenticated` ("Falha ao reprocessar o CMV — Timeout" no PI). Agora: SKUs-alvo uma vez (SKU + kits que o contêm), itens desses SKUs, pedido pela PK com filtro em `timestamptz` (fuso só nos que casam) e custo por SKU×dia — 5,3 s → 0,3 s em 3 meses do 15984, md5 idêntico (2.175 pares) |
 | `view_entrega_rapida_pendentes` | Pedidos Shopee "Entrega Rápida" ainda não coletados (1 linha/pedido: loja, status Shopee, situação Tiny, `dias_ate_prazo`, TAG, etiqueta impressa/no cache). Fonte do aviso das 12h10 |
 | `view_monitoramento_lotes` | Cards do `/monitoramento` (hoje, Shopee, single-SKU). **10/set:** ganhou `prazo` (min `ship_by_date` da TAG) e `pedidos_com_prazo`. O peso do produto NÃO existe no cadastro — o front extrai do nome (`src/lib/prazo.ts` → `extrairPeso`, última ocorrência de número+kg/g/ml/l) |
 | `get_kpis_fluxo_caixa()`, `get_projecao_fluxo_caixa(dias)`, `get_pedidos_resumo(inicio, fim)`, `get_dashboard_kpis()` | Agregações financeiras prontas |
@@ -1334,8 +1334,14 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 
 ## 5.9.1 Promoções Shopee — Minha Promoção + Relâmpago (30/set/2026)
 
-Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
-`/flash-sale` redireciona para a aba Relâmpago.
+**Hub `/promocoes` (07/out/2026, pedido do dono):** um item de menu só, "Promoções", com uma
+sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Promoção / Relâmpago /
+Relâmpago manual (`?aba=minha|relampago|manual&loja=`; componentes `PromocoesShopee`,
+`RelampagoManual` = a antiga página `/promocoes` de 01/ago), **Mercado Livre** = Central de Promoções
+(`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** e **TikTok** = `PromocoesEmBreve` (estudo).
+`/promocoes-shopee`, `/promocoes-ml` e `/flash-sale` só redirecionam (links antigos).
+Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
+`/flash-sale` redirecionava para a aba Relâmpago.
 - **"Atualizar da Shopee" (06/out/2026):** além da lista de promoções, relê os itens da promoção
   aberta e o **cadastro desses anúncios** (SKU/foto das variações) pela edge fn
   **`shopee-catalogo-itens`**, depois relê os itens. Antes, SKU alterado no Seller Center só aparecia
