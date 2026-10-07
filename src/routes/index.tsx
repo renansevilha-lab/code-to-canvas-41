@@ -194,6 +194,32 @@ function computeRange(preset: PresetKey, custom?: { from: string; to: string }):
   }
 }
 
+// Período de comparação dos deltas. "Mês atual" compara com os MESMOS dias do
+// mês anterior (01–06/out → 01–06/set; corta no fim do mês se ele for mais
+// curto) — leitura "mês contra mês", igual ao painel do Tiny/Olist. Os demais
+// presets comparam com o período imediatamente antes, de mesmo nº de dias.
+function periodoAnterior(preset: PresetKey, range: { from: string; to: string }): { from: string; to: string } {
+  const dFrom = spAnchor(range.from);
+  const nDias = differenceInCalendarDays(spAnchor(range.to), dFrom) + 1;
+  if (preset === "mes_atual") {
+    const ini = startOfMonth(subMonths(dFrom, 1));
+    const fimMes = endOfMonth(ini);
+    const fim = subDays(ini, -(nDias - 1));
+    return { from: spKey(ini), to: spKey(fim > fimMes ? fimMes : fim) };
+  }
+  return { from: spKey(subDays(dFrom, nDias)), to: spKey(subDays(dFrom, 1)) };
+}
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+/** "vs 01–06/set", "vs 25/set–01/out" ou "vs 05/out". */
+function rotuloComparacao(p: { from: string; to: string }): string {
+  const [, mf, df] = p.from.split("-");
+  const [, mt, dt] = p.to.split("-");
+  const mes = (m: string) => MESES_CURTOS[Number(m) - 1];
+  if (p.from === p.to) return `vs ${df}/${mes(mf)}`;
+  if (mf === mt) return `vs ${df}–${dt}/${mes(mt)}`;
+  return `vs ${df}/${mes(mf)}–${dt}/${mes(mt)}`;
+}
+
 const PRESET_LABEL: Record<PresetKey, string> = {
   hoje: "Hoje",
   ontem: "Ontem",
@@ -283,12 +309,8 @@ function Dashboard() {
 
     (async () => {
       try {
-        // Período anterior (mesmo nº de dias, imediatamente antes) — em SP tz
-        const dFrom = spAnchor(range.from);
-        const dTo = spAnchor(range.to);
-        const nDias = differenceInCalendarDays(dTo, dFrom) + 1;
-        const prevTo = spKey(subDays(dFrom, 1));
-        const prevFrom = spKey(subDays(dFrom, nDias));
+        // Período de comparação (ver periodoAnterior) — em SP tz
+        const { from: prevFrom, to: prevTo } = periodoAnterior(preset, range);
 
         const canaisQ = supabaseExternal
           .from("view_canais_diario")
@@ -527,7 +549,8 @@ function Dashboard() {
       }
     })();
     return () => { cancel = true; };
-  }, [range.from, range.to, compAtual, tick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, preset, compAtual, tick]);
 
   // Lista de todos os canais conhecidos (para o filtro)
   const canaisDisponiveis = useMemo(() => {
@@ -590,11 +613,12 @@ function Dashboard() {
   const lucroPosAdsPct = visaoGeral?.lucro_pos_ads_pct != null ? Number(visaoGeral.lucro_pos_ads_pct) : null;
   const acosGeral = vendas > 0 ? (adsTot / vendas) * 100 : null;
 
+  const comparado = rotuloComparacao(periodoAnterior(preset, range));
   const heroKpis: HeroKpiData[] = [
     {
       label: "Receita líquida",
       value: formatBRL(vendas, { compact: true }),
-      delta: deltas.receita, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      delta: deltas.receita, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-primary)",
       sub: preset === "mes_atual" && projecao != null
         ? `Projeção ${formatBRL(projecao, { compact: true })}`
@@ -604,7 +628,7 @@ function Dashboard() {
     {
       label: "Margem de contribuição",
       value: formatBRL(margemContrib, { compact: true }),
-      delta: deltas.margem, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      delta: deltas.margem, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-success)",
       sub: mcPct != null ? `MC ${formatPercent(mcPct)}` : "Após CMV, taxas e frete",
       spark: sparkPoints(serieDiaria.map((s) => s.margem)),
@@ -612,7 +636,7 @@ function Dashboard() {
     {
       label: "MC% média",
       value: mcPct != null ? formatPercent(mcPct) : "—",
-      delta: deltas.mcPp, deltaKind: "pp", temHistorico: deltas.temHistorico,
+      delta: deltas.mcPp, deltaKind: "pp", temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-warning)",
       sub: cobertura != null ? `Cobertura ${cobertura.toFixed(0)}%` : "Sobre a base coberta",
       subAlerta: cobertura != null && cobertura < 90,
@@ -621,7 +645,7 @@ function Dashboard() {
     {
       label: "Pedidos",
       value: formatNumber(pedidosTot),
-      delta: deltas.pedidos, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      delta: deltas.pedidos, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-chart-4)",
       sub: `Ticket ${formatBRL(ticket, { compact: true })}`,
       spark: sparkPoints(serieDiaria.map((s) => s.pedidos)),
@@ -630,7 +654,7 @@ function Dashboard() {
       label: "Gastos com ADS",
       value: formatBRL(adsTot, { compact: true }),
       // gastar MAIS não é bom por si só: o delta verde/vermelho sai invertido
-      delta: deltas.ads, deltaKind: "rel", deltaInverso: true, temHistorico: deltas.temHistorico,
+      delta: deltas.ads, deltaKind: "rel", deltaInverso: true, temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-chart-5)",
       sub: acosGeral != null ? `ACOS geral ${formatPercent(acosGeral)}` : "Shopee + Mercado Livre",
       spark: sparkPoints(serieDiaria.map((s) => s.ads)),
@@ -638,7 +662,7 @@ function Dashboard() {
     {
       label: "Lucro pós ADS",
       value: formatBRL(lucroPosAds, { compact: true }),
-      delta: deltas.lucroPosAds, deltaKind: "rel", temHistorico: deltas.temHistorico,
+      delta: deltas.lucroPosAds, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
       color: "var(--color-chart-2)",
       sub: lucroPosAdsPct != null
         ? `${formatPercent(lucroPosAdsPct)} da receita · sem ADS da Amazon`
@@ -808,6 +832,8 @@ type HeroKpiData = {
   /** true = subir é ruim (ex.: gasto com ADS) — inverte a cor do delta */
   deltaInverso?: boolean;
   temHistorico: boolean;
+  /** período comparado no delta ("vs 01–06/set") */
+  comparado?: string;
   color: string;
   sub: string;
   subAlerta?: boolean;
@@ -815,7 +841,7 @@ type HeroKpiData = {
 };
 
 function HeroKpi({ data, loading }: { data: HeroKpiData; loading: boolean }) {
-  const { label, value, delta, deltaKind, deltaInverso, temHistorico, color, sub, subAlerta, spark } = data;
+  const { label, value, delta, deltaKind, deltaInverso, temHistorico, comparado, color, sub, subAlerta, spark } = data;
   const subiu = delta != null && delta >= 0.05;
   const caiu = delta != null && delta <= -0.05;
   const bom = deltaInverso ? caiu : subiu;
@@ -832,7 +858,10 @@ function HeroKpi({ data, loading }: { data: HeroKpiData; loading: boolean }) {
       <div className="p-5 pl-6 flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
-          <span className={cn("text-[11.5px] font-semibold font-mono", deltaCls)}>{deltaTxt}</span>
+          <span className="flex flex-col items-end leading-tight" title={comparado ? `Comparado com ${comparado.replace(/^vs /, "")}` : undefined}>
+            <span className={cn("text-[11.5px] font-semibold font-mono", deltaCls)}>{deltaTxt}</span>
+            {comparado && <span className="text-[10.5px] text-muted-foreground font-medium">{comparado}</span>}
+          </span>
         </div>
         {loading ? (
           <div className="h-8 w-28 rounded bg-muted/50 animate-pulse" />

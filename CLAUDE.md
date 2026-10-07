@@ -2092,6 +2092,14 @@ fila" mantém o `await` (esperar é o esperado ali).
      no próprio Tiny** (14077 14078 14081 14082 14083 14085 14088 14612 14613
      14614 14615) — correção é na origem (Tiny), não no app.
 
+**Comparação dos cards do Dashboard (06/out/2026, pedido do dono):** o filtro **"Mês"** compara
+com os **mesmos dias do mês anterior** (01–06/out → 01–06/set; corta no fim do mês mais curto) —
+leitura mês contra mês, igual ao painel do Tiny/Olist. Antes comparava com os N dias imediatamente
+antes (25–30/set) e mostrava +32% quando o mês-contra-mês era −29%. Hoje/Ontem/7/30 dias seguem com
+o período imediatamente antes. Regra em `periodoAnterior()` (`src/routes/index.tsx`); cada card mostra
+"vs 01–06/set". Fora disso: as tabelas Vendas por SKU/Marca calculam o "anterior" dentro das RPCs, e
+"Mês anterior" compara com os 30 dias antes (não com o mês cheio).
+
 **Padrões a manter:**
 - `QueryClient` no nível de módulo, com `refetchOnWindowFocus: false`,
   `refetchOnMount: false`, `staleTime` 5 min.
