@@ -1353,6 +1353,18 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   (re-inclusão conta como nova). Como a tela relê logo após "Adicionar produtos", o horário é
   ~exato; incluído pelo Seller Center = hora da 1ª abertura seguinte. `inicial` = já estava na 1ª
   leitura do desconto (data real desconhecida) → vai para o fim, na ordem da Shopee.
+- **Clonar para a Relâmpago (07/out/2026, pedido do dono):** botão ⚡ na 1ª linha de cada
+  anúncio da Minha Promoção (só promoção em andamento/próxima) grava **todas as variações** do
+  anúncio em `flashsale_programacao` (upsert por shop+item+model, `ativo=true`):
+  `preco_promo` = `tetoRelampago(preço promo daqui, menor_preco_7d)` (o maior que a Shopee deve
+  aceitar), `preco_original` = o preço promo daqui (base da proteção ≥/50% do `programar`) e
+  `estoque_promo` = **1000** (teto do CHECK). A `shopee-flashsale` manda 1000 e, na recusa
+  1400101726, reenvia com o saldo real do anúncio (`corrigirItem`). Confirma antes se alguma
+  variação fica com MC negativa. Entra na relâmpago de amanhã pelo cron das 18h (se a automação
+  da loja estiver ligada) ou pelo "Programar amanhã agora". Selo ⚡ R$ x na linha = já programado.
+  ⚠ A `shopee-flashsale` no ar é a **v8** (deploy 20), não v3: `programar` não usa
+  `flashsale_config.max_itens_bloco` (1 sale/dia, até 50 itens, completa a existente) e o
+  "já está" é por `item_id` inteiro.
 - **Minha Promoção** = módulo **`v2.discount`** da Open API. Edge fn **`shopee-promocoes`**
   (verify_jwt + exige JWT `authenticated`/service role — chave publicável e o Bearer anon dos
   crons dão 401): `list` / `detalhe` / `item-promo` (leitura) e, com `confirmar=1`,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Clock, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, TrendingUp, Undo2, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarRange, Clock, Loader2, Plus, RefreshCw, Save, Search, Tag, Trash2, TrendingUp, Undo2, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,9 @@ import {
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { usePerfil } from "@/hooks/usePerfil";
 import {
-  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tetoRelampago, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
@@ -31,6 +32,13 @@ import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
 // Ordenação: "Mais vendidos" (vendas 30d, padrão) ou "Últimos adicionados"
 // (RPC promo_itens_vistos: 1ª vez que o item apareceu no desconto — a API da
 // Shopee não informa a data de inclusão).
+// Clonar para a Relâmpago (07/out/2026, pedido do dono): botão ⚡ por produto
+// grava TODAS as variações do anúncio na programação diária da relâmpago
+// (flashsale_programacao) com o MAIOR preço que a Shopee deve aceitar
+// (tetoRelampago sobre o preço promo daqui: 1% abaixo e ≤ menor preço vendido
+// em 7 dias) e estoque 1000 — o programar da shopee-flashsale reduz ao saldo
+// real do anúncio quando a Shopee recusa por estoque. Entra na relâmpago de
+// amanhã pela automação das 18h ou pelo botão da aba Relâmpago.
 // ============================================================================
 
 interface Desconto {
@@ -158,7 +166,9 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
   const termos = useMemo(() => semAcento(busca).split(/\s+/).filter(Boolean), [busca]);
   const [ord, setOrd] = useState<{ col: ColOrd; dir: 1 | -1 }>({ col: "vendas", dir: -1 });
   const [dlgAdd, setDlgAdd] = useState(false);
+  const [clonando, setClonando] = useState<number | null>(null);
   const tarifa = useTarifaShopee().data;
+  const { perfil } = usePerfil();
 
   const detQ = useQuery({
     queryKey: ["promo-shopee", "detalhe", shopId, desconto.discount_id],
@@ -223,6 +233,71 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
     },
   });
   const bases = baseQ.data ?? new Map<string, McBase>();
+
+  // Programação diária da relâmpago destes anúncios (selo ⚡ e "re-clonar")
+  const itemIds = useMemo(() => [...new Set(linhas.map((l) => l.item_id))].sort((a, b) => a - b), [linhas]);
+  const relQ = useQuery({
+    queryKey: ["flashsale", "prog-itens", shopId, itemIds],
+    enabled: itemIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Map<string, ProgRel>> => {
+      const m = new Map<string, ProgRel>();
+      for (let i = 0; i < itemIds.length; i += 200) {
+        const { data, error } = await supabaseExternal.from("flashsale_programacao")
+          .select("item_id, model_id, preco_promo, ativo").eq("shop_id", shopId).in("item_id", itemIds.slice(i, i + 200));
+        if (error) throw error;
+        for (const r of (data ?? []) as Array<{ item_id: number; model_id: number; preco_promo: number; ativo: boolean }>) {
+          m.set(`${r.item_id}:${r.model_id}`, { preco_promo: num(r.preco_promo), ativo: r.ativo });
+        }
+      }
+      return m;
+    },
+  });
+  const naRelampago = relQ.data ?? new Map<string, ProgRel>();
+
+  /** Clona o anúncio (todas as variações desta promoção) para a relâmpago diária. */
+  async function clonarRelampago(itemId: number) {
+    const doItem = linhas.filter((l) => l.item_id === itemId);
+    const planos: Array<{ l: Linha; teto: number; mc: ReturnType<typeof calcMc> }> = [];
+    const pulados: string[] = [];
+    for (const l of doItem) {
+      const base = l.sku ? bases.get(l.sku) : undefined;
+      const t = tetoRelampago(l.promo, base?.menor_preco_7d != null ? num(base.menor_preco_7d) : null);
+      if (!t || !(t.teto > 0)) { pulados.push(l.sku ?? l.variacao ?? String(l.model_id)); continue; }
+      planos.push({ l, teto: t.teto, mc: calcMc(base, t.teto, tarifa) });
+    }
+    if (planos.length === 0) { toast.error("Nada a clonar: variação sem preço promo"); return; }
+    const negativos = planos.filter((x) => x.mc != null && x.mc.mc < 0);
+    if (negativos.length > 0 && !window.confirm(
+      `${negativos.length} variação(ões) ficam com MC NEGATIVA no preço relâmpago:\n` +
+      negativos.slice(0, 6).map((x) => `${x.l.sku ?? x.l.variacao}: ${formatBRL(x.teto)} → MC ${formatBRL(x.mc!.mc)}`).join("\n") +
+      "\n\nClonar assim mesmo?")) return;
+    setClonando(itemId);
+    try {
+      const agora = new Date().toISOString();
+      const { error } = await supabaseExternal.from("flashsale_programacao").upsert(planos.map(({ l, teto }) => ({
+        shop_id: shopId, item_id: l.item_id, model_id: l.model_id,
+        item_nome: l.nome, model_nome: l.variacao, sku: l.sku, imagem: l.imagem,
+        // "preço atual" da relâmpago = o preço promo daqui (base do teto e da proteção de preço)
+        preco_original: l.promo, preco_promo: teto,
+        // estoque alto: a Shopee recusa acima do saldo e o programar reenvia com o saldo real
+        estoque_promo: 1000, ativo: true, criado_por: perfil?.nome ?? null, atualizado_em: agora,
+      })), { onConflict: "shop_id,item_id,model_id" });
+      if (error) throw error;
+      const { data: cfg } = await supabaseExternal.from("flashsale_config").select("automacao_ativa").eq("shop_id", shopId).maybeSingle();
+      const auto = !!(cfg as { automacao_ativa?: boolean } | null)?.automacao_ativa;
+      const resumo = planos.slice(0, 4).map(({ l, teto, mc }) =>
+        `${l.sku ?? l.variacao ?? l.nome.slice(0, 24)}: ${formatBRL(l.promo)} → ${formatBRL(teto)}${mc ? ` · MC ${(mc.pct * 100).toFixed(1)}%` : ""}`).join("\n");
+      toast.success(`${planos.length} variação(ões) na relâmpago diária · estoque 1000 (a Shopee reduz ao saldo)`, {
+        description: `${resumo}${planos.length > 4 ? `\n+${planos.length - 4}` : ""}${pulados.length ? `\nSem preço, ficaram de fora: ${pulados.join(", ")}` : ""}\n` +
+          (auto ? "Entra na relâmpago de amanhã na rodada das 18h." : "Automação desligada: use \"Programar amanhã agora\" na aba Relâmpago."),
+        duration: 15000,
+      });
+      void qc.invalidateQueries({ queryKey: ["flashsale"] });
+    } catch (e) {
+      toast.error("Falha ao clonar para a relâmpago", { description: (e as Error).message });
+    } finally { setClonando(null); }
+  }
 
   // "Últimos adicionados": registra/lê a 1ª vez que cada item apareceu no desconto.
   const vistoQ = useQuery({
@@ -481,6 +556,7 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
                             {l.sku ?? "sem SKU"}{l.variacao ? ` · ${l.variacao}` : ""}
                             {nGrupo > 1 && <span className="ml-1.5 text-[10.5px] rounded bg-muted px-1.5 py-px">{nGrupo} variações</span>}
                             {ord.col === "recentes" && <Entrada v={vistos.get(l.key)} />}
+                            <SeloRelampago r={naRelampago.get(l.key)} />
                           </div>
                         </div>
                       </div>
@@ -489,6 +565,7 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
                       <div className="pl-[48px] text-[11.5px] text-muted-foreground min-w-[280px]">
                         <span className="font-mono">{l.sku ?? "sem SKU"}</span>{l.variacao ? ` · ${l.variacao}` : ""}
                         {ord.col === "recentes" && <Entrada v={vistos.get(l.key)} />}
+                        <SeloRelampago r={naRelampago.get(l.key)} />
                       </div>
                     )}
                   </td>
@@ -531,7 +608,20 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
                         onMudar={(v) => setLimites((m) => { const n = new Map(m); if (v === l.limite) n.delete(l.item_id); else n.set(l.item_id, Math.max(0, Math.round(v))); return n; })} />
                     ) : <span className="tabular-nums text-muted-foreground">{primeiro ? (l.limite || "—") : ""}</span>}
                   </td>
-                  <td className="px-2 py-1.5">
+                  <td className="px-2 py-1.5 whitespace-nowrap">
+                    {primeiro && editavel && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7"
+                        style={{ color: itemNaRelampago(naRelampago, l.item_id) ? AMBER : undefined }}
+                        title={itemNaRelampago(naRelampago, l.item_id)
+                          ? "Já está na relâmpago diária. Clicar de novo regrava preço (teto) e estoque de todas as variações"
+                          : "Clonar para a Relâmpago: todas as variações, no maior preço que a Shopee deve aceitar e estoque alto"}
+                        disabled={clonando === l.item_id || baseQ.isLoading}
+                        onClick={() => void clonarRelampago(l.item_id)}>
+                        {clonando === l.item_id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <Zap className="h-3.5 w-3.5" fill={itemNaRelampago(naRelampago, l.item_id) ? "currentColor" : "none"} />}
+                      </Button>
+                    )}
                     {editavel && (
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Tirar da promoção"
                         disabled={removendo === l.key} onClick={() => void remover(l)}>
@@ -550,6 +640,7 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
           ? "Edite o preço promo e o limite direto na tabela — nada vai para a Shopee até \"Revisar e aplicar\". A promoção continua a mesma (não precisa recriar)."
           : "Promoção encerrada — só consulta."}
         {ord.col === "recentes" && " \"Últimos adicionados\" usa a 1ª vez que o app viu o item neste desconto (a Shopee não informa a data de inclusão); os que já estavam na 1ª leitura ficam no fim, na ordem da Shopee."}
+        {" "}⚡ clona o anúncio para a relâmpago diária no maior preço aceito (1% abaixo do promo daqui e no máximo o menor preço vendido em 7 dias), com estoque alto.
         {" "}MC = preço − comissão Shopee (tabela vigente: abaixo de R$ 80 = 20% + R$ 4,50 por unidade) − imposto (efetivo 60 dias) − CMV.
       </p>
 
@@ -698,5 +789,24 @@ function ThOrd({ col, ord, setOrd, title, children }: {
         {ativo && (ord.dir === -1 ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
       </button>
     </th>
+  );
+}
+
+// ---- clonar para a relâmpago ------------------------------------------------
+type ProgRel = { preco_promo: number; ativo: boolean };
+
+function itemNaRelampago(m: Map<string, ProgRel>, itemId: number) {
+  for (const [k, v] of m) if (v.ativo && k.startsWith(`${itemId}:`)) return true;
+  return false;
+}
+
+function SeloRelampago({ r }: { r: ProgRel | undefined }) {
+  if (!r) return null;
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10.5px] rounded px-1.5 py-px font-medium"
+      style={{ background: `${AMBER}18`, color: AMBER, opacity: r.ativo ? 1 : 0.5 }}
+      title={r.ativo ? "Na programação diária da relâmpago" : "Na programação da relâmpago, mas desativado"}>
+      <Zap className="h-2.5 w-2.5" /> {formatBRL(r.preco_promo)}{r.ativo ? "" : " (off)"}
+    </span>
   );
 }
