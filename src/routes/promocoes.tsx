@@ -10,8 +10,7 @@ import { PromocoesEmBreve } from "@/components/promocoes/PromocoesEmBreve";
 // ============================================================================
 // Promoções — todas as promoções num lugar só (07/out/2026, pedido do dono),
 // uma sub-aba por marketplace:
-//   · Shopee: Minha Promoção / Relâmpago / Relâmpago manual (antes
-//     /promocoes-shopee e a antiga /promocoes);
+//   · Shopee: Minha Promoção / Relâmpago (antes /promocoes-shopee);
 //   · Mercado Livre: Central de Promoções (antes /promocoes-ml);
 //   · Amazon e TikTok: o que a API permite e o que falta (estudo).
 // /promocoes-shopee, /promocoes-ml e /flash-sale redirecionam para cá.
@@ -31,7 +30,7 @@ const MKTS: Array<{ id: Mkt; nome: string; cor: string }> = [
 export const Route = createFileRoute("/promocoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
     mkt: MKTS.some((m) => m.id === s.mkt) ? (s.mkt as Mkt) : "shopee",
-    aba: s.aba === "relampago" || s.aba === "manual" ? s.aba : "minha",
+    aba: s.aba === "relampago" ? "relampago" : "minha",
     // `shop` = parâmetro da antiga /promocoes (relâmpago manual)
     loja: LOJAS.some((l) => l.shop_id === Number(s.loja ?? s.shop)) ? Number(s.loja ?? s.shop) : LOJAS[0].shop_id,
   }),

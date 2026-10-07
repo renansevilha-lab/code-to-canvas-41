@@ -1,21 +1,21 @@
-import { Hand, Tag, Zap } from "lucide-react";
+import { Tag, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LOJAS } from "./comum";
 import { MinhaPromocao } from "./MinhaPromocao";
 import { Relampago } from "./Relampago";
-import { RelampagoManual } from "./RelampagoManual";
 
 // ============================================================================
 // Promoções Shopee — sub-aba de /promocoes (antes a rota /promocoes-shopee):
 //   · Minha Promoção: descontos da loja (v2.discount) com CMV/MC/desconto;
-//   · Relâmpago: programação diária da Promoção Relâmpago;
-//   · Relâmpago manual: lista/cria flash sale direto (antiga /promocoes).
+//   · Relâmpago: programação diária da Promoção Relâmpago.
+// A antiga "Relâmpago manual" (página /promocoes de 01/ago) foi removida em
+// 07/out/2026 a pedido do dono.
 // Aba e loja ficam na URL (sobrevivem à remontagem).
 // ============================================================================
 
-export type AbaShopee = "minha" | "relampago" | "manual";
+export type AbaShopee = "minha" | "relampago";
 
 export function PromocoesShopee({ aba, loja, onChange }: {
   aba: AbaShopee; loja: number; onChange: (patch: { aba?: AbaShopee; loja?: number }) => void;
@@ -26,7 +26,6 @@ export function PromocoesShopee({ aba, loja, onChange }: {
         <TabsList>
           <TabsTrigger value="minha" className="gap-1.5"><Tag className="h-3.5 w-3.5" /> Minha Promoção</TabsTrigger>
           <TabsTrigger value="relampago" className="gap-1.5"><Zap className="h-3.5 w-3.5" /> Relâmpago</TabsTrigger>
-          <TabsTrigger value="manual" className="gap-1.5"><Hand className="h-3.5 w-3.5" /> Relâmpago manual</TabsTrigger>
         </TabsList>
         <div className="flex items-center gap-2">
           {LOJAS.map((l) => (
@@ -42,9 +41,6 @@ export function PromocoesShopee({ aba, loja, onChange }: {
       </TabsContent>
       <TabsContent value="relampago" className="mt-4">
         <Relampago key={loja} shopId={loja} />
-      </TabsContent>
-      <TabsContent value="manual" className="mt-4">
-        <RelampagoManual shop={loja} />
       </TabsContent>
     </Tabs>
   );

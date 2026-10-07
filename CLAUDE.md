@@ -1335,9 +1335,9 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
 ## 5.9.1 Promoções Shopee — Minha Promoção + Relâmpago (30/set/2026)
 
 **Hub `/promocoes` (07/out/2026, pedido do dono):** um item de menu só, "Promoções", com uma
-sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Promoção / Relâmpago /
-Relâmpago manual (`?aba=minha|relampago|manual&loja=`; componentes `PromocoesShopee`,
-`RelampagoManual` = a antiga página `/promocoes` de 01/ago), **Mercado Livre** = Central de Promoções
+sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Promoção / Relâmpago
+(`?aba=minha|relampago&loja=`; componente `PromocoesShopee`; a antiga "Relâmpago manual" —
+página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Livre** = Central de Promoções
 (`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** e **TikTok** = `PromocoesEmBreve` (estudo).
 `/promocoes-shopee`, `/promocoes-ml` e `/flash-sale` só redirecionam (links antigos).
 Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
