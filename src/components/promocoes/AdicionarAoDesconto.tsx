@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  FAIXAS_MC, Foto, RED, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  FAIXAS_MC, Foto, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -24,6 +24,9 @@ import {
 // Preço promo = preço cheio − desconto padrão (editável por linha); MC na
 // comissão da tabela Shopee vigente; filtro por faixa de MC; 20 por página.
 // Gravação: add_discount_item (confirmar=1) — muda o preço público na hora.
+// Busca por ID do Item (o número do Seller Center): relê ESSE anúncio na Shopee
+// (shopee-catalogo-itens) antes de listar — anúncio renomeado/SKU trocado
+// aparece na hora, sem esperar o catálogo noturno.
 // ============================================================================
 
 interface AnuncioBusca {
@@ -41,6 +44,8 @@ interface Linha {
 }
 
 const POR_PAGINA = 20;
+/** ID do Item da Shopee (10+ dígitos) — SKU interno tem 5. */
+const idDoItem = (t: string) => (/^\d{9,}$/.test(t.trim()) ? Number(t.trim()) : null);
 const r2 = (x: number) => Math.round(x * 100) / 100;
 
 export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }: {
@@ -83,7 +88,17 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
     queryKey: ["promo-shopee", "candidatos", shopId, buscaAtiva, ordem, soSemCampanha, campQ.data?.ids.length ?? -1],
     enabled: !soSemCampanha || campQ.isSuccess,
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<{ anuncios: AnuncioBusca[]; vars: Map<number, Variacao[]> }> => {
+    queryFn: async (): Promise<{ anuncios: AnuncioBusca[]; vars: Map<number, Variacao[]>; avisoId: string | null }> => {
+      let avisoId: string | null = null;
+      const id = idDoItem(buscaAtiva);
+      if (id != null) {
+        try {
+          const r = await atualizarCatalogoShopee(shopId, [id]);
+          if (r.feitos === 0) avisoId = "A Shopee não devolveu esse ID nesta loja (confira a loja selecionada e o número).";
+        } catch (e) {
+          avisoId = `Não consegui reler o anúncio na Shopee (${(e as Error).message}) — mostrando o cadastro salvo.`;
+        }
+      }
       const { data, error } = await supabaseExternal.rpc("shopee_anuncios_busca", {
         p_shop_id: shopId, p_busca: buscaAtiva.replace(/[%_]/g, " ") || null, p_ordem: ordem,
         p_offset: 0, p_limit: 1000, p_excluir: soSemCampanha ? (campQ.data?.ids ?? []) : null,
@@ -101,9 +116,11 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
           vars.get(x.item_id)!.push(x);
         }
       }
-      return { anuncios, vars };
+      return { anuncios, vars, avisoId };
     },
   });
+  const idBuscado = idDoItem(buscaAtiva);
+  const idEmCampanha = idBuscado != null && soSemCampanha && !!campQ.data?.ids.includes(idBuscado);
 
   const linhas = useMemo((): Linha[] => {
     const out: Linha[] = [];
@@ -234,7 +251,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
           </label>
           <div className="relative flex-1 min-w-[200px]">
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input className="h-8 pl-8 text-sm" placeholder="nome ou SKU" value={busca} onChange={(e) => setBusca(e.target.value)} />
+            <Input className="h-8 pl-8 text-sm" placeholder="nome, SKU ou ID do Item (relê na Shopee)" value={busca} onChange={(e) => setBusca(e.target.value)} />
           </div>
           {([["vendas", "Mais vendidos"], ["recentes", "Mais recentes"]] as const).map(([k, rot]) => (
             <Button key={k} size="sm" variant={ordem === k ? "default" : "outline"} className="h-8 text-xs"
@@ -255,6 +272,14 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
             </Button>
           ))}
         </div>
+
+        {idBuscado != null && !carregando && (anunQ.data?.avisoId || idEmCampanha) && (
+          <p className="text-[12px]" style={{ color: idEmCampanha ? RED : undefined }}>
+            {idEmCampanha
+              ? "Esse anúncio já está em outra campanha (desconto, relâmpago, combo ou promoção diária) — por isso não aparece. Desligue \"Só produtos sem nenhuma campanha\" para vê-lo; a Shopee recusa o mesmo item em dois descontos no mesmo período."
+              : anunQ.data?.avisoId}
+          </p>
+        )}
 
         <div className="rounded-md border overflow-x-auto">
           <table className="w-full text-[12.5px]">

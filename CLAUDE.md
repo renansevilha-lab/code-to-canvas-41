@@ -1341,6 +1341,11 @@ Rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minh
   **`shopee-catalogo-itens`**, depois relê os itens. Antes, SKU alterado no Seller Center só aparecia
   depois do catálogo noturno (crons 38/39/141–146, 00h–01h45 BRT, só anúncios não lidos há 24 h),
   e a lista de itens ficava em cache até o F5 (`refetchOnMount: false`).
+- **"Adicionar produtos" busca por ID do Item (06/out/2026):** `shopee_anuncios_busca` aceita o
+  `item_id` exato; no diálogo, digitar um ID (9+ dígitos) relê ESSE anúncio na Shopee
+  (`shopee-catalogo-itens`) antes de listar — anúncio renomeado ou com SKU trocado aparece na hora
+  (nome/SKU/preço cheio do diálogo vêm do espelho). Se o ID está em outra campanha e "Só produtos
+  sem nenhuma campanha" está ligado, o diálogo avisa em vez de só sumir com ele.
 - **Ordenar (06/out/2026):** "Mais vendidos" (vendas 30d, soma das variações — padrão) ou
   "Últimos adicionados". A `get_discount` **não informa quando o item entrou** no desconto, então
   a tela chama a RPC **`promo_itens_vistos(shop, discount, itens)`** a cada leitura: grava a 1ª vez
