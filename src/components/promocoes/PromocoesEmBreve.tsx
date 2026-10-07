@@ -21,7 +21,7 @@ const CONTEUDO: Record<"amazon" | "tiktok", { nome: string; resumo: string; linh
     ],
     falta: [
       "Teste de 07/out: leitura de promoções e de preço LIBERADA nas duas contas (ACZ tem descontos, ofertas e cupons ativos; SVL nenhum)",
-      "Para criar preço promocional: o \"Token de comerciante\" (Merchant Token, começa com A…) de cada conta — Seller Central › Configurações › Informações da conta",
+      "Token de comerciante: ACZ recebido e testado (leitura dos 498 anúncios liberada). Falta o da SVL — Seller Central › Configurações › Informações da conta",
       "Para os ADS: criar o app da Amazon Ads API e conectar ACZ e SVL",
     ],
   },

@@ -1372,9 +1372,11 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
 - **Amazon — teste de permissões (07/out/2026), edge fn `amazon-promocoes` v2 (só diagnóstico,
   `?modulo=teste[&conta=acz|svl]`):** Promotions API 2025-12-01 (`marketplaceIds` obrigatório) e
   Pricing v0 **liberadas** nas duas contas (ACZ com PRICE_DISCOUNT/DEAL/COUPON ativos; SVL 0).
-  Listings Items **não testável**: `oauth_tokens_amazon.seller_id` NÃO é o Merchant Token (`A…`) que a
-  Listings exige no path — falta o dono informar o token de cada conta. `oauth_tokens_amazon_ads`
-  vazio = ADS da Amazon não conectado.
+  Listings Items exige no path o **Merchant Token** (`A…`), que NÃO é o `oauth_tokens_amazon.seller_id`
+  → coluna **`oauth_tokens_amazon.merchant_token`** (ACZ = `AKDVB4QOPSP1V`, informado pelo dono em
+  07/out; **SVL ainda falta**). Com ele (v3): Listings LIBERADA na ACZ (498 anúncios; item `FBA-15825`
+  com offers) — leitura; escrita de preço promocional (PATCH com `discounted_price`) usa o mesmo papel,
+  ainda não testada. `oauth_tokens_amazon_ads` vazio = ADS da Amazon não conectado.
 `/promocoes-shopee`, `/promocoes-ml` e `/flash-sale` só redirecionam (links antigos).
 Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?aba=minha|relampago&loja=`),
 `/flash-sale` redirecionava para a aba Relâmpago.
