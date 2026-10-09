@@ -59,7 +59,9 @@ import { rangeToSPIso } from "@/lib/date";
 import { usePerfil } from "@/hooks/usePerfil";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import {
+  periodoAnterior,
   resolveRange,
+  rotuloComparacao,
   type PeriodPreset,
   type PeriodRange,
 } from "@/lib/dashboard/period";
@@ -362,18 +364,14 @@ function PedidosIntegradosPage() {
     return () => clearTimeout(t);
   }, [searchDraft, searchText]);
 
-  // Datas ISO do período atual e do período anterior
+  // Datas ISO do período atual e do período anterior (mês a mês quando o período é
+  // um mês — regra única em periodoAnterior, src/lib/dashboard/period.ts)
   const { fromIso, toIso, prevFrom, prevTo } = useMemo(() => {
     const iso = rangeToSPIso(range.from, range.to);
-    const days =
-      (parseISO(`${range.to}T00:00:00`).getTime() -
-        parseISO(`${range.from}T00:00:00`).getTime()) /
-        (1000 * 60 * 60 * 24) +
-      1;
-    const pTo = format(subDays(parseISO(`${range.from}T00:00:00`), 1), "yyyy-MM-dd");
-    const pFrom = format(subDays(parseISO(`${range.from}T00:00:00`), days), "yyyy-MM-dd");
-    return { fromIso: iso.fromIso, toIso: iso.toIso, prevFrom: pFrom, prevTo: pTo };
-  }, [range.from, range.to]);
+    const ant = periodoAnterior(search.period, range.from, range.to);
+    return { fromIso: iso.fromIso, toIso: iso.toIso, prevFrom: ant.from, prevTo: ant.to };
+  }, [range.from, range.to, search.period]);
+  const comparado = rotuloComparacao({ from: prevFrom, to: prevTo });
 
   const empresasKey = useMemo(() => [...empresas].sort().join("|"), [empresas]);
   const canaisKey = useMemo(() => [...canais].sort().join("|"), [canais]);
@@ -655,17 +653,19 @@ function PedidosIntegradosPage() {
           </Card>
         )}
 
-        {/* KPIs */}
+        {/* KPIs — comparação mês a mês quando o período é um mês (periodoAnterior) */}
         <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-[14px]">
           <KpiCard
             label="Receita Total"
             value={formatBRL(kpis.receita)}
+            comparado={comparado}
             delta={pctDelta(kpis.receita, prevKpis.receita)}
             loading={loading}
           />
           <KpiCard
             label="Custo Total"
             value={formatBRL(kpis.custo)}
+            comparado={comparado}
             delta={pctDelta(kpis.custo, prevKpis.custo)}
             invertColor
             loading={loading}
@@ -678,18 +678,21 @@ function PedidosIntegradosPage() {
                 ? "text-emerald-600 dark:text-emerald-400"
                 : "text-red-600 dark:text-red-400"
             }
+            comparado={comparado}
             delta={pctDelta(kpis.margem, prevKpis.margem)}
             loading={loading}
           />
           <KpiCard
             label="MC% Média"
             value={formatPercent((kpis.mcPct ?? 0) * 100, 1)}
+            comparado={comparado}
             delta={pctDelta(kpis.mcPct, prevKpis.mcPct)}
             loading={loading}
           />
           <KpiCard
             label="Pedidos"
             value={formatNumber(kpis.qtd)}
+            comparado={comparado}
             delta={pctDelta(kpis.qtd, prevKpis.qtd)}
             loading={loading}
           />
@@ -1178,9 +1181,11 @@ function KpiCard({
   badge,
   invertColor,
   loading,
+  comparado,
 }: {
   label: string;
   value: string;
+  comparado?: string;
   delta?: number | null;
   valueClassName?: string;
   badge?: { label: string; tone: "ok" | "warn" | "bad" };
@@ -1212,9 +1217,10 @@ function KpiCard({
             )}
           >
             {positive ? "↑" : negative ? "↓" : ""} {Math.abs(delta).toFixed(1).replace(".", ",")}%
+            {comparado && <span className="ml-1 font-normal text-muted-foreground">vs {comparado}</span>}
           </span>
         ) : !badge ? (
-          <span className="text-[11px] text-muted-foreground">vs. anterior</span>
+          <span className="text-[11px] text-muted-foreground">vs. {comparado ?? "anterior"}</span>
         ) : null}
         {badge && (
           <span

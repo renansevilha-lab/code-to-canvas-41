@@ -145,3 +145,42 @@ export const ALL_PRESETS: PeriodPreset[] = [
   ...FORWARD_PRESETS.filter((p) => !BACKWARD_PRESETS.includes(p)),
   "custom",
 ];
+
+// ---------------------------------------------------------------- período anterior
+// Regra única de comparação (pedido do dono, 09/out/2026: "não faz sentido comparar
+// mês com os 9 dias anteriores"). Período que começa no dia 1 e fica dentro de um
+// mês — "Mês atual", "Mês anterior" ou um personalizado assim — compara MÊS A MÊS:
+//   mês cheio (01–30/set)  → o mês cheio antes (01–31/ago);
+//   mês parcial (01–09/out) → os mesmos dias do mês anterior (01–09/set), cortando
+//   no fim do mês mais curto (01–31/mar → 01–28/fev).
+// Hoje/Ontem e janelas móveis (7/30/90 dias) comparam com o período logo antes.
+export function periodoAnterior(preset: PeriodPreset, from: string, to: string): { from: string; to: string } {
+  // calendário puro em UTC: as funções de mês do date-fns usam o fuso do navegador
+  // e deslocavam o fim do mês (01–31/mar virava 01/fev–01/mar)
+  const [fa, fm, fd] = from.split("-").map(Number);
+  const [ta, tm, td] = to.split("-").map(Number);
+  const dia = (a: number, m: number, d: number) => new Date(Date.UTC(a, m - 1, d, 12));
+  const ultimoDia = (a: number, m: number) => new Date(Date.UTC(a, m, 0, 12)).getUTCDate();
+  const nDias = Math.round((dia(ta, tm, td).getTime() - dia(fa, fm, fd).getTime()) / 86_400_000) + 1;
+  const mensal = (preset === "mtd" || preset === "prev_month" || preset === "custom") && fd === 1 && fa === ta && fm === tm;
+  if (mensal) {
+    const aAnt = fm === 1 ? fa - 1 : fa;
+    const mAnt = fm === 1 ? 12 : fm - 1;
+    const fimAnt = ultimoDia(aAnt, mAnt);
+    const ateDia = td === ultimoDia(ta, tm) ? fimAnt : Math.min(nDias, fimAnt);
+    return { from: fmt(dia(aAnt, mAnt, 1)), to: fmt(dia(aAnt, mAnt, ateDia)) };
+  }
+  const ini = dia(fa, fm, fd);
+  return { from: fmt(subDays(ini, nDias)), to: fmt(subDays(ini, 1)) };
+}
+
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+/** "01–09/set", "25/set–01/out" ou "05/out". */
+export function rotuloComparacao(p: { from: string; to: string }): string {
+  const [, mf, df] = p.from.split("-");
+  const [, mt, dt] = p.to.split("-");
+  const m = (x: string) => MESES_CURTOS[Number(x) - 1];
+  if (p.from === p.to) return `${df}/${m(mf)}`;
+  if (mf === mt) return `${df}–${dt}/${m(mt)}`;
+  return `${df}/${m(mf)}–${dt}/${m(mt)}`;
+}

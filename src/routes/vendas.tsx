@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { resolveRange, type PeriodPreset } from "@/lib/dashboard/period";
+import { periodoAnterior, resolveRange, rotuloComparacao, type PeriodPreset } from "@/lib/dashboard/period";
 
 // ---------------------------------------------------------------- tipos
 interface SkuRow {
@@ -94,6 +94,7 @@ function VendasPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const range = resolveRange(search.period, search.from, search.to);
+  const anterior = periodoAnterior(search.period, range.from, range.to);
   const patch = (p: Partial<SearchP>) => navigate({ search: (prev) => ({ ...prev, ...p }), replace: true });
   const qc = useQueryClient();
 
@@ -119,10 +120,11 @@ Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
   }
 
   const skuQ = useQuery({
-    queryKey: ["vendas", "sku", range.from, range.to, search.mk ?? ""],
+    queryKey: ["vendas", "sku", range.from, range.to, anterior.from, anterior.to, search.mk ?? ""],
     queryFn: async (): Promise<SkuRow[]> => {
       const { data, error } = await supabaseExternal.rpc("vendas_por_sku", {
         data_inicial: range.from, data_final: range.to, p_marketplace: search.mk ?? null,
+        p_ant_inicio: anterior.from, p_ant_fim: anterior.to,
       });
       if (error) throw new Error(error.message);
       return (data ?? []) as SkuRow[];
@@ -130,10 +132,11 @@ Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
     staleTime: 5 * 60 * 1000,
   });
   const marcaQ = useQuery({
-    queryKey: ["vendas", "marca", range.from, range.to, search.mk ?? ""],
+    queryKey: ["vendas", "marca", range.from, range.to, anterior.from, anterior.to, search.mk ?? ""],
     queryFn: async (): Promise<MarcaRow[]> => {
       const { data, error } = await supabaseExternal.rpc("vendas_por_marca", {
         data_inicial: range.from, data_final: range.to, p_marketplace: search.mk ?? null,
+        p_ant_inicio: anterior.from, p_ant_fim: anterior.to,
       });
       if (error) throw new Error(error.message);
       return (data ?? []) as MarcaRow[];
@@ -227,7 +230,7 @@ Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
             <ArrowLeft size={16} />
           </Link>
           <span style={{ fontSize: "13px", color: "#8B93A1" }}>
-            Unidades e receita por produto, com kits destrinchados · atual vs. período anterior.
+            Unidades e receita por produto, com kits destrinchados · atual vs. {rotuloComparacao(anterior)}.
           </span>
         </div>
 

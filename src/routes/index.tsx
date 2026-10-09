@@ -46,6 +46,7 @@ import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
 import { RelatoriosSection } from "@/components/relatorios/RelatoriosSection";
+import { periodoAnterior as periodoAnteriorComum, type PeriodPreset } from "@/lib/dashboard/period";
 
 export const Route = createFileRoute("/")({
   // ?rel= = aba da seção Relatórios (financeiro | compras | marketing)
@@ -199,15 +200,10 @@ function computeRange(preset: PresetKey, custom?: { from: string; to: string }):
 // curto) — leitura "mês contra mês", igual ao painel do Tiny/Olist. Os demais
 // presets comparam com o período imediatamente antes, de mesmo nº de dias.
 function periodoAnterior(preset: PresetKey, range: { from: string; to: string }): { from: string; to: string } {
-  const dFrom = spAnchor(range.from);
-  const nDias = differenceInCalendarDays(spAnchor(range.to), dFrom) + 1;
-  if (preset === "mes_atual") {
-    const ini = startOfMonth(subMonths(dFrom, 1));
-    const fimMes = endOfMonth(ini);
-    const fim = subDays(ini, -(nDias - 1));
-    return { from: spKey(ini), to: spKey(fim > fimMes ? fimMes : fim) };
-  }
-  return { from: spKey(subDays(dFrom, nDias)), to: spKey(subDays(dFrom, 1)) };
+  // Regra única (src/lib/dashboard/period.ts): período que é um mês compara mês a mês
+  // (Mês = mesmos dias do mês anterior; Mês anterior = o mês cheio antes dele).
+  const mapa: Partial<Record<PresetKey, PeriodPreset>> = { mes_atual: "mtd", mes_anterior: "prev_month", custom: "custom" };
+  return periodoAnteriorComum(mapa[preset] ?? "last7", range.from, range.to);
 }
 const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 /** "vs 01–06/set", "vs 25/set–01/out" ou "vs 05/out". */

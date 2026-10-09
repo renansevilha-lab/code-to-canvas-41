@@ -2224,8 +2224,16 @@ com os **mesmos dias do mês anterior** (01–06/out → 01–06/set; corta no f
 leitura mês contra mês, igual ao painel do Tiny/Olist. Antes comparava com os N dias imediatamente
 antes (25–30/set) e mostrava +32% quando o mês-contra-mês era −29%. Hoje/Ontem/7/30 dias seguem com
 o período imediatamente antes. Regra em `periodoAnterior()` (`src/routes/index.tsx`); cada card mostra
-"vs 01–06/set". Fora disso: as tabelas Vendas por SKU/Marca calculam o "anterior" dentro das RPCs, e
-"Mês anterior" compara com os 30 dias antes (não com o mês cheio).
+"vs 01–06/set". **09/out/2026 — regra ÚNICA em todas as telas (pedido do dono):** `periodoAnterior(preset, from, to)` em
+`src/lib/dashboard/period.ts` (calendário puro em UTC — as funções de mês do date-fns usam o fuso do
+navegador e deslocavam o fim do mês). Período que começa no dia 1 dentro de um mês ("Mês atual", "Mês
+anterior" ou personalizado assim) compara MÊS A MÊS: parcial = mesmos dias do mês anterior (corta no
+mês mais curto), cheio = o mês cheio antes. Hoje/Ontem/7/30/90 dias = período logo antes. Usam: Dashboard
+(via mapa de presets), **Vendas por produto** (`vendas_por_sku`/`vendas_por_marca` ganharam
+`p_ant_inicio`/`p_ant_fim` opcionais — sem eles = regra antiga, md5 de set/26 idêntico) e **Pedidos
+Integrados** (cards "vs 01–09/set"). Tendências fica com janelas móveis 7/30 d × as 7/30 anteriores (de
+propósito). Exemplo do erro antigo: 15984 em 01–09/out aparecia 17 → 708 (+4.064%) contra 22–30/set;
+mês a mês é 2.605 → 709.
 
 **Padrões a manter:**
 - `QueryClient` no nível de módulo, com `refetchOnWindowFocus: false`,
