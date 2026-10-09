@@ -1682,7 +1682,53 @@ clone em `C:\dev\an-ncio-m-gico`) vem para dentro da gestão em 4 fases. Fase 1
   contextos de um SKU"). Grupo "IA · Anúncios" no menu.
 - **Pendente:** os 2 arquivos de contexto de imagem (`sku/15159/…jpg`,
   `sku/15820/…png`) existem só no bucket do gerador — o dono sobe pela tela.
-  Fases 2–4 (geração, histórico, desligar o gerador) só planejadas.
+
+## 5.11.1 IA · Anúncios — Fase 2: geração na gestão (09/out/2026)
+
+Decisões do dono (09/out): **começar do zero** (o histórico do gerador — 15
+rascunhos, 58 imagens — fica lá como arquivo), só produto do Tiny (sem produto
+manual), entrada pelo **Catálogo** (botão "Gerar anúncio" na linha, só com o
+módulo `ia`) + lista `/ia/anuncios`, fila de imagem **encadeada + rede de
+segurança de 5 min**, comparar modelos fora. Envio ao Tiny = **Fase 3** (aqui
+aprovar só marca a etapa). Plano em `docs/ia-fase2-plano.md`; SQL + rollback em
+**`docs/ia-fase2-migracao.sql`**; código das fns em **`supabase/functions/`**
+(`ia-anuncio`, `ia-imagem-worker`, comum em `_shared/ia.ts` — deploy via MCP com
+o arquivo `../_shared/ia.ts` junto).
+- **Tabelas:** `ia_produto_extra` (público-alvo, frete adicional, embalagem e a
+  foto real CONGELADA `foto_ref_path` em `ia-anuncios/ref/{sku}/…` — uma fonte só;
+  o gerador tinha três), `ia_briefing` (1 por SKU), `ia_rascunho` (= draft),
+  `ia_prompt_imagem` (sku+tipo; `editado_mao` nunca é sobrescrito sem forçar),
+  `ia_rascunho_imagem`, `ia_etapa` (texto|imagem; pendente→na_fila→gerando→gerado→
+  aprovado/rejeitado/erro; `proxima_em` = backoff). RLS `tem_modulo('ia')`;
+  `ia_etapa` só leitura no app (muda por RPC/edge fn). Bucket privado `ia-anuncios`.
+- **RPCs:** `ia_calcular_preco`/`ia_analisar_preco` (custo = **`view_cmv_efetivo`**,
+  regra da gestão, kit pela composição; + frete/embalagem do `ia_produto_extra`;
+  faixas `ia_canal_faixa`, imposto `ia_empresa`), `ia_etapa_aprovar/rejeitar`,
+  `ia_imagem_fila_pegar` (SKIP LOCKED, devolve `gerando` > 5 min, respeita
+  `proxima_em`), `ia_fila_vigiar()` (cron `ia-fila-vigiar` `2-59/5`: só chama o
+  worker se há imagem parada; sem pendência não faz nada). Triggers: texto →
+  etapa texto (hash; texto editado depois de aprovado volta para revisão) e etapa
+  → status da imagem.
+- **Edge fns:** `ia-anuncio` (`briefing`, `texto`, `prompts-imagem`, `imagens` =
+  só enfileira + 3 workers, `foto-ref`; JWT de usuário + `tem_modulo('ia')`
+  checado no código) e `ia-imagem-worker` (1 imagem por chamada, encadeia;
+  Gemini `generateContent` 1:1 / OpenAI `images/edits` 1024; 3 tentativas com
+  espera 2 min × tentativa). Correções levadas do gerador: capa com
+  `[CONFIRMAR` recusada também no servidor; barra vazia = "sem barra" (o gerador
+  mandava um exemplo que saía impresso na arte); contextos baixados 1× por
+  chamada; prompts de imagem 4 por vez (antes todos juntos → 429).
+- **Secrets que o dono cadastra (nunca no chat):** `ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY` (modelo padrão `gpt-image-2.5-sunburst`), `GOOGLE_API_KEY`
+  (só se ativar modelo Gemini). Opcional `MODELO_TEXTO`.
+- **Front:** `/ia/gerar?sku=&canal=&empresa=&r=` (`src/components/ia/anuncio/`:
+  `ProdutoTopo` — foto de referência com troca/upload, dados extras; `EtapaTexto` —
+  texto editável, refazer com observação, briefing, preço com análise;
+  `EtapaFotos` — plano de fotos, formulário de capa, prompts editáveis, geração e
+  revisão com polling de 3 s só com fila andando e aba visível) e `/ia/anuncios`.
+  Tipos/chamadas em `src/lib/iaAnuncio.ts`. Quem tem só o módulo `ia` cai em
+  `/ia/anuncios` ao entrar.
+- **Catálogo (`/produtos`):** carregava só 1.000 dos 2.321 produtos (busca no
+  navegador não achava a outra metade) — agora pagina de 1.000 em 1.000.
 
 ## 6. Edge Functions
 
@@ -1727,6 +1773,8 @@ clone em `C:\dev\an-ncio-m-gico`) vem para dentro da gestão em 4 fases. Fase 1
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
+| `ia-anuncio` | v1 | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia` — ver §5.11.1 |
+| `ia-imagem-worker` | v1 | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min) — ver §5.11.1 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote

@@ -145,7 +145,7 @@ export function primeiraRotaPermitida(modulos: string[]): string {
     ["produtos", "/produtos-margem"],
     ["ads", "/ads-shopee"],
     ["devolucoes", "/devolucoes"],
-    ["ia", "/ia/prompts"],
+    ["ia", "/ia/anuncios"],
   ];
   if (modulos.includes("todos")) return "/";
   for (const [slug, rota] of preferencia) {

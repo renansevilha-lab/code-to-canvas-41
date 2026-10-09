@@ -1,6 +1,8 @@
 # Anúncio Mágico → gestão · Fase 2 (geração na gestão) — PLANO
 
-Status: **proposta, aguardando OK do dono** (07/out/2026). Nada aplicado.
+Status: **aprovado e implementado em 09/out/2026** (D1 do zero, D2 só Tiny, D3 encadeado + vigia 5 min,
+D4 botão no Catálogo + /ia/anuncios, D5 fora). Edge fns no ar; tabelas em `docs/ia-fase2-migracao.sql`
+(aplicar fora do horário comercial). Resumo no CLAUDE.md §5.11.1.
 Fase 1 (prompts/contextos em `ia_*`) no ar desde 06/out; cópia conferida de novo em 07/out
 por md5 — idêntica ao gerador, **não precisa re-sincronizar**.
 

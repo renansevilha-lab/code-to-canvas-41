@@ -46,7 +46,9 @@ import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
 import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as VendasRouteImport } from './routes/vendas'
+import { Route as IaAnunciosRouteImport } from './routes/ia.anuncios'
 import { Route as IaContextosRouteImport } from './routes/ia.contextos'
+import { Route as IaGerarRouteImport } from './routes/ia.gerar'
 import { Route as IaPromptsRouteImport } from './routes/ia.prompts'
 
 const IndexRoute = IndexRouteImport.update({
@@ -234,9 +236,19 @@ const VendasRoute = VendasRouteImport.update({
   path: '/vendas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IaAnunciosRoute = IaAnunciosRouteImport.update({
+  id: '/ia/anuncios',
+  path: '/ia/anuncios',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IaContextosRoute = IaContextosRouteImport.update({
   id: '/ia/contextos',
   path: '/ia/contextos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IaGerarRoute = IaGerarRouteImport.update({
+  id: '/ia/gerar',
+  path: '/ia/gerar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IaPromptsRoute = IaPromptsRouteImport.update({
@@ -283,7 +295,9 @@ export interface FileRoutesByFullPath {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/anuncios': typeof IaAnunciosRoute
   '/ia/contextos': typeof IaContextosRoute
+  '/ia/gerar': typeof IaGerarRoute
   '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRoutesByTo {
@@ -324,7 +338,9 @@ export interface FileRoutesByTo {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/anuncios': typeof IaAnunciosRoute
   '/ia/contextos': typeof IaContextosRoute
+  '/ia/gerar': typeof IaGerarRoute
   '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRoutesById {
@@ -366,7 +382,9 @@ export interface FileRoutesById {
   '/tendencias': typeof TendenciasRoute
   '/usuarios': typeof UsuariosRoute
   '/vendas': typeof VendasRoute
+  '/ia/anuncios': typeof IaAnunciosRoute
   '/ia/contextos': typeof IaContextosRoute
+  '/ia/gerar': typeof IaGerarRoute
   '/ia/prompts': typeof IaPromptsRoute
 }
 export interface FileRouteTypes {
@@ -409,7 +427,9 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/anuncios'
     | '/ia/contextos'
+    | '/ia/gerar'
     | '/ia/prompts'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -450,7 +470,9 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/anuncios'
     | '/ia/contextos'
+    | '/ia/gerar'
     | '/ia/prompts'
   id:
     | '__root__'
@@ -491,7 +513,9 @@ export interface FileRouteTypes {
     | '/tendencias'
     | '/usuarios'
     | '/vendas'
+    | '/ia/anuncios'
     | '/ia/contextos'
+    | '/ia/gerar'
     | '/ia/prompts'
   fileRoutesById: FileRoutesById
 }
@@ -533,7 +557,9 @@ export interface RootRouteChildren {
   TendenciasRoute: typeof TendenciasRoute
   UsuariosRoute: typeof UsuariosRoute
   VendasRoute: typeof VendasRoute
+  IaAnunciosRoute: typeof IaAnunciosRoute
   IaContextosRoute: typeof IaContextosRoute
+  IaGerarRoute: typeof IaGerarRoute
   IaPromptsRoute: typeof IaPromptsRoute
 }
 
@@ -798,11 +824,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ia/anuncios': {
+      id: '/ia/anuncios'
+      path: '/ia/anuncios'
+      fullPath: '/ia/anuncios'
+      preLoaderRoute: typeof IaAnunciosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ia/contextos': {
       id: '/ia/contextos'
       path: '/ia/contextos'
       fullPath: '/ia/contextos'
       preLoaderRoute: typeof IaContextosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ia/gerar': {
+      id: '/ia/gerar'
+      path: '/ia/gerar'
+      fullPath: '/ia/gerar'
+      preLoaderRoute: typeof IaGerarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ia/prompts': {
@@ -853,7 +893,9 @@ const rootRouteChildren: RootRouteChildren = {
   TendenciasRoute: TendenciasRoute,
   UsuariosRoute: UsuariosRoute,
   VendasRoute: VendasRoute,
+  IaAnunciosRoute: IaAnunciosRoute,
   IaContextosRoute: IaContextosRoute,
+  IaGerarRoute: IaGerarRoute,
   IaPromptsRoute: IaPromptsRoute,
 }
 export const routeTree = rootRouteImport

@@ -32,6 +32,7 @@ import {
   Clock,
   ChevronDown,
   Sparkles,
+  Wand2,
   Layers,
   type LucideIcon,
 } from "lucide-react";
@@ -121,6 +122,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "IA · Anúncios",
     cor: "oklch(0.8 0.12 300)",
     items: [
+      { title: "Anúncios", url: "/ia/anuncios", icon: Wand2, modulo: "ia" },
       { title: "Prompts", url: "/ia/prompts", icon: Sparkles, modulo: "ia" },
       { title: "Contextos", url: "/ia/contextos", icon: Layers, modulo: "ia" },
     ],

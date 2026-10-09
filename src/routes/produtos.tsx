@@ -1,6 +1,9 @@
 import { BotaoSincronizar } from "@/components/BotaoSincronizar";
 import { SyncStatusFooter } from "@/components/SyncStatusFooter";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { usePerfil } from "@/hooks/usePerfil";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,15 +35,26 @@ function ProdutosPage() {
   const [filtro, setFiltro] = useState<string>("todos");
   // Incrementado pelo botão "Sincronizar" para reler a view depois do sync.
   const [recarga, setRecarga] = useState(0);
+  // "Gerar anúncio" (IA · Anúncios, Fase 2) só para quem tem o módulo IA
+  const podeIa = usePerfil().temAcesso("ia");
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabaseExternal
-        .from("view_produtos_margem")
-        .select("*")
-        .order("margem_pct", { ascending: false, nullsFirst: false })
-        .limit(1000);
-      if (!error) setProdutos((data ?? []) as Produto[]);
+      // Paginado: são ~2,3 mil produtos e o PostgREST corta em 1.000 — com um
+      // .limit(1000) só, a busca não achava mais da metade do catálogo.
+      const todos: Produto[] = [];
+      for (let de = 0; de < 20_000; de += 1000) {
+        const { data, error } = await supabaseExternal
+          .from("view_produtos_margem")
+          .select("*")
+          .order("margem_pct", { ascending: false, nullsFirst: false })
+          .order("sku")
+          .range(de, de + 999);
+        if (error) break;
+        todos.push(...((data ?? []) as Produto[]));
+        if (!data || data.length < 1000) break;
+      }
+      setProdutos(todos);
       setLoading(false);
     })();
   }, [recarga]);
@@ -124,6 +138,7 @@ function ProdutosPage() {
                   <th className="px-4 py-3 font-medium text-right">CMV</th>
                   <th className="px-4 py-3 font-medium text-right">Margem</th>
                   <th className="px-4 py-3 font-medium text-right">%</th>
+                  {podeIa && <th className="px-4 py-3 font-medium" />}
                 </tr>
               </thead>
               <tbody>
@@ -161,6 +176,15 @@ function ProdutosPage() {
                           {p.margem_pct != null ? formatPercent(pct) : "—"}
                         </Badge>
                       </td>
+                      {podeIa && (
+                        <td className="px-2 py-2 text-right">
+                          <Button asChild size="sm" variant="ghost" className="h-7 gap-1 text-xs">
+                            <Link to="/ia/gerar" search={{ sku: p.sku, canal: "shopee", empresa: "ottz" }} title="Gerar anúncio com IA">
+                              <Sparkles className="h-3.5 w-3.5" />Gerar anúncio
+                            </Link>
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
