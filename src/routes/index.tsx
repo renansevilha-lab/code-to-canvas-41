@@ -375,15 +375,15 @@ function Dashboard() {
           .gte("data", range.from)
           .lte("data", range.to);
 
-        const [canaisR, canaisPrevR, met, prod, acos, am, anoms, visao, canaisSem, vsku, vmarca] = await Promise.all([
-          canaisQ, canaisPrevQ, metasQ, produtosQ, acosQ, amazonQ, anomsQ, visaoQ, canaisSemQ, vendasSkuQ, vendasMarcaQ,
+        // Em LEVAS (09/out/2026): as 11 consultas juntas, somadas às rotinas de
+        // fundo, estouravam o limite de 8 s do banco (instância pequena) e o
+        // Dashboard abria com blocos vazios. 1ª leva = topo e canais (views
+        // materializadas + RPC leve) e a tela libera; o resto vem em grupos
+        // pequenos. Os builders do supabase-js só disparam quando aguardados.
+        const [canaisR, canaisPrevR, visao, canaisSem] = await Promise.all([
+          canaisQ, canaisPrevQ, visaoQ, canaisSemQ,
         ]);
         if (cancel) return;
-
-        if (!vsku.error) setVendasSku((vsku.data ?? []) as VendaSkuRow[]);
-        else console.warn("vendas_por_sku →", vsku.error);
-        if (!vmarca.error) setVendasMarca((vmarca.data ?? []) as VendaMarcaRow[]);
-        else console.warn("vendas_por_marca →", vmarca.error);
 
         if (!canaisSem.error) {
           const rows = (canaisSem.data ?? []) as { marca_canal: string; pedidos: number | null; receita: number | null }[];
@@ -499,30 +499,19 @@ function Dashboard() {
         }
 
         setKpisCanal(kpiRows);
+        setAtualizadoEm(new Date());
+        setLoading(false);
+
+        // 2ª leva — metas/ACOS e alertas
+        const [met, acos, anoms] = await Promise.all([metasQ, acosQ, anomsQ]);
+        if (cancel) return;
         if (!met.error) setMetas((met.data ?? []) as MetaRealizado[]);
-
-        if (!prod.error) {
-          const produtos = (prod.data ?? []) as ProdutoRow[];
-          const confiaveis = produtos.filter((p) => p.confiavel !== false);
-          setTopProdutos(
-            confiaveis
-              .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
-              .slice(0, 6),
-          );
-          setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
-        }
-
+        else console.warn("view_metas_realizado →", met.error);
         if (!acos.error) {
           const rows = (acos.data ?? []) as { classificacao_roas: string; anuncios: number | null }[];
           const n = rows.reduce((s, r) => s + Number(r.anuncios ?? 0), 0);
           setAlertaAcos(n);
         }
-
-        if (!am.error) {
-          const rows = (am.data ?? []) as { tem_mapeamento: boolean | null }[];
-          setAlertaAmazon(rows.filter((r) => !r.tem_mapeamento).length);
-        }
-
         if (!anoms.error) {
           const rows = (anoms.data ?? []) as { tipo: string; receita: number | null }[];
           const acc = {
@@ -541,7 +530,33 @@ function Dashboard() {
           setAnomSemRecebido({ count: acc.sem_recebido.count });
         }
 
-        setAtualizadoEm(new Date());
+        // 3ª leva — vendas por SKU e por marca (kit destrinchado)
+        const [vsku, vmarca] = await Promise.all([vendasSkuQ, vendasMarcaQ]);
+        if (cancel) return;
+        if (!vsku.error) setVendasSku((vsku.data ?? []) as VendaSkuRow[]);
+        else console.warn("vendas_por_sku →", vsku.error);
+        if (!vmarca.error) setVendasMarca((vmarca.data ?? []) as VendaMarcaRow[]);
+        else console.warn("vendas_por_marca →", vmarca.error);
+
+        // 4ª leva — produtos (top margem / prejuízo com ADS) e SKUs Amazon sem cadastro
+        const [prod, am] = await Promise.all([produtosQ, amazonQ]);
+        if (cancel) return;
+
+        if (!prod.error) {
+          const produtos = (prod.data ?? []) as ProdutoRow[];
+          const confiaveis = produtos.filter((p) => p.confiavel !== false);
+          setTopProdutos(
+            confiaveis
+              .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
+              .slice(0, 6),
+          );
+          setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
+        }
+
+        if (!am.error) {
+          const rows = (am.data ?? []) as { tem_mapeamento: boolean | null }[];
+          setAlertaAmazon(rows.filter((r) => !r.tem_mapeamento).length);
+        }
       } catch (e) {
         if (!cancel) setErro((e as Error).message);
       } finally {
