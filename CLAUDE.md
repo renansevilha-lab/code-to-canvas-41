@@ -1575,6 +1575,14 @@ concluir.
 - Tabelas `fulfillment_tarefas` / `fulfillment_tarefa_itens` (RLS off, grant só
   `authenticated`). Localização de prateleira NÃO existe no cadastro (só no
   itens_json dos pedidos) — por isso não há filtro por localização.
+- **Fotos (09/out/2026, pedido do dono):** em qualquer tarefa, na criação e no
+  detalhe ("Tirar foto" abre a câmera do celular; "Escolher fotos" aceita várias).
+  `src/components/fulfillment/FotosTarefa.tsx`. **Sem tabela nem DDL:** ficam no
+  bucket privado `fulfillment-docs` (o dos PDFs de envio), pasta
+  `tarefas/<tarefa_id>/`, nome `<epoch ms>__<autor>.jpg` (quando/quem); a lista vem
+  do próprio Storage (`list`) com URL assinada de 1 h. Reduzidas no navegador
+  (lado maior 1.600 px, JPEG 82%) — foto de celular tem 4–8 MB. Excluir a tarefa
+  apaga as fotos (melhor-esforço).
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 

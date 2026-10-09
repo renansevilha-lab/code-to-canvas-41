@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Archive, ArchiveRestore, CalendarClock, Check, ChevronLeft, ChevronRight, ClipboardCheck,
-  ClipboardList, EyeOff, Eye, ListChecks, Loader2, Package as PackageIcon, Plus, RefreshCw, Search, Trash2, User, X,
+  ClipboardList, EyeOff, Eye, Camera, ImagePlus, ListChecks, Loader2, Package as PackageIcon, Plus, RefreshCw, Search, Trash2, User, X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/format";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
+import { FotosTarefa, apagarFotosTarefa, enviarFotosTarefa } from "./FotosTarefa";
 
 // ============================================================================
 // Fulfillment › Tarefas (06/out/2026, pedido do dono): quadro A fazer /
@@ -35,6 +36,8 @@ import { usePerfil } from "@/hooks/usePerfil";
 //   (balanço no depósito Geral) só sai pelo botão, com prévia AO VIVO e
 //   confirmação — edge fn fulfillment-tarefas.
 // - Organização / outra: descrição + checklist.
+// - Fotos (09/out/2026): na criação e no detalhe de qualquer tarefa — FotosTarefa.tsx
+//   (bucket fulfillment-docs, pasta tarefas/<id>/, reduzidas no navegador).
 // - Responsável (equipe_membros) e prazo; aviso no Discord (canal fulfilment)
 //   ao criar e ao concluir.
 // Tabelas: fulfillment_tarefas / fulfillment_tarefa_itens. Views:
@@ -496,6 +499,7 @@ function NovaTarefa({ onFechar, onCriada, criadoPor }: { onFechar: () => void; o
   const [cega, setCega] = useState(true);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [selecionados, setSelecionados] = useState<Map<string, ProdutoInv>>(new Map());
+  const [fotos, setFotos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
 
   // título sugerido para a contagem: o fornecedor dominante da seleção
@@ -529,6 +533,11 @@ function NovaTarefa({ onFechar, onCriada, criadoPor }: { onFechar: () => void; o
           await supabaseExternal.from("fulfillment_tarefas").delete().eq("id", id);
           throw e;
         }
+      }
+      if (fotos.length) {
+        // a tarefa já existe: falha na foto não desfaz a tarefa, só avisa
+        try { await enviarFotosTarefa(id, fotos, criadoPor); }
+        catch (e) { toast.warning("Tarefa criada, mas alguma foto não subiu", { description: (e as Error).message }); }
       }
       avisar(id, "criada");
       toast.success("Tarefa criada", { description: membro ? `Responsável: ${membro.nome}` : undefined });
@@ -585,6 +594,28 @@ function NovaTarefa({ onFechar, onCriada, criadoPor }: { onFechar: () => void; o
             <span className="text-xs font-medium text-muted-foreground">Descrição (opcional)</span>
             <Textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={2} className="bg-card"
               placeholder={tipo === "contagem" ? "Ex.: contar só a prateleira do galpão de cima" : "O que precisa ser feito"} />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Fotos (opcional — ex.: como está a prateleira)</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50">
+                <Camera className="h-4 w-4" /> Tirar foto
+                <input type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ""; setFotos((x) => [...x, ...f]); }} />
+              </label>
+              <label className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50">
+                <ImagePlus className="h-4 w-4" /> Escolher fotos
+                <input type="file" accept="image/*" multiple className="hidden"
+                  onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ""; setFotos((x) => [...x, ...f]); }} />
+              </label>
+              {fotos.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="inline-flex items-center gap-1 rounded bg-muted px-2 py-1 text-xs max-w-[180px]">
+                  <span className="truncate">{f.name}</span>
+                  <button type="button" className="text-muted-foreground hover:text-foreground" title="Tirar" onClick={() => setFotos((x) => x.filter((_, j) => j !== i))}><X className="h-3 w-3" /></button>
+                </span>
+              ))}
+            </div>
           </div>
 
           {tipo === "contagem" ? (
@@ -664,6 +695,7 @@ function DetalheTarefa({ id, onFechar }: { id: string; onFechar: () => void }) {
     setConfirmarExcluir(false);
     const { error } = await supabaseExternal.from("fulfillment_tarefas").delete().eq("id", id);
     if (error) { toast.error("Não foi possível excluir", { description: error.message }); return; }
+    void apagarFotosTarefa(id).catch(() => { /* melhor-esforço */ });
     toast.success("Tarefa excluída");
     void qc.invalidateQueries({ queryKey: ["fulfillment", "tarefas"] });
     onFechar();
@@ -737,6 +769,8 @@ function DetalheTarefa({ id, onFechar }: { id: string; onFechar: () => void }) {
               </div>
             )}
 
+            <FotosTarefa tarefaId={t.id} autor={perfil?.nome ?? "app"} />
+
             <AlertDialog open={confirmarConcluir} onOpenChange={setConfirmarConcluir}>
               <AlertDialogContent>
                 <AlertDialogHeader>
@@ -762,7 +796,7 @@ function DetalheTarefa({ id, onFechar }: { id: string; onFechar: () => void }) {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Excluir a tarefa?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Apaga a tarefa e as contagens dela. Não desfaz ajuste já lançado no Tiny. Para só tirar do quadro, use Arquivar.
+                    Apaga a tarefa, as contagens e as fotos dela. Não desfaz ajuste já lançado no Tiny. Para só tirar do quadro, use Arquivar.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
