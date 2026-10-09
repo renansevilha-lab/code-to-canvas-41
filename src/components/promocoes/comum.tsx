@@ -185,6 +185,28 @@ export async function atualizarCatalogoShopee(
   return { feitos, variacoes, erros };
 }
 
+/** Anúncios criados/alterados na Shopee nos últimos `dias` que o espelho ainda não
+ *  tem (ou tem desatualizado) — edge fn shopee-catalogo-itens v2 `modulo=recentes` —
+ *  e já os relê. Sem isso, produto recém-cadastrado só entrava no catálogo noturno
+ *  e não aparecia no "Adicionar produtos" (09/out/2026). */
+export async function sincronizarRecentesShopee(
+  shopId: number, dias = 3,
+): Promise<{ encontrados: number; novos: number; feitos: number; erros: string[] }> {
+  const { data } = await supabaseExternal.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Sessão expirada — entre de novo no app.");
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-catalogo-itens?modulo=recentes&shop_id=${shopId}&dias=${dias}`, {
+    headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.erro ?? `HTTP ${r.status}`);
+  const ids = ((j.item_ids ?? []) as unknown[]).map(Number);
+  const erros = [...((j.erros ?? []) as string[])];
+  if (!ids.length) return { encontrados: 0, novos: 0, feitos: 0, erros };
+  const res = await atualizarCatalogoShopee(shopId, ids);
+  return { encontrados: ids.length, novos: Number(j.novos ?? 0), feitos: res.feitos, erros: [...erros, ...res.erros] };
+}
+
 /** Traduz as recusas mais comuns da API de promoções da Shopee. */
 export function traduzirErroShopee(msg: string | null | undefined): string {
   const m = String(msg ?? "");

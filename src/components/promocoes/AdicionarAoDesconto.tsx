@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  FAIXAS_MC, Foto, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  FAIXAS_MC, Foto, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -83,10 +83,20 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
     },
   });
 
+  // 1b) anúncios novos/alterados na Shopee nos últimos 3 dias entram no espelho antes da lista
+  // (produto recém-cadastrado só chegava no catálogo noturno e não aparecia aqui)
+  const recentesQ = useQuery({
+    queryKey: ["promo-shopee", "recentes", shopId],
+    staleTime: 10 * 60_000,
+    retry: false,
+    queryFn: () => sincronizarRecentesShopee(shopId, 3),
+  });
+  const recentesProntos = recentesQ.isSuccess || recentesQ.isError;
+
   // 2) catálogo (espelho) — já sem os que estão em campanha, se marcado
   const anunQ = useQuery({
-    queryKey: ["promo-shopee", "candidatos", shopId, buscaAtiva, ordem, soSemCampanha, campQ.data?.ids.length ?? -1],
-    enabled: !soSemCampanha || campQ.isSuccess,
+    queryKey: ["promo-shopee", "candidatos", shopId, buscaAtiva, ordem, soSemCampanha, campQ.data?.ids.length ?? -1, recentesQ.dataUpdatedAt],
+    enabled: (!soSemCampanha || campQ.isSuccess) && recentesProntos,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<{ anuncios: AnuncioBusca[]; vars: Map<number, Variacao[]>; avisoId: string | null }> => {
       let avisoId: string | null = null;
@@ -231,7 +241,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
     } finally { setSalvando(false); }
   }
 
-  const carregando = (soSemCampanha && campQ.isLoading) || anunQ.isLoading;
+  const carregando = (soSemCampanha && campQ.isLoading) || !recentesProntos || anunQ.isLoading;
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
@@ -273,6 +283,17 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
           ))}
         </div>
 
+        {recentesQ.data && recentesQ.data.feitos > 0 && (
+          <p className="text-[12px] text-muted-foreground">
+            Trazidos da Shopee agora: {recentesQ.data.feitos} anúncio(s) novo(s)/alterado(s) nos últimos 3 dias
+            {recentesQ.data.novos > 0 ? ` (${recentesQ.data.novos} que ainda não estavam no catálogo)` : ""}.
+          </p>
+        )}
+        {recentesQ.isError && (
+          <p className="text-[12px]" style={{ color: RED }}>
+            Não consegui buscar os anúncios novos na Shopee ({(recentesQ.error as Error).message}) — produto cadastrado hoje pode não aparecer; busque pelo ID do item.
+          </p>
+        )}
         {idBuscado != null && !carregando && (anunQ.data?.avisoId || idEmCampanha) && (
           <p className="text-[12px]" style={{ color: idEmCampanha ? RED : undefined }}>
             {idEmCampanha
@@ -301,7 +322,8 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
               {carregando ? (
                 <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
-                  {soSemCampanha && campQ.isLoading ? "Conferindo na Shopee quais anúncios já estão em campanha…" : "Carregando catálogo…"}
+                  {!recentesProntos ? "Trazendo da Shopee os anúncios novos/alterados nos últimos 3 dias…"
+                    : soSemCampanha && campQ.isLoading ? "Conferindo na Shopee quais anúncios já estão em campanha…" : "Carregando catálogo…"}
                 </td></tr>
               ) : campQ.isError && soSemCampanha ? (
                 <tr><td colSpan={8} className="p-4 text-center" style={{ color: RED }}>Não consegui conferir as campanhas: {(campQ.error as Error).message}</td></tr>

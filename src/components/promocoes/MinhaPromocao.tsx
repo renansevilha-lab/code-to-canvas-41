@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
-  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tetoRelampago, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tetoRelampago, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
@@ -335,6 +335,15 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
       if (ids.length === 0) return;
       setCatalogo({ feitos: 0, total: ids.length });
       const res = await atualizarCatalogoShopee(shopId, ids, (f) => setCatalogo({ feitos: f, total: ids.length }));
+      // + anúncios novos/alterados nos últimos 3 dias (produto recém-cadastrado aparece no "Adicionar produtos")
+      try {
+        const rec = await sincronizarRecentesShopee(shopId, 3);
+        if (rec.feitos > 0) toast.success(`${rec.feitos} anúncio(s) novo(s)/alterado(s) trazido(s) da Shopee`);
+        void qc.invalidateQueries({ queryKey: ["promo-shopee", "candidatos", shopId] });
+        void qc.invalidateQueries({ queryKey: ["promo-shopee", "recentes", shopId] });
+      } catch (e) {
+        res.erros.push(`anúncios novos: ${(e as Error).message}`);
+      }
       await detQ.refetch();
       if (res.erros.length) toast.warning(`Cadastro de ${res.feitos}/${ids.length} anúncio(s) atualizado`, { description: res.erros.slice(0, 4).join("\n"), duration: 12000 });
       else toast.success(`Atualizado da Shopee: ${res.feitos} anúncio(s), ${res.variacoes} variação(ões)`);
