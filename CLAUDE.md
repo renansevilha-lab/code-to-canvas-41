@@ -1899,6 +1899,27 @@ em 18/set:
 Se voltar a acontecer com esses cortes no ar, o próximo passo é subir a
 instância (Micro → Small), não caçar consulta.
 
+### Dashboard com blocos vazios (08–09/out/2026) — disputa de CPU, não consulta ruim
+`canceling statement due to statement timeout` (limite 8 s do `authenticated`) em rajadas no MESMO
+segundo: as 11 consultas do Dashboard saíam juntas e, somadas às rotinas de fundo, nenhuma
+terminava. Isoladas eram rápidas (metas 175 ms, visão geral 0,2 s) — sob carga, 3–8 s.
+Feito em 09/out (pedido do dono):
+- **Front em levas** (`src/routes/index.tsx`): topo+canais primeiro (libera a tela), depois
+  metas/ACOS/anomalias, vendas SKU/marca, produtos/Amazon. Não voltar ao `Promise.all` único.
+- **CMV congelado só de madrugada:** cron **68** `cmv-congelar-novos` (15 min, ~6,5 s) DESLIGADO;
+  vale o **112** `cmv-congelar-completo` (03:40 UTC). Sem risco: a `view_margem_pedido_v2` usa o
+  custo ao vivo enquanto o item não está congelado, e o custo do Tiny só muda 1×/dia (05h BRT).
+  Exceção: custo trocado no meio do dia (Puxar custo / formação de custo) congela os pedidos do
+  dia com o custo novo.
+- **Estoque do Tiny só de manhã:** cron **58** `tiny-estoque-reposicao` de `*/10` o dia todo
+  (lia a `view_reposicao_skus_alvo`, 5,7 s, 144×/dia) para **`*/10 8-10 * * *`** (05h–07h50 BRT,
+  18 rodadas × 35 = os 601 SKUs-alvo 1×/dia). O app não manda estoque aos marketplaces (o Tiny
+  manda); quem lê `estoque_tiny` = reposição do Full, cobertura do agente de compras (cron 127,
+  madrugada) e inventário (o ajuste relê ao vivo).
+- **Pendente (DDL, noite):** índice parcial `pedidos_tiny (data_pedido desc) where valor_produtos
+  is null` (busca do sync levava 3,7 s × centenas/dia, 11% do tempo do banco) e janela de 30 dias +
+  índice em `pedidos_sem_escrow_componente` (percorria 32 mil pedidos para achar 6 de hoje, ~4 s).
+
 ### Ao mexer em view de cálculo, capture baseline antes
 Rode os totais de um período conhecido **antes** da alteração e compare depois,
 ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
