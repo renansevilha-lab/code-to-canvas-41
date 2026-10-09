@@ -69,15 +69,17 @@ interface ProdutoInv {
 }
 interface Membro { id: string; nome: string }
 
-const STATUS: { id: Status; label: string; cor: string }[] = [
-  { id: "a_fazer", label: "A fazer", cor: "#B7791F" },
-  { id: "fazendo", label: "Fazendo", cor: "#2F6FB0" },
-  { id: "feito", label: "Feito", cor: "#0E8A5F" },
+// Mesmas cores do quadro de Envios (fulfillment.tsx STAGES): cor forte no cabeçalho e
+// na faixa do cartão, fundo tingido na coluna.
+const STATUS: { id: Status; label: string; cor: string; tint: string }[] = [
+  { id: "a_fazer", label: "A fazer", cor: "#B7791F", tint: "#FDF6EA" },
+  { id: "fazendo", label: "Fazendo", cor: "#2F6FB0", tint: "#EEF5FC" },
+  { id: "feito", label: "Feito", cor: "#0E8A5F", tint: "#EBF7F1" },
 ];
-const TIPOS: { id: Tipo; label: string; cls: string }[] = [
-  { id: "contagem", label: "Contagem de inventário", cls: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300" },
-  { id: "organizacao", label: "Organização de estoque", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
-  { id: "outro", label: "Outra tarefa", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300" },
+const TIPOS: { id: Tipo; label: string; cls: string; cor: string }[] = [
+  { id: "contagem", label: "Contagem de inventário", cls: "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300", cor: "#7A5CC7" },
+  { id: "organizacao", label: "Organização de estoque", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300", cor: "#2F6FB0" },
+  { id: "outro", label: "Outra tarefa", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300", cor: "#5C6470" },
 ];
 const tipoDe = (t: string) => TIPOS.find((x) => x.id === t) ?? TIPOS[2];
 const n = (x: unknown) => { const v = Number(x ?? 0); return Number.isFinite(v) ? v : 0; };
@@ -137,6 +139,8 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
   const [filtroTipo, setFiltroTipo] = useState<"todos" | Tipo>("todos");
   const [filtroResp, setFiltroResp] = useState<string>("todos");
   const [arquivadas, setArquivadas] = useState(false);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<Status | null>(null);
 
   const q = useQuery({
     queryKey: ["fulfillment", "tarefas", arquivadas],
@@ -169,9 +173,27 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
   }
 
   const contagem = (s: Status) => lista.filter((t) => t.status === s);
+  const resumo = [
+    { rotulo: "A fazer", valor: contagem("a_fazer").length, cor: "#B7791F" },
+    { rotulo: "Fazendo", valor: contagem("fazendo").length, cor: "#2F6FB0" },
+    { rotulo: "Atrasadas", valor: lista.filter((t) => t.atrasada && t.status !== "feito").length, cor: "#C9432F" },
+    { rotulo: "Feitas", valor: contagem("feito").length, cor: "#0E8A5F" },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
+      {!arquivadas && (
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+          {resumo.map((c) => (
+            <div key={c.rotulo} className="bg-card rounded-xl px-4 py-3" style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${c.cor}` }}>
+              <div className="text-[11.5px] text-[#8B93A1]">{c.rotulo}</div>
+              <div className="text-[22px] font-semibold tracking-[-0.02em] leading-tight" style={{ color: c.rotulo === "Atrasadas" && c.valor > 0 ? c.cor : undefined }}>
+                {c.valor} <span className="text-[13px] font-normal text-[#8B93A1]">tarefa{c.valor === 1 ? "" : "s"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Select value={filtroTipo} onValueChange={(v) => setFiltroTipo(v as typeof filtroTipo)}>
@@ -213,29 +235,64 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
       ) : arquivadas ? (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {lista.length === 0 && <div className="text-sm text-muted-foreground">Nenhuma tarefa arquivada.</div>}
-          {lista.map((t) => <CardTarefa key={t.id} t={t} onAbrir={() => setAbertaId(t.id)} />)}
+          {lista.map((t) => <CardTarefa key={t.id} t={t} corEtapa={STATUS.find((x) => x.id === t.status)?.cor ?? "#5C6470"} onAbrir={() => setAbertaId(t.id)} />)}
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-3 items-start">
-          {STATUS.map((s, idx) => (
-            <div key={s.id} className="rounded-xl border bg-muted/30 flex flex-col min-w-0">
-              <div className="px-3 py-2.5 border-b flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  <i className="h-2.5 w-2.5 rounded-full" style={{ background: s.cor }} /> {s.label}
-                </span>
-                <Badge variant="secondary" className="tabular-nums">{contagem(s.id).length}</Badge>
-              </div>
-              <div className="p-2 flex flex-col gap-2 min-h-[120px]">
-                {contagem(s.id).length === 0 && <div className="text-xs text-muted-foreground px-1 py-3">Nada aqui.</div>}
-                {contagem(s.id).map((t) => (
-                  <CardTarefa key={t.id} t={t} onAbrir={() => setAbertaId(t.id)}
-                    onEsquerda={idx > 0 ? () => void mover(t, STATUS[idx - 1].id) : undefined}
-                    onDireita={idx < STATUS.length - 1 ? () => void mover(t, STATUS[idx + 1].id) : undefined} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <>
+          <p className="text-[12.5px] text-[#8B93A1] -mt-1">
+            {lista.filter((t) => t.status !== "feito").length} tarefa(s) aberta(s) · arraste os cartões entre as colunas (ou use as setas) para mudar a etapa
+          </p>
+          <div className="grid gap-3.5 overflow-x-auto pb-1.5 items-start" style={{ gridTemplateColumns: "repeat(3, minmax(240px, 1fr))" }}>
+            {STATUS.map((s, idx) => {
+              const doStatus = contagem(s.id);
+              const over = !!dragId && dragOver === s.id;
+              return (
+                <div
+                  key={s.id}
+                  onDragOver={(e) => { e.preventDefault(); if (dragOver !== s.id) setDragOver(s.id); }}
+                  onDragLeave={() => { if (dragOver === s.id) setDragOver(null); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const tid = e.dataTransfer.getData("text/plain") || dragId;
+                    const t = lista.find((x) => x.id === tid);
+                    setDragId(null); setDragOver(null);
+                    if (t) void mover(t, s.id);
+                  }}
+                  className="flex flex-col gap-2.5 min-h-[180px] rounded-[14px] p-1.5 pb-2.5 min-w-0"
+                  style={{
+                    background: over ? "#F7F6FD" : s.tint,
+                    border: over ? "1.5px dashed var(--color-primary)" : `1.5px solid ${s.tint}`,
+                    boxShadow: "0 1px 3px rgba(16,20,26,.03)",
+                  }}
+                >
+                  <div className="flex items-center gap-2 px-2 py-2 -mx-1.5 -mt-1.5 rounded-t-[10px]" style={{ background: s.cor }}>
+                    <span className="h-[7px] w-[7px] rounded-full bg-white shrink-0" />
+                    <span className="text-[11.5px] font-bold uppercase tracking-wide text-white">{s.label}</span>
+                    <div className="flex-1" />
+                    <span className="text-[11px] font-bold text-white font-mono px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,.28)" }}>
+                      {doStatus.length}
+                    </span>
+                  </div>
+                  {doStatus.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-[#C9CFD8] py-5 px-4 flex flex-col items-center gap-1.5 text-center" style={{ background: "rgba(255,255,255,.5)" }}>
+                      <span className="text-[#B8BEC8] text-base">◌</span>
+                      <span className="text-[12px] font-medium text-[#8B93A1]">Nenhuma tarefa</span>
+                      {s.id === "a_fazer" && <span className="text-[11px] text-[#A6ADBA]">Clique em Nova tarefa para criar</span>}
+                    </div>
+                  ) : (
+                    doStatus.map((t) => (
+                      <CardTarefa key={t.id} t={t} corEtapa={s.cor} arrastando={dragId === t.id}
+                        onArrastar={(id) => setDragId(id)} onSoltar={() => { setDragId(null); setDragOver(null); }}
+                        onAbrir={() => { if (!dragId) setAbertaId(t.id); }}
+                        onEsquerda={idx > 0 ? () => void mover(t, STATUS[idx - 1].id) : undefined}
+                        onDireita={idx < STATUS.length - 1 ? () => void mover(t, STATUS[idx + 1].id) : undefined} />
+                    ))
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {nova && (
@@ -250,45 +307,62 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
   );
 }
 
-function CardTarefa({ t, onAbrir, onEsquerda, onDireita }: {
-  t: Tarefa; onAbrir: () => void; onEsquerda?: () => void; onDireita?: () => void;
+function CardTarefa({ t, corEtapa, onAbrir, onEsquerda, onDireita, onArrastar, onSoltar, arrastando }: {
+  t: Tarefa; corEtapa: string; onAbrir: () => void; onEsquerda?: () => void; onDireita?: () => void;
+  onArrastar?: (id: string) => void; onSoltar?: () => void; arrastando?: boolean;
 }) {
   const tp = tipoDe(t.tipo);
   const contagem = t.tipo === "contagem";
   const total = contagem ? n(t.n_itens) : n(t.n_checklist);
   const feitos = contagem ? n(t.n_contados) : n(t.n_checklist_feitos);
+  const atrasada = t.atrasada && t.status !== "feito";
   return (
-    <div className="rounded-lg border bg-card p-3 flex flex-col gap-2 hover:border-foreground/25 transition-colors">
-      <button type="button" onClick={onAbrir} className="text-left flex flex-col gap-1.5">
-        <span className={cn("self-start text-[10.5px] font-semibold px-2 py-0.5 rounded-full", tp.cls)}>{tp.label}</span>
-        <span className="text-sm font-semibold leading-snug">{t.titulo}</span>
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><User className="h-3 w-3" />{t.responsavel ?? "sem responsável"}</span>
-          {t.prazo && (
-            <span className={cn("inline-flex items-center gap-1", t.atrasada && "text-red-600 dark:text-red-400 font-semibold")}>
-              <CalendarClock className="h-3 w-3" />{t.atrasada ? "atrasada · " : ""}{ddmm(t.prazo)}
-            </span>
-          )}
+    <div
+      draggable={!!onArrastar}
+      onDragStart={(ev) => { ev.dataTransfer.setData("text/plain", t.id); ev.dataTransfer.effectAllowed = "move"; onArrastar?.(t.id); }}
+      onDragEnd={() => onSoltar?.()}
+      onClick={onAbrir}
+      className={cn("bg-card rounded-xl p-3 pl-2.5 flex flex-col gap-2 hover:bg-muted/30 transition-colors", onArrastar ? "cursor-grab" : "cursor-pointer")}
+      style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${corEtapa}`, opacity: arrastando ? 0.4 : 1, boxShadow: "0 1px 2px rgba(16,20,26,.04)" }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full shrink-0" style={{ background: tp.cor }} />
+        <span className="text-[11px] font-semibold text-[#6C7481] truncate">{tp.label}</span>
+        <div className="flex-1" />
+        {onArrastar && <span className="text-[#C9CFD8] text-xs tracking-tighter">⠿</span>}
+      </div>
+      <span className="text-[13.5px] font-semibold leading-snug">{t.titulo}</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 text-[11.5px] font-medium px-2 py-0.5 rounded-lg bg-[#F4F5F7] text-[#4B5462]">
+          <User className="h-3 w-3" />{t.responsavel ?? "sem responsável"}
         </span>
-        {total > 0 && (
-          <span className="flex flex-col gap-1">
-            <span className="h-1.5 rounded-full bg-muted overflow-hidden">
-              <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (feitos / total) * 100)}%` }} />
-            </span>
-            <span className="text-[11px] text-muted-foreground tabular-nums">
-              {contagem ? `${feitos} de ${total} SKUs contados` : `${feitos} de ${total} itens`}
-              {contagem && n(t.n_divergentes) > 0 && <span className="text-amber-700 dark:text-amber-400 font-semibold"> · {t.n_divergentes} divergência(s)</span>}
-              {contagem && t.ajuste_em && <span className="text-emerald-700 dark:text-emerald-400"> · ajuste lançado</span>}
-            </span>
+        {t.prazo && (
+          <span className="inline-flex items-center gap-1 text-[11.5px] font-bold font-mono px-2 py-0.5 rounded-lg"
+            style={{ background: atrasada ? "#FBEDEA" : "#F4F5F7", color: atrasada ? "#C9432F" : "#6C7481" }}>
+            <CalendarClock className="h-3 w-3" />{atrasada ? "atrasada · " : ""}{ddmm(t.prazo)}
           </span>
         )}
-      </button>
+      </div>
+      {total > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="h-1.5 rounded-full bg-[#EEF0F3] overflow-hidden">
+            <span className="block h-full rounded-full" style={{ width: `${Math.min(100, (feitos / total) * 100)}%`, background: corEtapa }} />
+          </span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {contagem ? `${feitos} de ${total} SKUs contados` : `${feitos} de ${total} itens`}
+            {contagem && n(t.n_divergentes) > 0 && <span className="text-amber-700 dark:text-amber-400 font-semibold"> · {t.n_divergentes} divergência(s)</span>}
+            {contagem && t.ajuste_em && <span className="text-emerald-700 dark:text-emerald-400"> · ajuste lançado</span>}
+          </span>
+        </div>
+      )}
       {(onEsquerda || onDireita) && (
-        <div className="flex justify-between">
-          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!onEsquerda} onClick={onEsquerda} aria-label="Voltar etapa">
+        <div className="flex justify-between border-t border-[#EEF0F3] pt-1.5 -mb-1">
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!onEsquerda} aria-label="Voltar etapa"
+            onClick={(ev) => { ev.stopPropagation(); onEsquerda?.(); }}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!onDireita} onClick={onDireita} aria-label="Avançar etapa">
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!onDireita} aria-label="Avançar etapa"
+            onClick={(ev) => { ev.stopPropagation(); onDireita?.(); }}>
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>

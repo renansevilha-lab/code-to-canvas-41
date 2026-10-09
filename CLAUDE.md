@@ -1391,6 +1391,14 @@ Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?a
   NORMAL/UNLIST) o que foi criado/alterado nos últimos N dias e devolve só o que o espelho não tem ou
   tem mais velho; o front relê esses (`sincronizarRecentesShopee` em `promocoes/comum.tsx`). Roda
   sozinho ao abrir o "Adicionar produtos" (cache 10 min) e junto do "Atualizar da Shopee".
+  **09/out/2026 — SKU sem custo:** produto cadastrado no Tiny durante o dia só chegava ao cadastro
+  na sincronização das 05h (cron 19) e a composição do kit às 07h30 (cron 11) — até lá a promoção
+  mostrava CMV/comissão/MC vazios (caso dos kits Bumi Mix 16458–16475, todos 16454 × n). Agora
+  `useCustoTinyAutomatico` (`promocoes/comum.tsx`, nas 3 telas: Minha Promoção, Adicionar produtos
+  e busca da Relâmpago) pega os SKUs sem CMV, roda a listagem do Tiny se algum nem existe em
+  `produtos` (`tiny-sync-produtos?modulo=produtos`, no máx. 1×/10 min, ~9 s) + `detalhar&sku=` de
+  cada um (custo e `produto_kits`) e recalcula a margem. Cada SKU é tentado 1× por sessão; o que
+  continua sem custo é custo que falta no PRÓPRIO Tiny (a tela avisa).
 - **"Adicionar produtos" busca por ID do Item (06/out/2026):** `shopee_anuncios_busca` aceita o
   `item_id` exato; no diálogo, digitar um ID (9+ dígitos) relê ESSE anúncio na Shopee
   (`shopee-catalogo-itens`) antes de listar — anúncio renomeado ou com SKU trocado aparece na hora
@@ -1583,6 +1591,11 @@ concluir.
   do próprio Storage (`list`) com URL assinada de 1 h. Reduzidas no navegador
   (lado maior 1.600 px, JPEG 82%) — foto de celular tem 4–8 MB. Excluir a tarefa
   apaga as fotos (melhor-esforço).
+- **Visual (09/out/2026, pedido do dono):** o quadro segue o padrão do quadro de
+  Envios — resumo no topo (A fazer / Fazendo / Atrasadas / Feitas, borda colorida
+  à esquerda), colunas com fundo tingido e cabeçalho na cor da etapa (mesmas cores
+  dos STAGES), cartões brancos com faixa da cor da etapa, chips de responsável/prazo
+  e **arrastar entre colunas** (soltar em Feito abre a tarefa para concluir).
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 

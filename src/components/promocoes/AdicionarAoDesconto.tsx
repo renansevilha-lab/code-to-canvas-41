@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  FAIXAS_MC, Foto, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  FAIXAS_MC, Foto, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tituloMc, traduzirErroShopee, useTarifaShopee, useCustoTinyAutomatico, AvisoCustoTiny, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -167,6 +167,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
     },
   });
   const bases = baseQ.data ?? new Map<string, McBase>();
+  const custoTiny = useCustoTinyAutomatico(skus, baseQ.data, ["promo-shopee", "mc", shopId, skus]);
 
   const d = Math.min(90, Math.max(0, Number(descPadrao.replace(",", ".")) || 0)) / 100;
   const promoDe = (l: Linha) => precos.get(l.key) ?? r2(l.cheio * (1 - d));
@@ -283,6 +284,7 @@ export function AdicionarAoDesconto({ shopId, desconto, onFechar, onAdicionou }:
           ))}
         </div>
 
+        <AvisoCustoTiny estado={custoTiny} />
         {recentesQ.data && recentesQ.data.feitos > 0 && (
           <p className="text-[12px] text-muted-foreground">
             Trazidos da Shopee agora: {recentesQ.data.feitos} anúncio(s) novo(s)/alterado(s) nos últimos 3 dias

@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
-  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tetoRelampago, tituloMc, traduzirErroShopee, useTarifaShopee, type McBase,
+  AMBER, FAIXAS_MC, Foto, GREEN, RED, atualizarCatalogoShopee, sincronizarRecentesShopee, calcMc, chamarPromocoes, corMc, num, passaFaixa, tetoRelampago, tituloMc, traduzirErroShopee, useTarifaShopee, useCustoTinyAutomatico, AvisoCustoTiny, type McBase,
 } from "./comum";
 import { AdicionarAoDesconto } from "./AdicionarAoDesconto";
 import { PainelPromoDiaria, RepetirDiario } from "./PromoDiaria";
@@ -233,6 +233,8 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
     },
   });
   const bases = baseQ.data ?? new Map<string, McBase>();
+  // SKU sem custo (produto cadastrado hoje no Tiny) → busca no Tiny na hora e recalcula
+  const custoTiny = useCustoTinyAutomatico(skus, baseQ.data, ["promo-shopee", "mc", shopId, skus]);
 
   // Programação diária da relâmpago destes anúncios (selo ⚡ e "re-clonar")
   const itemIds = useMemo(() => [...new Set(linhas.map((l) => l.item_id))].sort((a, b) => a - b), [linhas]);
@@ -461,6 +463,7 @@ function DetalheDesconto({ shopId, desconto, recarga }: { shopId: number; descon
           {resumo.neg > 0 && <span style={{ color: RED }}> · {resumo.neg} com MC negativa</span>}
           {resumo.semBase > 0 && !baseQ.isLoading && <span> · {resumo.semBase} sem custo/base</span>}
         </span>
+        <AvisoCustoTiny estado={custoTiny} />
         {catalogo && (
           <span className="text-[12px] text-muted-foreground flex items-center gap-1.5">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Atualizando cadastro dos anúncios na Shopee… {catalogo.feitos}/{catalogo.total}

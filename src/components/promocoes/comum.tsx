@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Zap } from "lucide-react";
 
 import {
   supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY,
@@ -217,4 +217,82 @@ export function traduzirErroShopee(msg: string | null | undefined): string {
   if (/already.*(exist|in).*promotion|in other promotion|conflict/i.test(m)) return "produto já está em outra promoção no mesmo período";
   if (/stock/i.test(m)) return `estoque: ${m}`;
   return m || "recusado pela Shopee";
+}
+
+// ---------------------------------------------------------------------------- custo de SKU novo
+// 09/out/2026 (pedido do dono): produto cadastrado no Tiny durante o dia só chegava ao
+// cadastro da gestão na sincronização das 05h (e a composição do kit às 07h30) — até lá a
+// promoção mostrava CMV/comissão/MC vazios. Quando a tela encontra SKU sem custo, busca
+// no Tiny na hora: listagem de produtos (se o SKU nem existe; no máx. 1×/10 min) +
+// detalhe de cada SKU (custo e composição do kit) e recalcula a margem. Cada SKU é
+// tentado UMA vez por sessão — custo que não existe no próprio Tiny não vira laço.
+const tentadosTiny = new Set<string>();
+let ultimaListagemTiny = 0;
+
+async function chamarTinyProdutos(qs: string) {
+  const { data } = await supabaseExternal.auth.getSession();
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/tiny-sync-produtos?${qs}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${data.session?.access_token ?? EXTERNAL_PUBLISHABLE_KEY}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!r.ok) throw new Error(`tiny-sync-produtos ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+
+/** Puxa do Tiny o cadastro/custo dos SKUs sem CMV e invalida `chaveBases` para a margem recalcular. */
+export function useCustoTinyAutomatico(skus: string[], bases: Map<string, McBase> | undefined, chaveBases: unknown[]) {
+  const qc = useQueryClient();
+  const [estado, setEstado] = useState<{ buscando: number } | { resolvidos: number; semCusto: string[] } | null>(null);
+  const semCusto = bases ? skus.filter((s) => { const b = bases.get(s); return !b || b.cmv == null; }) : [];
+  const pendentes = semCusto.filter((s) => !tentadosTiny.has(s));
+  const chave = pendentes.join("|");
+
+  useEffect(() => {
+    if (!pendentes.length) return;
+    let cancelado = false;
+    const alvo = pendentes.slice(0, 30);
+    alvo.forEach((s) => tentadosTiny.add(s));
+    setEstado({ buscando: alvo.length });
+    (async () => {
+      try {
+        const { data } = await supabaseExternal.from("produtos").select("sku").in("sku", alvo);
+        const existem = new Set(((data ?? []) as { sku: string }[]).map((r) => r.sku));
+        if (alvo.some((s) => !existem.has(s)) && Date.now() - ultimaListagemTiny > 10 * 60_000) {
+          ultimaListagemTiny = Date.now();
+          await chamarTinyProdutos("modulo=produtos&limite=5000");
+        }
+        for (let i = 0; i < alvo.length; i += 3) {
+          await Promise.all(alvo.slice(i, i + 3).map((s) => chamarTinyProdutos(`modulo=detalhar&sku=${encodeURIComponent(s)}`).catch(() => null)));
+        }
+      } catch { /* melhor-esforço: a tela segue com o que tem */ }
+      if (cancelado) return;
+      await qc.invalidateQueries({ queryKey: chaveBases });
+      const atualizadas = qc.getQueryData<Map<string, McBase>>(chaveBases);
+      const continuam = alvo.filter((s) => { const b = atualizadas?.get(s); return !b || b.cmv == null; });
+      setEstado({ resolvidos: alvo.length - continuam.length, semCusto: continuam });
+    })();
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chave]);
+  return estado;
+}
+
+/** Faixa curta com o andamento da busca de custo no Tiny. */
+export function AvisoCustoTiny({ estado }: { estado: ReturnType<typeof useCustoTinyAutomatico> }) {
+  if (!estado) return null;
+  if ("buscando" in estado) {
+    return (
+      <p className="text-[12px] text-muted-foreground flex items-center gap-1.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando no Tiny o custo de {estado.buscando} SKU(s) novo(s)…
+      </p>
+    );
+  }
+  if (!estado.resolvidos && !estado.semCusto.length) return null;
+  return (
+    <p className="text-[12px]" style={{ color: estado.semCusto.length ? AMBER : GREEN }}>
+      {estado.resolvidos > 0 && `Custo de ${estado.resolvidos} SKU(s) trazido do Tiny agora. `}
+      {estado.semCusto.length > 0 && `Sem custo no próprio Tiny: ${estado.semCusto.slice(0, 8).join(", ")}${estado.semCusto.length > 8 ? "…" : ""} — cadastre o custo (ou a composição do kit) lá.`}
+    </p>
+  );
 }

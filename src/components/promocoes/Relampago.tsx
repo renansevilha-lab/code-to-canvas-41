@@ -16,7 +16,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
-  AMBER, Foto, GREEN, LOJAS, RED, calcMc, chamarFlashsale, corMc, num, tetoRelampago, tituloMc, useTarifaShopee, type McBase,
+  AMBER, Foto, GREEN, LOJAS, RED, calcMc, chamarFlashsale, corMc, num, tetoRelampago, tituloMc, useTarifaShopee, useCustoTinyAutomatico, AvisoCustoTiny, type McBase,
 } from "./comum";
 
 // ============================================================================
@@ -507,6 +507,7 @@ function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, 
     },
   });
   const bases = baseQ.data ?? new Map<string, McBase>();
+  const custoTiny = useCustoTinyAutomatico(skusPagina, baseQ.data, ["flashsale", "busca-base", shopId, skusPagina]);
 
   async function adicionar(a: AnuncioBusca, v: VariacaoRow | null, preco: number, teto: number | null) {
     const key = `${a.item_id}:${v?.model_id ?? 0}`;
@@ -545,6 +546,7 @@ function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, 
             Shopee deve aceitar</b> (1% abaixo do atual e nunca acima do menor preço vendido nos últimos 7 dias).
           </DialogDescription>
         </DialogHeader>
+        <AvisoCustoTiny estado={custoTiny} />
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
