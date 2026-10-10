@@ -9,6 +9,7 @@
 -- anuncio_etapa → ia_etapa, anuncio_prompt_imagem → ia_prompt_imagem,
 -- produto_atributos → produtos/ia_produto + ia_produto_extra (só o que a gestão não tem).
 -- Envio ao Tiny = Fase 3: aqui "aprovar" só marca a etapa.
+-- APLICADA em 10/out/2026 (migração ia_10_geracao) + cron 152 ia-fila-vigiar.
 -- =============================================================================
 
 -- ---------------------------------------------------------------- tabelas

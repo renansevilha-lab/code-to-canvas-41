@@ -1756,6 +1756,14 @@ o arquivo `../_shared/ia.ts` junto).
   `/ia/anuncios` ao entrar.
 - **Catálogo (`/produtos`):** carregava só 1.000 dos 2.321 produtos (busca no
   navegador não achava a outra metade) — agora pagina de 1.000 em 1.000.
+- **Estado em 10/out/2026:** migração `ia_10_geracao` APLICADA (sábado 12h47, banco
+  parado) e cron **152** `ia-fila-vigiar` (`2-59/5`) ligado. Falta o dono cadastrar os
+  secrets e o 1º teste real (nenhuma geração foi feita ainda). `ia_calcular_preco`
+  conferido no 15984: Shopee ottz R$ 41,14 / svl R$ 39,27 (margem-alvo 17,5%).
+  **Pendências de cadastro (tela `/ia/prompts` › Canais):** (1) `ia_canal_faixa` só tem
+  faixas da **Shopee** — nos outros 6 canais o preço volta "nenhuma faixa viável";
+  (2) a faixa 1 da Shopee está com fixo **R$ 4,00** (cópia do gerador), mas desde
+  01/out é **R$ 4,50** (`shopee_tarifa`) — o preço sugerido sai ~R$ 0,95 baixo.
 
 ## 6. Edge Functions
 
