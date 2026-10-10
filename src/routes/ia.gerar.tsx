@@ -10,6 +10,7 @@ import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
+import { Referencias } from "@/components/ia/anuncio/Referencias";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
@@ -154,6 +155,8 @@ function GerarAnuncioPage() {
       )}
 
       <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho} />
+
+      <Referencias key={`ref-${sku}`} sku={sku} marca={dados.produto.marca} />
 
       <EtapaTexto sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho}
         etapa={etapas.find((e) => e.etapa === "texto")} briefing={apoioQ.data?.briefing ?? null}

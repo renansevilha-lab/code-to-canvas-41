@@ -1,5 +1,5 @@
 // =============================================================================
-// Edge Function: ia-imagem-worker v1 — IA · Anúncios, Fase 2 (09/out/2026)
+// Edge Function: ia-imagem-worker v2 — IA · Anúncios, Fase 2 (09/out/2026; v2 em 10/out)
 // -----------------------------------------------------------------------------
 // Gera UMA imagem por chamada, da fila em ia_etapa (etapa='imagem', status 'na_fila').
 // Quem chama: ia-anuncio?modulo=imagens (3 em paralelo ao enfileirar), o próprio
@@ -11,6 +11,11 @@
 //  - referência = a cópia congelada da foto real (ia_produto_extra.foto_ref_path);
 //  - backoff entre tentativas (o gerador re-tentava na hora e repetia o mesmo 429);
 //  - tempo medido no log (limite da função).
+// v2 (10/out/2026): as IMAGENS de contexto (identidade visual, foto de referência
+//    extra) também vão para o modelo da OpenAI, como imagens adicionais do
+//    images/edits (até 4). Antes só o Gemini as recebia; na OpenAI viravam uma nota
+//    "(anexo nao suportado)". Se a OpenAI recusar o conjunto (400), refaz só com a
+//    foto real, como na v1. PDF continua fora do modelo de imagem (não aceita).
 // =============================================================================
 import {
   CORS, json, sb, carregarProduto, fotoReferencia, templatesAtivos, guardrails, regrasImagem,
@@ -20,6 +25,7 @@ import {
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const OPENAI_EDITS = "https://api.openai.com/v1/images/edits";
 const MAX_TENTATIVAS = 3;
+const MAX_IMAGENS_EXTRA = 4;
 type Parte = Record<string, unknown>;
 
 function fraseDoPapel(papel: string, nome: string, escopo: string, chave: string | null): string {
@@ -40,6 +46,8 @@ function fraseDoPapel(papel: string, nome: string, escopo: string, chave: string
 async function contextoImagem(db: DB, sku: string, incluirTextos: boolean) {
   const { porAplica, anexos } = await carregarContextos(db, sku, ["imagem"]);
   const partes: Parte[] = []; const textos: string[] = []; const usados: string[] = [];
+  // imagens de contexto (para a OpenAI irem como imagem extra) e a nota que as substitui quando não vão
+  const imagens: { mime: string; bytes: Uint8Array; frase: string }[] = []; const notasImagem: string[] = [];
   for (const c of porAplica.imagem ?? []) {
     const frase = fraseDoPapel(c.papel, c.nome, c.escopo, c.chave);
     if (c.tipo === "texto") {
@@ -53,10 +61,16 @@ async function contextoImagem(db: DB, sku: string, incluirTextos: boolean) {
     if (!a) continue;
     partes.push({ inline_data: { mime_type: c.media_type ?? a.mime, data: a.data } });
     partes.push({ text: `Acima: ${frase}` });
-    textos.push(`(anexo nao suportado neste modelo) ${frase}`);
+    const mime = c.media_type ?? a.mime;
+    if (/^image\/(jpeg|png|webp)$/.test(mime)) {
+      imagens.push({ mime, bytes: deB64(a.data), frase });
+      notasImagem.push(`(imagem de contexto nao anexada) ${frase}`);
+    } else {
+      textos.push(`(anexo nao suportado neste modelo) ${frase}`);
+    }
     usados.push(`${c.nome} [${c.papel}]`);
   }
-  return { partes, textos, usados };
+  return { partes, textos, usados, imagens, notasImagem };
 }
 
 async function viaGemini(key: string, model: string, partes: Parte[]) {
@@ -79,14 +93,17 @@ async function viaGemini(key: string, model: string, partes: Parte[]) {
   return { bytes: deB64(inline.data), mime: inline.mimeType ?? inline.mime_type ?? "image/png" };
 }
 
-async function viaOpenAI(key: string, model: string, quality: string, prompt: string, ref: { mime: string; bytes: Uint8Array }) {
+async function viaOpenAI(key: string, model: string, quality: string, prompt: string, ref: { mime: string; bytes: Uint8Array },
+  extras: { mime: string; bytes: Uint8Array }[] = []) {
   const fd = new FormData();
   fd.append("model", model);
   fd.append("prompt", prompt);
   fd.append("size", "1024x1024");
   fd.append("quality", quality);
   fd.append("n", "1");
-  fd.append("image", new Blob([ref.bytes], { type: ref.mime }), `referencia.${extDoMime(ref.mime)}`);
+  // várias imagens = campo image[]; a 1ª é sempre a foto real do produto
+  fd.append(extras.length ? "image[]" : "image", new Blob([ref.bytes], { type: ref.mime }), `referencia.${extDoMime(ref.mime)}`);
+  for (const [i, e] of extras.entries()) fd.append("image[]", new Blob([e.bytes], { type: e.mime }), `contexto-${i + 1}.${extDoMime(e.mime)}`);
   const r = await fetch(OPENAI_EDITS, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: fd });
   const txt = await r.text();
   if (!r.ok) throw new Error(`OpenAI ${r.status}: ${txt.slice(0, 220)}`);
@@ -156,8 +173,22 @@ Deno.serve(async (req) => {
         { text: prompt },
       ]);
     } else {
-      const extra = ctx.textos.length ? `\n\nCONTEXTO:\n${ctx.textos.join("\n\n")}` : "";
-      gerada = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + extra, { mime: ref.media_type, bytes: ref.bytes });
+      const extras = ctx.imagens.slice(0, MAX_IMAGENS_EXTRA);
+      const sobra = ctx.notasImagem.slice(extras.length);
+      const bloco = (ts: string[]) => (ts.length ? `\n\nCONTEXTO:\n${ts.join("\n\n")}` : "");
+      const guia = extras.length
+        ? `\n\nIMAGENS ANEXADAS, NA ORDEM: (1) FOTO REAL do produto — referencia principal: rotulo, logo, cores e proporcoes identicos. ` +
+          extras.map((e, i) => `(${i + 2}) ${e.frase}`).join(" ")
+        : "";
+      const refImg = { mime: ref.media_type, bytes: ref.bytes };
+      try {
+        gerada = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + guia + bloco([...ctx.textos, ...sobra]), refImg, extras);
+      } catch (e) {
+        // o modelo recusou o conjunto de imagens: refaz só com a foto real (comportamento da v1)
+        if (!extras.length || !/OpenAI 400/.test(String(e instanceof Error ? e.message : e))) throw e;
+        console.log(JSON.stringify({ evento: "ia_imagem_extras_recusadas", etapa: etapa.id, erro: String(e).slice(0, 200) }));
+        gerada = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + bloco([...ctx.textos, ...ctx.notasImagem]), refImg);
+      }
     }
 
     const caminho = `${r.sku}/${r.id}/${img.ordem}-${img.tipo}.${extDoMime(gerada.mime)}`;

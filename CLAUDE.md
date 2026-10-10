@@ -1817,6 +1817,43 @@ lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_histori
   (só leitura). Função `stable` chamada na MESMA instrução que a função que grava não vê o
   que ela gravou (snapshot) — conferir em consulta separada.
 
+## 5.11.3 IA · Anúncios — referências na tela, preço por margem e estudo de publicação direta (10/out/2026)
+
+- **Referências e instruções na tela do anúncio** (`anuncio/Referencias.tsx`, bloco em
+  `/ia/gerar`): lista o que vale para o SKU (regra do banco `ia_contextos_do_sku`, uma chamada
+  por uso) e deixa **subir arquivos** (JPG/PNG/WEBP/PDF, vários de uma vez; imagem > 3 MB é
+  reduzida a 2.000 px no navegador) ou **escrever instrução**, com papel (identidade visual,
+  referência do produto, ficha técnica, diretriz), alcance (só o produto ou toda a marca) e uso
+  (textos e/ou imagens). **Sem tabela nova:** é o cadastro de `/ia/contextos` (`ia_contexto` +
+  bucket `ia-contexto`, caminho `sku/<sku>/<uuid>` ou `marca/<uuid>`). Categoria/global só se
+  editam em `/ia/contextos`.
+- **Quem recebe o quê:** texto e prompts (Claude) recebem imagem e PDF. Modelo de imagem:
+  Gemini recebia as imagens de contexto; **a OpenAI (modelo padrão) NÃO** — só a foto real, e o
+  anexo virava a nota "(anexo nao suportado)". `ia-imagem-worker` **v2 (no repositório)** manda
+  até 4 imagens de contexto como `image[]` do `images/edits` e, se a OpenAI recusar (400),
+  refaz só com a foto real. ⚠ **v2 ainda NÃO está no ar** (no ar = v1): fazer o deploy junto
+  com o 1º teste real, quando as chaves forem cadastradas. PDF nunca vai ao modelo de imagem.
+- **Preço por margem:** `ia_calcular_preco(sku, canal, empresa, p_margem default null)` e
+  `ia_analisar_preco(..., p_preco, p_margem default null)` (migração `ia_13_preco_por_margem`;
+  as assinaturas antigas foram removidas — chamada com 3 argumentos nomeados continua valendo).
+  Sem margem = `ia_canal_config.margem_alvo_pct`. Na tela: campo "Margem que eu quero" +
+  atalhos 10/15/20/25/30% + "padrão do canal"; o caminho inverso (preço → margem) é o
+  "Analisar". A margem escolhida é salva em `ia_rascunho.memoria_calculo.margem_desejada`
+  junto com o preço.
+- **Publicação direta (estudo, `docs/ia-fase3-publicacao-direta.md`):** edge fn
+  **`anuncio-publicar-sonda`** v1 (só leitura, `?mkt=shopee|ml|amazon|tiktok`; a única chamada
+  não-GET é o validador `/items/validate` do ML). Resultado: módulo de produtos **liberado nos
+  quatro canais** com os nossos apps. Shopee = o mais simples (sem atributo obrigatório nas
+  categorias testadas; marca obrigatória aceita "Sem marca"; peso e **dimensões** obrigatórios;
+  dá para criar NÃO LISTADO). ML = conta no modelo novo (User Products: exige `family_name`),
+  BRAND obrigatório, GTIN condicional, validador funciona. TikTok = dimensões do pacote
+  obrigatórias, depósito conhecido. Amazon = esquema por tipo de produto (`ANIMAL_LITTER`: 105
+  campos, 6 obrigatórios), o mais trabalhoso. **Escrita não testada.** O que decide é o
+  **vínculo com o Tiny** (estoque e pedido): anúncio criado direto precisa casar com o produto
+  do Tiny pelo SKU — a conferir com 1 anúncio de teste. Faltam na gestão: dimensões, EAN, NCM,
+  origem (o Tiny tem). Recomendação: piloto com 1 produto na Shopee Ottz, não listado.
+  **Aguardando decisão do dono** (caminho A/B/C e autorização do 1º teste de escrita).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -1861,7 +1898,8 @@ lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_histori
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v1 | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia` — ver §5.11.1 |
-| `ia-imagem-worker` | v1 | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min) — ver §5.11.1 |
+| `ia-imagem-worker` | v1 no ar (v2 no repositório, falta deploy) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min) — ver §5.11.1 e §5.11.3 |
+| `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote

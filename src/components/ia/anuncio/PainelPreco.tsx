@@ -15,20 +15,43 @@ import { nomeCanal, nomeEmpresa, type IaHistSku, type IaPreco, type IaRascunho }
 // - Taxa do canal = o que o marketplace realmente descontou nos pedidos dos
 //   últimos 120 dias, na faixa de preço do produto (Shopee: tabela em vigor).
 // - "Como vende hoje" = preço, volume e margem REAIS deste produto por canal.
+// - Precificação por margem: a pessoa escolhe a margem e o banco devolve o preço
+//   (e o caminho inverso: informa o preço e vê a margem). Sem escolher, vale a
+//   margem alvo do canal (ia_canal_config).
 // Todo o cálculo é do banco (ia_calcular_preco / ia_analisar_preco); aqui só
 // exibe. Não depende da IA: aparece antes de existir rascunho.
 // ============================================================================
 
 const pct = (v: unknown, casas = 1) => (v == null ? "—" : `${(Number(v) * 100).toFixed(casas)}%`);
+const MARGENS_RAPIDAS = [0.1, 0.15, 0.2, 0.25, 0.3];
+const emPct = (v: number) => (v * 100).toFixed(1).replace(/\.0$/, "").replace(".", ",");
 const corMargem = (v: number | null, alvo: number) => (v == null ? undefined : v >= alvo ? "#0E8A5F" : v > 0 ? "#B7791F" : "#C9432F");
 
 export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; canal: string; empresa: string; rascunho: IaRascunho | null }) {
   const qc = useQueryClient();
+  // margem escolhida (fração). null = a margem alvo do canal. O que foi salvo no rascunho volta ao abrir.
+  const salva = rascunho?.memoria_calculo?.margem_desejada;
+  const [margem, setMargem] = useState<number | null>(salva != null ? Number(salva) : null);
+  const [margemTxt, setMargemTxt] = useState(salva != null ? emPct(Number(salva)) : "");
+  useEffect(() => {
+    setMargem(salva != null ? Number(salva) : null);
+    setMargemTxt(salva != null ? emPct(Number(salva)) : "");
+  }, [rascunho?.id, canal, empresa]);
+  // digitação com atraso: só recalcula quando a pessoa para de digitar
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const v = Number(margemTxt.replace(",", "."));
+      setMargem(margemTxt.trim() !== "" && v >= 0 && v < 60 ? Math.round(v * 10) / 1000 : null);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [margemTxt]);
+
   // a chave começa por ["ia-anuncio","produto",sku]: salvar frete/embalagem do produto recalcula sozinho
   const precoQ = useQuery({
-    queryKey: ["ia-anuncio", "produto", sku, "preco", canal, empresa],
+    queryKey: ["ia-anuncio", "produto", sku, "preco", canal, empresa, margem],
+    placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<IaPreco> => {
-      const { data, error } = await supabaseExternal.rpc("ia_calcular_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa });
+      const { data, error } = await supabaseExternal.rpc("ia_calcular_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa, p_margem: margem });
       if (error) throw error;
       return (data ?? {}) as IaPreco;
     },
@@ -53,7 +76,8 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
 
   const p = precoQ.data;
   const mem = p?.memoria_calculo ?? {};
-  const alvo = Number(mem.margem_alvo_pct ?? 0.175);
+  const padrao = Number(mem.margem_padrao_pct ?? (p as any)?.margem_padrao_pct ?? 0.175);
+  const alvo = Number(mem.margem_alvo_pct ?? margem ?? padrao);
   const hist = histQ.data ?? [];
   const aqui = hist.find((h) => h.canal === canal && h.empresa === empresa);
   const taxaFraca = ["canal", "cadastro"].includes(String(mem.nivel_taxa ?? ""));
@@ -63,7 +87,7 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
     const v = valor ?? numero();
     if (!(v > 0)) { toast.error("Informe um preço"); return; }
     setOcupado(true);
-    const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa, p_preco: v });
+    const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa, p_preco: v, p_margem: margem });
     setOcupado(false);
     if (error) { toast.error("Falha na análise", { description: error.message }); return; }
     setAnalise(data as Record<string, any>);
@@ -76,7 +100,8 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
   async function salvar() {
     if (!rascunho) return;
     const v = numero();
-    const { error } = await supabaseExternal.from("ia_rascunho").update({ preco_aprovado: v > 0 ? v : null }).eq("id", rascunho.id);
+    const memoria = { ...(rascunho.memoria_calculo ?? {}), margem_desejada: margem };
+    const { error } = await supabaseExternal.from("ia_rascunho").update({ preco_aprovado: v > 0 ? v : null, memoria_calculo: memoria }).eq("id", rascunho.id);
     if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
     toast.success("Preço salvo no rascunho");
     void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
@@ -87,6 +112,22 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="font-semibold">Preço</h3>
         <span className="text-xs text-muted-foreground">{nomeCanal(canal)} · {nomeEmpresa(empresa)} · pelas taxas reais dos pedidos</span>
+        {precoQ.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Margem que eu quero:</span>
+        <div className="relative">
+          <Input className="h-8 w-20 font-mono pr-6" value={margemTxt} onChange={(e) => setMargemTxt(e.target.value)} placeholder={emPct(padrao)} />
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+        </div>
+        {MARGENS_RAPIDAS.map((m) => (
+          <Button key={m} size="sm" variant={margem != null && Math.abs(margem - m) < 0.0005 ? "default" : "outline"} className="h-7 px-2 text-xs"
+            onClick={() => setMargemTxt(emPct(m))}>{emPct(m)}%</Button>
+        ))}
+        <Button size="sm" variant={margem == null ? "secondary" : "ghost"} className="h-7 px-2 text-xs" onClick={() => setMargemTxt("")}>
+          padrão do canal ({emPct(padrao)}%)
+        </Button>
       </div>
 
       {precoQ.isLoading ? (
