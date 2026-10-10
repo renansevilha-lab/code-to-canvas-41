@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, PencilLine, RotateCcw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatBRL } from "@/lib/format";
 import { ROTULO_ETAPA, chamarIa, type IaBriefing, type IaEtapa, type IaRascunho } from "@/lib/iaAnuncio";
 
 export function SeloEtapa({ etapa }: { etapa: IaEtapa | undefined }) {
@@ -26,7 +25,7 @@ export async function decidirEtapa(etapaId: string, aprovar: boolean) {
   if (error) throw error;
 }
 
-/** Etapa 1: briefing + título/descrição/bullets + preço. */
+/** Etapa 1: briefing + título/descrição/bullets. O preço fica no PainelPreco (não depende da IA). */
 export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onCriado }: {
   sku: string; canal: string; empresa: string; rascunho: IaRascunho | null; etapa: IaEtapa | undefined;
   briefing: IaBriefing | null; onCriado: (id: string) => void;
@@ -36,6 +35,7 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
   const [obs, setObs] = useState("");
   const [titulo, setTitulo] = useState(""); const [descricao, setDescricao] = useState(""); const [bullets, setBullets] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
+  const [criando, setCriando] = useState(false);
   useEffect(() => {
     setTitulo(rascunho?.titulo ?? ""); setDescricao(rascunho?.descricao ?? ""); setBullets(rascunho?.bullet_points ?? []);
   }, [rascunho?.id, rascunho?.updated_at]);
@@ -49,7 +49,7 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
       const r = await chamarIa("texto", { sku, canal, empresa, rascunho_id: refazer ? rascunho?.id : undefined, observacao: refazer ? obs : undefined });
       const avisos = (r.avisos ?? []) as string[];
       if (r.status === "erro") toast.warning("Texto gerado, mas uma regra bloqueou", { description: avisos.join("\n") || r.erro });
-      else toast.success(refazer ? "Texto refeito" : "Texto e preço gerados", { description: avisos.slice(0, 3).join("\n") || undefined });
+      else toast.success(refazer ? "Texto gerado" : "Texto gerado e rascunho criado", { description: avisos.slice(0, 3).join("\n") || undefined });
       if (!refazer && r.rascunho_id) onCriado(r.rascunho_id);
       setObs("");
       recarregar();
@@ -57,8 +57,18 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
       toast.error("Falha ao gerar o texto", { description: (e as Error).message });
     } finally { setGerando(false); }
   }
+  // rascunho sem IA: cria a linha (com o preço calculado) e a pessoa escreve o texto à mão
+  async function comecarAMao() {
+    setCriando(true);
+    const { data, error } = await supabaseExternal.rpc("ia_rascunho_criar", { p_sku: sku, p_canal: canal, p_empresa: empresa });
+    setCriando(false);
+    if (error) { toast.error("Não foi possível criar o rascunho", { description: error.message }); return; }
+    onCriado(String(data));
+    recarregar();
+  }
   async function salvarEdicao() {
     if (!rascunho) return;
+    if (!titulo.trim()) { toast.error("Escreva o título antes de salvar"); return; }
     setSalvando(true);
     const { error } = await supabaseExternal.from("ia_rascunho")
       .update({ titulo: titulo.trim(), descricao: descricao.trim(), bullet_points: bullets.map((b) => b.trim()).filter(Boolean) })
@@ -77,15 +87,20 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
   if (!rascunho) {
     return (
       <Card><CardContent className="p-5 space-y-3">
-        <h3 className="font-semibold">1 · Texto e preço</h3>
+        <h3 className="font-semibold">1 · Texto</h3>
         <p className="text-sm text-muted-foreground">
           A IA lê a foto real e os contextos do produto, monta o briefing (público, dores, benefícios) e escreve título,
-          descrição e bullets para o canal escolhido. O preço sugerido sai do custo da gestão e das faixas do canal.
+          descrição e bullets para o canal escolhido. Se preferir, comece o rascunho em branco e escreva à mão.
         </p>
-        <Button disabled={gerando} onClick={() => void gerar(false)} className="gap-1.5">
-          {gerando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {gerando ? "Gerando (até 1 min)…" : "Gerar texto e preço"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={gerando || criando} onClick={() => void gerar(false)} className="gap-1.5">
+            {gerando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {gerando ? "Gerando (até 1 min)…" : "Gerar texto com IA"}
+          </Button>
+          <Button variant="outline" disabled={gerando || criando} onClick={() => void comecarAMao()} className="gap-1.5">
+            {criando ? <Loader2 className="h-4 w-4 animate-spin" /> : <PencilLine className="h-4 w-4" />}Escrever à mão
+          </Button>
+        </div>
       </CardContent></Card>
     );
   }
@@ -95,7 +110,7 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
   return (
     <Card><CardContent className="p-5 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-semibold mr-1">1 · Texto e preço</h3>
+        <h3 className="font-semibold mr-1">1 · Texto</h3>
         <SeloEtapa etapa={etapa} />
         <div className="flex-1" />
         {etapa && ["gerado", "rejeitado", "erro"].includes(etapa.status) && (
@@ -135,61 +150,13 @@ export function EtapaTexto({ sku, canal, empresa, rascunho, etapa, briefing, onC
         <div className="flex-1" />
         <Input className="h-8 max-w-[360px] text-sm" value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Observação para refazer (opcional)" />
         <Button size="sm" variant="outline" className="gap-1" disabled={gerando} onClick={() => void gerar(true)}>
-          {gerando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}Refazer texto
+          {gerando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : rascunho.titulo ? <RotateCcw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {rascunho.titulo ? "Refazer texto com IA" : "Gerar texto com IA"}
         </Button>
       </div>
 
-      <Preco rascunho={rascunho} />
       {briefing && <Briefing briefing={briefing} sku={sku} />}
     </CardContent></Card>
-  );
-}
-
-function Preco({ rascunho }: { rascunho: IaRascunho }) {
-  const qc = useQueryClient();
-  const [preco, setPreco] = useState(rascunho.preco_aprovado != null ? String(rascunho.preco_aprovado) : "");
-  const [analise, setAnalise] = useState<Record<string, any> | null>(null);
-  const [ocupado, setOcupado] = useState(false);
-  const mem = rascunho.memoria_calculo ?? {};
-
-  async function analisar() {
-    const v = Number(preco.replace(",", "."));
-    if (!(v > 0)) { toast.error("Informe um preço"); return; }
-    setOcupado(true);
-    const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: rascunho.sku, p_canal: rascunho.canal, p_empresa: rascunho.empresa, p_preco: v });
-    setOcupado(false);
-    if (error) { toast.error("Falha na análise", { description: error.message }); return; }
-    setAnalise(data as Record<string, any>);
-  }
-  async function salvar() {
-    const v = Number(preco.replace(",", "."));
-    const { error } = await supabaseExternal.from("ia_rascunho").update({ preco_aprovado: v > 0 ? v : null }).eq("id", rascunho.id);
-    if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
-    toast.success("Preço salvo no rascunho");
-    void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
-  }
-
-  return (
-    <div className="rounded-lg border p-3 space-y-2 text-sm">
-      <div className="flex flex-wrap gap-x-6 gap-y-1">
-        <span>Sugerido: <b className="font-mono">{rascunho.preco_sugerido != null ? formatBRL(Number(rascunho.preco_sugerido)) : "—"}</b></span>
-        <span>Margem estimada: <b className="font-mono">{rascunho.margem_estimada_pct != null ? `${(Number(rascunho.margem_estimada_pct) * 100).toFixed(1)}%` : "—"}</b></span>
-        {mem.custo_total != null && <span className="text-muted-foreground">custo total {formatBRL(Number(mem.custo_total))} · faixa {mem.faixa} · comissão {(Number(mem.comissao_pct) * 100).toFixed(0)}% + {formatBRL(Number(mem.tarifa_fixa ?? 0))} · imposto {(Number(mem.imposto_pct) * 100).toFixed(1)}%</span>}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground">Preço que vai praticar:</span>
-        <Input className="h-8 w-28 font-mono" value={preco} onChange={(e) => { setPreco(e.target.value); setAnalise(null); }} placeholder="0,00" />
-        <Button size="sm" variant="outline" className="h-8" disabled={ocupado} onClick={() => void analisar()}>Analisar</Button>
-        <Button size="sm" variant="outline" className="h-8" onClick={() => void salvar()}>Salvar preço</Button>
-        {analise && !analise.erro && (
-          <span className={analise.status === "ok" ? "text-emerald-600" : analise.status === "baixo" ? "text-amber-600" : "text-destructive"}>
-            lucro {formatBRL(Number(analise.lucro_reais))} ({(Number(analise.lucro_pct) * 100).toFixed(1)}%) ·
-            o produto poderia custar até {formatBRL(Number(analise.custo_max_mercadoria))} para bater a margem alvo
-          </span>
-        )}
-        {analise?.erro && <span className="text-destructive">{analise.erro}</span>}
-      </div>
-    </div>
   );
 }
 

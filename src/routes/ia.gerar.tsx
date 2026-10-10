@@ -9,14 +9,16 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
+import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
 
 // ============================================================================
 // /ia/gerar?sku= — gerar anúncio com IA dentro da gestão (Fase 2, 09/out/2026).
-// Etapas: texto+preço → fotos (prompts → imagens na fila → revisão). Entrada pelo
-// botão "Gerar anúncio" do Catálogo ou pela lista /ia/anuncios. O envio ao Tiny
+// Blocos: produto → preço (taxas reais dos pedidos, não depende da IA) → texto →
+// fotos (prompts → imagens na fila → revisão). Entrada pela lista /ia/anuncios
+// (catálogo ativo) ou pelo botão "Gerar anúncio" do Catálogo. O envio ao Tiny
 // é a Fase 3 — aqui aprovar só marca a etapa.
 // ============================================================================
 
@@ -150,6 +152,8 @@ function GerarAnuncioPage() {
           {rascunho && <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => set({ r: "novo" })}>+ novo rascunho neste canal</Button>}
         </CardContent></Card>
       )}
+
+      <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho} />
 
       <EtapaTexto sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho}
         etapa={etapas.find((e) => e.etapa === "texto")} briefing={apoioQ.data?.briefing ?? null}

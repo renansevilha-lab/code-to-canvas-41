@@ -51,6 +51,33 @@ export const CANAIS: { id: string; nome: string }[] = [
   { id: "tiktok", nome: "TikTok" }, { id: "temu", nome: "Temu" }, { id: "shein", nome: "Shein" }, { id: "olist", nome: "Olist" },
 ];
 export const nomeCanal = (c: string) => CANAIS.find((x) => x.id === c)?.nome ?? c;
+export const nomeEmpresa = (e: string) => (e === "svl" ? "SVL" : "Ottz");
+/** Canais com pedidos integrados na gestão (têm histórico de taxa, preço e margem). */
+export const CANAIS_COM_HISTORICO = ["shopee", "mercado_livre", "amazon", "tiktok"];
+
+// ---- Catálogo da tela /ia/anuncios (RPC ia_catalogo) e histórico de venda (ia_hist_sku_canal).
+// Preenchidos 1×/dia por ia_historico_atualizar() a partir da margem real dos pedidos (120 dias).
+export interface IaCanalHist { canal: string; empresa: string; un30: number; un120: number; preco: number | null; mc_pct: number | null }
+export interface IaRascunhoResumo {
+  id: string; canal: string; empresa: string; texto: StatusEtapa | null; imgs: number; imgs_ok: number; andando: number;
+  preco: number | null; atualizado: string;
+}
+export interface IaCatalogoLinha {
+  sku: string; nome: string; marca: string | null; tipo: string | null; foto: string | null; custo: number | null;
+  un30: number; un120: number; canais: IaCanalHist[]; rascunhos: IaRascunhoResumo[]; situacao: "sem" | "andamento" | "pronto";
+}
+export interface IaCatalogo {
+  total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];
+}
+export interface IaHistSku {
+  sku: string; canal: string; empresa: string; unidades_30d: number; unidades_120d: number; pedidos_mono: number;
+  preco_unit_med: number | null; preco_unit_ult: number | null; taxa_med: number | null; mc_pct: number | null; ultima_venda: string | null;
+}
+/** Resposta de ia_calcular_preco (preço sugerido pelas taxas reais do canal). */
+export interface IaPreco {
+  erro?: string; preco_sugerido?: number; lucro_reais?: number; margem_estimada_pct?: number;
+  memoria_calculo?: Record<string, any>; historico?: Record<string, any> | null;
+}
 /** Rótulo legível do tipo de foto (template imagem_*). */
 export const rotuloFoto = (t: string) => t.replace(/^imagem_/, "").replace(/_/g, " ");
 

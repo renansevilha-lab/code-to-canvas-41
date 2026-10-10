@@ -1758,12 +1758,64 @@ o arquivo `../_shared/ia.ts` junto).
   navegador não achava a outra metade) — agora pagina de 1.000 em 1.000.
 - **Estado em 10/out/2026:** migração `ia_10_geracao` APLICADA (sábado 12h47, banco
   parado) e cron **152** `ia-fila-vigiar` (`2-59/5`) ligado. Falta o dono cadastrar os
-  secrets e o 1º teste real (nenhuma geração foi feita ainda). `ia_calcular_preco`
-  conferido no 15984: Shopee ottz R$ 41,14 / svl R$ 39,27 (margem-alvo 17,5%).
-  **Pendências de cadastro (tela `/ia/prompts` › Canais):** (1) `ia_canal_faixa` só tem
-  faixas da **Shopee** — nos outros 6 canais o preço volta "nenhuma faixa viável";
-  (2) a faixa 1 da Shopee está com fixo **R$ 4,00** (cópia do gerador), mas desde
-  01/out é **R$ 4,50** (`shopee_tarifa`) — o preço sugerido sai ~R$ 0,95 baixo.
+  secrets e o 1º teste real (nenhuma geração foi feita ainda). Ordem combinada com o
+  dono (10/out): **primeiro a lógica e o layout, depois as integrações** (chaves de IA,
+  envio ao Tiny).
+
+## 5.11.2 IA · Anúncios — preço pelo histórico e catálogo (10/out/2026)
+
+Pedido do dono: o preço usa "o conhecimento que temos" (margens e taxas dos pedidos) e a
+lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_historico_catalogo` e
+`ia_12_taxa_faixas_finas`; SQL comentado + rollback em `docs/ia-fase2b-preco-historico.sql`.
+- **Histórico (2 tabelas, preenchidas 1×/dia):** `ia_historico_atualizar()` (cron **153**
+  `ia-historico`, `23 9 * * *` = 06h23 BRT; ~8 s; lê a `view_margem_pedido_v2` UMA vez para
+  temp tables) grava **`ia_hist_taxa_faixa`** (canal × empresa × faixa de preço: `n`,
+  `taxa_med`, p25/p75 e **`taxa_suave`/`n_suave`**) e **`ia_hist_sku_canal`** (SKU vendido ×
+  canal × empresa: unidades 30/120 d de todos os pedidos; preço unitário mediano e do último
+  pedido, `mc_pct` = soma margem ÷ soma venda e taxa — estes de pedidos de 1 SKU só).
+  Canais/empresas nos códigos da IA (`shopee`, `mercado_livre`, `amazon`, `tiktok`;
+  `ottz`/`svl`; empresa `'*'` = as duas; faixa `0` = canal inteiro).
+- **Taxa do canal** = `(venda − recebido_estimado) ÷ venda` do pedido de 1 SKU e 1 unidade
+  (tudo que o marketplace desconta: comissão, tarifa fixa, frete do vendedor). Faixas FINAS
+  (`ia_faixa_preco`/`ia_faixas`: R$ 5 até 100, R$ 10 até 200, R$ 50 até 500) e a taxa de
+  cada faixa é a média ponderada com as vizinhas a ±15% do preço, **sem atravessar R$ 80**
+  (degrau real de Shopee/ML). 1ª versão tinha 6 faixas largas e a mediana criava degrau
+  artificial (ML sugeria R$ 50,00 "com 28% de margem"). Regressão fixo+% por faixa foi
+  testada e descartada (produtos se concentram em poucos preços: r² baixo, coeficientes
+  absurdos).
+- **`ia_faixas_taxa(sku, canal, empresa)`** → por faixa: `pct`, `fixo`, `fonte`, `nivel`, `n`.
+  **Shopee = `shopee_tarifa_vigente()`** (a MESMA tabela das telas de promoção: 20% + R$ 4,50
+  etc.). Demais, do mais específico ao mais geral: faixa da empresa (`n_suave` ≥ 15) → faixa
+  das duas empresas → mediana do canal (`nivel='canal'`, a tela avisa "estimativa fraca") →
+  `ia_canal_config.comissao_pct` cadastrada → erro "sem pedidos deste canal". Se o produto já
+  vende no canal (≥ 5 pedidos de 1 un.), as faixas são multiplicadas por
+  `taxa do produto ÷ taxa do canal no preço dele` (limitado a 0,6–1,6; `nivel='sku'`) — leva
+  peso/categoria/frete próprios do produto para outros preços.
+- **`ia_calcular_preco` / `ia_analisar_preco`** reescritas sobre isso (mesmas chaves de
+  antes + `fonte_taxa`, `nivel_taxa`, `amostra`, `faixa_min/max` e `historico` = como o
+  produto vende hoje naquele canal). Percorre as faixas em ordem e aceita a 1ª em que o
+  preço cabe (`greatest(preço, piso da faixa)`). **`ia_canal_faixa` ficou sem uso** (não
+  apagada). Temu/Shein/Olist não têm pedido com repasse na gestão → sem preço sugerido até
+  cadastrar `comissao_pct`. Margem alvo segue em `ia_canal_config.margem_alvo_pct` (17,5%).
+  Conferido no 15984: Shopee Ottz R$ 42,10; ML Ottz vende a R$ 36,99 com 8,5% de margem →
+  sugerido R$ 45,00; Amazon Ottz R$ 37,23.
+- **Limite conhecido:** produto NOVO no canal usa a taxa média da faixa de preço — não
+  enxerga peso (frete do ML/Amazon varia com ele). Próximo refinamento = faixa × peso.
+- **Tela `/ia/anuncios` = catálogo ativo** (RPC **`ia_catalogo(busca, marca, situacao,
+  sem_canal, ordem, offset, limit)`**, security definer + `tem_modulo('ia')`, ~0,3 s):
+  produtos `ativo` e não arquivados (2.318), com custo, unidades 30 d, selos "onde vende
+  hoje" (canal · empresa · preço · margem real) e os rascunhos de IA. Filtros na URL:
+  situação (sem anúncio / em andamento / pronto, com contagem), marca, "ainda não vende em
+  <canal>", ordem; 50 por página. Tudo no banco — nada de filtrar no navegador.
+- **Tela `/ia/gerar`:** bloco **Preço** (`PainelPreco.tsx`) aparece SEMPRE, antes de existir
+  rascunho: sugerido, conta aberta, de onde veio a taxa, "analisar o preço que vou praticar"
+  e a tabela "como este produto vende hoje" por canal. **"Escrever à mão"** (RPC
+  `ia_rascunho_criar`) cria o rascunho sem IA — dá para percorrer texto e fotos sem as
+  chaves cadastradas.
+- **Teste de RPC que exige login, sem login:** `set_config('request.jwt.claims',
+  json_build_object('sub', <user_id>, 'role','authenticated')::text, true)` na mesma consulta
+  (só leitura). Função `stable` chamada na MESMA instrução que a função que grava não vê o
+  que ela gravou (snapshot) — conferir em consulta separada.
 
 ## 6. Edge Functions
 
