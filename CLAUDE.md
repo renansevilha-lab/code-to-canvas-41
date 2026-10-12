@@ -2157,6 +2157,48 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
   da Amazon (consulta de 12/out): Xô Gatinho unidade = ASIN B09SJT22QN (Pet Clean), Kit 2 =
   B0GNTS7RHT, sem restrição para a ACZ. **Não testado ao vivo.**
 
+## 5.11.8 Criar no Tiny produto com variações de quantidade (12/out/2026)
+
+Pedido do dono: a partir de um produto SIMPLES, criar pelo app o produto pai cujas variações
+são kits do produto base (a estrutura do print: 16181 → 16176/16177/16178 = 1×/2×/3× 15820).
+Como nasce no Tiny, o anúncio enviado depois PELO TINY já sai ligado (resolve o vínculo que
+faltou no anúncio criado direto na Shopee).
+
+- **Ensaio real autorizado (produto `TESTE-APP-208691`), o que a API do Tiny faz e não faz:**
+  - v3 `POST /produtos` (tipo V + `grade: ["Tamanho"]` + `variacoes[{sku, precos, grade[{chave,
+    valor}]}]`) cria pai e variações. **O SKU é OBRIGATÓRIO** no pai e em cada variação (sem
+    ele: 400 "Este valor não deve ser nulo" — o Tiny NÃO numera sozinho pela API). A variação
+    nasce `tipo S`.
+  - v3 NÃO transforma variação em kit: `PUT /produtos/{id}/kit` = 400 "Produto não é do tipo
+    'Kit'"; `tipo`/`kit` no corpo da variação são ignorados; `PUT /produtos/{idVariacao}` = 404.
+  - **v2 `produto.alterar.php` com `classe_produto: "K"` + `kit: [{item: {id_produto,
+    quantidade}}]` transforma a variação em kit** e mantém `tipoVariacao V` + `produtoPai`.
+    Campos mínimos que funcionaram: `sequencia, id, codigo, nome, unidade, preco, origem,
+    situacao, tipo: "P"`. Alterar um produto que JÁ é kit exige mandar a lista do kit de novo.
+  - **Excluir não dá:** v3 `DELETE /produtos/{id}` = 403; v2 só aceita situação A ou I (não "E").
+    Sobrou no Tiny o produto de teste: pai e 2 variações INATIVADOS, e a variação
+    `TESTE-APP-208691-2` ainda ATIVA (virou kit) — apagar na tela do Tiny.
+  - Achado útil: v3 tem `POST/PUT /produtos/{id}/anexos` (`{url, externo}`) — dá para mandar
+    FOTO ao produto do Tiny por endereço (ainda não usado).
+- **Edge fn `tiny-produto-variacoes` v1** (JWT de usuário + módulo `ia`; conta Tiny `ottz`):
+  `sugerir {base_sku}` (dados do produto + próximos SKUs livres = maior SKU numérico de 5
+  dígitos do espelho + 1…) · `previa {…}` (confere tudo, inclusive SKU livre no espelho E ao
+  vivo no Tiny; não escreve) · `criar {…, confirmar: true}` (POST do pai → v2 em cada variação
+  → confere pelo GET → grava `produtos` e `produto_kits` na hora) · `kit {id_variacao,
+  quantidade, base_sku, confirmar}` (refaz só o passo do kit). Copia do produto base: unidade,
+  NCM, origem, GTIN, marca e categoria. O POST não é repetido; no código 6 da v2 a função para
+  e as variações restantes ficam simples até o "tentar de novo". Registro em
+  `debug_fulfillment` (`modulo = 'tiny-produto-variacoes'`, `etapa` = SKU do pai).
+- **Tela:** menu "…" na linha de `/ia/anuncios` → "Criar produto com variações" (só produto
+  simples) → `CriarVariacoes.tsx`: nome, SKU do pai, nome da grade ("Tamanho"), linhas (nome
+  da opção, quantidade no kit, SKU, preço — sugeridos; preço = preço do base × quantidade;
+  atalhos 1·2·3, 3·4·6, 6·12) → Conferir → Criar no Tiny (com confirmação) → resultado por
+  variação. **Não testado pela tela** (sem sessão a função responde 401).
+- **Lista de anúncios (mesmo dia):** filtro "Fotos da família, sem capa própria" e ordem "Mais
+  vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC nova estiver aplicada
+  (`docs/ia-catalogo-filtros.sql`, fora do horário comercial; testada como função temporária:
+  8 produtos do Xô Gatinho no filtro).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -2203,6 +2245,7 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
+| `tiny-produto-variacoes` | v1 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir`, `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

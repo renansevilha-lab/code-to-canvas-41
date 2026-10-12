@@ -1,11 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, Loader2, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, Layers, Loader2, MoreHorizontal, Search, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { CriarVariacoes } from "@/components/ia/anuncio/CriarVariacoes";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -85,6 +87,8 @@ function AnunciosPage() {
   const total = cat?.total ?? 0;
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const canalPadrao = sem ?? "shopee";
+  // menu "…" da linha → criar no Tiny um produto com variações a partir deste produto simples
+  const [variacoesDe, setVariacoesDe] = useState<string | null>(null);
 
   // kits como no Tiny: a composicao (quantidade x componente) aparece na linha. So os kits da pagina.
   const skusKit = (cat?.linhas ?? []).filter((x) => x.tipo === "K").map((x) => x.sku);
@@ -160,6 +164,7 @@ function AnunciosPage() {
           <span className="w-16 text-right">30 dias</span>
           <span className="w-[300px]">Onde vende hoje (preço · margem)</span>
           <span className="w-[230px]">Anúncio com IA</span>
+          <span className="w-8" />
           <span className="w-[76px]" />
         </div>
         {catQ.isLoading ? (
@@ -169,9 +174,11 @@ function AnunciosPage() {
         ) : !cat?.linhas.length ? (
           <div className="p-10 text-center text-muted-foreground">Nenhum produto com esses filtros.</div>
         ) : (
-          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={x} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} />)}</div>
+          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={x} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe} />)}</div>
         )}
       </Card>
+
+      {variacoesDe && <CriarVariacoes sku={variacoesDe} onFechar={() => setVariacoesDe(null)} />}
 
       {total > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -198,7 +205,9 @@ interface Componente { sku_componente: string; quantidade: number; nome_componen
  * Uma linha do catálogo. Como no Tiny: o kit mostra a composição, e o produto com variações
  * abre as variações logo abaixo (cada uma com venda, canais e anúncio próprios).
  */
-function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; variacao?: boolean }) {
+function Linha({ x, canalPadrao, composicao, variacao, onVariacoes }: {
+  x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; variacao?: boolean; onVariacoes?: (sku: string) => void;
+}) {
   const primeiro = x.rascunhos[0];
   const filhas = x.variacoes ?? [];
   const [aberto, setAberto] = useState(false);
@@ -253,6 +262,19 @@ function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; c
           ? <span className="text-[11px] text-muted-foreground">nenhum ainda</span>
           : x.rascunhos.slice(0, 4).map((r) => <SeloRascunho key={r.id} r={r} sku={x.sku} />)}
       </div>
+      {onVariacoes && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0" title="Mais ações"><MoreHorizontal className="h-4 w-4" /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={x.tipo !== "S" || variacao} onSelect={() => onVariacoes(x.sku)}>
+              <Layers className="h-4 w-4 mr-2" />Criar produto com variações
+              {x.tipo !== "S" && <span className="ml-2 text-[10px] text-muted-foreground">só produto simples</span>}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <Button asChild size="sm" variant={primeiro ? "outline" : "default"} className="h-8 w-[76px] gap-1 shrink-0">
         {primeiro ? (
           <Link to="/ia/gerar" search={{ sku: x.sku, canal: primeiro.canal, empresa: primeiro.empresa, r: primeiro.id }}>Abrir</Link>
@@ -261,7 +283,7 @@ function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; c
         )}
       </Button>
     </div>
-    {aberto && filhas.map((v) => <Linha key={v.sku} x={v} canalPadrao={canalPadrao} variacao />)}
+    {aberto && filhas.map((v) => <Linha key={v.sku} x={v} canalPadrao={canalPadrao} variacao onVariacoes={onVariacoes} />)}
     </>
   );
 }

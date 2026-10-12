@@ -167,6 +167,10 @@ export const temSeloShopee = (tipo: string) => /shopee/.test(tipo);
 export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "aplicar-lote", body: Record<string, unknown>) =>
   chamarFuncao("ia-aproveitar", modulo, body);
 
+/** Criar no Tiny um produto com variações (cada variação = kit do produto base) — edge fn `tiny-produto-variacoes`. */
+export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit", body: Record<string, unknown>) =>
+  chamarFuncao("tiny-produto-variacoes", modulo, body);
+
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */
 export async function urlsAssinadas(paths: string[]): Promise<Record<string, string>> {
   const unicos = [...new Set(paths.filter(Boolean))];
