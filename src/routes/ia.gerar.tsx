@@ -10,6 +10,7 @@ import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
+import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
 import {
@@ -19,7 +20,8 @@ import {
 // ============================================================================
 // /ia/gerar?sku= — gerar anúncio com IA dentro da gestão (Fase 2, 09/out/2026).
 // Blocos: produto → preço (taxas reais dos pedidos, não depende da IA) → texto →
-// fotos (prompts → imagens na fila → revisão) → enviar ao marketplace. Entrada pela lista /ia/anuncios
+// fotos (prompts → imagens na fila → revisão) → enviar ao marketplace. O bloco "Aproveitar" traz texto e
+// fotos de outro anúncio (outro canal ou a família de kit) sem gerar de novo. Entrada pela lista /ia/anuncios
 // (catálogo ativo) ou pelo botão "Gerar anúncio" do Catálogo. O envio ao Tiny
 // é a Fase 3 — aqui aprovar só marca a etapa.
 // ============================================================================
@@ -153,6 +155,11 @@ function GerarAnuncioPage() {
           ))}
           {rascunho && <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => set({ r: "novo" })}>+ novo rascunho neste canal</Button>}
         </CardContent></Card>
+      )}
+
+      {r !== "novo" && (
+        <Aproveitar key={`apr-${sku}-${canal}-${empresa}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
+          imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
       )}
 
       <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho} />

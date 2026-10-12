@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageOff, Loader2, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, on
             </div>
             <h2 className="text-lg font-semibold leading-snug mt-1">{produto.nome}</h2>
             <p className="text-xs text-muted-foreground mt-0.5">{produto.categoria_caminho ?? "sem categoria no Tiny"}</p>
+            {produto.tipo === "K" && <ComposicaoKit sku={produto.sku} canal={canal} empresa={empresa} />}
           </div>
           <div className="flex flex-wrap items-end gap-3 text-sm">
             <label className="block">
@@ -62,6 +64,33 @@ export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, on
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** Composição do kit como no Tiny: quantidade × componente (com atalho para o anúncio do componente). */
+function ComposicaoKit({ sku, canal, empresa }: { sku: string; canal: string; empresa: string }) {
+  const q = useQuery({
+    queryKey: ["ia-anuncio", "composicao", sku],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal.from("produto_kits").select("sku_componente, quantidade, nome_componente").eq("sku_kit", sku).order("sku_componente");
+      if (error) throw error;
+      return (data ?? []) as { sku_componente: string; quantidade: number; nome_componente: string | null }[];
+    },
+  });
+  if (!q.data) return null;
+  if (!q.data.length) return <p className="text-xs text-amber-600 mt-1.5">Kit sem composição cadastrada no Tiny.</p>;
+  return (
+    <div className="mt-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs space-y-0.5">
+      <div className="text-[10.5px] font-medium text-muted-foreground">Composição do kit</div>
+      {q.data.map((c) => (
+        <div key={c.sku_componente} className="flex items-baseline gap-1.5">
+          <b className="tabular-nums shrink-0">{Number(c.quantidade).toLocaleString("pt-BR")}×</b>
+          <Link to="/ia/gerar" search={{ sku: c.sku_componente, canal, empresa }} className="font-mono text-muted-foreground hover:underline shrink-0">{c.sku_componente}</Link>
+          <span className="truncate" title={c.nome_componente ?? ""}>{c.nome_componente ?? "—"}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 

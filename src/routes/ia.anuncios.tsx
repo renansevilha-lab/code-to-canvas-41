@@ -83,6 +83,21 @@ function AnunciosPage() {
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const canalPadrao = sem ?? "shopee";
 
+  // kits como no Tiny: a composicao (quantidade x componente) aparece na linha. So os kits da pagina.
+  const skusKit = (cat?.linhas ?? []).filter((x) => x.tipo === "K").map((x) => x.sku);
+  const kitsQ = useQuery({
+    queryKey: ["ia-anuncio", "composicoes", skusKit.join(",")],
+    enabled: skusKit.length > 0,
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal.from("produto_kits").select("sku_kit, sku_componente, quantidade, nome_componente").in("sku_kit", skusKit).limit(1000);
+      if (error) throw error;
+      const por: Record<string, Componente[]> = {};
+      for (const c of (data ?? []) as (Componente & { sku_kit: string })[]) (por[c.sku_kit] ??= []).push(c);
+      return por;
+    },
+  });
+
   return (
     <div className="p-4 md:p-8 max-w-[1400px] mx-auto space-y-4">
       <header className="space-y-1">
@@ -151,7 +166,7 @@ function AnunciosPage() {
         ) : !cat?.linhas.length ? (
           <div className="p-10 text-center text-muted-foreground">Nenhum produto com esses filtros.</div>
         ) : (
-          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={x} canalPadrao={canalPadrao} />)}</div>
+          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={x} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} />)}</div>
         )}
       </Card>
 
@@ -174,7 +189,9 @@ function AnunciosPage() {
   );
 }
 
-function Linha({ x, canalPadrao }: { x: IaCatalogoLinha; canalPadrao: string }) {
+interface Componente { sku_componente: string; quantidade: number; nome_componente: string | null }
+
+function Linha({ x, canalPadrao, composicao }: { x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[] }) {
   const primeiro = x.rascunhos[0];
   return (
     <div className="flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-muted/20">
@@ -189,6 +206,17 @@ function Linha({ x, canalPadrao }: { x: IaCatalogoLinha; canalPadrao: string }) 
           {x.tipo === "K" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">kit</Badge>}
           {x.tipo === "V" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">com variações</Badge>}
         </div>
+        {composicao && composicao.length > 0 && (
+          <div className="text-[11px] text-muted-foreground truncate" title={composicao.map((c) => `${Number(c.quantidade)}× ${c.sku_componente} ${c.nome_componente ?? ""}`).join(" + ")}>
+            {composicao.slice(0, 3).map((c, i) => (
+              <span key={c.sku_componente}>
+                {i > 0 && " + "}<b className="text-foreground/80">{Number(c.quantidade).toLocaleString("pt-BR")}×</b>{" "}
+                <span className="font-mono">{c.sku_componente}</span> {c.nome_componente ?? ""}
+              </span>
+            ))}
+            {composicao.length > 3 && <> + {composicao.length - 3} item(ns)</>}
+          </div>
+        )}
       </div>
       <span className="w-20 text-right text-xs font-mono">
         {x.custo != null ? formatBRL(Number(x.custo)) : <span className="text-destructive font-sans">sem custo</span>}

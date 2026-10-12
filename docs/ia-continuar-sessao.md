@@ -7,7 +7,11 @@ está no `CLAUDE.md` §5.11.1 a §5.11.5 e §5.9.1 (relâmpago).
 Para retomar, abra uma sessão nova no outro PC, dê `git pull` e diga:
 **"Leia docs/ia-continuar-sessao.md e continue de onde parou."**
 
-## 1. Pendência nº 1 — publicar a função `anuncio-publicar` v4 (Mercado Livre)
+## 1. ~~Pendência nº 1~~ FEITO em 12/out à tarde — `anuncio-publicar` v4 (Mercado Livre) no ar
+
+**A v4 está publicada** (com o OK do dono) e o que subiu confere por sha256 com o repositório.
+No mesmo dia entrou o "aproveitar" (texto/fotos da Shopee no Mercado Livre e artes do produto
+base nos kits) — ver `CLAUDE.md` §5.11.6. O texto abaixo fica como registro de como foi feito.
 
 - O código da v4 está no repositório (`supabase/functions/anuncio-publicar/index.ts`), mas
   **no ar ainda está a v3** (só Shopee). O deploy foi **bloqueado pelo classificador de
@@ -37,9 +41,11 @@ Para retomar, abra uma sessão nova no outro PC, dê `git pull` e diga:
 | Capas novas (selo flutuante, sem benefícios), Lifestyle com texto, sem etapa de confirmação | no ar; **efeito ainda não visto** numa imagem (clicar "prompt" e depois "refazer") |
 | Shopee — conferência (criar e atualizar, seletor de fotos) | conferência vista pelo dono em tela |
 | Shopee — **envio** (criar ou atualizar) | **nunca rodou**; reaproveitar id de foto antiga no `update_item` não testado |
-| Mercado Livre — código | pronto, **não publicado** (item 1) |
+| Mercado Livre — código | **publicado** (v4, 12/out) |
+| Aproveitar texto/fotos (outro canal e kits) — `ia-aproveitar` v1 | no ar; **nenhuma chamada real ainda** (observar a cópia no Storage na 1ª vez) |
+| Variações agrupadas como no Tiny | pendente: depende do pacote do Catálogo (DDL à noite) |
 | Mercado Livre — ensaio (leitura + validador do ML) | ok nas duas contas: `ml-anuncio-sonda?conta=ottz&sku=15984` e `conta=svl&sku=16170` |
-| Mercado Livre — conferência pela tela e **envio** | nunca rodaram (dependem do item 1) |
+| Mercado Livre — conferência pela tela e **envio** | nunca rodaram (a função já está no ar) |
 | Relâmpago Shopee em dias alternados (`shopee-flashsale` v9) | corrigido; o reenvio novo só roda no cron das 18h07 — **falta conferir** `flashsale_criadas.detalhe.acoes` (`ler-reservas`, `add-retry`) do dia seguinte a 12/out |
 
 Ordem sugerida de teste depois de publicar a v4:

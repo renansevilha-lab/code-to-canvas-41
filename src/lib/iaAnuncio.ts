@@ -129,6 +129,37 @@ export const chamarIa = (modulo: string, body: Record<string, unknown>) => chama
 /** Envio do anúncio ao marketplace: `existentes` e `previa` só leem; `enviar` cria ou atualiza o anúncio. */
 export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
 
+// ---- Aproveitar o que já foi gerado (edge fn `ia-aproveitar`, 12/out/2026): o mesmo produto em outro
+// canal (texto + fotos) e a família de kit (fotos do produto base nos kits dele). Não chama IA.
+export type RelacaoFamilia = "mesmo" | "componente" | "kit" | "irmao";
+export interface IaParente {
+  sku: string; nome: string; tipo: string | null; relacao: RelacaoFamilia; quantidade: number | null; n_componentes: number;
+}
+export interface IaFonteImagem { id: string; ordem: number; tipo: string; storage_path: string; status: StatusEtapa | null }
+export interface IaFonte {
+  rascunho_id: string; sku: string; nome: string; relacao: RelacaoFamilia; quantidade: number | null; n_componentes: number;
+  canal: string; empresa: string; atualizado: string;
+  texto: { status: StatusEtapa | null; titulo: string; n_titulo: number } | null; imagens: IaFonteImagem[];
+}
+export interface IaFontes {
+  limite_titulo: number;
+  destino: { rascunho_id: string; tem_texto: boolean; tipos: string[]; n_fotos: number } | null;
+  familia: IaParente[]; fontes: IaFonte[];
+}
+export interface IaDestino extends IaParente { foto: string | null; rascunho_id: string | null; n_fotos: number; tipos: string[] }
+/** "kit com 3 un.", "produto base do kit"… — como o produto se liga ao que está aberto. */
+export function rotuloRelacao(p: { relacao: RelacaoFamilia; quantidade: number | null; n_componentes: number }): string {
+  const q = p.quantidade && p.quantidade > 1 ? ` (${p.quantidade} un.)` : "";
+  if (p.relacao === "mesmo") return "este produto";
+  if (p.relacao === "componente") return `produto base do kit${q}`;
+  if (p.n_componentes > 1) return "kit misto";
+  return p.relacao === "kit" ? `kit deste produto${q}` : `kit do mesmo produto${q}`;
+}
+/** Fotos que carregam o selo da Shopee: não servem para outro canal. */
+export const temSeloShopee = (tipo: string) => /shopee/.test(tipo);
+export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "aplicar-lote", body: Record<string, unknown>) =>
+  chamarFuncao("ia-aproveitar", modulo, body);
+
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */
 export async function urlsAssinadas(paths: string[]): Promise<Record<string, string>> {
   const unicos = [...new Set(paths.filter(Boolean))];

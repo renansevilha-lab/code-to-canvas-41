@@ -1984,9 +1984,9 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   "nada muda" viram pendência. A lista enviada mistura os `image_id` que já eram do anúncio com
   os das fotos novas recém-subidas — reaproveitar id antigo no `update_item` ainda não foi
   testado.
-- **Mercado Livre (12/out, pedido do dono) — `anuncio-publicar` v4 (código no repositório;
-  ⚠ o deploy da v4 foi BLOQUEADO pelo classificador de permissões e aguardava o OK do dono —
-  conferir com `get_edge_function` se a linha 2 já diz v4 antes de supor que está no ar).**
+- **Mercado Livre (12/out, pedido do dono) — `anuncio-publicar` v4 (NO AR desde 12/out à
+  tarde, com o OK do dono; o que subiu foi conferido por sha256 contra o repositório,
+  `a63a0d8b…431fe2`).**
   Rascunho com canal `mercado_livre`; conta pela empresa (ottz 1107117809, svl 1299638625),
   token sempre DA CONTA. Mesma tela e a mesma conferência da Shopee (`Envio` em `Publicar.tsx`
   serve aos dois; textos/limites mudam pelo canal; `previa.limites`). O que a sondagem
@@ -2028,6 +2028,54 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   - **Não testado ao vivo:** nenhum `enviar` (criar ou atualizar), o upload de foto, a troca de
     título e se anúncios da mesma família compartilham fotos.
 - **Próximos:** TikTok, Amazon; anúncio com variações na Shopee.
+
+## 5.11.6 IA · Anúncios — aproveitar o que já foi gerado e kits como no Tiny (12/out/2026)
+
+Pedido do dono: o conteúdo feito para a Shopee serve para o Mercado Livre, e as artes do
+produto base (Xô Gatinho, Adestrador) servem para todos os kits dele — sem gerar de novo.
+
+- **Edge fn `ia-aproveitar` v1** (função separada da `ia-anuncio`, §2.1.5/§10; não precisou de
+  DDL). Só copia dentro da gestão: nada vai a marketplace nem a IA.
+  - `fontes {sku, canal, empresa, destino_id?}` → rascunhos de onde dá para TRAZER + a família.
+  - `destinos {rascunho_id}` → produtos da família para onde dá para LEVAR as fotos.
+  - `aplicar {origem_id, sku, canal, empresa, destino_id?, texto?, imagens[], substituir?,
+    aprovadas?}` → um destino (cria o rascunho se faltar, por `ia_rascunho_criar` em nome do
+    usuário, então nasce com o preço do canal).
+  - `aplicar-lote {origem_id, skus[], canal, empresa, imagens[]…}` → vários produtos; orçamento
+    de 22 s e `restantes` (a tela reenvia). Só aceita SKU da família da origem.
+- **Família de um SKU** (`produto_kits`): ele mesmo, os componentes dele (se for kit) e os kits
+  ATIVOS que contêm ele ou os componentes. Relação: `mesmo` · `componente` · `kit` (contém o
+  produto aberto) · `irmao` (kit do mesmo componente). Medido: 10933 → 8 kits; 14560 (via 11538)
+  → 10; 16170 (via 15820) → 25. Kit com mais de um componente aparece como "kit misto" e não
+  vem marcado.
+- **A foto aproveitada NÃO divide o arquivo com a origem.** O worker regrava
+  `{sku}/{rascunho}/{ordem}-{tipo}.ext` ao "refazer" (upsert): se o destino apontasse para esse
+  caminho, uma foto já aprovada mudaria sozinha. A função copia UMA vez para
+  **`compartilhado/{sku de origem}/{tipo}-{12 do sha256}.{ext}`** e todos os destinos apontam
+  para essa cópia (25 kits = 1 arquivo, ~1,3 MB por foto, e não 25). "Refazer" no destino grava
+  no caminho do próprio destino. Para a origem refeita chegar aos kits: levar de novo com
+  "substituir".
+- **Regras de aprovação:** foto aprovada na origem entra aprovada (caixa desligável); as outras
+  entram "para revisar". Texto só entra aprovado quando é o MESMO produto, estava aprovado e o
+  título cabe no canal — senão fica para revisar com o aviso (Mercado Livre aceita 60
+  caracteres; os da Shopee têm 53–79). Texto de outro produto nunca entra aprovado.
+- **O que não vem marcado:** capa com selo da Shopee (`capa_*shopee*`) quando o destino não é
+  Shopee; capa de OUTRO produto (mostra a quantidade errada); tipo que o destino já tem.
+- **Tela:** bloco "Aproveitar o que já está pronto" em `/ia/gerar`
+  (`src/components/ia/anuncio/Aproveitar.tsx`): lista as fontes com "Trazer para <canal>"
+  (diálogo com texto + miniaturas) e, quando o anúncio aberto tem fotos e o produto tem
+  família, "Levar as fotos deste anúncio para os kits" (escolhe fotos e produtos; cria os
+  rascunhos que faltam). O preço NÃO é copiado: cada canal calcula o seu.
+- **Kits como no Tiny:** composição (quantidade × componente) no topo de `/ia/gerar`
+  (`ComposicaoKit`, com atalho para o componente) e na linha de `/ia/anuncios` (uma consulta a
+  `produto_kits` só com os kits da página).
+- **Variações como no Tiny — PENDENTE do banco:** o espelho `produtos` não guarda quem é o pai
+  de cada variação (`sku_pai`). Depende do pacote do Catálogo (colunas novas + `tiny-sync-
+  produtos` v28), que é DDL e vai fora do horário comercial; hoje a linha só tem o selo "com
+  variações".
+- **Não testado ao vivo:** nenhuma chamada com sessão de usuário (a prévia local para no
+  login). Conferido: preflight 200, sem sessão 401, chave pública 401; `tsc` e `vite build` ok.
+  A cópia de arquivo no Storage (`storage.copy`) é o passo a observar na 1ª vez.
 
 ## 6. Edge Functions
 
@@ -2074,7 +2122,8 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v3 no ar · v4 no repositório | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `anuncio-publicar` | v4 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
