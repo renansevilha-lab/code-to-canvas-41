@@ -117,7 +117,10 @@ async function chamarFuncao(funcao: string, modulo: string, body: Record<string,
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.ok === false) {
     const pend = Array.isArray(j.pendencias) && j.pendencias.length ? `: ${j.pendencias.join("; ")}` : "";
-    throw new Error((j.erro ?? `HTTP ${r.status}`) + pend);
+    // o motivo de cada foto pulada (ex.: capa sem prompt, prompt com [CONFIRMAR])
+    const puladas = Array.isArray(j.puladas) && j.puladas.length
+      ? `: ${(j.puladas as { tipo: string; motivo: string }[]).map((x) => `${x.tipo.replace(/_/g, " ")} — ${x.motivo}`).join("; ")}` : "";
+    throw new Error((j.erro ?? `HTTP ${r.status}`) + pend + puladas);
   }
   return j;
 }

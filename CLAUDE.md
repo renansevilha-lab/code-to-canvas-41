@@ -1923,6 +1923,19 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 - **Não testado:** nem a prévia nem o envio rodaram (exigem login). O formato do `add_item` e
   do upload de imagem vem da documentação — se a Shopee recusar, a resposta crua fica em
   `ia_publicacao.resposta` e a mensagem aparece na tela.
+- **Imagem sem prompt saía crua (12/out, mesmo dia):** há DOIS caminhos de imagem. Com prompt
+  escrito (`ia_prompt_imagem`, feito pelo `meta_prompt`) sai o infográfico com título e destaques.
+  Sem prompt, o worker usa o template `imagem_*` puro — e os de lifestyle/detalhe/ângulo/kit
+  diziam "Sem texto sobreposto". O botão "imagem" por linha deixou esse 2º caminho a um clique
+  (a 1ª Lifestyle do dono saiu sem texto). Além disso capa sem prompt é recusada pela função
+  ("nenhuma foto a gerar", sem dizer por quê). Corrigido: (1) o front **escreve antes o prompt
+  das fotos que não têm** (uma ou várias) e só então enfileira; (2) o erro mostra o motivo de
+  cada foto pulada; (3) regra nova `inst_imagem_texto_vantagem` (`ia_prompt_guardrail`,
+  instrução `IMAGEM:`): fora a principal e as capas, toda imagem leva texto apontando vantagem
+  ou uso, e prefere cenário de uso a fundo branco (pedido do dono); (4) templates
+  `imagem_lifestyle`, `imagem_detalhe`, `imagem_angulo` e `imagem_kit` ganharam a **versão 2**
+  (v1 desligada, não apagada) pedindo o texto. `imagem_principal` segue sem texto (regra dos
+  marketplaces para a foto de catálogo).
 - **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
   `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
 

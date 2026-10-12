@@ -74,15 +74,27 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
     finally { if (so) setUmaVez((u) => { const n = { ...u }; delete n[so]; return n; }); else setPreparando(false); }
   }
   async function gerarImagens(fotos: string[], observacao?: string, so?: string) {
-    if (so) setUmaVez((u) => ({ ...u, [so]: "imagem" })); else setEnfileirando(true);
+    // foto sem prompt escrito sairia do modelo genérico (cena crua, sem o texto de venda), e capa sem
+    // prompt nem é gerada: escreve antes o prompt das que faltam, com os dados da capa do formulário
+    const semPrompt = fotos.filter((t) => !promptPor.has(t));
+    if (so) setUmaVez((u) => ({ ...u, [so]: semPrompt.length ? "prompt" : "imagem" })); else setEnfileirando(true);
     try {
+      if (semPrompt.length) {
+        const rp = await chamarIa("prompts-imagem", {
+          sku, canal, fotos: semPrompt, forcar: false, capa: semPrompt.some((t) => t.startsWith("imagem_capa_")) ? capa : null,
+        });
+        const falhou = ((rp.pulados ?? []) as { tipo: string; motivo: string }[]).filter((x) => !/já existe|preservado/.test(x.motivo));
+        if (falhou.length) toast.warning("Alguns prompts não foram escritos", { description: falhou.map((x) => `${rotuloFoto(x.tipo)}: ${x.motivo}`).slice(0, 5).join("\n") });
+        recarregar();
+        if (so) setUmaVez((u) => ({ ...u, [so]: "imagem" }));
+      }
       const r = await chamarIa("imagens", { rascunho_id: rascunho.id, fotos, modelo, observacao: observacao ?? (obs || undefined) });
       const puladas = (r.puladas ?? []) as { tipo: string; motivo: string }[];
       toast.success(`${(r.enfileiradas ?? []).length} imagem(ns) na fila`, {
         description: [`custo estimado US$ ${r.custo_estimado_usd}`, r.aviso, ...puladas.map((p) => `${p.tipo}: ${p.motivo}`)].filter(Boolean).slice(0, 6).join("\n"),
       });
       recarregar();
-    } catch (e) { toast.error("Falha ao enfileirar", { description: (e as Error).message }); }
+    } catch (e) { toast.error("Não foi possível gerar", { description: (e as Error).message, duration: 12000 }); recarregar(); }
     finally { if (so) setUmaVez((u) => { const n = { ...u }; delete n[so]; return n; }); else setEnfileirando(false); }
   }
 
@@ -108,11 +120,11 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
         <div className="flex gap-1 shrink-0">
           <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] gap-1" disabled={!!rodando || preparando}
             title={p ? "Escrever de novo o prompt só desta foto" : "Escrever o prompt só desta foto"} onClick={() => void prepararPrompts(t)}>
-            {rodando === "prompt" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}prompt
+            {rodando === "prompt" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}{rodando === "prompt" ? "escrevendo…" : "prompt"}
           </Button>
           <Button size="sm" variant="outline" className="h-7 px-2 text-[11px] gap-1" disabled={!!rodando || enfileirando || !!andando}
             title={img?.storage_path ? "Gerar de novo só esta imagem" : "Gerar só esta imagem"} onClick={() => void gerarImagens([t], undefined, t)}>
-            {rodando === "imagem" || andando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}{img?.storage_path ? "refazer" : "imagem"}
+            {rodando || andando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}{img?.storage_path ? "refazer" : "imagem"}
           </Button>
         </div>
       </div>
@@ -125,7 +137,7 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
 
       <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
         <p><b className="text-foreground">Prompt</b> é a instrução que a IA escreve para o modelo de imagem, a partir do briefing, da foto real e das referências. Você pode ler e editar antes de gerar.</p>
-        <p><b className="text-foreground">Imagem</b> é gerada a partir do prompt (sem prompt, usa o modelo padrão da foto). Cada imagem é cobrada à parte.</p>
+        <p><b className="text-foreground">Imagem</b> é gerada a partir do prompt. Se a foto ainda não tem prompt, ele é escrito antes, automaticamente. Cada imagem é cobrada à parte.</p>
         <p>Faça <b className="text-foreground">uma foto por vez</b> pelos botões de cada linha, ou marque várias e use os botões de baixo.</p>
       </div>
 
