@@ -2195,9 +2195,13 @@ faltou no anúncio criado direto na Shopee).
   atalhos 1·2·3, 3·4·6, 6·12) → Conferir → Criar no Tiny (com confirmação) → resultado por
   variação. **Não testado pela tela** (sem sessão a função responde 401).
 - **Lista de anúncios (mesmo dia):** filtro "Fotos da família, sem capa própria" e ordem "Mais
-  vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC nova estiver aplicada
-  (`docs/ia-catalogo-filtros.sql`, fora do horário comercial; testada como função temporária:
-  8 produtos do Xô Gatinho no filtro).
+  vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC `ia_catalogo` responde
+  `versao >= 2`. **RPC v1.1 APLICADA em 12/out às 18h18** (migração
+  `ia_catalogo_filtros_sem_capa_vendas120`, `docs/ia-catalogo-filtros.sql`; o dono mandou
+  aplicar antes das 19h — foi só um `create or replace function`, e a API respondeu em 0,6 s
+  logo depois). "Sem capa" = tem foto em `compartilhado/…` e nenhuma capa PRÓPRIA aprovada; no
+  dia eram 8 produtos do Xô Gatinho. O pacote de variações (`ia_catalogo_variacoes.sql`) já
+  traz os dois e sobe a `versao` para 3.
 
 ## 6. Edge Functions
 

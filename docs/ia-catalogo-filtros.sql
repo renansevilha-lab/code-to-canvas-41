@@ -6,7 +6,7 @@
 --     30 e 120 dias (ia_hist_sku_canal); 120 dias é o "geral" disponível.
 -- A resposta ganha `versao` (a tela só mostra o filtro e a ordem novos quando ele chega) e, em cada
 -- linha, `sem_capa`. Nada mais muda: mesma assinatura, mesmos campos.
--- APLICAR FORA DO HORÁRIO COMERCIAL. O pacote de variações (docs/catalogo-espelho-tiny/
+-- APLICADO em 12/out/2026 às 18h18 (com o OK do dono). O pacote de variações (docs/catalogo-espelho-tiny/
 -- ia_catalogo_variacoes.sql) já inclui estas duas coisas — se ele for aplicado, este arquivo não precisa.
 create or replace function public.ia_catalogo(
   p_busca text default null, p_marca text default null, p_situacao text default 'todos',
