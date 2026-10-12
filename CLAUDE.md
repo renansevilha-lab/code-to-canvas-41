@@ -2123,6 +2123,28 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
     posição** (`opcoes.fotos.manter_pos`). Anúncio com pendência fica de fora e é avisado. O
     preço, se marcado, é o de cada destino (não o do principal).
   - **Não testado ao vivo:** `ordem`, `manter_pos` e o envio em sequência.
+- **v7 — Amazon, só ATUALIZAR (12/out, sha256 `9fcce7f4…2f64`):** SP-API Listings Items
+  (`GET/PATCH /listings/2021-08-01/items/{merchant_token}/{sku}`), conta pela empresa (shop
+  900001 ACZ / 900002 SVL). O SKU na Amazon é procurado em: o nosso SKU, `FBA-<sku>`,
+  `sku_mapeamento` e `estoque_fulfillment`. Atualiza `item_name`, `product_description` +
+  `bullet_point` (campos separados; até 5 bullets) e as fotos (`main_product_image_locator` +
+  `other_product_image_locator_1..8`; foto nova = endereço assinado do bucket por 7 dias, que
+  a Amazon baixa; campo que sobra é apagado com `op: delete`). A prévia passa os patches no
+  validador (`mode=VALIDATION_PREVIEW`, não aplica). Preço e criar anúncio novo: não.
+  **SVL sem `merchant_token`** → erro claro. Ensaio real em 12/out (leitura do 15819 + preview
+  do título = `VALID`) pelo diagnóstico `supabase/functions/amazon-anuncio-sonda`, que está
+  publicado no slot **`amazon-lwa-debug`** (`?conta=ottz&sku=`): criar função NOVA no projeto
+  falhou 3× com erro interno (atualizar existente funciona; suspeita: limite de funções — há
+  ~90, várias `*-probe/-teste/-debug` sem uso que o dono pode apagar no painel; a MCP não apaga;
+  **`shopee-devolucao-probe` NÃO pode sair: 4 crons usam**).
+  **Não testado ao vivo:** `previa`/`enviar` da Amazon pela tela, fotos por endereço assinado.
+- **Vínculo com o Tiny (12/out, relato do dono):** o anúncio CRIADO direto na Shopee (16452 →
+  item 43435113505, `item_sku` = SKU do Tiny, não listado) **não ficou ligado ao Tiny**. Criar
+  direto só serve depois de resolver isso (importar anúncios no Tiny, ou publicar pelo Tiny e
+  só ATUALIZAR por aqui). Atualizar anúncio existente não tem esse problema.
+- **Estrutura real de anúncio com variação de quantidade (print do dono):** Tiny tem um produto
+  pai tipo V (ex.: 16181 "1 a 3 un") cujas variações são KITS do produto base (16176/16177/16178
+  = 1×/2×/3× 15820); na Shopee o anúncio tem `item_sku` = pai e cada modelo com o SKU do kit.
 
 ## 6. Edge Functions
 
