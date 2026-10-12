@@ -65,6 +65,9 @@ export interface IaRascunhoResumo {
 export interface IaCatalogoLinha {
   sku: string; nome: string; marca: string | null; tipo: string | null; foto: string | null; custo: number | null;
   un30: number; un120: number; canais: IaCanalHist[]; rascunhos: IaRascunhoResumo[]; situacao: "sem" | "andamento" | "pronto";
+  // variações dentro do pai, como no Tiny — só vêm depois que o banco souber o pai de cada variação
+  // (produtos.sku_pai; ver docs/catalogo-espelho-tiny). Até lá ficam ausentes.
+  n_variacoes?: number; variacoes?: IaCatalogoLinha[];
 }
 export interface IaCatalogo {
   total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];

@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, ImageOff, Loader2, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, Loader2, Search, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -191,10 +191,17 @@ function AnunciosPage() {
 
 interface Componente { sku_componente: string; quantidade: number; nome_componente: string | null }
 
-function Linha({ x, canalPadrao, composicao }: { x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[] }) {
+/**
+ * Uma linha do catálogo. Como no Tiny: o kit mostra a composição, e o produto com variações
+ * abre as variações logo abaixo (cada uma com venda, canais e anúncio próprios).
+ */
+function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; variacao?: boolean }) {
   const primeiro = x.rascunhos[0];
+  const filhas = x.variacoes ?? [];
+  const [aberto, setAberto] = useState(false);
   return (
-    <div className="flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-muted/20">
+    <>
+    <div className={`flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-muted/20 ${variacao ? "lg:pl-12 bg-muted/10" : ""}`}>
       <div className="h-11 w-11 rounded border bg-muted/30 overflow-hidden shrink-0 flex items-center justify-center">
         {x.foto ? <img src={x.foto} alt="" loading="lazy" className="h-full w-full object-cover" /> : <ImageOff className="h-4 w-4 text-muted-foreground" />}
       </div>
@@ -204,7 +211,14 @@ function Linha({ x, canalPadrao, composicao }: { x: IaCatalogoLinha; canalPadrao
           <span className="font-mono">{x.sku}</span>
           {x.marca && <span>· {x.marca}</span>}
           {x.tipo === "K" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">kit</Badge>}
-          {x.tipo === "V" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">com variações</Badge>}
+          {x.tipo === "V" && filhas.length === 0 && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">com variações</Badge>}
+          {variacao && <Badge variant="outline" className="text-[9.5px] py-0 px-1">variação</Badge>}
+          {filhas.length > 0 && (
+            <button type="button" onClick={() => setAberto((v) => !v)}
+              className="inline-flex items-center gap-0.5 rounded bg-secondary px-1 text-[10px] font-medium text-secondary-foreground hover:bg-secondary/70">
+              {aberto ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}{filhas.length} variações
+            </button>
+          )}
         </div>
         {composicao && composicao.length > 0 && (
           <div className="text-[11px] text-muted-foreground truncate" title={composicao.map((c) => `${Number(c.quantidade)}× ${c.sku_componente} ${c.nome_componente ?? ""}`).join(" + ")}>
@@ -242,6 +256,8 @@ function Linha({ x, canalPadrao, composicao }: { x: IaCatalogoLinha; canalPadrao
         )}
       </Button>
     </div>
+    {aberto && filhas.map((v) => <Linha key={v.sku} x={v} canalPadrao={canalPadrao} variacao />)}
+    </>
   );
 }
 

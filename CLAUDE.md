@@ -2072,7 +2072,11 @@ produto base (Xô Gatinho, Adestrador) servem para todos os kits dele — sem ge
 - **Variações como no Tiny — PENDENTE do banco:** o espelho `produtos` não guarda quem é o pai
   de cada variação (`sku_pai`). Depende do pacote do Catálogo (colunas novas + `tiny-sync-
   produtos` v28), que é DDL e vai fora do horário comercial; hoje a linha só tem o selo "com
-  variações".
+  variações". **Tudo pronto em `docs/catalogo-espelho-tiny/`** (SQL, função v28, `ia_catalogo`
+  v2 testada como função temporária, ordem de aplicação no `LEIA-ME.md`). A tela
+  `/ia/anuncios` já sabe abrir as variações dentro do pai (campo `variacoes` da RPC); enquanto
+  o banco não muda, nada aparece diferente. Lição: arquivo preparado e não aplicado NÃO fica
+  em pasta temporária (foi limpa e o pacote teve de ser refeito a partir do histórico).
 - **Não testado ao vivo:** nenhuma chamada com sessão de usuário (a prévia local para no
   login). Conferido: preflight 200, sem sessão 401, chave pública 401; `tsc` e `vite build` ok.
   A cópia de arquivo no Storage (`storage.copy`) é o passo a observar na 1ª vez.
