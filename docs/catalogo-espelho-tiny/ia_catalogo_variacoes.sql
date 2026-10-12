@@ -8,13 +8,16 @@
 --     texto bate numa variação; a situação do pai considera os rascunhos das variações;
 --   * `total` e `contagem` passam a contar linhas de topo (pai + produtos sem pai).
 -- Enquanto `sku_pai` estiver vazio o resultado é o mesmo da v1 (+ `n_variacoes` 0 e `variacoes` []).
+-- desde 12/out a função tem 8 parâmetros (p_tipo no fim): este arquivo mantém a mesma assinatura
 create or replace function public.ia_catalogo(
   p_busca text default null, p_marca text default null, p_situacao text default 'todos',
-  p_sem_canal text default null, p_ordem text default 'vendas', p_offset integer default 0, p_limit integer default 50)
+  p_sem_canal text default null, p_ordem text default 'vendas', p_offset integer default 0, p_limit integer default 50,
+  p_tipo text default null)
 returns jsonb language plpgsql stable security definer set search_path to 'public' as $function$
 declare
   v jsonb; v_b text := nullif(btrim(coalesce(p_busca, '')), '');
   v_lim int := least(greatest(coalesce(p_limit, 50), 1), 200); v_off int := greatest(coalesce(p_offset, 0), 0);
+  v_sit text := coalesce(nullif(p_situacao, ''), 'todos'); v_tipo text := nullif(upper(btrim(coalesce(p_tipo, ''))), '');
 begin
   if not public.tem_modulo('ia') then raise exception 'Sem acesso ao módulo IA.'; end if;
   with base as (
@@ -90,7 +93,7 @@ begin
       and (coalesce(p_sem_canal, '') = '' or not (p_sem_canal = any (i.vende || coalesce(fc.vende, '{}'::text[]))))
   ), g as (
     select * from f
-    where coalesce(p_situacao, 'todos') in ('todos', '') or (p_situacao = 'sem_capa' and sem_capa) or situacao = p_situacao
+    where (v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit) and (v_tipo is null or tipo = v_tipo)
   ), num as (
     select g.*, row_number() over (order by
         case when p_ordem = 'nome' then g.nome end asc nulls last,
@@ -103,11 +106,13 @@ begin
     select * from num where rn > v_off and rn <= v_off + v_lim
   )
   select jsonb_build_object(
-    'versao', 3,
+    'versao', 4,
     'total', (select count(*) from g),
     'contagem', (select jsonb_build_object('todos', count(*), 'sem', count(*) filter (where situacao = 'sem'),
                    'andamento', count(*) filter (where situacao = 'andamento'), 'pronto', count(*) filter (where situacao = 'pronto'),
-                   'sem_capa', count(*) filter (where sem_capa)) from f),
+                   'sem_capa', count(*) filter (where sem_capa)) from f where v_tipo is null or tipo = v_tipo),
+    'tipos', (select jsonb_build_object('todos', count(*), 'S', count(*) filter (where tipo = 'S'), 'K', count(*) filter (where tipo = 'K'),
+                   'V', count(*) filter (where tipo = 'V')) from f where v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit),
     'marcas', (select coalesce(jsonb_agg(z.m order by z.m), '[]'::jsonb) from (select distinct marca as m from base where coalesce(marca, '') <> '') z),
     'historico_em', (select max(atualizado_em) from public.ia_hist_sku_canal),
     'linhas', (select coalesce(jsonb_agg(jsonb_build_object(

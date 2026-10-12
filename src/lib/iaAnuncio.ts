@@ -73,8 +73,10 @@ export interface IaCatalogoLinha {
 }
 export interface IaCatalogo {
   total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];
-  /** 2 = a RPC já entende o filtro "sem_capa" e a ordem "vendas120". */
+  /** 2 = a RPC já entende o filtro "sem_capa" e a ordem "vendas120"; 3 = também o filtro por tipo. */
   versao?: number;
+  /** quantos produtos de cada tipo (S simples, K kit, V com variações) dentro da situação escolhida. */
+  tipos?: Record<string, number>;
 }
 export interface IaHistSku {
   sku: string; canal: string; empresa: string; unidades_30d: number; unidades_120d: number; pedidos_mono: number;

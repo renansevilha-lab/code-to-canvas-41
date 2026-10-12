@@ -24,7 +24,7 @@ import {
 // são feitos no banco (RPC ia_catalogo) — são ~2,3 mil produtos.
 // ============================================================================
 
-type Busca = { q?: string; marca?: string; sit?: string; sem?: string; ordem?: string; p?: number };
+type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; ordem?: string; p?: number };
 
 const SITUACOES = [
   { id: "todos", rotulo: "Todos" },
@@ -41,6 +41,13 @@ const ORDENS = [
   { id: "novos", rotulo: "SKU mais novo" },
   { id: "recentes", rotulo: "Anúncio mexido por último" },
 ];
+// tipo do produto, como as abas do Tiny (o "com variações" é o produto pai)
+const TIPOS = [
+  { id: "todos", rotulo: "Todos os tipos" },
+  { id: "S", rotulo: "Simples" },
+  { id: "K", rotulo: "Kits" },
+  { id: "V", rotulo: "Com variações" },
+];
 const POR_PAGINA = 50;
 const TODAS = "__todas";
 
@@ -51,6 +58,7 @@ export const Route = createFileRoute("/ia/anuncios")({
     q: texto(s.q),
     marca: texto(s.marca),
     sit: SITUACOES.some((x) => x.id === s.sit) && s.sit !== "todos" ? String(s.sit) : undefined,
+    tipo: ["S", "K", "V"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
     sem: CANAIS_COM_HISTORICO.includes(String(s.sem)) ? String(s.sem) : undefined,
     ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== "vendas" ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
@@ -59,7 +67,7 @@ export const Route = createFileRoute("/ia/anuncios")({
 });
 
 function AnunciosPage() {
-  const { q, marca, sit, sem, ordem, p } = Route.useSearch();
+  const { q, marca, sit, tipo, sem, ordem, p } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/anuncios" });
   const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true });
   const pagina = p ?? 1;
@@ -72,12 +80,12 @@ function AnunciosPage() {
   }, [digitado]);
 
   const catQ = useQuery({
-    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", sem ?? "", ordem ?? "vendas", pagina],
+    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", ordem ?? "vendas", pagina],
     placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<IaCatalogo> => {
       const { data, error } = await supabaseExternal.rpc("ia_catalogo", {
         p_busca: q ?? null, p_marca: marca ?? null, p_situacao: sit ?? "todos", p_sem_canal: sem ?? null,
-        p_ordem: ordem ?? "vendas", p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA,
+        p_ordem: ordem ?? "vendas", p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA, p_tipo: tipo ?? null,
       });
       if (error) throw error;
       return data as IaCatalogo;
@@ -127,6 +135,21 @@ function AnunciosPage() {
           );
         })}
       </div>
+
+      {cat?.tipos && (
+        <div className="flex flex-wrap gap-1.5">
+          {TIPOS.map((x) => {
+            const ativo = (tipo ?? "todos") === x.id;
+            return (
+              <Button key={x.id} size="sm" variant={ativo ? "secondary" : "ghost"} className={`h-7 gap-1.5 text-xs ${ativo ? "ring-1 ring-primary/40" : ""}`}
+                onClick={() => set({ tipo: x.id === "todos" ? undefined : x.id })}>
+                {x.rotulo}
+                <span className="text-muted-foreground">{(cat.tipos?.[x.id] ?? 0).toLocaleString("pt-BR")}</span>
+              </Button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px] max-w-md">

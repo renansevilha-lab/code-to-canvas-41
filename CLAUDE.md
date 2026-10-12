@@ -2200,8 +2200,16 @@ faltou no anúncio criado direto na Shopee).
   `ia_catalogo_filtros_sem_capa_vendas120`, `docs/ia-catalogo-filtros.sql`; o dono mandou
   aplicar antes das 19h — foi só um `create or replace function`, e a API respondeu em 0,6 s
   logo depois). "Sem capa" = tem foto em `compartilhado/…` e nenhuma capa PRÓPRIA aprovada; no
-  dia eram 8 produtos do Xô Gatinho. O pacote de variações (`ia_catalogo_variacoes.sql`) já
-  traz os dois e sobe a `versao` para 3.
+  dia eram 8 produtos do Xô Gatinho.
+- **Filtro por tipo, como as abas do Tiny (12/out, 19h07):** RPC `ia_catalogo` **v1.2** —
+  migração `ia_catalogo_filtro_tipo`. A função passou a ter **8 parâmetros** (`p_tipo` no fim:
+  `S` simples, `K` kit, `V` com variações = o pai); a de 7 foi removida no mesmo passo (duas
+  com o mesmo nome deixariam a chamada ambígua) e as permissões foram refeitas (só
+  `authenticated` e `service_role`). A resposta traz `versao: 3` e `tipos {todos, S, K, V}`.
+  As contagens se cruzam: `contagem` (situações) dentro do tipo escolhido e `tipos` dentro da
+  situação escolhida. Na tela, segunda fileira de botões em `/ia/anuncios` (`?tipo=`).
+  **Quem mexer na `ia_catalogo` precisa manter os 8 parâmetros** — o pacote de variações
+  (`docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql`) já foi ajustado (`versao: 4`).
 
 ## 6. Edge Functions
 
