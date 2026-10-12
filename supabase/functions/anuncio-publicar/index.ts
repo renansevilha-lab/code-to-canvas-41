@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v6 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v7 (12/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -40,6 +40,11 @@
 //   "#N" (a foto atual da posição N, contando do zero). O que não estiver na lista vai para o fim.
 //   opcoes.fotos.manter_pos = [N..] mantém as fotos atuais POR POSIÇÃO (em vez de por id): é o que
 //   permite repetir, no anúncio de outra conta/loja, a mesma escolha feita no primeiro.
+// v7: AMAZON, só ATUALIZAR anúncio que já existe (SP-API Listings Items, conta pela empresa: shop
+//   900001 ACZ / 900002 SVL; exige o merchant_token da conta). Título, descrição + bullets e fotos
+//   (a principal + 8; a Amazon baixa cada foto nova de um endereço assinado do nosso armazenamento).
+//   A prévia passa as alterações no VALIDADOR da Amazon (mode=VALIDATION_PREVIEW, não aplica nada).
+//   Preço e criar anúncio novo na Amazon ainda não.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -210,10 +215,11 @@ async function existentesShopee(shopId: number, sku: string): Promise<Existente[
   return [...porItem.values()];
 }
 async function existentesTodos(sku: string) {
-  const [ottz, svl, mlLojas, ml, tt] = await Promise.all([
+  const [ottz, svl, mlLojas, amzLojas, ml, tt] = await Promise.all([
     existentesShopee(LOJA_SHOPEE.ottz.shop_id, sku),
     existentesShopee(LOJA_SHOPEE.svl.shop_id, sku),
     existentesMlLojas(sku),
+    existentesAmzLojas(sku),
     db.from("ml_anuncios").select("mlb, titulo, permalink, preco, n_variacoes").eq("sku", sku).eq("status", "active"),
     db.from("tiktok_produtos").select("product_id::text, titulo, preco").eq("seller_sku", sku),
   ]);
@@ -223,6 +229,7 @@ async function existentesTodos(sku: string) {
     mercado_livre: mlEspelho, // espelho da gestão (só a conta Ottz) — mantido para a tela antiga
     // ao vivo, por conta (null = não deu para consultar); a Ottz cai no espelho se a consulta falhar
     mercado_livre_lojas: { ottz: mlLojas.ottz ?? mlEspelho, svl: mlLojas.svl },
+    amazon: amzLojas, // ao vivo, por conta (null = não deu para consultar, ex.: falta o código de vendedor)
     tiktok: [...new Map(((tt.data ?? []) as any[]).map((t) => [t.product_id, { item_id: t.product_id, nome: t.titulo, preco: num(t.preco) }])).values()],
   };
 }
@@ -897,6 +904,216 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
   return json({ ok: true, modo, item_id: id, url: a.previa.alvo.url, atualizados: feitos, avisos: a.avisos });
 }
 
+// ---------------------------------------------------------------- Amazon (v7: ATUALIZAR anúncio existente)
+const SPAPI = "https://sellingpartnerapi-na.amazon.com";
+const MKT_BR = "A2Q3Y263D00KWC";
+const CONTA_AMZ: Record<string, { shop_id: number; nome: string }> = {
+  ottz: { shop_id: 900001, nome: "Amazon · ACZ Pet" },
+  svl: { shop_id: 900002, nome: "Amazon · SVL" },
+};
+// a 1ª é a capa; a Amazon aceita a principal + 8
+const FOTOS_AMZ = ["main_product_image_locator", ...Array.from({ length: 8 }, (_, i) => `other_product_image_locator_${i + 1}`)];
+const LIM_AMZ = { titulo: 200, descricao: 2000, bullet: 500, bullets: 5, fotos: FOTOS_AMZ.length };
+type ContaAmz = { shop_id: number; nome: string; token: string; seller: string; mkt: string };
+
+/** Token e código de vendedor DA CONTA (shop 900001 = ACZ, 900002 = SVL). */
+async function contaAmz(empresa: string): Promise<ContaAmz> {
+  const c = CONTA_AMZ[empresa] ?? CONTA_AMZ.ottz;
+  const { data } = await db.from("oauth_tokens_amazon").select("access_token, expires_at, merchant_token, marketplace_id").eq("shop_id", c.shop_id).maybeSingle();
+  if (!data) throw new Error(`a conta ${c.nome} não está conectada`);
+  if (!data.merchant_token) throw new Error(`falta o código de vendedor (Merchant Token) da conta ${c.nome}`);
+  if (new Date(data.expires_at as string) < new Date()) throw new Error("token da Amazon vencido — a renovação automática roda a cada 20 min; tente de novo em instantes");
+  return { ...c, token: String(data.access_token), seller: String(data.merchant_token), mkt: String(data.marketplace_id || MKT_BR) };
+}
+/** Um anúncio (SKU da Amazon) da conta: GET lê; PATCH atualiza — com mode=VALIDATION_PREVIEW a Amazon só valida. */
+async function amzItem(c: ContaAmz, skuAmz: string, metodo = "GET", params: Record<string, string> = {}, corpo?: unknown): Promise<RespMl> {
+  const url = new URL(`${SPAPI}/listings/2021-08-01/items/${encodeURIComponent(c.seller)}/${encodeURIComponent(skuAmz)}`);
+  url.searchParams.set("marketplaceIds", c.mkt); url.searchParams.set("issueLocale", "pt_BR");
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const r = await fetch(url.toString(), {
+    method: metodo,
+    headers: { "x-amz-access-token": c.token, Accept: "application/json", ...(corpo !== undefined ? { "Content-Type": "application/json" } : {}) },
+    body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+  });
+  const txt = await r.text();
+  let body: any = null;
+  try { body = txt ? JSON.parse(txt) : null; } catch { body = { message: txt.slice(0, 300) }; }
+  return { status: r.status, body };
+}
+/** O que a Amazon aponta: erro bloqueia, o resto só informa. */
+function problemasAmz(body: any): { erros: string[]; avisos: string[] } {
+  const erros: string[] = []; const avisos: string[] = [];
+  for (const i of ((body?.issues ?? []) as any[])) {
+    const onde = ((i?.attributeNames ?? []) as string[]).join(", ");
+    const t = `${i?.code ?? ""}: ${String(i?.message ?? "").slice(0, 240)}${onde ? ` [${onde}]` : ""}`;
+    (String(i?.severity) === "ERROR" ? erros : avisos).push(t);
+  }
+  for (const e of ((body?.errors ?? []) as any[])) erros.push(`${e?.code ?? ""}: ${String(e?.message ?? "").slice(0, 240)}`);
+  return { erros, avisos };
+}
+/** Anúncios da conta que são este produto. O SKU na Amazon pode ser o nosso, FBA-<sku>, o do de-para ou o que o FBA conhece. */
+async function existentesAmz(c: ContaAmz, sku: string): Promise<Existente[]> {
+  const [map, fulf] = await Promise.all([
+    db.from("sku_mapeamento").select("sku_origem").ilike("marketplace", "amazon%").eq("sku_correto", sku),
+    db.from("estoque_fulfillment").select("sku_marketplace").ilike("marketplace", "amazon%").eq("shop_id", c.shop_id).eq("sku", sku),
+  ]);
+  const candidatos = [...new Set([sku, `FBA-${sku}`, ...((map.data ?? []) as any[]).map((x) => String(x.sku_origem)),
+    ...((fulf.data ?? []) as any[]).map((x) => String(x.sku_marketplace))])].slice(0, 6);
+  const out: Existente[] = [];
+  for (const s of candidatos) {
+    const r = await amzItem(c, s, "GET", { includedData: "summaries" });
+    const sm = r.body?.summaries?.[0];
+    if (!mlOk(r) || !sm?.asin) continue;
+    out.push({
+      item_id: s, nome: sm.itemName ?? null, status: ((sm.status ?? []) as string[]).includes("BUYABLE") ? "active" : "sem oferta ativa",
+      url: `https://www.amazon.com.br/dp/${sm.asin}`, variacao: false, model_id: String(sm.asin), nome_variacao: null, preco: null,
+    });
+  }
+  return out;
+}
+async function existentesAmzLojas(sku: string): Promise<Record<string, Existente[] | null>> {
+  const out: Record<string, Existente[] | null> = { ottz: null, svl: null };
+  await Promise.all(Object.keys(CONTA_AMZ).map(async (k) => {
+    try { out[k] = await existentesAmz(await contaAmz(k), sku); } catch { out[k] = null; }
+  }));
+  return out;
+}
+
+async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Existente) {
+  const r = await amzItem(c, alvo.item_id, "GET", { includedData: "summaries,attributes,issues" });
+  const at = r.body?.attributes ?? {}; const sm = r.body?.summaries?.[0];
+  if (!mlOk(r) || !sm) throw new Error(`não consegui ler o anúncio ${alvo.item_id} na Amazon: ${problemasAmz(r.body).erros.join(" · ") || r.status}`);
+  const b = base(d, op, { quem: "a Amazon", titulo: LIM_AMZ.titulo, descMin: 10, descMax: 50000, fotos: LIM_AMZ.fotos });
+  // na Amazon a descrição e os bullets são campos separados
+  const descricao = String(d.r.descricao ?? "").trim();
+  const bullets = (Array.isArray(d.r.bullet_points) ? (d.r.bullet_points as unknown[]) : []).map((x) => String(x).trim()).filter(Boolean).slice(0, LIM_AMZ.bullets);
+  const junto = (desc: string, bl: string[]) => [desc, bl.length ? bl.map((x) => `• ${x}`).join("\n") : ""].filter(Boolean).join("\n\n");
+  const campos = {
+    titulo: op.campos?.titulo !== false, descricao: op.campos?.descricao !== false,
+    fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true,
+  };
+  const pendencias: string[] = []; const avisos: string[] = [];
+  if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
+  if (campos.titulo) pendencias.push(...b.problemas.titulo);
+  if (campos.descricao) {
+    if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
+    if (descricao.length < 10) pendencias.push("descrição muito curta");
+    if (descricao.length > LIM_AMZ.descricao) pendencias.push(`descrição com ${descricao.length} caracteres (a Amazon aceita até ${LIM_AMZ.descricao.toLocaleString("pt-BR")}; os bullets vão à parte)`);
+    if (bullets.some((x) => x.length > LIM_AMZ.bullet)) pendencias.push(`há bullet com mais de ${LIM_AMZ.bullet} caracteres`);
+  }
+  if (campos.preco) pendencias.push("o preço na Amazon ainda não é trocado por aqui: desmarque \"Preço\"");
+
+  // fotos atuais: uma por campo de imagem do anúncio (o id é o nome do campo; a mesma imagem pode repetir)
+  const atuais = FOTOS_AMZ.map((k) => ({ id: k, url: String(at[k]?.[0]?.media_location ?? "") })).filter((f) => f.url);
+  const idsAtuais = atuais.map((f) => f.id);
+  const { todasNovas, manter, novas, posicao } = planoFotos(d, op, idsAtuais);
+  if (campos.fotos) {
+    const total = manter.length + novas.length;
+    if (total === 0) pendencias.push("o anúncio precisa de ao menos 1 foto");
+    if (total > LIM_AMZ.fotos) pendencias.push(`a Amazon aceita ${LIM_AMZ.fotos} fotos e há ${total} marcadas (${manter.length} atuais + ${novas.length} novas): desmarque ${total - LIM_AMZ.fotos}`);
+    if (novas.length === 0 && manter.length === idsAtuais.length) pendencias.push("nada muda nas fotos: desmarque \"Fotos\" ou escolha o que entra e o que sai");
+    if (manter.length < idsAtuais.length) avisos.push(`${idsAtuais.length - manter.length} foto(s) atual(is) do anúncio sai(em)`);
+  }
+  for (const x of problemasAmz(r.body).erros) avisos.push(`a Amazon já aponta neste anúncio: ${x}`);
+  avisos.push("a Amazon aplica a mudança em alguns minutos; título e fotos podem demorar ou não mudar se a ficha do produto for de outra marca");
+
+  /** Endereço público temporário das fotos novas (a Amazon baixa a imagem a partir dele), na ordem de `novas`. */
+  const assinar = async (segundos: number): Promise<string[]> => {
+    if (!campos.fotos || !novas.length) return [];
+    const { data } = await db.storage.from(BUCKET).createSignedUrls(novas.map((f) => f.path), segundos);
+    const urls = novas.map((f) => String(((data ?? []) as any[]).find((x) => x?.path === f.path)?.signedUrl ?? ""));
+    if (urls.some((u) => !u)) throw new Error("não consegui gerar o endereço de uma das fotos novas");
+    return urls;
+  };
+  /** As alterações no formato da Amazon. Campo de foto que sobra é apagado. */
+  const patches = (urlsNovas: string[]): Record<string, unknown>[] => {
+    const p: Record<string, unknown>[] = [];
+    const val = (v: string) => ({ value: v, language_tag: "pt_BR", marketplace_id: c.mkt });
+    if (campos.titulo) p.push({ op: "replace", path: "/attributes/item_name", value: [val(b.titulo)] });
+    if (campos.descricao) {
+      p.push({ op: "replace", path: "/attributes/product_description", value: [val(descricao)] });
+      if (bullets.length) p.push({ op: "replace", path: "/attributes/bullet_point", value: bullets.map(val) });
+    }
+    if (campos.fotos) {
+      const urlAtual = new Map(atuais.map((f) => [f.id, f.url]));
+      const finais = ordemFinal(op, { manter, novas, posicao, atuais: idsAtuais }, urlsNovas).map((x) => urlAtual.get(x) ?? x).slice(0, LIM_AMZ.fotos);
+      FOTOS_AMZ.forEach((k, i) => {
+        if (finais[i]) p.push({ op: "replace", path: `/attributes/${k}`, value: [{ media_location: finais[i], marketplace_id: c.mkt }] });
+        else if (urlAtual.has(k)) p.push({ op: "delete", path: `/attributes/${k}`, value: [{ media_location: urlAtual.get(k), marketplace_id: c.mkt }] });
+      });
+    }
+    return p;
+  };
+  // VALIDADOR da Amazon: confere as alterações sem aplicar nada
+  if (!pendencias.length) {
+    const v = await amzItem(c, alvo.item_id, "PATCH", { mode: "VALIDATION_PREVIEW" }, { productType: sm.productType, patches: patches(await assinar(900)) });
+    const pv = problemasAmz(v.body);
+    pendencias.push(...pv.erros.map((e) => `Amazon: ${e}`));
+    avisos.push(...pv.avisos.map((e) => `Amazon: ${e}`));
+    if (!pv.erros.length && String(v.body?.status ?? "") !== "VALID") pendencias.push(`Amazon: a validação respondeu ${v.body?.status ?? v.status}`);
+  }
+  const antes = {
+    titulo: String(at.item_name?.[0]?.value ?? sm.itemName ?? ""),
+    descricao: junto(String(at.product_description?.[0]?.value ?? ""), ((at.bullet_point ?? []) as any[]).map((x) => String(x?.value ?? "")).filter(Boolean)),
+    fotos: atuais.map((f) => f.url), preco: null as number | null,
+  };
+  return {
+    pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], campos, antes, patches, assinar, tipo: String(sm.productType),
+    previa: {
+      loja: c.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: junto(descricao, bullets), preco: null, fotos: todasNovas,
+      fotos_plano: { manter, novas: novas.map((f) => f.path), posicao },
+      alvo: { ...alvo, n_variacoes: 0, situacao: alvo.status }, campos,
+      atual: { titulo: antes.titulo, descricao: antes.descricao, fotos: atuais, preco: null },
+      limites: { titulo: LIM_AMZ.titulo, fotos: LIM_AMZ.fotos },
+    },
+  };
+}
+
+async function fluxoAmazon(d: Dados, op: Opcoes, modulo: string, body: Record<string, any>, quem: Quem): Promise<Response> {
+  const c = await contaAmz(String(d.r.empresa));
+  const existentes = await existentesAmz(c, String(d.r.sku));
+  const alvo = existentes.find((e) => e.item_id === String(op.item_id ?? "")) ?? existentes[0];
+  if (!alvo) {
+    const motivo = `este produto não tem anúncio na ${c.nome} (procurei pelos SKUs ${d.r.sku} e FBA-${d.r.sku}). Criar anúncio novo na Amazon ainda não está pronto por aqui.`;
+    if (modulo === "previa") return json({ ok: true, disponivel: false, canal: "amazon", existentes, motivo, publicacoes: d.publicacoes });
+    return json({ ok: false, erro: motivo }, 400);
+  }
+  // na Amazon só existe o modo atualizar (criar anúncio novo fica para depois)
+  const a = await montarAtualizarAmz(d, op, c, { ...alvo });
+  if (modulo === "previa") {
+    return json({ ok: true, disponivel: true, canal: "amazon", modo: "atualizar", existentes, previa: a.previa, pendencias: a.pendencias, avisos: a.avisos, publicacoes: d.publicacoes });
+  }
+  if (modulo !== "enviar") return json({ ok: false, erro: "use ?modulo=existentes, previa ou enviar" }, 400);
+  if (body.confirmar !== true) return json({ ok: false, erro: "envio exige confirmar: true" }, 400);
+  if (a.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: a.pendencias }, 400);
+  const emCurso = d.publicacoes.find((p) => p.estado === "enviando" && Date.now() - new Date(p.criado_em).getTime() < 3 * 60_000);
+  if (emCurso) return json({ ok: false, erro: "já há um envio em andamento para este rascunho — aguarde" }, 409);
+
+  const { data: pub, error: ePub } = await db.from("ia_publicacao").insert({
+    rascunho_id: d.r.id, sku: d.r.sku, canal: "amazon", empresa: d.r.empresa, shop_id: c.shop_id, estado: "enviando", operacao: "atualizar",
+    item_id: alvo.item_id, criado_por: quem.id, criado_por_nome: quem.nome,
+  }).select("id").single();
+  if (ePub || !pub) return json({ ok: false, erro: `banco: ${ePub?.message}` }, 500);
+  let lista: Record<string, unknown>[] = [];
+  let resposta: Record<string, unknown> = {};
+  const falhar = async (erro: string) => {
+    await db.from("ia_publicacao").update({ estado: "erro", erro: erro.slice(0, 500), enviado: { campos: a.campos, antes: a.antes, patches: lista }, resposta }).eq("id", pub.id);
+    return json({ ok: false, erro, resposta }, 200);
+  };
+  // o endereço das fotos novas vale 7 dias: a Amazon baixa a imagem depois de aceitar o pedido
+  try { lista = a.patches(await a.assinar(7 * 24 * 3600)); }
+  catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
+  // sem repetição automática
+  const r = await amzItem(c, alvo.item_id, "PATCH", {}, { productType: a.tipo, patches: lista });
+  const pv = problemasAmz(r.body);
+  resposta = { status: r.status, situacao: r.body?.status ?? null, submissionId: r.body?.submissionId ?? null, issues: r.body?.issues ?? null, errors: r.body?.errors ?? null };
+  if (!mlOk(r) || String(r.body?.status ?? "") !== "ACCEPTED") return await falhar(`a Amazon recusou a atualização: ${pv.erros.join(" · ") || r.body?.status || r.status}`);
+  const feitos = [a.campos.titulo ? "título" : "", a.campos.descricao ? "descrição e bullets" : "", a.campos.fotos ? "fotos" : ""].filter(Boolean);
+  await db.from("ia_publicacao").update({ estado: "publicado", url: alvo.url, enviado: { campos: a.campos, antes: a.antes, patches: lista }, resposta }).eq("id", pub.id);
+  await db.from("ia_rascunho").update({ status: "publicado" }).eq("id", d.r.id);
+  return json({ ok: true, modo: "atualizar", item_id: alvo.item_id, url: alvo.url, atualizados: feitos, avisos: [...a.avisos, ...pv.avisos.map((e) => `Amazon: ${e}`)] });
+}
+
 // ---------------------------------------------------------------- handler
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -928,9 +1145,10 @@ Deno.serve(async (req) => {
       d.r = { ...d.r, canal: canalD, empresa: empresaD, preco_aprovado: salvo, preco_sugerido: sugerido };
     }
     if (d.r.canal === "mercado_livre") return await fluxoMl(d, op, modulo, body, quem);
+    if (d.r.canal === "amazon") return await fluxoAmazon(d, op, modulo, body, quem);
     if (d.r.canal !== "shopee") {
       return json({ ok: true, disponivel: false, canal: d.r.canal, publicacoes: d.publicacoes,
-        motivo: "o envio direto está pronto para a Shopee e o Mercado Livre; os outros canais entram nas próximas versões" });
+        motivo: "o envio direto está pronto para a Shopee, o Mercado Livre e a Amazon (só atualizar); os outros canais entram nas próximas versões" });
     }
     const loja = LOJA_SHOPEE[d.r.empresa] ?? LOJA_SHOPEE.ottz;
     const c = await ctxShopee(loja.shop_id);

@@ -35,7 +35,7 @@ const DESTINOS: { canal: string; pronto: boolean; nota: string }[] = [
   { canal: "shopee", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo, com o texto, o preço e as fotos aprovadas." },
   { canal: "mercado_livre", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo; a conferência passa pelo validador do Mercado Livre." },
   { canal: "tiktok", pronto: false, nota: "Em preparação. Precisa enviar as fotos pela API e informar as medidas do pacote." },
-  { canal: "amazon", pronto: false, nota: "Em preparação. Cada tipo de produto tem um formulário próprio; entra por último." },
+  { canal: "amazon", pronto: true, nota: "Atualiza um anúncio que já existe (título, descrição, bullets e fotos), conferido pelo validador da Amazon. Criar anúncio novo e preço ainda não." },
 ];
 
 interface Existente { item_id: string; nome: string | null; status?: string | null; url?: string | null; variacao?: boolean; model_id?: string | null; nome_variacao?: string | null; preco: number | null; variacoes?: number; vendas?: number; catalogo?: boolean }
@@ -43,6 +43,8 @@ interface Existentes {
   shopee: { ottz: Existente[]; svl: Existente[] }; mercado_livre: Existente[]; tiktok: Existente[];
   /** Mercado Livre ao vivo, por conta (null = não deu para consultar). */
   mercado_livre_lojas?: { ottz: Existente[] | null; svl: Existente[] | null };
+  /** Amazon ao vivo, por conta (null = não deu para consultar; SVL sem o código de vendedor). */
+  amazon?: { ottz: Existente[] | null; svl: Existente[] | null };
 }
 interface Atributo { id: string; nome: string; obrigatorio: boolean; valor: string; opcoes: string[]; dica: string | null }
 interface Foto { path: string; tipo: string }
@@ -77,6 +79,7 @@ const LOJAS: Record<string, { rotulo: string; empresa: string }[]> = {
   shopee: [{ rotulo: "Ottz", empresa: "ottz" }, { rotulo: "Bumi", empresa: "svl" }],
   mercado_livre: [{ rotulo: "Ottz", empresa: "ottz" }, { rotulo: "SVL", empresa: "svl" }],
   tiktok: [{ rotulo: "ACZ", empresa: "ottz" }],
+  amazon: [{ rotulo: "ACZ", empresa: "ottz" }, { rotulo: "SVL", empresa: "svl" }],
 };
 
 export function Publicar({ rascunho, canal, empresa, onDestino }: {
@@ -94,6 +97,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
     if (c === "shopee") return e === "svl" ? ex.shopee.svl : ex.shopee.ottz;
     if (c === "mercado_livre") return ex.mercado_livre_lojas ? (e === "svl" ? ex.mercado_livre_lojas.svl : ex.mercado_livre_lojas.ottz) : (e === "svl" ? null : ex.mercado_livre);
     if (c === "tiktok") return ex.tiktok;
+    if (c === "amazon") return ex.amazon ? (e === "svl" ? ex.amazon.svl : ex.amazon.ottz) : null;
     return undefined;
   };
   const pronto = DESTINOS.find((d) => d.canal === canal)?.pronto === true;
@@ -118,8 +122,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
                 {d.pronto ? <Badge className="text-[10px] py-0 px-1.5">disponível</Badge> : <Badge variant="secondary" className="text-[10px] py-0 px-1.5">em preparação</Badge>}
               </div>
               <div className="text-[11px] leading-snug space-y-0.5">
-                {d.canal === "amazon" ? <span className="text-muted-foreground">anúncios da Amazon ainda não são lidos pela gestão</span>
-                  : lojas.map((l) => {
+                {lojas.map((l) => {
                     const lista = listaDe(d.canal, l.empresa);
                     const escolhida = atual && l.empresa === empresa;
                     return (
@@ -169,7 +172,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
   const destino = { canal, empresa };
   const ml = canal === "mercado_livre";
-  const MK = ml ? "Mercado Livre" : "Shopee";
+  const amz = canal === "amazon";
+  const MK = ml ? "Mercado Livre" : amz ? "Amazon" : "Shopee";
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(abertoInicial === true);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
@@ -335,7 +339,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant={modo === "atualizar" ? "default" : "outline"} disabled={existentes.length === 0 || previaQ.isFetching}
             onClick={() => trocar({ modo: "atualizar" })}>Atualizar anúncio existente</Button>
-          <Button size="sm" variant={modo === "criar" ? "default" : "outline"} disabled={previaQ.isFetching} onClick={() => trocar({ modo: "criar" })}>Criar anúncio novo</Button>
+          <Button size="sm" variant={modo === "criar" ? "default" : "outline"} disabled={previaQ.isFetching || amz} title={amz ? "Criar anúncio novo na Amazon ainda não está pronto" : undefined}
+            onClick={() => trocar({ modo: "criar" })}>Criar anúncio novo</Button>
           {previaQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground self-center" />}
         </div>
         {modo === "atualizar" && existentes.length > 0 && (
@@ -371,7 +376,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
             antes={p.atual.titulo} depois={`${p.titulo} (${p.titulo.length}/${limTitulo})`}
             nota={ml ? "Desmarcado por padrão: o Mercado Livre só deixa trocar o título de anúncio que ainda não vendeu." : undefined} />
           <Troca rotulo="Descrição" marcado={op.c_descricao !== false} onMarcar={(v) => trocar({ c_descricao: v })}
-            antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} />
+            antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} nota={amz ? "Na Amazon a descrição e os bullets vão em campos separados; aqui aparecem juntos." : undefined} />
           <div className="flex items-start gap-2">
             <Checkbox className="mt-1" checked={op.c_fotos !== false} onCheckedChange={(v) => trocar({ c_fotos: v === true })} />
             <div className={`min-w-0 flex-1 space-y-2 ${op.c_fotos !== false ? "" : "opacity-60 pointer-events-none"}`}>
@@ -401,7 +406,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
           </div>
           <Troca rotulo="Preço" marcado={op.c_preco === true} onMarcar={(v) => trocar({ c_preco: v })}
             antes={p.atual.preco != null ? formatBRL(p.atual.preco) : "—"} depois={p.preco != null ? formatBRL(p.preco) : "—"}
-            nota="Desmarcado por padrão: mexer no preço pode afetar promoção em andamento." />
+            nota={amz ? "O preço na Amazon ainda não é trocado por aqui." : "Desmarcado por padrão: mexer no preço pode afetar promoção em andamento."} />
         </div>
       ) : (
         <div className="rounded-md border p-3 space-y-3">
