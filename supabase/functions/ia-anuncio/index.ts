@@ -151,7 +151,12 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
 // ---------------------------------------------------------------- prompts de imagem
 type CapaEntrada = { quantidade?: unknown; peso?: unknown; barra?: unknown; faixa?: unknown; icones?: unknown; fundo?: unknown; sem_texto?: boolean | null };
 
-/** Formulário de capa. Barra vazia = "sem barra" (o gerador mandava um EXEMPLO que virava texto na arte). */
+/**
+ * Formulário de capa. Barra vazia = "sem barra" (o gerador mandava um EXEMPLO que virava texto na arte).
+ * 12/out/2026 (pedido do dono, com capas de exemplo): capa NÃO leva benefícios — ícones só se o
+ * operador informar; e o título é um SELO flutuante na identidade da marca, nunca faixa colada no topo.
+ * Título vazio = a IA escreve pelo nome do produto (ou "Menor Preço da Shopee" nos estilos que são isso).
+ */
 function blocoOperador(capa: CapaEntrada | null): string {
   if (!capa || typeof capa !== "object") return "";
   const t = (x: unknown) => (x == null ? "" : String(x).trim().slice(0, 300));
@@ -165,8 +170,10 @@ function blocoOperador(capa: CapaEntrada | null): string {
     l.push(`Este estilo NAO tem texto na capa: Barra inferior = "sem barra", Faixa superior = "sem faixa", Icones = "sem icones".`);
   } else {
     l.push(barra ? `Barra inferior de variacoes: ${barra} — exatamente estes valores, nesta ordem` : `Barra inferior de variacoes: sem barra`);
-    l.push(faixa ? `Faixa superior: "${faixa}" — exatamente este texto` : `Faixa superior: sem faixa`);
-    l.push(icones ? `Icones de beneficios: ${icones} — exatamente estes` : `Icones de beneficios: (livre — escolha de 3 a 5 beneficios REAIS do briefing; nunca invente)`);
+    l.push(faixa
+      ? `Faixa superior (selo de titulo): "${faixa}" — exatamente este texto; se houver "|", ele separa a linha de cima da linha de baixo do selo`
+      : `Faixa superior (selo de titulo): (nao informada — siga o esqueleto: nos estilos "Menor Preco da Shopee" o texto e MENOR PRECO / DA SHOPEE; nos outros estilos com titulo, a linha de cima e o TIPO DE PRODUTO e a de baixo o DIFERENCIAL, tirados do nome do produto; nunca um beneficio)`);
+    l.push(icones ? `Icones de beneficios: ${icones} — exatamente estes, numa fileira unica` : `Icones de beneficios: sem icones (capa nao leva beneficios)`);
   }
   l.push(`Fundo e composicao: ${fundo || "(livre — siga o estilo do esqueleto)"}`);
   return `\n\n═══ DADOS INFORMADOS PELO OPERADOR (valem mais que o esqueleto) ═══\n${l.join("\n")}`;

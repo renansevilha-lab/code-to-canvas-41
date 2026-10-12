@@ -151,13 +151,13 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
           <div className="divide-y">{capas.map(linha)}</div>
           {temCapaSel && (
             <div className="rounded-md border p-2.5 mt-2 space-y-1.5">
-              <p className="text-[11px] font-medium">Dados da capa (vazio = a IA decide; barra vazia = sem barra)</p>
+              <p className="text-[11px] font-medium">Dados da capa (vazio = a IA decide; barra vazia = sem barra; ícones vazios = sem ícones)</p>
               <div className="grid grid-cols-2 gap-1.5">
                 <Input className="h-7 text-xs" placeholder="Qtd. de embalagens" value={capa.quantidade} onChange={(e) => setCapa({ ...capa, quantidade: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Peso na embalagem (ex. 4kg)" value={capa.peso} onChange={(e) => setCapa({ ...capa, peso: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Barra de variações (ex. 4kg 8kg 12kg)" value={capa.barra} onChange={(e) => setCapa({ ...capa, barra: e.target.value })} disabled={capa.sem_texto} />
-                <Input className="h-7 text-xs" placeholder="Faixa superior" value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
-                <Input className="h-7 text-xs" placeholder="Ícones (vazio = 3–5 do briefing)" value={capa.icones} onChange={(e) => setCapa({ ...capa, icones: e.target.value })} disabled={capa.sem_texto} />
+                <Input className="h-7 text-xs" placeholder="Título do selo (use | para a 2ª linha)" value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
+                <Input className="h-7 text-xs" placeholder="Ícones de benefício (vazio = nenhum)" value={capa.icones} onChange={(e) => setCapa({ ...capa, icones: e.target.value })} disabled={capa.sem_texto} />
                 <Input className="h-7 text-xs" placeholder="Fundo / composição" value={capa.fundo} onChange={(e) => setCapa({ ...capa, fundo: e.target.value })} />
               </div>
               <label className="flex items-center gap-1.5 text-xs cursor-pointer">
