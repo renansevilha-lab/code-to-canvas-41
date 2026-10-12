@@ -13,13 +13,16 @@ import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type
 
 // ============================================================================
 // 3 · Enviar anúncio (12/out/2026, pedido do dono): manda o anúncio montado aqui
-// DIRETO para o marketplace. Funciona hoje para a SHOPEE (edge fn
-// `anuncio-publicar`), em dois modos:
+// DIRETO para o marketplace. Funciona hoje para a SHOPEE e o MERCADO LIVRE
+// (edge fn `anuncio-publicar`; o mesmo componente `Envio` serve aos dois), em
+// dois modos:
 //  - ATUALIZAR um anúncio que já existe (padrão quando o SKU já está anunciado
 //    na loja): troca só o que for marcado — título, descrição, fotos, preço.
 //    Nas fotos, as atuais do anúncio FICAM por padrão e as novas entram; a
 //    pessoa escolhe quais atuais manter, quais novas incluir e a posição;
-//  - CRIAR um anúncio novo (nasce fora do ar por padrão).
+//  - CRIAR um anúncio novo (nasce fora do ar por padrão; no Mercado Livre é
+//    pausado logo depois de criado e a conferência passa pelo validador do ML,
+//    com as características obrigatórias da categoria para preencher).
 // Sempre: conferência do que será enviado → confirmação → envio.
 // Cada cartão de canal mostra se o produto JÁ está anunciado ali (espelhos da
 // gestão). Os outros canais aparecem como "em preparação".
@@ -27,21 +30,30 @@ import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type
 
 const DESTINOS: { canal: string; pronto: boolean; nota: string }[] = [
   { canal: "shopee", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo, com o texto, o preço e as fotos aprovadas." },
-  { canal: "mercado_livre", pronto: false, nota: "Em preparação. O app já tem permissão; falta montar o envio." },
+  { canal: "mercado_livre", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo; a conferência passa pelo validador do Mercado Livre." },
   { canal: "tiktok", pronto: false, nota: "Em preparação. Precisa enviar as fotos pela API e informar as medidas do pacote." },
   { canal: "amazon", pronto: false, nota: "Em preparação. Cada tipo de produto tem um formulário próprio; entra por último." },
 ];
 
-interface Existente { item_id: string; nome: string | null; status?: string | null; url?: string | null; variacao?: boolean; model_id?: string | null; nome_variacao?: string | null; preco: number | null; variacoes?: number }
-interface Existentes { shopee: { ottz: Existente[]; svl: Existente[] }; mercado_livre: Existente[]; tiktok: Existente[] }
+interface Existente { item_id: string; nome: string | null; status?: string | null; url?: string | null; variacao?: boolean; model_id?: string | null; nome_variacao?: string | null; preco: number | null; variacoes?: number; vendas?: number; catalogo?: boolean }
+interface Existentes {
+  shopee: { ottz: Existente[]; svl: Existente[] }; mercado_livre: Existente[]; tiktok: Existente[];
+  /** Mercado Livre ao vivo, por conta (null = não deu para consultar). */
+  mercado_livre_lojas?: { ottz: Existente[] | null; svl: Existente[] | null };
+}
+interface Atributo { id: string; nome: string; obrigatorio: boolean; valor: string; opcoes: string[]; dica: string | null }
 interface Foto { path: string; tipo: string }
 interface Previa {
   loja: string; titulo: string; descricao: string; preco: number | null; sku: string; fotos: Foto[];
   // criar
   estoque?: number; fora_do_ar?: boolean; ean?: string | null;
   medidas?: { peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null };
-  categoria?: { id: number; caminho: string } | null; categorias_sugeridas?: { id: number; caminho: string }[];
+  categoria?: { id: number | string; caminho: string } | null; categorias_sugeridas?: { id: number | string; caminho: string }[];
   marca?: { id: number; nome: string }; logistica?: { id: number; nome: string }[];
+  // criar · Mercado Livre
+  tipo_anuncio?: string; tipos_anuncio?: { id: string; nome: string }[]; atributos?: Atributo[];
+  /** limites do marketplace/categoria (sem isso valem os da Shopee: 120 e 9) */
+  limites?: { titulo: number; fotos: number };
   // atualizar
   alvo?: Existente & { n_variacoes: number; situacao: string | null };
   campos?: { titulo: boolean; descricao: boolean; fotos: boolean; preco: boolean };
@@ -53,7 +65,9 @@ interface Resposta { ok: boolean; disponivel: boolean; motivo?: string; modo?: "
 type Op = Record<string, string | boolean>;
 
 const txt = (v: number | null | undefined) => (v == null ? "" : String(v).replace(".", ","));
-const OP_INICIAL: Op = { fora_do_ar: true, c_titulo: true, c_descricao: true, c_fotos: true, c_preco: false };
+// no Mercado Livre o título começa desmarcado: o ML recusa a troca em anúncio que já vendeu
+const opInicial = (canal: string): Op => ({ fora_do_ar: true, c_titulo: canal !== "mercado_livre", c_descricao: true, c_fotos: true, c_preco: false });
+const situacao = (st?: string | null) => (!st || st === "NORMAL" || st === "active" ? "" : st === "UNLIST" ? "fora do ar" : st === "paused" ? "pausado" : st);
 
 export function Publicar({ rascunho, onCanal }: { rascunho: IaRascunho; onCanal: (canal: string) => void }) {
   const exQ = useQuery({
@@ -62,10 +76,14 @@ export function Publicar({ rascunho, onCanal }: { rascunho: IaRascunho; onCanal:
     queryFn: async () => (await chamarPublicar("existentes", { sku: rascunho.sku })).existentes as Existentes,
   });
   const ex = exQ.data;
-  const doCanal = (canal: string): { rotulo: string; lista: Existente[] }[] => {
+  const doCanal = (canal: string): { rotulo: string; lista: Existente[] | null }[] => {
     if (!ex) return [];
     if (canal === "shopee") return [{ rotulo: "Ottz", lista: ex.shopee.ottz }, { rotulo: "Bumi", lista: ex.shopee.svl }];
-    if (canal === "mercado_livre") return [{ rotulo: "Ottz", lista: ex.mercado_livre }];
+    if (canal === "mercado_livre") {
+      return ex.mercado_livre_lojas
+        ? [{ rotulo: "Ottz", lista: ex.mercado_livre_lojas.ottz }, { rotulo: "SVL", lista: ex.mercado_livre_lojas.svl }]
+        : [{ rotulo: "Ottz", lista: ex.mercado_livre }];
+    }
     if (canal === "tiktok") return [{ rotulo: "ACZ", lista: ex.tiktok }];
     return [];
   };
@@ -92,7 +110,8 @@ export function Publicar({ rascunho, onCanal }: { rascunho: IaRascunho; onCanal:
                   : lojas.map((l) => (
                     <div key={l.rotulo}>
                       <span className="text-muted-foreground">{l.rotulo}: </span>
-                      {l.lista.length === 0 ? <span>ainda não anunciado</span> : (
+                      {l.lista === null ? <span className="text-muted-foreground">não consegui verificar</span>
+                        : l.lista.length === 0 ? <span>ainda não anunciado</span> : (
                         <span className="font-medium text-emerald-700 dark:text-emerald-400">
                           já anunciado{l.lista.length > 1 ? ` (${l.lista.length})` : ""}
                           {l.lista.slice(0, 2).map((e) => e.url && (
@@ -112,21 +131,27 @@ export function Publicar({ rascunho, onCanal }: { rascunho: IaRascunho; onCanal:
         })}
       </div>
       {rascunho.canal === "shopee"
-        ? <EnvioShopee rascunho={rascunho} jaExiste={(rascunho.empresa === "svl" ? ex?.shopee.svl : ex?.shopee.ottz) ?? null} />
+        ? <Envio rascunho={rascunho} jaExiste={(rascunho.empresa === "svl" ? ex?.shopee.svl : ex?.shopee.ottz) ?? null} />
+        : rascunho.canal === "mercado_livre"
+        ? <Envio rascunho={rascunho} jaExiste={(rascunho.empresa === "svl" ? ex?.mercado_livre_lojas?.svl : (ex?.mercado_livre_lojas?.ottz ?? ex?.mercado_livre)) ?? null} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(rascunho.canal)} ainda não está pronto. Por enquanto, o texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
     </CardContent></Card>
   );
 }
 
-function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: Existente[] | null }) {
+/** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
+function Envio({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: Existente[] | null }) {
   const qc = useQueryClient();
+  const ml = rascunho.canal === "mercado_livre";
+  const MK = ml ? "Mercado Livre" : "Shopee";
+  const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(false);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
-  const [op, setOp] = useState<Op>(OP_INICIAL);
-  const [aplicado, setAplicado] = useState<Op>(OP_INICIAL);
+  const [op, setOp] = useState<Op>(() => opInicial(rascunho.canal));
+  const [aplicado, setAplicado] = useState<Op>(() => opInicial(rascunho.canal));
   const [enviando, setEnviando] = useState(false);
   const [deNovo, setDeNovo] = useState(false);
-  useEffect(() => { setAberto(false); setOp(OP_INICIAL); setAplicado(OP_INICIAL); setDeNovo(false); }, [rascunho.id]);
+  useEffect(() => { const i = opInicial(rascunho.canal); setAberto(false); setOp(i); setAplicado(i); setDeNovo(false); }, [rascunho.id]);
 
   const previaQ = useQuery({
     queryKey: ["ia-anuncio", "publicar", rascunho.id, rascunho.updated_at, JSON.stringify(aplicado)],
@@ -137,6 +162,8 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
   const d = previaQ.data;
   const p = d?.previa;
   const modo = d?.modo ?? "criar";
+  const limTitulo = p?.limites?.titulo ?? 120;
+  const limFotos = p?.limites?.fotos ?? 9;
   const fotosQ = useQuery({
     queryKey: ["ia-anuncio", "publicar-fotos", (p?.fotos ?? []).map((f) => f.path).join("|")],
     enabled: !!p?.fotos.length,
@@ -173,24 +200,28 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
     if (!p) return;
     const c = p.campos;
     const aviso = modo === "atualizar" ? [
-      `Atualizar o anúncio ${p.alvo?.item_id} na ${p.loja}?`, "",
+      `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
       `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
-      `Criar o anúncio na ${p.loja}?`, "",
+      `Criar o anúncio ${NO} ${p.loja}?`, "",
       `${p.titulo}`, `Preço: ${p.preco != null ? formatBRL(p.preco) : "—"} · Estoque inicial: ${p.estoque} · ${p.fotos.length} foto(s)`,
-      p.fora_do_ar ? "Vai nascer FORA DO AR (não listado). Você ativa depois no Seller Center." : "Vai nascer NO AR, visível para os compradores.",
+      p.fora_do_ar
+        ? (ml ? "Vai ser PAUSADO logo depois de criado. Você reativa depois no Mercado Livre." : "Vai nascer FORA DO AR (não listado). Você ativa depois no Seller Center.")
+        : "Vai nascer NO AR, visível para os compradores.",
     ].join("\n");
     if (!window.confirm(aviso)) return;
     setEnviando(true);
     try {
       const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, opcoes: { ...limpar(aplicado), modo, de_novo: deNovo }, confirmar: true });
-      if (modo === "atualizar") toast.success("Anúncio atualizado na Shopee", { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
-      else toast.success("Anúncio criado na Shopee", { description: `Código ${r.item_id}${r.fora_do_ar ? " · fora do ar" : ""}` });
+      if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
+      else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
+      // o que deu certo pela metade (ex.: criado mas não pausou) não pode passar batido
+      for (const av of ((r.avisos ?? []) as string[]).filter((x) => /^(ATENÇÃO|o anúncio foi criado, mas)/.test(x))) toast.warning(av, { duration: 30000 });
       setDeNovo(false);
     } catch (e) {
-      toast.error(modo === "atualizar" ? "A Shopee não aceitou a atualização" : "A Shopee não aceitou o anúncio", { description: (e as Error).message, duration: 15000 });
+      toast.error(`${ml ? "O" : "A"} ${MK} não aceitou ${modo === "atualizar" ? "a atualização" : "o anúncio"}`, { description: (e as Error).message, duration: 15000 });
     } finally {
       setEnviando(false);
       void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
@@ -204,18 +235,18 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
         {jaExiste && (
           <div className={`rounded-md border px-3 py-2 text-sm ${n ? "border-emerald-500/40 bg-emerald-500/5" : ""}`}>
             {n === 0
-              ? <>Este produto <b>ainda não tem anúncio</b> na Shopee {nomeEmpresa(rascunho.empresa)}: o envio cria um anúncio novo.</>
-              : <>Este produto <b>já tem {n === 1 ? "um anúncio" : `${n} anúncios`}</b> na Shopee {nomeEmpresa(rascunho.empresa)}: o padrão é <b>atualizar</b> o que existe, sem criar duplicado.</>}
+              ? <>Este produto <b>ainda não tem anúncio</b> {NO} {MK} {nomeEmpresa(rascunho.empresa)}: o envio cria um anúncio novo.</>
+              : <>Este produto <b>já tem {n === 1 ? "um anúncio" : `${n} anúncios`}</b> {NO} {MK} {nomeEmpresa(rascunho.empresa)}: o padrão é <b>atualizar</b> o que existe, sem criar duplicado.</>}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <Button className="gap-1.5" onClick={() => setAberto(true)}><Send className="h-4 w-4" />Conferir e enviar para a Shopee ({nomeEmpresa(rascunho.empresa)})</Button>
+          <Button className="gap-1.5" onClick={() => setAberto(true)}><Send className="h-4 w-4" />Conferir e enviar para {ART} {MK} ({nomeEmpresa(rascunho.empresa)})</Button>
           <span className="text-xs text-muted-foreground">Abre a conferência; nada é enviado antes de você confirmar.</span>
         </div>
       </div>
     );
   }
-  if (previaQ.isLoading) return <div className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Montando a conferência (lendo a Shopee)…</div>;
+  if (previaQ.isLoading) return <div className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Montando a conferência (lendo {ART} {MK})…</div>;
   if (previaQ.isError) return (
     <div className="space-y-2">
       <p className="text-sm text-destructive">Falha ao montar a conferência: {(previaQ.error as Error).message}</p>
@@ -231,8 +262,8 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
       <div className="rounded-md border p-3 space-y-2 text-sm">
         <div>
           {existentes.length === 0
-            ? <>Este produto <b>ainda não tem anúncio</b> na {p.loja}.</>
-            : <>Este produto <b>já tem {existentes.length === 1 ? "um anúncio" : `${existentes.length} anúncios`}</b> na {p.loja}.</>}
+            ? <>Este produto <b>ainda não tem anúncio</b> {NO} {p.loja}.</>
+            : <>Este produto <b>já tem {existentes.length === 1 ? "um anúncio" : `${existentes.length} anúncios`}</b> {NO} {p.loja}.</>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant={modo === "atualizar" ? "default" : "outline"} disabled={existentes.length === 0 || previaQ.isFetching}
@@ -251,9 +282,11 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
                     <span className="block truncate text-sm">{e.nome ?? e.item_id}</span>
                     <span className="text-muted-foreground">
                       código {e.item_id}
-                      {e.variacao ? <> · este SKU é a variação <b>{e.nome_variacao || e.model_id}</b> do anúncio</> : " · anúncio só deste SKU"}
+                      {e.variacao ? <> · este SKU é a variação <b>{e.nome_variacao || e.model_id}</b> do anúncio</> : ml ? "" : " · anúncio só deste SKU"}
                       {e.preco != null && <> · {formatBRL(e.preco)}</>}
-                      {e.status && e.status !== "NORMAL" && <> · {e.status === "UNLIST" ? "fora do ar" : e.status}</>}
+                      {e.vendas != null && <> · {e.vendas.toLocaleString("pt-BR")} venda{e.vendas === 1 ? "" : "s"}</>}
+                      {e.catalogo && <> · catálogo</>}
+                      {situacao(e.status) && <> · {situacao(e.status)}</>}
                     </span>
                   </span>
                   {e.url && <a href={e.url} target="_blank" rel="noreferrer" className="text-xs underline inline-flex items-center gap-0.5 shrink-0">abrir<ExternalLink className="h-3 w-3" /></a>}
@@ -267,8 +300,9 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
       {modo === "atualizar" && p.atual && p.campos ? (
         <div className="rounded-md border p-3 space-y-3">
           <p className="text-[11px] text-muted-foreground">Marque o que quer trocar no anúncio. O que ficar desmarcado continua como está.</p>
-          <Troca rotulo="Título" marcado={op.c_titulo !== false} onMarcar={(v) => trocar({ c_titulo: v })}
-            antes={p.atual.titulo} depois={`${p.titulo} (${p.titulo.length}/120)`} />
+          <Troca rotulo="Título" marcado={op.c_titulo === true} onMarcar={(v) => trocar({ c_titulo: v })}
+            antes={p.atual.titulo} depois={`${p.titulo} (${p.titulo.length}/${limTitulo})`}
+            nota={ml ? "Desmarcado por padrão: o Mercado Livre só deixa trocar o título de anúncio que ainda não vendeu." : undefined} />
           <Troca rotulo="Descrição" marcado={op.c_descricao !== false} onMarcar={(v) => trocar({ c_descricao: v })}
             antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} />
           <div className="flex items-start gap-2">
@@ -292,13 +326,13 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                  Vai ficar com {manter.length + novas.length} de 9 fotos ({manter.length} das atuais + {novas.length} nova{novas.length === 1 ? "" : "s"})
+                  Vai ficar com {manter.length + novas.length} de {limFotos} fotos ({manter.length} das atuais + {novas.length} nova{novas.length === 1 ? "" : "s"})
                 </div>
                 <Miniaturas urls={(() => {
                   const n = p.fotos.filter((f) => novas.includes(f.path)).map((f) => fotosQ.data?.[f.path] ?? "");
                   const m = p.atual!.fotos.filter((f) => manter.includes(f.id)).map((f) => f.url);
                   return posicao === "inicio" ? [...n, ...m] : [...m, ...n];
-                })()} />
+                })()} max={limFotos} />
               </div>
             </div>
           </div>
@@ -310,19 +344,21 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
         <div className="rounded-md border p-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-sm"><b>{p.loja}</b><span className="text-muted-foreground">SKU {p.sku} · anúncio novo</span></div>
           <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-            <Linha rotulo="Título" valor={`${p.titulo} (${p.titulo.length}/120)`} />
+            <Linha rotulo="Título" valor={`${p.titulo} (${p.titulo.length}/${limTitulo})`} />
             <Linha rotulo="Preço" valor={p.preco != null ? formatBRL(p.preco) : "—"} />
-            <Linha rotulo="Marca" valor={p.marca?.nome ?? "—"} />
-            <Linha rotulo="Código de barras" valor={p.ean ?? "sem código no Tiny"} />
-            <Linha rotulo="Canais de envio" valor={(p.logistica ?? []).map((l) => l.nome).join(", ") || "—"} />
+            {p.marca && <Linha rotulo="Marca" valor={p.marca.nome} />}
+            <Linha rotulo="Código de barras" valor={p.ean ?? (ml ? "sem código — vai como \"produto sem código cadastrado\"" : "sem código no Tiny")} />
+            {p.logistica && <Linha rotulo="Canais de envio" valor={p.logistica.map((l) => l.nome).join(", ") || "—"} />}
+            {ml && <Linha rotulo="Envio" valor="Mercado Envios, sem retirada em mãos" />}
             <Linha rotulo="Descrição" valor={`${p.descricao.length.toLocaleString("pt-BR")} caracteres (texto + bullets)`} />
           </div>
-          <Miniaturas urls={p.fotos.map((f) => fotosQ.data?.[f.path] ?? "")} legendas={p.fotos.map((f, i) => `${i + 1}. ${rotuloFoto(f.tipo)}`)} />
+          <Miniaturas urls={p.fotos.map((f) => fotosQ.data?.[f.path] ?? "")} legendas={p.fotos.map((f, i) => `${i + 1}. ${rotuloFoto(f.tipo)}`)} max={limFotos} />
           <div className="flex flex-wrap items-end gap-3 text-sm border-t pt-3">
             <label className="block min-w-[260px] flex-1">
-              <span className="text-[11px] text-muted-foreground">Categoria na Shopee</span>
+              <span className="text-[11px] text-muted-foreground">Categoria {NO} {MK}</span>
+              {/* no Mercado Livre a categoria muda as características pedidas: a conferência é refeita na hora */}
               <select className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs"
-                value={String(op.categoria_id ?? p.categoria?.id ?? "")} onChange={(e) => setOp({ ...op, categoria_id: e.target.value })}>
+                value={String(op.categoria_id ?? p.categoria?.id ?? "")} onChange={(e) => (ml ? trocar({ categoria_id: e.target.value }) : setOp({ ...op, categoria_id: e.target.value }))}>
                 {(p.categorias_sugeridas ?? []).length === 0 && <option value="">nenhuma sugestão</option>}
                 {(p.categorias_sugeridas ?? []).map((c) => <option key={c.id} value={c.id}>{c.caminho}</option>)}
                 {p.categoria && !(p.categorias_sugeridas ?? []).some((c) => c.id === p.categoria!.id) && <option value={p.categoria.id}>{p.categoria.caminho || p.categoria.id}</option>}
@@ -333,12 +369,38 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
             <Medida rotulo="Largura (cm)" valor={campo("largura_cm", p.medidas?.largura_cm)} onChange={(v) => setOp({ ...op, largura_cm: v })} />
             <Medida rotulo="Altura (cm)" valor={campo("altura_cm", p.medidas?.altura_cm)} onChange={(v) => setOp({ ...op, altura_cm: v })} />
             <Medida rotulo="Estoque inicial" valor={campo("estoque", p.estoque)} onChange={(v) => setOp({ ...op, estoque: v })} />
+            {ml && (
+              <label className="block">
+                <span className="text-[11px] text-muted-foreground">Tipo de anúncio</span>
+                <select className="mt-1 h-8 block rounded-md border bg-background px-2 text-xs"
+                  value={String(op.tipo_anuncio ?? p.tipo_anuncio ?? "")} onChange={(e) => setOp({ ...op, tipo_anuncio: e.target.value })}>
+                  {(p.tipos_anuncio ?? []).map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                </select>
+              </label>
+            )}
+            {ml && <Medida rotulo="Código de barras" largo valor={typeof op.gtin === "string" ? op.gtin : (p.ean ?? "")} onChange={(v) => setOp({ ...op, gtin: v })} />}
           </div>
+          {ml && (p.atributos ?? []).length > 0 && (
+            <div className="border-t pt-3 space-y-2">
+              <div className="text-[11px] text-muted-foreground">Características que o Mercado Livre pede nesta categoria (as com * são obrigatórias; as outras melhoram a ficha)</div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {(p.atributos ?? []).map((a) => (
+                  <label key={a.id} className="block min-w-0">
+                    <span className="text-[11px] text-muted-foreground">{a.nome}{a.obrigatorio ? " *" : ""}</span>
+                    <Input className="h-8 mt-1 text-xs" list={a.opcoes.length ? `ml-at-${a.id}` : undefined} placeholder={a.dica ?? ""}
+                      value={typeof op[`a_${a.id}`] === "string" ? String(op[`a_${a.id}`]) : a.valor}
+                      onChange={(e) => setOp({ ...op, [`a_${a.id}`]: e.target.value })} />
+                    {a.opcoes.length > 0 && <datalist id={`ml-at-${a.id}`}>{a.opcoes.map((o) => <option key={o} value={o} />)}</datalist>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
             <span>
-              Criar <b>fora do ar</b> (não listado)
-              <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e ative depois no Seller Center.</span>
+              {ml ? <>Criar e <b>pausar</b> em seguida</> : <>Criar <b>fora do ar</b> (não listado)</>}
+              <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e {ml ? "reative depois no Mercado Livre" : "ative depois no Seller Center"}.</span>
             </span>
           </label>
           {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Atualizar a conferência com o que mudei</Button>}
@@ -360,7 +422,7 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
       <div className="flex flex-wrap items-center gap-3">
         <Button className="gap-1.5" disabled={enviando || mudou || previaQ.isFetching || pend.length > 0 || (modo === "criar" && !!criado && !deNovo)} onClick={() => void enviar()}>
           {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          {enviando ? "Enviando para a Shopee…" : modo === "atualizar" ? "Atualizar o anúncio na Shopee" : "Criar o anúncio na Shopee"}
+          {enviando ? `Enviando para ${ART} ${MK}…` : modo === "atualizar" ? `Atualizar o anúncio ${NO} ${MK}` : `Criar o anúncio ${NO} ${MK}`}
         </Button>
         {modo === "criar" && criado && (
           <label className="flex items-center gap-1.5 text-xs cursor-pointer">
@@ -377,7 +439,7 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
               {x.estado === "publicado" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : x.estado === "erro" ? <AlertTriangle className="h-3.5 w-3.5 text-destructive" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{new Date(x.criado_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
               {x.criado_por_nome && <span className="text-muted-foreground">{x.criado_por_nome}</span>}
-              {x.estado === "publicado" && <span>{x.operacao === "atualizar" ? "atualizou o anúncio" : "criou o anúncio"} <b className="font-mono">{x.item_id}</b>{x.fora_do_ar ? " · fora do ar" : ""}</span>}
+              {x.estado === "publicado" && <span>{x.operacao === "atualizar" ? "atualizou o anúncio" : "criou o anúncio"} <b className="font-mono">{x.item_id}</b>{x.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}</span>}
               {x.url && <a href={x.url} target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-0.5">abrir<ExternalLink className="h-3 w-3" /></a>}
               {x.estado === "erro" && <span className="text-destructive">{x.operacao === "atualizar" ? "atualização" : "criação"} recusada: {x.erro}</span>}
               {x.estado === "enviando" && <span className="text-muted-foreground">envio em andamento</span>}
@@ -392,9 +454,10 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
 /** Monta as opções da função: tira os vazios, troca vírgula por ponto e junta os c_* em `campos`. */
 function limpar(op: Op): Record<string, unknown> {
   const out: Record<string, unknown> = {}; const campos: Record<string, boolean> = {};
-  const fotos: Record<string, unknown> = {};
+  const fotos: Record<string, unknown> = {}; const atributos: Record<string, string> = {};
   for (const [k, v] of Object.entries(op)) {
     if (k.startsWith("c_")) { campos[k.slice(2)] = v === true; continue; }
+    if (k.startsWith("a_")) { if (String(v).trim()) atributos[k.slice(2)] = String(v).trim(); continue; }
     if (k === "f_manter" || k === "f_novas") { fotos[k.slice(2)] = String(v).split("|").filter(Boolean); continue; }
     if (k === "f_pos") { fotos.posicao = v; continue; }
     if (typeof v === "boolean") out[k] = v;
@@ -402,6 +465,7 @@ function limpar(op: Op): Record<string, unknown> {
   }
   out.campos = campos;
   if (Object.keys(fotos).length) out.fotos = fotos;
+  if (Object.keys(atributos).length) out.atributos = atributos;
   return out;
 }
 const resumo = (t: string) => `${t.length.toLocaleString("pt-BR")} caracteres · ${t.replace(/\s+/g, " ").slice(0, 150)}${t.length > 150 ? "…" : ""}`;
@@ -409,11 +473,11 @@ const resumo = (t: string) => `${t.length.toLocaleString("pt-BR")} caracteres ·
 function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
   return <div className="min-w-0"><span className="text-[11px] text-muted-foreground block">{rotulo}</span><span className="break-words">{valor}</span></div>;
 }
-function Medida({ rotulo, valor, onChange }: { rotulo: string; valor: string; onChange: (v: string) => void }) {
+function Medida({ rotulo, valor, onChange, largo }: { rotulo: string; valor: string; onChange: (v: string) => void; largo?: boolean }) {
   return (
     <label className="block">
       <span className="text-[11px] text-muted-foreground">{rotulo}</span>
-      <Input className="h-8 mt-1 w-24 font-mono" value={valor} onChange={(e) => onChange(e.target.value)} />
+      <Input className={`h-8 mt-1 font-mono ${largo ? "w-40" : "w-24"}`} value={valor} onChange={(e) => onChange(e.target.value)} />
     </label>
   );
 }
@@ -458,11 +522,11 @@ function Selecao({ itens, marcados, fora, onAlternar }: {
     </div>
   );
 }
-function Miniaturas({ urls, legendas }: { urls: string[]; legendas?: string[] }) {
+function Miniaturas({ urls, legendas, max = 9 }: { urls: string[]; legendas?: string[]; max?: number }) {
   if (!urls.length) return <span className="text-xs text-muted-foreground">nenhuma foto</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
-      {urls.slice(0, 9).map((u, i) => (
+      {urls.slice(0, max).map((u, i) => (
         <div key={`${u}-${i}`} className="w-14">
           <div className="h-14 w-14 rounded border bg-muted/30 overflow-hidden">{u && <img src={u} alt="" loading="lazy" className="h-full w-full object-cover" />}</div>
           {legendas?.[i] && <div className="text-[9.5px] text-muted-foreground truncate capitalize" title={legendas[i]}>{legendas[i]}</div>}

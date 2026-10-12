@@ -1984,8 +1984,50 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   "nada muda" viram pendência. A lista enviada mistura os `image_id` que já eram do anúncio com
   os das fotos novas recém-subidas — reaproveitar id antigo no `update_item` ainda não foi
   testado.
-- **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
-  `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
+- **Mercado Livre (12/out, pedido do dono) — `anuncio-publicar` v4 (código no repositório;
+  ⚠ o deploy da v4 foi BLOQUEADO pelo classificador de permissões e aguardava o OK do dono —
+  conferir com `get_edge_function` se a linha 2 já diz v4 antes de supor que está no ar).**
+  Rascunho com canal `mercado_livre`; conta pela empresa (ottz 1107117809, svl 1299638625),
+  token sempre DA CONTA. Mesma tela e a mesma conferência da Shopee (`Envio` em `Publicar.tsx`
+  serve aos dois; textos/limites mudam pelo canal; `previa.limites`). O que a sondagem
+  (`ml-anuncio-sonda`, só leitura + validador) mostrou e a função segue:
+  - As duas contas estão no modelo **User Products**: o corpo de criação leva **`family_name`**
+    e **NÃO pode levar `title`** (`body.invalid_fields`); o ML monta o título final.
+  - Obrigatório: BRAND (+ o que a categoria pedir com `tags.required`, ex. MODEL), as medidas
+    da embalagem `SELLER_PACKAGE_HEIGHT/WIDTH/LENGTH` ("31 cm") e `_WEIGHT` ("450 g"),
+    `SELLER_SKU` = nosso SKU. Código de barras: `GTIN` ou `EMPTY_GTIN_REASON` (17055160 "não
+    tem código cadastrado"; 17055159 "kit ou pack" para produto tipo K) — em algumas
+    categorias (ex. MLB178927) o motivo NÃO é aceito e o GTIN é exigido.
+  - `shipping` pode ir `{mode: me2, local_pick_up: false, free_shipping: false}`; `sale_terms`
+    (garantia do vendedor, 30 dias) é opcional. Preço ≥ ~R$ 79 → o ML põe frete grátis
+    obrigatório (aviso).
+  - **`POST /items/validate` devolve 400 "Validation error" mesmo quando só há `warning:`** —
+    aceito = nenhuma causa `type: error`. `shipping.lost_me1_by_user` e
+    `shipping.free_shipping.cost_exceeded` aparecem em todo anúncio nosso: ignorados. A prévia
+    de criar passa o corpo no validador (fotos como URL assinada de 15 min) e os erros viram
+    pendência.
+  - Categoria: `/sites/MLB/domain_discovery/search?q=título` (também adianta características);
+    limites em `/categories/{id}` (`max_title_length` 60, `max_pictures_per_item` 12);
+    características em `/categories/{id}/attributes`. Tipo de anúncio padrão = o que a conta
+    mais usa (Ottz: 256 Clássico × 81 Premium).
+  - Existentes: **ao vivo** por conta, `/users/{id}/items/search?seller_sku=` + multiget (a
+    gestão só espelha a Ottz em `ml_anuncios`). `existentes` devolve `mercado_livre_lojas
+    {ottz, svl}` (null = não deu para consultar) além do `mercado_livre` antigo. Um SKU pode
+    ter vários MLB (15984 tem 6, 3 de **catálogo**): a lista traz primeiro os editáveis.
+  - Criar: fotos por `POST /pictures/items/upload` → `POST /items` (sem repetição) → **pausa**
+    (`PUT {status: paused}`, padrão; o ML não cria pausado e exige estoque ≥ 1) → descrição
+    (`POST /items/{id}/description {plain_text}`). Se a pausa ou a descrição falharem, o
+    anúncio fica criado e o aviso aparece em destaque.
+  - Atualizar: um passo por vez, para no primeiro que o ML recusar — fotos (`PUT /items/{id}
+    {pictures: [{id}]}`, mesmo seletor manter/novas/posição), descrição (`PUT
+    …/description?api_version=2`), título (**desmarcado por padrão**; pendência se o anúncio
+    já vendeu; tenta `family_name` e depois `title`) e preço (desmarcado por padrão). Anúncio
+    de catálogo: só preço. Anúncio com `variations` (modelo antigo): sem fotos/preço.
+  - `ia_publicacao`: `canal 'mercado_livre'`, `shop_id` = user_id da conta, `item_id` = MLB,
+    resposta enxuta (o corpo inteiro do ML tem ~15 kB e o banco está no teto).
+  - **Não testado ao vivo:** nenhum `enviar` (criar ou atualizar), o upload de foto, a troca de
+    título e se anúncios da mesma família compartilham fotos.
+- **Próximos:** TikTok, Amazon; anúncio com variações na Shopee.
 
 ## 6. Edge Functions
 
@@ -2032,7 +2074,8 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v3 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `anuncio-publicar` | v3 no ar · v4 no repositório | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
