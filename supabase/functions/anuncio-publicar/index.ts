@@ -1,23 +1,31 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v1 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v2 (12/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
-// v1: só a SHOPEE (o canal mais simples — ver docs/ia-fase3-publicacao-direta.md).
+// Só a SHOPEE por enquanto (ver docs/ia-fase3-publicacao-direta.md).
+//   POST ?modulo=existentes body {sku} → onde o produto JÁ está anunciado (espelhos
+//        da gestão: Shopee das duas lojas, Mercado Livre, TikTok). Só banco.
 //   POST ?modulo=previa  body {rascunho_id, opcoes?}  → o que SERIA enviado + pendências.
-//        Só leitura (banco, Tiny e Shopee). Não cria nada.
-//   POST ?modulo=enviar  body {rascunho_id, opcoes, confirmar: true} → envia as fotos
-//        aprovadas (media_space.upload_image) e cria o anúncio (product.add_item).
-//        Por padrão nasce FORA DO AR (UNLIST): confere-se no Tiny se o vínculo pelo
-//        SKU acontece e só então ativa no Seller Center.
-// opcoes: {categoria_id, estoque, fora_do_ar, peso_kg, comprimento_cm, largura_cm,
-//          altura_cm, preco, de_novo}
+//        Só leitura (banco, Tiny e Shopee). Não cria nem altera nada.
+//   POST ?modulo=enviar  body {rascunho_id, opcoes, confirmar: true}
+// v2: DOIS MODOS (opcoes.modo):
+//   "criar"     → sobe as fotos aprovadas e cria o anúncio (product.add_item). Por padrão
+//                 nasce FORA DO AR (UNLIST), para conferir o vínculo com o Tiny pelo SKU.
+//   "atualizar" → altera um anúncio que JÁ existe (opcoes.item_id), só nos campos marcados
+//                 em opcoes.campos {titulo, descricao, fotos, preco}: product.update_item
+//                 e, para o preço, product.update_price. O anúncio já está ligado ao Tiny
+//                 e mantém vendas e avaliações. Padrão quando o SKU já tem anúncio na loja.
+//                 O estado ANTERIOR (título, descrição, fotos, preço) fica gravado no envio.
+// opcoes: {modo, item_id, campos, categoria_id, estoque, fora_do_ar, peso_kg,
+//          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
 //  - exige sessão de usuário com o módulo `ia` (ou service role);
-//  - só envia com o TEXTO aprovado e pelo menos 1 FOTO aprovada;
+//  - texto/fotos só vão se estiverem APROVADOS;
 //  - escrita NÃO é retentada (um POST repetido criaria anúncio em dobro);
 //  - tudo que foi enviado e a resposta da Shopee ficam em ia_publicacao;
-//  - um rascunho já publicado só é enviado de novo com opcoes.de_novo = true.
-// Anúncio SIMPLES (um SKU, sem variações). Variações ficam para a próxima versão.
+//  - um rascunho já CRIADO só cria outro anúncio com opcoes.de_novo = true.
+// Criar = anúncio SIMPLES (um SKU, sem variações). Atualizar aceita anúncio com variações:
+// título, descrição e fotos são do anúncio inteiro; o preço é da variação com o nosso SKU.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -128,6 +136,66 @@ async function subirImagem(c: Ctx, bytes: Uint8Array, mime: string, nome: string
   if (r?.error || !id) throw new Error(`a Shopee recusou a foto ${nome}: ${r?.error || "sem image_id"} ${r?.message ?? ""}`.trim());
   return String(id);
 }
+/** Sobe as fotos aprovadas (na ordem) e devolve os image_id. */
+async function subirFotos(c: Ctx, fotos: { path: string; tipo: string }[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const f of fotos) {
+    const dl = await db.storage.from(BUCKET).download(f.path);
+    if (dl.error || !dl.data) throw new Error(`não consegui ler a foto ${f.tipo} do armazenamento`);
+    const bytes = new Uint8Array(await dl.data.arrayBuffer());
+    const mime = (dl.data.type || "image/png").split(";")[0];
+    ids.push(await subirImagem(c, bytes, mime, `${f.tipo}.${mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg"}`));
+  }
+  return ids;
+}
+
+// ---------------------------------------------------------------- onde o produto já está anunciado
+type Existente = {
+  item_id: string; nome: string | null; status: string | null; url: string;
+  variacao: boolean; model_id: string | null; nome_variacao: string | null; preco: number | null;
+};
+/** Anúncios da loja Shopee que vendem este SKU (anúncio próprio ou uma variação de anúncio maior). */
+async function existentesShopee(shopId: number, sku: string): Promise<Existente[]> {
+  const [proprios, vars] = await Promise.all([
+    db.from("shopee_anuncios").select("item_id, nome, status, tem_variacao, preco_min").eq("shop_id", shopId).eq("sku_pai", sku).in("status", ["NORMAL", "UNLIST"]),
+    db.from("shopee_anuncios_variacao").select("item_id, model_id, nome_variacao, preco").eq("shop_id", shopId).eq("sku", sku),
+  ]);
+  const porItem = new Map<string, Existente>();
+  const idsVar = [...new Set(((vars.data ?? []) as any[]).map((v) => Number(v.item_id)))];
+  const pais = idsVar.length
+    ? ((await db.from("shopee_anuncios").select("item_id, nome, status").eq("shop_id", shopId).in("item_id", idsVar).in("status", ["NORMAL", "UNLIST"])).data ?? []) as any[]
+    : [];
+  const pai = new Map(pais.map((p) => [String(p.item_id), p]));
+  for (const v of (vars.data ?? []) as any[]) {
+    const a = pai.get(String(v.item_id));
+    if (!a) continue; // anúncio fora do ar/apagado
+    porItem.set(String(v.item_id), {
+      item_id: String(v.item_id), nome: a.nome ?? null, status: a.status ?? null, url: `https://shopee.com.br/product/${shopId}/${v.item_id}`,
+      variacao: true, model_id: String(v.model_id), nome_variacao: v.nome_variacao ?? null, preco: num(v.preco),
+    });
+  }
+  for (const a of (proprios.data ?? []) as any[]) {
+    if (porItem.has(String(a.item_id))) continue;
+    porItem.set(String(a.item_id), {
+      item_id: String(a.item_id), nome: a.nome ?? null, status: a.status ?? null, url: `https://shopee.com.br/product/${shopId}/${a.item_id}`,
+      variacao: false, model_id: null, nome_variacao: null, preco: num(a.preco_min),
+    });
+  }
+  return [...porItem.values()];
+}
+async function existentesTodos(sku: string) {
+  const [ottz, svl, ml, tt] = await Promise.all([
+    existentesShopee(LOJA_SHOPEE.ottz.shop_id, sku),
+    existentesShopee(LOJA_SHOPEE.svl.shop_id, sku),
+    db.from("ml_anuncios").select("mlb, titulo, permalink, preco, n_variacoes").eq("sku", sku).eq("status", "active"),
+    db.from("tiktok_produtos").select("product_id::text, titulo, preco").eq("seller_sku", sku),
+  ]);
+  return {
+    shopee: { ottz, svl },
+    mercado_livre: ((ml.data ?? []) as any[]).map((m) => ({ item_id: m.mlb, nome: m.titulo, url: m.permalink, preco: num(m.preco), variacoes: Number(m.n_variacoes) || 0 })),
+    tiktok: [...new Map(((tt.data ?? []) as any[]).map((t) => [t.product_id, { item_id: t.product_id, nome: t.titulo, preco: num(t.preco) }])).values()],
+  };
+}
 
 // ---------------------------------------------------------------- dados do anúncio
 async function carregar(rascunhoId: string) {
@@ -139,7 +207,7 @@ async function carregar(rascunhoId: string) {
     db.from("ia_produto_extra").select("*").eq("sku", r.sku).maybeSingle(),
     db.from("ia_rascunho_imagem").select("id, ordem, tipo, storage_path, status").eq("rascunho_id", rascunhoId).order("ordem"),
     db.from("ia_etapa").select("etapa, status, imagem_id").eq("rascunho_id", rascunhoId),
-    db.from("ia_publicacao").select("id, canal, empresa, estado, item_id, url, fora_do_ar, erro, criado_por_nome, criado_em")
+    db.from("ia_publicacao").select("id, canal, empresa, operacao, estado, item_id, url, fora_do_ar, erro, criado_por_nome, criado_em")
       .eq("rascunho_id", rascunhoId).order("criado_em", { ascending: false }).limit(10),
   ]);
   const aprovadas = new Set(((etapas.data ?? []) as any[]).filter((e) => e.etapa === "imagem" && e.status === "aprovado").map((e) => e.imagem_id));
@@ -150,6 +218,7 @@ async function carregar(rascunhoId: string) {
   return { r: r as Record<string, any>, produto: prod.data as Record<string, any> | null, cad: cad.data as Record<string, any> | null,
     extra: extra.data as Record<string, any> | null, fotos, textoAprovado, publicacoes: (pubs.data ?? []) as Record<string, any>[] };
 }
+type Dados = Awaited<ReturnType<typeof carregar>>;
 
 /** Peso, dimensões, EAN e NCM do cadastro do Tiny (leitura; melhor-esforço). */
 async function medidasTiny(idTiny: number | null): Promise<Record<string, any>> {
@@ -172,23 +241,37 @@ function montarDescricao(r: Record<string, any>): string {
 
 type Opcoes = Record<string, any>;
 
-async function montarShopee(d: Awaited<ReturnType<typeof carregar>>, op: Opcoes) {
-  const loja = LOJA_SHOPEE[d.r.empresa] ?? LOJA_SHOPEE.ottz;
-  const c = await ctxShopee(loja.shop_id);
-  const pendencias: string[] = []; const avisos: string[] = [];
-
+/** O que é comum aos dois modos: texto, preço e fotos do rascunho, com as checagens de tamanho. */
+function base(d: Dados, op: Opcoes) {
   const titulo = String(d.r.titulo ?? "").trim();
   const descricao = montarDescricao(d.r);
   const preco = num(op.preco) ?? num(d.r.preco_aprovado) ?? num(d.r.preco_sugerido);
-  if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
-  if (!titulo) pendencias.push("o anúncio está sem título");
-  if (titulo.length > 120) pendencias.push(`título com ${titulo.length} caracteres (a Shopee aceita até 120)`);
-  if (descricao.length < 10) pendencias.push("descrição muito curta (a Shopee pede ao menos 10 caracteres)");
-  if (descricao.length > 5000) pendencias.push(`descrição com ${descricao.length} caracteres (a Shopee aceita até 5.000)`);
-  if (!(preco && preco >= 1)) pendencias.push("defina o preço no bloco Preço (\"Salvar preço\")");
-  if (d.fotos.length === 0) pendencias.push("aprove ao menos 1 foto (bloco 2)");
+  const fotos = d.fotos.slice(0, 9).map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
+  const problemas = {
+    titulo: [
+      ...(!d.textoAprovado ? ["aprove o texto (bloco 1) antes de enviar"] : []),
+      ...(!titulo ? ["o anúncio está sem título"] : []),
+      ...(titulo.length > 120 ? [`título com ${titulo.length} caracteres (a Shopee aceita até 120)`] : []),
+    ],
+    descricao: [
+      ...(!d.textoAprovado ? ["aprove o texto (bloco 1) antes de enviar"] : []),
+      ...(descricao.length < 10 ? ["descrição muito curta (a Shopee pede ao menos 10 caracteres)"] : []),
+      ...(descricao.length > 5000 ? [`descrição com ${descricao.length} caracteres (a Shopee aceita até 5.000)`] : []),
+    ],
+    fotos: d.fotos.length === 0 ? ["aprove ao menos 1 foto (bloco 2)"] : [],
+    preco: !(preco && preco >= 1) ? ["defina o preço no bloco Preço (\"Salvar preço\")"] : [],
+  };
+  return { titulo, descricao, preco, fotos, problemas };
+}
+
+// ---------------------------------------------------------------- modo CRIAR
+async function montarCriar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: number; nome: string }, existentes: Existente[]) {
+  const b = base(d, op);
+  const pendencias = [...new Set([...b.problemas.titulo, ...b.problemas.descricao, ...b.problemas.fotos, ...b.problemas.preco])];
+  const avisos: string[] = [];
+  if (existentes.length) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta loja: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
   if (d.fotos.length > 9) avisos.push(`há ${d.fotos.length} fotos aprovadas; a Shopee aceita 9 — vão as 9 primeiras (capa na frente)`);
-  if (d.produto?.tipo === "V") avisos.push("este produto tem variações no Tiny: esta versão cria um anúncio simples, só deste SKU");
+  if (d.produto?.tipo === "V") avisos.push("este produto tem variações no Tiny: criar gera um anúncio simples, só deste SKU");
 
   // medidas: o que a pessoa digitou → o que já foi salvo → cadastro do Tiny → peso da gestão
   const tiny = await medidasTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null);
@@ -203,7 +286,7 @@ async function montarShopee(d: Awaited<ReturnType<typeof carregar>>, op: Opcoes)
 
   // categoria: a Shopee sugere pelo título; os nomes vêm da árvore de categorias
   const [rec, arv] = await Promise.all([
-    titulo ? shopeeGet(c, "/api/v2/product/category_recommend", { item_name: titulo }) : Promise.resolve(null),
+    b.titulo ? shopeeGet(c, "/api/v2/product/category_recommend", { item_name: b.titulo }) : Promise.resolve(null),
     shopeeGet(c, "/api/v2/product/get_category", { language: "pt-BR" }),
   ]);
   const nos = new Map<number, any>(((arv?.response?.category_list ?? []) as any[]).map((n) => [Number(n.category_id), n]));
@@ -250,7 +333,7 @@ async function montarShopee(d: Awaited<ReturnType<typeof carregar>>, op: Opcoes)
   if (estoque === 0) avisos.push("estoque inicial 0: o anúncio nasce esgotado até o Tiny mandar o estoque (depois do vínculo pelo SKU)");
 
   const corpo = {
-    original_price: preco, description: descricao, description_type: "normal", item_name: titulo, item_sku: String(d.r.sku),
+    original_price: b.preco, description: b.descricao, description_type: "normal", item_name: b.titulo, item_sku: String(d.r.sku),
     weight: medidas.peso_kg,
     dimension: { package_length: Math.max(1, Math.ceil(medidas.comprimento_cm ?? 0)), package_width: Math.max(1, Math.ceil(medidas.largura_cm ?? 0)), package_height: Math.max(1, Math.ceil(medidas.altura_cm ?? 0)) },
     logistic_info: logistica.map((l) => ({ logistic_id: l.id, enabled: true })),
@@ -260,13 +343,76 @@ async function montarShopee(d: Awaited<ReturnType<typeof carregar>>, op: Opcoes)
     item_status: foraDoAr ? "UNLIST" : "NORMAL", condition: "NEW", pre_order: { is_pre_order: false },
   };
   return {
-    c, loja, corpo, pendencias, avisos, medidas, tiny,
+    corpo, pendencias, avisos, medidas, tiny,
     previa: {
-      loja: loja.nome, titulo, descricao, preco, estoque, fora_do_ar: foraDoAr, sku: String(d.r.sku), medidas,
+      loja: loja.nome, titulo: b.titulo, descricao: b.descricao, preco: b.preco, estoque, fora_do_ar: foraDoAr, sku: String(d.r.sku), medidas,
       categoria: categoriaId ? { id: categoriaId, caminho: caminho(categoriaId) } : null, categorias_sugeridas: sugeridas,
       marca: { id: marca.brand_id, nome: marca.brand_id ? marca.original_brand_name : "Sem marca" },
-      logistica, fotos: d.fotos.slice(0, 9).map((f: any) => ({ path: f.storage_path, tipo: f.tipo })),
-      ean: d.extra?.gtin ?? tiny.gtin ?? null,
+      logistica, fotos: b.fotos, ean: d.extra?.gtin ?? tiny.gtin ?? null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------- modo ATUALIZAR
+async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: number; nome: string }, alvo: Existente) {
+  const b = base(d, op);
+  const campos = {
+    titulo: op.campos?.titulo !== false, descricao: op.campos?.descricao !== false,
+    fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true, // preço: só se a pessoa marcar
+  };
+  const pendencias: string[] = []; const avisos: string[] = [];
+  if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
+  if (campos.titulo) pendencias.push(...b.problemas.titulo);
+  if (campos.descricao) pendencias.push(...b.problemas.descricao);
+  if (campos.fotos) pendencias.push(...b.problemas.fotos);
+  if (campos.preco) pendencias.push(...b.problemas.preco);
+
+  // o anúncio como está AGORA na Shopee (para mostrar o antes e guardar no registro)
+  const bi = await shopeeGet(c, "/api/v2/product/get_item_base_info", { item_id_list: alvo.item_id });
+  const it = bi?.response?.item_list?.[0];
+  if (bi?.error || !it) throw new Error(`não consegui ler o anúncio ${alvo.item_id} na Shopee: ${bi?.error ?? "não encontrado"} ${bi?.message ?? ""}`.trim());
+  const estendida = it.description_type === "extended";
+  const descAtual = estendida
+    ? ((it.description_info?.extended_description?.field_list ?? []) as any[]).filter((f) => f.field_type === "text").map((f) => String(f.text ?? "")).join("\n")
+    : String(it.description ?? "");
+  let precoAtual: number | null = num(it.price_info?.[0]?.original_price);
+  let nVariacoes = 0;
+  if (it.has_model) {
+    const ml = await shopeeGet(c, "/api/v2/product/get_model_list", { item_id: alvo.item_id });
+    const modelos = (ml?.response?.model ?? []) as any[];
+    nVariacoes = modelos.length;
+    const m = modelos.find((x) => String(x.model_id) === String(alvo.model_id)) ?? modelos.find((x) => String(x.model_sku ?? "").trim() === String(d.r.sku));
+    precoAtual = num(m?.price_info?.[0]?.original_price);
+    if (m) alvo.model_id = String(m.model_id);
+    if (campos.preco && !m) pendencias.push("não achei, neste anúncio, a variação com o SKU deste produto para trocar o preço");
+    if (campos.titulo || campos.descricao || campos.fotos) avisos.push(`este anúncio tem ${nVariacoes} variações: título, descrição e fotos valem para o anúncio INTEIRO, não só para este SKU`);
+  }
+  const fotosAtuais = ((it.image?.image_url_list ?? []) as string[]);
+  if (campos.fotos) avisos.push(`as ${fotosAtuais.length} fotos atuais do anúncio serão SUBSTITUÍDAS pelas ${b.fotos.length} aprovadas aqui`);
+  if (campos.descricao && estendida) avisos.push("este anúncio usa descrição com imagens; ao atualizar, a descrição passa a ser só o texto novo");
+  if (campos.preco) avisos.push("troca de preço: se o anúncio estiver em promoção, a Shopee pode recusar ou a promoção pode ser afetada");
+  if (it.item_status && it.item_status !== "NORMAL") avisos.push(`o anúncio está com a situação ${it.item_status} na Shopee`);
+
+  const corpo: Record<string, any> = { item_id: Number(alvo.item_id) };
+  if (campos.titulo) corpo.item_name = b.titulo;
+  if (campos.descricao) {
+    if (estendida) {
+      corpo.description_type = "extended";
+      corpo.description_info = { extended_description: { field_list: [{ field_type: "text", text: b.descricao }] } };
+    } else corpo.description = b.descricao;
+  }
+  if (campos.fotos) corpo.image = { image_id_list: [] as string[] };
+  const corpoPreco = campos.preco
+    ? { item_id: Number(alvo.item_id), price_list: [{ ...(it.has_model ? { model_id: Number(alvo.model_id) } : {}), original_price: b.preco }] }
+    : null;
+  const antes = { titulo: String(it.item_name ?? ""), descricao: descAtual, descricao_tipo: it.description_type ?? "normal",
+    fotos: fotosAtuais, image_id_list: (it.image?.image_id_list ?? []) as string[], preco: precoAtual };
+  return {
+    corpo, corpoPreco, pendencias: [...new Set(pendencias)], avisos, campos, antes,
+    previa: {
+      loja: loja.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: b.descricao, preco: b.preco, fotos: b.fotos,
+      alvo: { ...alvo, n_variacoes: nVariacoes, situacao: it.item_status ?? null }, campos,
+      atual: { titulo: antes.titulo, descricao: antes.descricao, fotos: antes.fotos, preco: antes.preco },
     },
   };
 }
@@ -281,64 +427,99 @@ Deno.serve(async (req) => {
   const op: Opcoes = (body.opcoes ?? {}) as Opcoes;
 
   try {
+    if (modulo === "existentes") {
+      if (!body.sku) return json({ ok: false, erro: "informe sku" }, 400);
+      return json({ ok: true, sku: String(body.sku), existentes: await existentesTodos(String(body.sku)) });
+    }
     if (!body.rascunho_id) return json({ ok: false, erro: "informe rascunho_id" }, 400);
     const d = await carregar(String(body.rascunho_id));
     if (d.r.canal !== "shopee") {
       return json({ ok: true, disponivel: false, canal: d.r.canal, publicacoes: d.publicacoes,
         motivo: "o envio direto está pronto só para a Shopee; os outros canais entram nas próximas versões" });
     }
-    const m = await montarShopee(d, op);
+    const loja = LOJA_SHOPEE[d.r.empresa] ?? LOJA_SHOPEE.ottz;
+    const c = await ctxShopee(loja.shop_id);
+    const existentes = await existentesShopee(loja.shop_id, String(d.r.sku));
+    // padrão: se o produto já tem anúncio na loja, atualiza; senão, cria
+    const modo: "criar" | "atualizar" = op.modo === "criar" || op.modo === "atualizar" ? op.modo : (existentes.length ? "atualizar" : "criar");
+    const alvo = modo === "atualizar" ? (existentes.find((e) => e.item_id === String(op.item_id ?? "")) ?? existentes[0]) : null;
+    if (modo === "atualizar" && !alvo) return json({ ok: false, erro: "este produto não tem anúncio nesta loja para atualizar — use Criar anúncio novo" }, 400);
+
+    const mC = modo === "criar" ? await montarCriar(d, op, c, loja, existentes) : null;
+    const mA = modo === "atualizar" ? await montarAtualizar(d, op, c, loja, { ...alvo! }) : null;
+    const m = (mC ?? mA)!;
 
     if (modulo === "previa") {
-      return json({ ok: true, disponivel: true, canal: "shopee", previa: m.previa, pendencias: m.pendencias, avisos: m.avisos, publicacoes: d.publicacoes });
+      return json({ ok: true, disponivel: true, canal: "shopee", modo, existentes, previa: m.previa, pendencias: m.pendencias, avisos: m.avisos, publicacoes: d.publicacoes });
     }
 
     if (modulo === "enviar") {
       if (body.confirmar !== true) return json({ ok: false, erro: "envio exige confirmar: true" }, 400);
       if (m.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: m.pendencias }, 400);
-      const jaFoi = d.publicacoes.find((p) => p.canal === "shopee" && p.empresa === d.r.empresa && p.estado === "publicado");
-      if (jaFoi && op.de_novo !== true) return json({ ok: false, erro: `este rascunho já foi enviado (anúncio ${jaFoi.item_id}). Para criar outro, marque "enviar de novo".` }, 409);
+      if (modo === "criar") {
+        const jaFoi = d.publicacoes.find((p) => p.canal === "shopee" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar");
+        if (jaFoi && op.de_novo !== true) return json({ ok: false, erro: `este rascunho já criou o anúncio ${jaFoi.item_id}. Para criar outro, marque "criar outro anúncio mesmo assim".` }, 409);
+      }
       const emCurso = d.publicacoes.find((p) => p.estado === "enviando" && Date.now() - new Date(p.criado_em).getTime() < 3 * 60_000);
       if (emCurso) return json({ ok: false, erro: "já há um envio em andamento para este rascunho — aguarde" }, 409);
 
       const { data: pub, error: ePub } = await db.from("ia_publicacao").insert({
-        rascunho_id: d.r.id, sku: d.r.sku, canal: "shopee", empresa: d.r.empresa, shop_id: m.loja.shop_id, estado: "enviando",
-        fora_do_ar: m.previa.fora_do_ar, criado_por: quem.id, criado_por_nome: quem.nome,
+        rascunho_id: d.r.id, sku: d.r.sku, canal: "shopee", empresa: d.r.empresa, shop_id: loja.shop_id, estado: "enviando", operacao: modo,
+        item_id: mA ? mA.previa.alvo.item_id : null, fora_do_ar: mC ? mC.previa.fora_do_ar : null, criado_por: quem.id, criado_por_nome: quem.nome,
       }).select("id").single();
       if (ePub || !pub) return json({ ok: false, erro: `banco: ${ePub?.message}` }, 500);
+      const registro = () => (mC ? mC.corpo : { campos: mA!.campos, corpo: mA!.corpo, preco: mA!.corpoPreco, antes: mA!.antes });
       const falhar = async (erro: string, resposta: unknown = null) => {
-        await db.from("ia_publicacao").update({ estado: "erro", erro: erro.slice(0, 500), enviado: m.corpo, resposta }).eq("id", pub.id);
+        await db.from("ia_publicacao").update({ estado: "erro", erro: erro.slice(0, 500), enviado: registro(), resposta }).eq("id", pub.id);
         return json({ ok: false, erro, resposta }, 200);
       };
 
-      // as medidas conferidas ficam salvas para o próximo anúncio do mesmo produto
-      await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...m.medidas, gtin: d.extra?.gtin ?? m.tiny.gtin ?? null, ncm: d.extra?.ncm ?? m.tiny.ncm ?? null }, { onConflict: "sku" });
+      // ------------------------------------------------ CRIAR
+      if (mC) {
+        // as medidas conferidas ficam salvas para o próximo anúncio do mesmo produto
+        await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...mC.medidas, gtin: d.extra?.gtin ?? mC.tiny.gtin ?? null, ncm: d.extra?.ncm ?? mC.tiny.ncm ?? null }, { onConflict: "sku" });
+        try { mC.corpo.image.image_id_list = await subirFotos(c, mC.previa.fotos); }
+        catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
+        // sem repetição automática
+        const resp = await shopeePost(c, "/api/v2/product/add_item", mC.corpo);
+        const itemId = resp?.response?.item_id;
+        if (resp?.error || !itemId) return await falhar(`a Shopee recusou o anúncio: ${resp?.error || "sem item_id"} ${resp?.message ?? ""}`.trim(), resp);
+        const url = `https://shopee.com.br/product/${loja.shop_id}/${itemId}`;
+        await db.from("ia_publicacao").update({ estado: "publicado", item_id: String(itemId), url, enviado: mC.corpo, resposta: resp }).eq("id", pub.id);
+        await db.from("ia_rascunho").update({ status: "publicado" }).eq("id", d.r.id);
+        return json({ ok: true, modo, item_id: String(itemId), url, fora_do_ar: mC.previa.fora_do_ar, avisos: mC.avisos });
+      }
 
-      // 1) fotos
-      const idsImagem: string[] = [];
-      try {
-        for (const f of m.previa.fotos) {
-          const dl = await db.storage.from(BUCKET).download(f.path);
-          if (dl.error || !dl.data) throw new Error(`não consegui ler a foto ${f.tipo} do armazenamento`);
-          const bytes = new Uint8Array(await dl.data.arrayBuffer());
-          const mime = (dl.data.type || "image/png").split(";")[0];
-          idsImagem.push(await subirImagem(m.c, bytes, mime, `${f.tipo}.${mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg"}`));
+      // ------------------------------------------------ ATUALIZAR
+      const a = mA!;
+      const respostas: Record<string, unknown> = {};
+      const feitos: string[] = [];
+      if (a.campos.fotos) {
+        try { a.corpo.image.image_id_list = await subirFotos(c, a.previa.fotos); }
+        catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
+      }
+      if (a.campos.titulo || a.campos.descricao || a.campos.fotos) {
+        const resp = await shopeePost(c, "/api/v2/product/update_item", a.corpo);
+        respostas.update_item = resp;
+        if (resp?.error) return await falhar(`a Shopee recusou a atualização: ${resp.error} ${resp.message ?? ""}`.trim(), respostas);
+        feitos.push(...[a.campos.titulo ? "título" : "", a.campos.descricao ? "descrição" : "", a.campos.fotos ? "fotos" : ""].filter(Boolean));
+      }
+      if (a.corpoPreco) {
+        const resp = await shopeePost(c, "/api/v2/product/update_price", a.corpoPreco);
+        respostas.update_price = resp;
+        const falhas = (resp?.response?.failure_list ?? []) as any[];
+        if (resp?.error || falhas.length) {
+          const motivo = resp?.error ? `${resp.error} ${resp.message ?? ""}` : String(falhas[0]?.failed_reason ?? "preço recusado");
+          return await falhar(`${feitos.length ? `${feitos.join(", ")} atualizado(s), mas ` : ""}a Shopee recusou o preço: ${motivo}`.trim(), respostas);
         }
-      } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
-      m.corpo.image.image_id_list = idsImagem;
-
-      // 2) anúncio (sem repetição automática)
-      const resp = await shopeePost(m.c, "/api/v2/product/add_item", m.corpo);
-      const itemId = resp?.response?.item_id;
-      if (resp?.error || !itemId) return await falhar(`a Shopee recusou o anúncio: ${resp?.error || "sem item_id"} ${resp?.message ?? ""}`.trim(), resp);
-
-      const url = `https://shopee.com.br/product/${m.loja.shop_id}/${itemId}`;
-      await db.from("ia_publicacao").update({ estado: "publicado", item_id: String(itemId), url, enviado: m.corpo, resposta: resp }).eq("id", pub.id);
+        feitos.push("preço");
+      }
+      await db.from("ia_publicacao").update({ estado: "publicado", url: a.previa.alvo.url, enviado: registro(), resposta: respostas }).eq("id", pub.id);
       await db.from("ia_rascunho").update({ status: "publicado" }).eq("id", d.r.id);
-      return json({ ok: true, item_id: String(itemId), url, fora_do_ar: m.previa.fora_do_ar, avisos: m.avisos });
+      return json({ ok: true, modo, item_id: a.previa.alvo.item_id, url: a.previa.alvo.url, atualizados: feitos, avisos: a.avisos });
     }
 
-    return json({ ok: false, erro: "use ?modulo=previa ou ?modulo=enviar" }, 400);
+    return json({ ok: false, erro: "use ?modulo=existentes, previa ou enviar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }

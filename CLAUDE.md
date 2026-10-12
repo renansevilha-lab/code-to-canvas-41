@@ -1959,6 +1959,22 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   das Dedeiras; título vazio = a IA escreve pelo nome, ou MENOR PREÇO / DA SHOPEE nos estilos
   Shopee; `|` no título separa as duas linhas). Estilos 2 (ML fundo branco) e 5 (sem texto) não
   mudaram. Efeito ainda não visto numa imagem gerada.
+- **Atualizar anúncio existente (12/out, pedido do dono) — `anuncio-publicar` v2:** dos 2.318
+  produtos ativos, 1.635 já têm anúncio em algum canal (Shopee Ottz 1.314, Bumi 1.042, ML 342,
+  TikTok 106) — criar para eles duplicaria. `?modulo=existentes {sku}` (só banco) devolve onde o
+  SKU já está anunciado: Shopee por loja (`shopee_anuncios.sku_pai` = anúncio próprio;
+  `shopee_anuncios_variacao.sku` = variação de um anúncio maior, com `model_id`), `ml_anuncios`
+  e `tiktok_produtos`; a Amazon não tem espelho. Os cartões do bloco 3 mostram "já anunciado /
+  ainda não anunciado" por loja. **`opcoes.modo`**: `atualizar` é o PADRÃO quando o SKU já tem
+  anúncio na loja do rascunho (senão `criar`). Atualizar = `product.update_item` só com os campos
+  marcados (`opcoes.campos`: título, descrição e fotos ligados por padrão; **preço desligado por
+  padrão** → `product.update_price`, por variação quando o anúncio tem variações). A prévia lê o
+  anúncio AO VIVO e mostra hoje → vai ficar; o estado anterior (título, descrição, ids das
+  fotos, preço) fica em `ia_publicacao.enviado.antes`. Avisos: anúncio com variações (texto e
+  fotos valem para todas), fotos substituídas, descrição "extended" vira só texto, preço ×
+  promoção. `ia_publicacao.operacao` (`criar`|`atualizar`, migração `ia_15`). A trava "já foi
+  enviado" vale só para criar. Atualização mexe em anúncio NO AR — sempre com a confirmação da
+  tela. **Não testado** (nem prévia nem envio do modo atualizar rodaram).
 - **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
   `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
 
@@ -2007,7 +2023,7 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v1 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `anuncio-publicar` | v2 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

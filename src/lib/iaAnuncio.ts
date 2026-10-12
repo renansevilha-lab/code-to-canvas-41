@@ -126,8 +126,8 @@ async function chamarFuncao(funcao: string, modulo: string, body: Record<string,
 }
 /** Geração: briefing, texto, prompts de imagem, imagens, foto de referência. */
 export const chamarIa = (modulo: string, body: Record<string, unknown>) => chamarFuncao("ia-anuncio", modulo, body);
-/** Envio do anúncio ao marketplace (`previa` só lê; `enviar` cria o anúncio). */
-export const chamarPublicar = (modulo: "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
+/** Envio do anúncio ao marketplace: `existentes` e `previa` só leem; `enviar` cria ou atualiza o anúncio. */
+export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
 
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */
 export async function urlsAssinadas(paths: string[]): Promise<Record<string, string>> {
