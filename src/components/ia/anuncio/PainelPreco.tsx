@@ -30,7 +30,13 @@ const corMargem = (v: number | null, alvo: number) => (v == null ? undefined : v
 export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; canal: string; empresa: string; rascunho: IaRascunho | null }) {
   const qc = useQueryClient();
   // margem escolhida (fração). null = a margem alvo do canal. O que foi salvo no rascunho volta ao abrir.
-  const salva = rascunho?.memoria_calculo?.margem_desejada;
+  // UM anúncio, vários destinos: o preço do rascunho é o do canal dele; o de outro destino
+  // (canal:empresa) fica guardado à parte, em memoria_calculo.destinos — a função de envio lê de lá.
+  const proprio = !rascunho || (rascunho.canal === canal && rascunho.empresa === empresa);
+  const chaveDestino = `${canal}:${empresa}`;
+  const guardado = proprio ? null : ((rascunho?.memoria_calculo?.destinos?.[chaveDestino] ?? null) as { preco?: number | null; margem?: number | null } | null);
+  const salva = proprio ? rascunho?.memoria_calculo?.margem_desejada : guardado?.margem;
+  const precoSalvo = proprio ? rascunho?.preco_aprovado : guardado?.preco;
   const [margem, setMargem] = useState<number | null>(salva != null ? Number(salva) : null);
   const [margemTxt, setMargemTxt] = useState(salva != null ? emPct(Number(salva)) : "");
   useEffect(() => {
@@ -70,9 +76,9 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
   const [analise, setAnalise] = useState<Record<string, any> | null>(null);
   const [ocupado, setOcupado] = useState(false);
   useEffect(() => {
-    setPreco(rascunho?.preco_aprovado != null ? String(rascunho.preco_aprovado).replace(".", ",") : "");
+    setPreco(precoSalvo != null ? String(precoSalvo).replace(".", ",") : "");
     setAnalise(null);
-  }, [rascunho?.id, rascunho?.preco_aprovado, canal, empresa]);
+  }, [rascunho?.id, precoSalvo, canal, empresa]);
 
   const p = precoQ.data;
   const mem = p?.memoria_calculo ?? {};
@@ -100,10 +106,13 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
   async function salvar() {
     if (!rascunho) return;
     const v = numero();
-    const memoria = { ...(rascunho.memoria_calculo ?? {}), margem_desejada: margem };
-    const { error } = await supabaseExternal.from("ia_rascunho").update({ preco_aprovado: v > 0 ? v : null, memoria_calculo: memoria }).eq("id", rascunho.id);
+    const mc = rascunho.memoria_calculo ?? {};
+    const mudanca = proprio
+      ? { preco_aprovado: v > 0 ? v : null, memoria_calculo: { ...mc, margem_desejada: margem } }
+      : { memoria_calculo: { ...mc, destinos: { ...(mc.destinos ?? {}), [chaveDestino]: { preco: v > 0 ? v : null, margem } } } };
+    const { error } = await supabaseExternal.from("ia_rascunho").update(mudanca).eq("id", rascunho.id);
     if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
-    toast.success("Preço salvo no rascunho");
+    toast.success(`Preço de ${nomeCanal(canal)} · ${nomeEmpresa(empresa)} salvo`);
     void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
   }
 

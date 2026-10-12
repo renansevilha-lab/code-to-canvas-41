@@ -2080,6 +2080,34 @@ produto base (Xô Gatinho, Adestrador) servem para todos os kits dele — sem ge
 - **Não testado ao vivo:** nenhuma chamada com sessão de usuário (a prévia local para no
   login). Conferido: preflight 200, sem sessão 401, chave pública 401; `tsc` e `vite build` ok.
   A cópia de arquivo no Storage (`storage.copy`) é o passo a observar na 1ª vez.
+  (12/out, tarde: o dono usou o "Trazer" no 14560 Shopee → Mercado Livre e funcionou.)
+
+## 5.11.7 IA · Anúncios — um anúncio, vários destinos (12/out/2026)
+
+Pedido do dono depois de testar o "Trazer": **sem botão de trazer para o mesmo produto** — o
+anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Enviar anúncio".
+
+- **`anuncio-publicar` v5:** `previa` e `enviar` aceitam `destino {canal, empresa}`. Sem
+  `destino` vale o canal/empresa do rascunho (como antes). Com destino diferente, o MESMO
+  rascunho (texto + fotos aprovadas) é conferido e enviado para aquela loja; `ia_publicacao`
+  grava o canal/empresa do DESTINO. Conferido por sha256 (`d8aa86ee…551b`).
+- **Preço por destino:** `ia_rascunho.preco_aprovado` continua sendo o preço do canal do
+  rascunho. O de outro destino fica em `memoria_calculo.destinos["canal:empresa"] = {preco,
+  margem}` (gravado pelo `PainelPreco` quando o canal da tela não é o do rascunho). A função
+  usa: `opcoes.preco` → o salvo para o destino → o sugerido por `ia_calcular_preco` daquele
+  canal (chamado em nome do usuário). **Nunca** o preço do canal do rascunho.
+- **Tela:** o canal/empresa da URL de `/ia/gerar` passou a ser o DESTINO (preço e envio).
+  Sem rascunho exato daquele canal, abre o mais recente do produto; trocar canal/empresa no
+  topo ou clicar em "enviar para cá" num cartão mantém o mesmo rascunho. Cartões: uma linha
+  por loja (Shopee Ottz/Bumi, Mercado Livre Ottz/SVL) com "já anunciado" + botão. Sumiram
+  "abrir o rascunho de <canal>" e o "Trazer" do mesmo produto; o bloco de aproveitar ficou só
+  com a família de kit ("Usar as fotos deste produto" e "Levar as fotos para os kits").
+- **Limites que continuam por canal:** título do Mercado Livre ≤ 60 (na atualização o título
+  vem desmarcado); capa com selo da Shopee não deve ir para outro canal — na conferência,
+  desmarque a foto em "Novas, aprovadas aqui".
+- **Legado:** rascunhos de Mercado Livre criados pelo "Trazer" (ex.: 14560) continuam
+  existindo como cópias; aparecem em "Outros rascunhos deste SKU".
+- **Não testado ao vivo:** `previa`/`enviar` com `destino` diferente do canal do rascunho.
 
 ## 6. Edge Functions
 
@@ -2126,7 +2154,7 @@ produto base (Xô Gatinho, Adestrador) servem para todos os kits dele — sem ge
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v4 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `anuncio-publicar` | v5 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

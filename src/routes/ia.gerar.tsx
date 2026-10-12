@@ -80,7 +80,10 @@ function GerarAnuncioPage() {
       return (data ?? []) as IaRascunho[];
     },
   });
-  const rascunho = (rascunhosQ.data ?? []).find((x) => (r ? x.id === r : x.canal === canal && x.empresa === empresa)) ?? null;
+  // UM anúncio por produto (12/out): sem rascunho exato deste canal, abre o mais recente do produto —
+  // o canal/empresa da tela é só o DESTINO (preço e envio); texto e fotos são os mesmos.
+  const lista = rascunhosQ.data ?? [];
+  const rascunho = lista.find((x) => (r ? x.id === r : x.canal === canal && x.empresa === empresa)) ?? (r ? null : lista[0] ?? null);
 
   const etapasQ = useQuery({
     queryKey: ["ia-anuncio", "etapas", rascunho?.id],
@@ -142,7 +145,7 @@ function GerarAnuncioPage() {
       </div>
 
       <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} extra={dados.extra} canal={canal} empresa={empresa}
-        onCanal={(c) => set({ canal: c, r: undefined })} onEmpresa={(e) => set({ empresa: e, r: undefined })} />
+        onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
 
       {outros.length > 0 && (
         <Card><CardContent className="p-3 flex flex-wrap items-center gap-2 text-xs">
@@ -177,7 +180,7 @@ function GerarAnuncioPage() {
       )}
 
       {rascunho && r !== "novo" && (
-        <Publicar rascunho={rascunho} onCanal={(c) => set({ canal: c, r: undefined })} />
+        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
       )}
     </div>
   );

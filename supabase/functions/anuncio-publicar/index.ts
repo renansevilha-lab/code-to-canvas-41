@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v4 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v5 (12/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -30,6 +30,11 @@
 //   Atualizar: fotos (mesmo seletor manter/novas/posição), descrição, preço (só se marcar) e
 //   título (só se marcar; o ML recusa em anúncio que já vendeu).
 //   opcoes extras do ML: tipo_anuncio (gold_special | gold_pro), gtin, atributos {ID: valor}.
+// v5: UM ANÚNCIO, VÁRIOS DESTINOS (pedido do dono). body.destino = {canal, empresa} manda o MESMO
+//   rascunho (texto e fotos) para outro marketplace/loja, sem um rascunho por canal. Sem destino
+//   vale o canal/empresa do rascunho, como antes. O preço de outro destino é o salvo para ele
+//   (memoria_calculo.destinos["canal:empresa"].preco) ou, se não houver, o sugerido pelas taxas
+//   daquele canal (ia_calcular_preco) — nunca o preço do canal do rascunho.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -69,7 +74,8 @@ const num = (v: unknown): number | null => {
 };
 
 // ---------------------------------------------------------------- acesso
-type Quem = { id: string | null; nome: string | null };
+// deno-lint-ignore no-explicit-any
+type Quem = { id: string | null; nome: string | null; doUsuario?: any };
 async function exigirAcesso(req: Request): Promise<Quem | Response> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearer && bearer === SRK) return { id: null, nome: "sistema" };
@@ -81,7 +87,7 @@ async function exigirAcesso(req: Request): Promise<Quem | Response> {
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "ia" });
   if (error || data !== true) return json({ erro: "sem acesso ao módulo IA · Anúncios" }, 403);
   const { data: perfil } = await db.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
-  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null };
+  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null, doUsuario };
 }
 
 // ---------------------------------------------------------------- Shopee
@@ -878,6 +884,20 @@ Deno.serve(async (req) => {
     }
     if (!body.rascunho_id) return json({ ok: false, erro: "informe rascunho_id" }, 400);
     const d = await carregar(String(body.rascunho_id));
+    // v5: destino escolhido na tela — o mesmo rascunho serve a qualquer marketplace/loja
+    const dest = (body.destino ?? {}) as Record<string, unknown>;
+    const canalD = typeof dest.canal === "string" && dest.canal ? dest.canal : String(d.r.canal);
+    const empresaD = dest.empresa === "ottz" || dest.empresa === "svl" ? dest.empresa : String(d.r.empresa);
+    if (canalD !== d.r.canal || empresaD !== d.r.empresa) {
+      // o preço do rascunho é o do canal DELE: para outro destino vale o salvo para o destino ou o sugerido
+      const salvo = num(d.r.memoria_calculo?.destinos?.[`${canalD}:${empresaD}`]?.preco);
+      let sugerido: number | null = null;
+      if (salvo == null && quem.doUsuario) {
+        const { data: pr } = await quem.doUsuario.rpc("ia_calcular_preco", { p_sku: d.r.sku, p_canal: canalD, p_empresa: empresaD });
+        sugerido = num((pr as Record<string, unknown> | null)?.preco_sugerido);
+      }
+      d.r = { ...d.r, canal: canalD, empresa: empresaD, preco_aprovado: salvo, preco_sugerido: sugerido };
+    }
     if (d.r.canal === "mercado_livre") return await fluxoMl(d, op, modulo, body, quem);
     if (d.r.canal !== "shopee") {
       return json({ ok: true, disponivel: false, canal: d.r.canal, publicacoes: d.publicacoes,

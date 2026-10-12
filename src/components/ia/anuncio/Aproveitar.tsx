@@ -34,19 +34,22 @@ export function Aproveitar({ sku, canal, empresa, rascunho, imagens, etapas, onD
   const d = fontesQ.data;
   const comArquivo = imagens.filter((i) => i.storage_path);
   const podeLevar = !!rascunho && comArquivo.length > 0 && (d?.familia.length ?? 0) > 0;
-  if (!d || (d.fontes.length === 0 && !podeLevar)) return null;
+  // o MESMO produto não precisa mais ser trazido de outro canal: o anúncio é um só e o destino é
+  // escolhido no bloco "Enviar". Aqui ficam só as fotos da família de kit (outros produtos).
+  const fontes = (d?.fontes ?? []).filter((f) => f.relacao !== "mesmo");
+  if (!d || (fontes.length === 0 && !podeLevar)) return null;
 
   return (
     <Card><CardContent className="p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Recycle className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-semibold">Aproveitar o que já está pronto</h3>
+        <h3 className="font-semibold">Aproveitar as fotos da família de kit</h3>
         <span className="text-xs text-muted-foreground">sem gerar de novo e sem custo de IA</span>
       </div>
 
-      {d.fontes.length > 0 && (
+      {fontes.length > 0 && (
         <div className="divide-y rounded-md border">
-          {d.fontes.slice(0, 12).map((f) => {
+          {fontes.slice(0, 12).map((f) => {
             const ok = f.imagens.filter((i) => i.status === "aprovado").length;
             const st = f.texto?.status ? ROTULO_ETAPA[f.texto.status] : null;
             return (
@@ -64,7 +67,7 @@ export function Aproveitar({ sku, canal, empresa, rascunho, imagens, etapas, onD
                   </div>
                 </div>
                 <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setTrazer(f)}>
-                  <ArrowDownToLine className="h-3.5 w-3.5" />Trazer para {nomeCanal(canal)}
+                  <ArrowDownToLine className="h-3.5 w-3.5" />Usar as fotos deste produto
                 </Button>
               </div>
             );
