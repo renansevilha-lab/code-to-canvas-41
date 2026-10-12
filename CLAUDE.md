@@ -2180,7 +2180,7 @@ faltou no anúncio criado direto na Shopee).
     `TESTE-APP-208691-2` ainda ATIVA (virou kit) — apagar na tela do Tiny.
   - Achado útil: v3 tem `POST/PUT /produtos/{id}/anexos` (`{url, externo}`) — dá para mandar
     FOTO ao produto do Tiny por endereço (ainda não usado).
-- **Edge fn `tiny-produto-variacoes` v1** (JWT de usuário + módulo `ia`; conta Tiny `ottz`):
+- **Edge fn `tiny-produto-variacoes`** (v1; v2 logo abaixo — JWT de usuário + módulo `ia`; conta Tiny `ottz`):
   `sugerir {base_sku}` (dados do produto + próximos SKUs livres = maior SKU numérico de 5
   dígitos do espelho + 1…) · `previa {…}` (confere tudo, inclusive SKU livre no espelho E ao
   vivo no Tiny; não escreve) · `criar {…, confirmar: true}` (POST do pai → v2 em cada variação
@@ -2194,6 +2194,17 @@ faltou no anúncio criado direto na Shopee).
   da opção, quantidade no kit, SKU, preço — sugeridos; preço = preço do base × quantidade;
   atalhos 1·2·3, 3·4·6, 6·12) → Conferir → Criar no Tiny (com confirmação) → resultado por
   variação. **Não testado pela tela** (sem sessão a função responde 401).
+- **v2 (12/out, noite) — 1º uso real pelo dono (base 16452, Bento Mix 4kg):** a sugestão de SKU
+  saía do ESPELHO (maior = 16475), mas o dono tinha criado 16476–16485 no Tiny horas antes (o
+  espelho só atualiza de madrugada) → todas as linhas recusadas com "já existe no Tiny: Areia
+  Higiênica Bumi Pet Mix…", lido como "o sistema confundiu Bento com Bumi". Corrigido: `sugerir`
+  confere os números **ao vivo no Tiny** (`skusLivres`: parte do maior do espelho, sonda 6 por
+  vez, até +72) e só devolve os livres; a recusa agora diz `SKU X já está em uso no Tiny por
+  OUTRO produto ("nome"): troque o número`. **Areia vai por PESO** (regra do dono): quando o nome
+  do base casa `areia|granulado|sílica` e tem peso (`extrairPeso` de `src/lib/prazo.ts`), as
+  opções nascem "4kg, 8kg, 12kg…" (peso da embalagem × quantidade do kit), o nome do pai troca
+  o peso pela faixa ("… 4kg a 20kg"), o padrão é 1–5 embalagens e os atalhos são em kg. Demais
+  produtos seguem em "N unidades".
 - **Lista de anúncios (mesmo dia):** filtro "Fotos da família, sem capa própria" e ordem "Mais
   vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC `ia_catalogo` responde
   `versao >= 2`. **RPC v1.1 APLICADA em 12/out às 18h18** (migração
@@ -2257,7 +2268,7 @@ faltou no anúncio criado direto na Shopee).
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
-| `tiny-produto-variacoes` | v1 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir`, `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-produto-variacoes` | v2 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

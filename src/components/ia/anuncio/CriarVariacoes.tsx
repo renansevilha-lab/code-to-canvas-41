@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Loader2, Plus, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
+import { extrairPeso } from "@/lib/prazo";
 
 // ============================================================================
 // "Criar produto com variações" (12/out/2026, pedido do dono): a partir de um produto
@@ -33,7 +34,10 @@ interface Resultado {
 
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
-const rotuloDe = (n: number) => `${n} ${n === 1 ? "unidade" : "unidades"}`;
+const rotuloUnidades = (n: number) => `${n} ${n === 1 ? "unidade" : "unidades"}`;
+const kg = (v: number) => String(Math.round(v * 1000) / 1000).replace(".", ",");
+/** Areia (e granulado/sílica) se vende por PESO: as opções são "4kg, 8kg, 12kg…", não "1, 2, 3 unidades". */
+const EH_AREIA = /areia|granulado|s[ií]lica/i;
 
 export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () => void }) {
   const qc = useQueryClient();
@@ -53,18 +57,47 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
 
   const base = sugQ.data?.base;
   const livres = sugQ.data?.skus ?? [];
+  const [nomeEditado, setNomeEditado] = useState(false);
+  // peso da embalagem do produto base, lido do nome ("… 4kg"), só para areia: muda o nome das opções e o do pai
+  const peso = useMemo(() => {
+    if (!base || !EH_AREIA.test(base.nome)) return null;
+    const p = extrairPeso(base.nome);
+    if (!p) return null;
+    const v = Number(p.valor.replace(",", "."));
+    if (!(v > 0)) return null;
+    return { kg: p.unidade === "g" ? v / 1000 : p.unidade === "kg" ? v : 0, inicio: p.inicio, fim: p.fim };
+  }, [base]);
+  const porPeso = !!peso && peso.kg > 0;
+  const rotuloDe = (n: number) => (porPeso ? `${kg(peso!.kg * n)}kg` : rotuloUnidades(n));
+  /** Nome do pai: na areia, o peso do nome vira a faixa ("4kg a 20kg"). */
+  const nomeDoPai = (qtds: number[]) => {
+    if (!base) return "";
+    if (!porPeso || qtds.length === 0) return base.nome;
+    const min = Math.min(...qtds), max = Math.max(...qtds);
+    return `${base.nome.slice(0, peso!.inicio)}${kg(peso!.kg * min)}kg a ${kg(peso!.kg * max)}kg${base.nome.slice(peso!.fim)}`.replace(/\s+/g, " ").trim();
+  };
   /** Monta as linhas para as quantidades dadas: SKUs na sequência sugerida e preço = preço do produto base × quantidade. */
   const montar = (qtds: number[]) => {
     setLinhas(qtds.map((n, i) => ({ rotulo: rotuloDe(n), quantidade: String(n), sku: livres[i + 1] ?? "", preco: base?.preco ? dinheiro(base.preco * n) : "" })));
+    if (!nomeEditado) setNome(nomeDoPai(qtds));
     setPrevia(null);
   };
   useEffect(() => {
     if (!sugQ.data) return;
-    setNome(sugQ.data.base.nome); setSkuPai(sugQ.data.skus[0] ?? "");
-    montar([1, 2, 3]);
+    setSkuPai(sugQ.data.skus[0] ?? "");
+    montar(porPeso ? [1, 2, 3, 4, 5] : [1, 2, 3]);
   }, [sugQ.data]);
 
-  const mudar = (i: number, x: Partial<Linha>) => { setLinhas((ls) => ls.map((l, j) => (j === i ? { ...l, ...x } : l))); setPrevia(null); };
+  const mudar = (i: number, x: Partial<Linha>) => {
+    setLinhas((ls) => ls.map((l, j) => {
+      if (j !== i) return l;
+      // mudou a quantidade e o nome da opção ainda era o automático: o nome acompanha (na areia, o peso)
+      const n = Number(x.quantidade);
+      const acompanha = x.quantidade !== undefined && x.rotulo === undefined && n >= 1 && l.rotulo === rotuloDe(Number(l.quantidade));
+      return { ...l, ...x, ...(acompanha ? { rotulo: rotuloDe(n) } : {}) };
+    }));
+    setPrevia(null);
+  };
   const adicionar = () => {
     const usados = new Set([skuPai, ...linhas.map((l) => l.sku)]);
     const maiorQtd = Math.max(0, ...linhas.map((l) => Number(l.quantidade) || 0));
@@ -165,7 +198,7 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
               <div className="grid sm:grid-cols-[1fr_130px_150px] gap-2">
                 <label className="block">
                   <span className="text-[11px] text-muted-foreground">Nome do produto com variações</span>
-                  <Input className="h-8 mt-1" value={nome} onChange={(e) => { setNome(e.target.value); setPrevia(null); }} />
+                  <Input className="h-8 mt-1" value={nome} onChange={(e) => { setNome(e.target.value); setNomeEditado(true); setPrevia(null); }} />
                 </label>
                 <label className="block">
                   <span className="text-[11px] text-muted-foreground">SKU do pai</span>
@@ -180,9 +213,12 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
               <div className="space-y-1.5">
                 <div className="flex flex-wrap items-center gap-1.5 text-sm">
                   <span className="font-medium mr-1">Variações</span>
-                  {[[1, 2, 3], [3, 4, 6], [6, 12]].map((q) => (
-                    <Button key={q.join("-")} size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => montar(q)}>{q.join(" · ")} un.</Button>
+                  {(porPeso ? [[1, 2, 3], [1, 2, 3, 4, 5], [2, 3, 4, 5]] : [[1, 2, 3], [3, 4, 6], [6, 12]]).map((q) => (
+                    <Button key={q.join("-")} size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => montar(q)}>
+                      {porPeso ? `${q.map((n) => kg(peso!.kg * n)).join(" · ")} kg` : `${q.join(" · ")} un.`}
+                    </Button>
                   ))}
+                  {porPeso && <span className="text-[11px] text-muted-foreground">areia: as opções vão por peso ({kg(peso!.kg)}kg por embalagem)</span>}
                 </div>
                 <div className="grid grid-cols-[1fr_70px_120px_100px_28px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
                   <span>Nome da opção</span><span>Qtd. no kit</span><span>SKU</span><span>Preço</span><span />
@@ -198,7 +234,7 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
                 ))}
                 <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={adicionar}><Plus className="h-3.5 w-3.5" />variação</Button>
                 <p className="text-[11px] text-muted-foreground">
-                  Os SKUs vêm sugeridos na sequência do catálogo (o Tiny exige o SKU na criação pela API); troque se preferir. O preço sugerido é o do produto base × a quantidade.
+                  Os SKUs sugeridos são os próximos números livres, conferidos agora no Tiny (ele exige o SKU na criação pela API); troque se preferir. O preço sugerido é o do produto base × a quantidade.
                 </p>
               </div>
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v1 (12/out/2026)
+// Edge Function: tiny-produto-variacoes v2 (12/out/2026)
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -19,6 +19,9 @@
 //    mantém o vínculo com o pai. É o passo 2 desta função;
 //  - excluir pela API não funciona (v3 DELETE = 403; v2 não aceita situação "E"): produto criado
 //    por engano se apaga na tela do Tiny.
+// v2: os SKUs sugeridos são conferidos AO VIVO no Tiny (o espelho só se atualiza de madrugada: no 1º
+//  uso sugeriu 16476–16481, que o dono tinha criado no Tiny horas antes) e a mensagem de SKU ocupado
+//  deixa claro que o nome citado é o do OUTRO produto que já usa aquele número.
 // Regras: sessão de usuário com o módulo `ia`; escrita NÃO é repetida (um POST repetido criaria
 // produto em dobro); a v2 tem limite de 60 chamadas/min e no código 6 a função para.
 // ============================================================================
@@ -117,14 +120,38 @@ async function carregarBase(token: string, sku: string) {
 async function skusOcupados(token: string, skus: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const { data } = await db.from("produtos").select("sku, nome").in("sku", skus);
-  for (const x of ((data ?? []) as any[])) out.set(String(x.sku), `já existe no catálogo: ${String(x.nome ?? "").slice(0, 60)}`);
+  for (const x of ((data ?? []) as any[])) out.set(String(x.sku), `já está em uso por OUTRO produto do catálogo ("${String(x.nome ?? "").slice(0, 60)}"): troque o número`);
   for (const s of skus) {
     if (out.has(s)) continue;
     const r = await v3(token, "GET", `/produtos?codigo=${encodeURIComponent(s)}&limit=1`);
     const it = (r.body?.itens ?? [])[0];
-    if (it && String(it.sku) === s) out.set(s, `já existe no Tiny: ${String(it.descricao ?? "").slice(0, 60)}`);
+    if (it && String(it.sku) === s) out.set(s, `já está em uso no Tiny por OUTRO produto ("${String(it.descricao ?? "").slice(0, 60)}"): troque o número`);
   }
   return out;
+}
+
+/** Este SKU já é de algum produto no Tiny? (sem espera embutida: para sondar alguns de uma vez; null = não deu para saber) */
+async function ocupadoNoTiny(token: string, sku: string): Promise<boolean | null> {
+  try {
+    const r = await fetch(`${TINY}/produtos?codigo=${encodeURIComponent(sku)}&limit=1`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+    if (!r.ok) return null;
+    const b = await r.json().catch(() => null);
+    return String(b?.itens?.[0]?.sku ?? "") === sku;
+  } catch { return null; }
+}
+/** Próximos SKUs numéricos realmente LIVRES: parte do maior do espelho e confere no Tiny, 6 por vez. */
+async function skusLivres(token: string, quantos: number): Promise<string[]> {
+  const { data: maior } = await db.from("produtos").select("sku").filter("sku", "match", "^[0-9]{5}$").order("sku", { ascending: false }).limit(1);
+  const ini = Number(maior?.[0]?.sku ?? 0) + 1;
+  const livres: string[] = [];
+  if (ini <= 1) return livres;
+  for (let de = ini; livres.length < quantos && de < ini + 72; de += 6) {
+    const lote = Array.from({ length: 6 }, (_, i) => String(de + i));
+    const res = await Promise.all(lote.map((s) => ocupadoNoTiny(token, s)));
+    lote.forEach((s, i) => { if (res[i] === false && livres.length < quantos) livres.push(s); });
+    await sleep(500);
+  }
+  return livres;
 }
 
 async function conferir(token: string, pd: Pedido) {
@@ -222,15 +249,14 @@ Deno.serve(async (req) => {
 
     if (modulo === "sugerir") {
       const base = await carregarBase(token, String(body.base_sku ?? "").trim());
-      // próximos SKUs: depois do maior SKU numérico do catálogo (sugestão; a pessoa pode trocar)
-      const { data: maior } = await db.from("produtos").select("sku").filter("sku", "match", "^[0-9]{5}$").order("sku", { ascending: false }).limit(1);
-      const ini = Number(maior?.[0]?.sku ?? 0) + 1;
+      // próximos SKUs livres, conferidos ao vivo no Tiny (sugestão; a pessoa pode trocar)
       const n = Math.min(Math.max(Math.floor(num(body.n) ?? 4), 1), 13);
+      const livres = await skusLivres(token, n);
       const d = base.det;
       return json({
         ok: true,
         base: { sku: base.espelho.sku, nome: d.descricao, tipo: d.tipo, tipo_variacao: d.tipoVariacao ?? "N", preco: num(d.precos?.preco), custo: base.custo, marca: d.marca?.nome ?? null },
-        skus: ini > 1 ? Array.from({ length: n }, (_, i) => String(ini + i)) : [],
+        skus: livres,
       });
     }
 
