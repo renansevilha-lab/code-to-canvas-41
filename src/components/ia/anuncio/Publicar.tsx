@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Check, CheckCircle2, ExternalLink, Loader2, Send, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -97,6 +97,10 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
     return undefined;
   };
   const pronto = DESTINOS.find((d) => d.canal === canal)?.pronto === true;
+  // clicar em "enviar para cá" já abre a conferência (o número muda a cada clique e remonta o Envio aberto)
+  const [abrir, setAbrir] = useState(0);
+  // todos os anúncios deste produto no canal escolhido (todas as lojas): servem ao "Atualizar também"
+  const outros: Outro[] = (LOJAS[canal] ?? []).flatMap((l) => (listaDe(canal, l.empresa) ?? []).map((e) => ({ empresa: l.empresa, rotulo: l.rotulo, e })));
   return (
     <Card><CardContent className="p-5 space-y-4">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -135,7 +139,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
                         </div>
                         {d.pronto && (
                           <Button size="sm" variant={escolhida ? "default" : "outline"} className="h-6 px-2 text-[11px] shrink-0"
-                            onClick={() => onDestino(d.canal, l.empresa)}>{escolhida ? "escolhido" : "enviar para cá"}</Button>
+                            onClick={() => { setAbrir((n) => n + 1); onDestino(d.canal, l.empresa); }}>{escolhida ? "escolhido" : "enviar para cá"}</Button>
                         )}
                       </div>
                     );
@@ -147,27 +151,32 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
         })}
       </div>
       {pronto
-        ? <Envio key={`${rascunho.id}-${canal}-${empresa}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null} />
+        ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
+            abertoInicial={abrir > 0} outros={outros} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
     </CardContent></Card>
   );
 }
 
+/** Um anúncio deste produto numa loja do canal (candidato ao "Atualizar também"). */
+interface Outro { empresa: string; rotulo: string; e: Existente }
+
 /** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
-function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null }) {
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
+  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[];
+}) {
   const qc = useQueryClient();
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
   const destino = { canal, empresa };
   const ml = canal === "mercado_livre";
   const MK = ml ? "Mercado Livre" : "Shopee";
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
-  const [aberto, setAberto] = useState(false);
+  const [aberto, setAberto] = useState(abertoInicial === true);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
   const [op, setOp] = useState<Op>(() => opInicial(canal));
   const [aplicado, setAplicado] = useState<Op>(() => opInicial(canal));
   const [enviando, setEnviando] = useState(false);
   const [deNovo, setDeNovo] = useState(false);
-  useEffect(() => { const i = opInicial(canal); setAberto(false); setOp(i); setAplicado(i); setDeNovo(false); }, [rascunho.id, canal, empresa]);
 
   const previaQ = useQuery({
     queryKey: ["ia-anuncio", "publicar", rascunho.id, canal, empresa, rascunho.updated_at, JSON.stringify(aplicado)],
@@ -191,6 +200,33 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
   const manter = lista("f_manter", p?.fotos_plano?.manter ?? []);
   const novas = lista("f_novas", p?.fotos_plano?.novas ?? []);
   const posicao = op.f_pos === "inicio" || op.f_pos === "fim" ? op.f_pos : (p?.fotos_plano?.posicao ?? "fim");
+  // ORDEM FINAL das fotos: a que a pessoa arrumou (arrastando ou pelas setas) ou, sem mexer, atuais/novas pela
+  // posição. Fica só na tela e vai junto no envio (não refaz a conferência a cada troca de lugar).
+  const [ordem, setOrdem] = useState<string[] | null>(null);
+  const idsAtuais = (p?.atual?.fotos ?? []).map((f) => f.id);
+  const baseOrdem = modo === "atualizar"
+    ? (() => {
+      const m = idsAtuais.filter((id) => manter.includes(id));
+      const n = (p?.fotos ?? []).map((f) => f.path).filter((x) => novas.includes(x));
+      return posicao === "inicio" ? [...n, ...m] : [...m, ...n];
+    })()
+    : (p?.fotos ?? []).map((f) => f.path);
+  const finalOrdem = ordem ? [...ordem.filter((x) => baseOrdem.includes(x)), ...baseOrdem.filter((x) => !ordem.includes(x))] : baseOrdem;
+  const itensOrdem = finalOrdem.map((x) => {
+    const a = p?.atual?.fotos.find((f) => f.id === x); const n = p?.fotos.find((f) => f.path === x);
+    return { id: x, url: a ? a.url : (fotosQ.data?.[x] ?? ""), legenda: a ? "atual" : rotuloFoto(n?.tipo ?? "") };
+  });
+  // ATUALIZAR TAMBÉM: a mesma troca em outros anúncios deste produto no mesmo marketplace
+  const [tambem, setTambem] = useState<Record<string, boolean>>({});
+  const [prontoT, setProntoT] = useState<Record<string, boolean>>({});
+  const chaveT = (o: Outro) => `${o.empresa}:${o.e.item_id}`;
+  const alvosT = (outros ?? []).filter((o) => !(o.empresa === empresa && o.e.item_id === p?.alvo?.item_id));
+  /** As opções do anúncio principal traduzidas para outro anúncio: fotos atuais por POSIÇÃO (os ids são de cada anúncio). */
+  const opcoesT = (o: Outro, comOrdem: boolean): Record<string, unknown> => {
+    const fotos: Record<string, unknown> = { manter_pos: manter.map((id) => idsAtuais.indexOf(id)).filter((i) => i >= 0), novas, posicao };
+    if (comOrdem && ordem) fotos.ordem = finalOrdem.map((x) => (idsAtuais.includes(x) ? `#${idsAtuais.indexOf(x)}` : x));
+    return { modo: "atualizar", item_id: o.e.item_id, campos: limpar(aplicado).campos, fotos };
+  };
   const chaveFotos = (o: Op) => `${o.f_manter ?? "~"}#${o.f_novas ?? "~"}#${o.f_pos ?? "~"}`;
   // a conferência é refeita sozinha, pouco depois do último clique nas fotos
   useEffect(() => {
@@ -210,6 +246,8 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
   // trocar de modo ou de anúncio refaz a conferência na hora (são leituras diferentes na Shopee)
   const trocar = (x: Op) => { const n = { ...op, ...x }; setOp(n); setAplicado(n); };
   const criado = (d?.publicacoes ?? []).find((x) => x.estado === "publicado" && x.operacao !== "atualizar" && x.canal === canal && x.empresa === empresa);
+  const extras = modo === "atualizar" ? alvosT.filter((o) => tambem[chaveT(o)]) : [];
+  const extrasProntos = extras.filter((o) => prontoT[chaveT(o)]);
   const existentes = d?.existentes ?? jaExiste ?? [];
 
   async function enviar() {
@@ -219,6 +257,8 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
       `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
       `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
+      extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})`).join(", ")}.` : "",
+      extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
       `Criar o anúncio ${NO} ${p.loja}?`, "",
@@ -230,12 +270,23 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
     if (!window.confirm(aviso)) return;
     setEnviando(true);
     try {
-      const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: { ...limpar(aplicado), modo, de_novo: deNovo }, confirmar: true });
+      const opc: Record<string, unknown> = { ...limpar(aplicado), modo, de_novo: deNovo };
+      if (ordem) opc.fotos = { ...((opc.fotos as Record<string, unknown> | undefined) ?? {}), ordem: finalOrdem };
+      const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: opc, confirmar: true });
       if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
       else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
       // o que deu certo pela metade (ex.: criado mas não pausou) não pode passar batido
       for (const av of ((r.avisos ?? []) as string[]).filter((x) => /^(ATENÇÃO|o anúncio foi criado, mas)/.test(x))) toast.warning(av, { duration: 30000 });
       setDeNovo(false);
+      // os outros anúncios marcados: um por vez, só depois que o principal deu certo
+      for (const o of extrasProntos) {
+        try {
+          const rr = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino: { canal, empresa: o.empresa }, opcoes: opcoesT(o, true), confirmar: true });
+          toast.success(`Também atualizado: ${MK} ${o.rotulo}`, { description: `Código ${rr.item_id} · ${(rr.atualizados ?? []).join(", ")}` });
+        } catch (e) {
+          toast.error(`${MK} ${o.rotulo} (${o.e.item_id}) não aceitou a atualização`, { description: (e as Error).message, duration: 20000 });
+        }
+      }
     } catch (e) {
       toast.error(`${ml ? "O" : "A"} ${MK} não aceitou ${modo === "atualizar" ? "a atualização" : "o anúncio"}`, { description: (e as Error).message, duration: 15000 });
     } finally {
@@ -337,18 +388,14 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
               </div>
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="text-muted-foreground">As novas entram:</span>
-                <Button size="sm" variant={posicao === "inicio" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setOp({ ...op, f_pos: "inicio" })}>no início (a 1ª vira a capa)</Button>
-                <Button size="sm" variant={posicao === "fim" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setOp({ ...op, f_pos: "fim" })}>no fim</Button>
+                <Button size="sm" variant={posicao === "inicio" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => { setOrdem(null); setOp({ ...op, f_pos: "inicio" }); }}>no início (a 1ª vira a capa)</Button>
+                <Button size="sm" variant={posicao === "fim" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => { setOrdem(null); setOp({ ...op, f_pos: "fim" }); }}>no fim</Button>
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                  Vai ficar com {manter.length + novas.length} de {limFotos} fotos ({manter.length} das atuais + {novas.length} nova{novas.length === 1 ? "" : "s"})
+                  Vai ficar com {manter.length + novas.length} de {limFotos} fotos ({manter.length} das atuais + {novas.length} nova{novas.length === 1 ? "" : "s"}) · arraste ou use as setas para mudar a ordem
                 </div>
-                <Miniaturas urls={(() => {
-                  const n = p.fotos.filter((f) => novas.includes(f.path)).map((f) => fotosQ.data?.[f.path] ?? "");
-                  const m = p.atual!.fotos.filter((f) => manter.includes(f.id)).map((f) => f.url);
-                  return posicao === "inicio" ? [...n, ...m] : [...m, ...n];
-                })()} max={limFotos} />
+                <Ordenavel itens={itensOrdem} max={limFotos} onOrdem={setOrdem} />
               </div>
             </div>
           </div>
@@ -368,7 +415,10 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
             {ml && <Linha rotulo="Envio" valor="Mercado Envios, sem retirada em mãos" />}
             <Linha rotulo="Descrição" valor={`${p.descricao.length.toLocaleString("pt-BR")} caracteres (texto + bullets)`} />
           </div>
-          <Miniaturas urls={p.fotos.map((f) => fotosQ.data?.[f.path] ?? "")} legendas={p.fotos.map((f, i) => `${i + 1}. ${rotuloFoto(f.tipo)}`)} max={limFotos} />
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Fotos, na ordem em que vão · arraste ou use as setas para mudar</div>
+            <Ordenavel itens={itensOrdem} max={limFotos} onOrdem={setOrdem} />
+          </div>
           <div className="flex flex-wrap items-end gap-3 text-sm border-t pt-3">
             <label className="block min-w-[260px] flex-1">
               <span className="text-[11px] text-muted-foreground">Categoria {NO} {MK}</span>
@@ -423,6 +473,17 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
         </div>
       )}
 
+      {modo === "atualizar" && alvosT.length > 0 && (
+        <div className="rounded-md border p-3 space-y-1.5">
+          <div className="text-sm"><b>Atualizar também</b> <span className="text-xs text-muted-foreground">— a mesma troca nos outros anúncios deste produto {NO} {MK}. As fotos atuais que ficam são as das mesmas posições.</span></div>
+          {alvosT.map((o) => (
+            <Tambem key={chaveT(o)} rascunho={rascunho} canal={canal} alvo={o} opcoes={opcoesT(o, false)} parado={mudou || previaQ.isFetching}
+              marcado={tambem[chaveT(o)] === true} onMarcar={(v) => setTambem((x) => ({ ...x, [chaveT(o)]: v }))}
+              onPronto={(v) => setProntoT((x) => (x[chaveT(o)] === v ? x : { ...x, [chaveT(o)]: v }))} />
+          ))}
+        </div>
+      )}
+
       {pend.length > 0 && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
           <b className="text-destructive flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />Falta resolver antes de enviar</b>
@@ -438,7 +499,7 @@ function Envio({ rascunho, canal, empresa, jaExiste }: { rascunho: IaRascunho; c
       <div className="flex flex-wrap items-center gap-3">
         <Button className="gap-1.5" disabled={enviando || mudou || previaQ.isFetching || pend.length > 0 || (modo === "criar" && !!criado && !deNovo)} onClick={() => void enviar()}>
           {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          {enviando ? `Enviando para ${ART} ${MK}…` : modo === "atualizar" ? `Atualizar o anúncio ${NO} ${MK}` : `Criar o anúncio ${NO} ${MK}`}
+          {enviando ? `Enviando para ${ART} ${MK}…` : modo === "atualizar" ? (extrasProntos.length ? `Atualizar os ${extrasProntos.length + 1} anúncios ${NO} ${MK}` : `Atualizar o anúncio ${NO} ${MK}`) : `Criar o anúncio ${NO} ${MK}`}
         </Button>
         {modo === "criar" && criado && (
           <label className="flex items-center gap-1.5 text-xs cursor-pointer">
@@ -536,6 +597,82 @@ function Selecao({ itens, marcados, fora, onAlternar }: {
           </button>
         );
       })}
+    </div>
+  );
+}
+/** Outro anúncio do mesmo produto que recebe a MESMA troca; é conferido em separado antes de entrar no envio. */
+function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPronto }: {
+  rascunho: IaRascunho; canal: string; alvo: Outro; opcoes: Record<string, unknown>; marcado: boolean; parado: boolean;
+  onMarcar: (v: boolean) => void; onPronto: (v: boolean) => void;
+}) {
+  const q = useQuery({
+    queryKey: ["ia-anuncio", "publicar-tambem", rascunho.id, rascunho.updated_at, canal, alvo.empresa, alvo.e.item_id, JSON.stringify(opcoes)],
+    enabled: marcado && !parado,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<Resposta> => (await chamarPublicar("previa", { rascunho_id: rascunho.id, destino: { canal, empresa: alvo.empresa }, opcoes })) as Resposta,
+  });
+  const pend = q.data?.pendencias ?? [];
+  const pronto = marcado && !parado && !!q.data?.previa && pend.length === 0 && !q.isFetching && !q.isError;
+  useEffect(() => { onPronto(pronto); }, [pronto]);
+  const e = alvo.e;
+  return (
+    <label className="flex items-start gap-2 rounded border px-2 py-1.5 cursor-pointer text-xs">
+      <Checkbox className="mt-0.5" checked={marcado} onCheckedChange={(v) => onMarcar(v === true)} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm"><b>{alvo.rotulo}</b> · {e.nome ?? e.item_id}</span>
+        <span className="text-muted-foreground">
+          código {e.item_id}
+          {e.preco != null && <> · {formatBRL(e.preco)}</>}
+          {e.vendas != null && <> · {e.vendas.toLocaleString("pt-BR")} venda{e.vendas === 1 ? "" : "s"}</>}
+          {e.catalogo && <> · catálogo</>}
+          {situacao(e.status) && <> · {situacao(e.status)}</>}
+        </span>
+        {marcado && (
+          <span className="block mt-0.5">
+            {q.isError ? <span className="text-destructive">não consegui conferir: {(q.error as Error).message}</span>
+              : parado || q.isFetching || !q.data ? <span className="text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin inline mr-1 -mt-0.5" />conferindo…</span>
+              : pend.length ? <span className="text-destructive">fica de fora: {pend.join(" · ")}</span>
+              : <span className="text-emerald-700 dark:text-emerald-400">pronto: vai ficar com {(q.data.previa?.fotos_plano?.manter.length ?? 0) + (q.data.previa?.fotos_plano?.novas.length ?? 0)} foto(s)
+                {(q.data.avisos ?? []).length > 0 && <span className="text-amber-600"> · {(q.data.avisos ?? []).slice(0, 2).join(" · ")}</span>}</span>}
+          </span>
+        )}
+      </span>
+      {e.url && <a href={e.url} target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-0.5 shrink-0">abrir<ExternalLink className="h-3 w-3" /></a>}
+    </label>
+  );
+}
+
+/** Fotos na ordem final: arraste ou use as setas para mudar de lugar. A primeira é a capa. */
+function Ordenavel({ itens, max, onOrdem }: { itens: { id: string; url: string; legenda?: string }[]; max: number; onOrdem: (ids: string[]) => void }) {
+  const [pego, setPego] = useState<string | null>(null);
+  if (!itens.length) return <span className="text-xs text-muted-foreground">nenhuma foto</span>;
+  const ids = itens.map((x) => x.id);
+  const mover = (id: string, para: number) => {
+    const de = ids.indexOf(id);
+    if (de === -1 || para < 0 || para >= ids.length || para === de) return;
+    const n = [...ids]; n.splice(de, 1); n.splice(para, 0, id); onOrdem(n);
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {itens.map((f, i) => (
+        <div key={f.id} draggable onDragStart={() => setPego(f.id)} onDragEnd={() => setPego(null)}
+          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (pego) mover(pego, i); setPego(null); }}
+          className={`w-16 cursor-grab ${pego === f.id || i >= max ? "opacity-40" : ""}`} title={i >= max ? "passa do limite de fotos: não vai" : "arraste para mudar a ordem"}>
+          <div className={`relative h-16 w-16 rounded border-2 overflow-hidden bg-muted/30 ${i === 0 ? "border-primary" : "border-border"}`}>
+            {f.url && <img src={f.url} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />}
+            <span className="absolute top-0 left-0 bg-background/85 px-1 text-[9.5px] font-semibold rounded-br">{i === 0 ? "capa" : i + 1}</span>
+          </div>
+          <div className="flex items-center justify-between mt-0.5">
+            <button type="button" className="h-4 w-4 rounded hover:bg-muted disabled:opacity-30" disabled={i === 0} onClick={() => mover(f.id, i - 1)} title="mais para a frente">
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-[9px] text-muted-foreground truncate capitalize px-0.5">{f.legenda ?? ""}</span>
+            <button type="button" className="h-4 w-4 rounded hover:bg-muted disabled:opacity-30" disabled={i === itens.length - 1} onClick={() => mover(f.id, i + 1)} title="mais para trás">
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

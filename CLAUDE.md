@@ -2108,6 +2108,21 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
 - **Legado:** rascunhos de Mercado Livre criados pelo "Trazer" (ex.: 14560) continuam
   existindo como cópias; aparecem em "Outros rascunhos deste SKU".
 - **Não testado ao vivo:** `previa`/`enviar` com `destino` diferente do canal do rascunho.
+- **v6 (mesmo dia, 3 pedidos do dono; sha256 `fa824000…7da5`):**
+  - **Clicar em "enviar para cá" já abre a conferência** (o `Envio` é remontado aberto; abrir a
+    página sem clicar continua fechado, para não ler o marketplace à toa).
+  - **Ordem das fotos manual:** as miniaturas de "Vai ficar com N fotos" (atualizar) e do
+    anúncio novo (criar) são arrastáveis e têm setas; a primeira é a capa. A ordem fica só na
+    tela e vai no `enviar` como `opcoes.fotos.ordem` (id de foto atual, caminho de foto nova
+    ou `#N` = foto atual da posição N). Clicar em "no início / no fim" desfaz a ordem manual.
+  - **"Atualizar também":** na conferência de atualização aparecem os OUTROS anúncios do
+    produto no mesmo marketplace (outra conta/loja e outros códigos da mesma conta — no
+    Mercado Livre, Ottz + SVL). Marcado, cada um é conferido em separado (`previa` com
+    `destino` dele) e, no envio, recebe a mesma troca depois que o principal dá certo, um por
+    vez. Como os ids de foto são de cada anúncio, as fotos atuais que ficam vão **por
+    posição** (`opcoes.fotos.manter_pos`). Anúncio com pendência fica de fora e é avisado. O
+    preço, se marcado, é o de cada destino (não o do principal).
+  - **Não testado ao vivo:** `ordem`, `manter_pos` e o envio em sequência.
 
 ## 6. Edge Functions
 
@@ -2154,7 +2169,7 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v5 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
+| `anuncio-publicar` | v6 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

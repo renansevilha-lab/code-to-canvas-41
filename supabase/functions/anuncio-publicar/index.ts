@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v5 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v6 (12/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -35,6 +35,11 @@
 //   vale o canal/empresa do rascunho, como antes. O preço de outro destino é o salvo para ele
 //   (memoria_calculo.destinos["canal:empresa"].preco) ou, se não houver, o sugerido pelas taxas
 //   daquele canal (ia_calcular_preco) — nunca o preço do canal do rascunho.
+// v6: ORDEM DAS FOTOS escolhida na tela e o mesmo plano em OUTRO anúncio (pedido do dono).
+//   opcoes.fotos.ordem = [..] dá a sequência final: id de foto atual, caminho de foto nova ou
+//   "#N" (a foto atual da posição N, contando do zero). O que não estiver na lista vai para o fim.
+//   opcoes.fotos.manter_pos = [N..] mantém as fotos atuais POR POSIÇÃO (em vez de por id): é o que
+//   permite repetir, no anúncio de outra conta/loja, a mesma escolha feita no primeiro.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -266,6 +271,27 @@ function montarDescricao(r: Record<string, any>): string {
 
 type Opcoes = Record<string, any>;
 
+/** Fotos atuais que ficam: por posição (manter_pos), por id (manter) ou todas. */
+function fotosQueFicam(selF: Record<string, any>, idsAtuais: string[]): string[] {
+  if (Array.isArray(selF.manter_pos)) { const pos = (selF.manter_pos as unknown[]).map(Number); return idsAtuais.filter((_, i) => pos.includes(i)); }
+  if (Array.isArray(selF.manter)) { const ids = (selF.manter as unknown[]).map(String); return idsAtuais.filter((id) => ids.includes(id)); }
+  return idsAtuais;
+}
+/** Sequência final das fotos no modo atualizar: a escolhida na tela ou atuais/novas pela posição. */
+function ordemFinal(op: Opcoes, plano: { manter: string[]; novas: { path: string }[]; posicao: "inicio" | "fim"; atuais: string[] }, novosIds: string[]): string[] {
+  const padrao = plano.posicao === "inicio" ? [...novosIds, ...plano.manter] : [...plano.manter, ...novosIds];
+  if (!Array.isArray(op.fotos?.ordem)) return padrao;
+  const idDaNova = new Map(plano.novas.map((f, i) => [f.path, novosIds[i]]));
+  const out: string[] = [];
+  for (const t of (op.fotos.ordem as unknown[]).map(String)) {
+    const atual = t.startsWith("#") ? plano.atuais[Number(t.slice(1))] : t;
+    const id = atual && plano.manter.includes(atual) ? atual : idDaNova.get(t);
+    if (id && !out.includes(id)) out.push(id);
+  }
+  for (const id of padrao) if (!out.includes(id)) out.push(id);
+  return out;
+}
+
 type Limites = { quem: string; titulo: number; descMin: number; descMax: number; fotos: number };
 const LIM_SHOPEE: Limites = { quem: "a Shopee", titulo: 120, descMin: 10, descMax: 5000, fotos: 9 };
 
@@ -274,7 +300,10 @@ function base(d: Dados, op: Opcoes, lim: Limites = LIM_SHOPEE) {
   const titulo = String(d.r.titulo ?? "").trim();
   const descricao = montarDescricao(d.r);
   const preco = num(op.preco) ?? num(d.r.preco_aprovado) ?? num(d.r.preco_sugerido);
-  const fotos = d.fotos.slice(0, lim.fotos).map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
+  const ordem = Array.isArray(op.fotos?.ordem) ? (op.fotos.ordem as unknown[]).map(String) : null;
+  const lugar = (f: any) => { const i = ordem ? ordem.indexOf(String(f.storage_path)) : -1; return i === -1 ? 1e6 : i; };
+  const fotos = (ordem ? [...d.fotos].sort((x: any, y: any) => lugar(x) - lugar(y)) : d.fotos)
+    .slice(0, lim.fotos).map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
   const problemas = {
     titulo: [
       ...(!d.textoAprovado ? ["aprove o texto (bloco 1) antes de enviar"] : []),
@@ -420,7 +449,7 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
   const fotosAtuais = ((it.image?.image_url_list ?? []) as string[]);
   const todasNovas = d.fotos.map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
   const selF = (op.fotos ?? {}) as Record<string, any>;
-  const manter = Array.isArray(selF.manter) ? idsAtuais.filter((id) => (selF.manter as unknown[]).map(String).includes(id)) : idsAtuais;
+  const manter = fotosQueFicam(selF, idsAtuais);
   const novas = Array.isArray(selF.novas) ? todasNovas.filter((f) => (selF.novas as unknown[]).map(String).includes(f.path)) : todasNovas;
   const posicao: "inicio" | "fim" = selF.posicao === "inicio" || selF.posicao === "fim" ? selF.posicao
     : (String(novas[0]?.tipo ?? "").startsWith("capa_") ? "inicio" : "fim");
@@ -450,7 +479,7 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
   const antes = { titulo: String(it.item_name ?? ""), descricao: descAtual, descricao_tipo: it.description_type ?? "normal",
     fotos: fotosAtuais, image_id_list: (it.image?.image_id_list ?? []) as string[], preco: precoAtual };
   return {
-    corpo, corpoPreco, pendencias: [...new Set(pendencias)], avisos, campos, antes, plano: { manter, novas, posicao },
+    corpo, corpoPreco, pendencias: [...new Set(pendencias)], avisos, campos, antes, plano: { manter, novas, posicao, atuais: idsAtuais },
     previa: {
       loja: loja.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: b.descricao, preco: b.preco, fotos: todasNovas,
       fotos_plano: { manter, novas: novas.map((f) => f.path), posicao },
@@ -571,7 +600,7 @@ async function subirFotosMl(token: string, fotos: { path: string; tipo: string }
 function planoFotos(d: Dados, op: Opcoes, idsAtuais: string[]) {
   const todasNovas = d.fotos.map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
   const selF = (op.fotos ?? {}) as Record<string, any>;
-  const manter = Array.isArray(selF.manter) ? idsAtuais.filter((id) => (selF.manter as unknown[]).map(String).includes(id)) : idsAtuais;
+  const manter = fotosQueFicam(selF, idsAtuais);
   const novas = Array.isArray(selF.novas) ? todasNovas.filter((f) => (selF.novas as unknown[]).map(String).includes(f.path)) : todasNovas;
   const posicao: "inicio" | "fim" = selF.posicao === "inicio" || selF.posicao === "fim" ? selF.posicao
     : (String(novas[0]?.tipo ?? "").startsWith("capa_") ? "inicio" : "fim");
@@ -738,7 +767,7 @@ async function montarAtualizarMl(d: Dados, op: Opcoes, token: string, conta: Con
   const descAtual = mlOk(rd) ? String(rd.body?.plain_text ?? "") : "";
   const antes = { titulo: String(it.title ?? ""), descricao: descAtual, fotos: fotosIt.map((f) => f.url), picture_ids: idsAtuais, preco: num(it.price) };
   return {
-    pendencias: [...new Set(pendencias)], avisos, campos, antes, plano: { manter, novas, posicao },
+    pendencias: [...new Set(pendencias)], avisos, campos, antes, plano: { manter, novas, posicao, atuais: idsAtuais },
     temDescricao: mlOk(rd), temFamilia: !!it.family_name, titulo: b.titulo, descricao: b.descricao, preco: b.preco,
     previa: {
       loja: conta.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: b.descricao, preco: b.preco, fotos: todasNovas,
@@ -831,7 +860,7 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
     let lista: string[];
     try {
       const novosIds = await subirFotosMl(token, a.plano.novas);
-      lista = a.plano.posicao === "inicio" ? [...novosIds, ...a.plano.manter] : [...a.plano.manter, ...novosIds];
+      lista = ordemFinal(op, a.plano, novosIds);
     } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
     const r = await mlApi(token, `/items/${id}`, "PUT", { pictures: lista.map((x) => ({ id: x })) });
     respostas.fotos = { ...enxuto(r), enviadas: lista };
@@ -964,7 +993,7 @@ Deno.serve(async (req) => {
       if (a.campos.fotos) {
         try {
           const novosIds = await subirFotos(c, a.plano.novas);
-          a.corpo.image.image_id_list = a.plano.posicao === "inicio" ? [...novosIds, ...a.plano.manter] : [...a.plano.manter, ...novosIds];
+          a.corpo.image.image_id_list = ordemFinal(op, a.plano, novosIds);
         } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
       }
       if (a.campos.titulo || a.campos.descricao || a.campos.fotos) {
