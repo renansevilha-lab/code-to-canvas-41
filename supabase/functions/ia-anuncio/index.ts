@@ -1,5 +1,5 @@
 // =============================================================================
-// Edge Function: ia-anuncio v1 — IA · Anúncios, Fase 2 (09/out/2026)
+// Edge Function: ia-anuncio v3 — IA · Anúncios, Fase 2 (09/out/2026)
 // -----------------------------------------------------------------------------
 // Geração de anúncio DENTRO da gestão (porte do gerador pcobdzlpnaoqdbsdzhlq).
 // POST ?modulo=... com body JSON. Exige usuário com módulo `ia` (ou service role).
@@ -160,7 +160,7 @@ function blocoOperador(capa: CapaEntrada | null): string {
   l.push(`Quantidade de embalagens na composicao: ${qtd || "(nao informada — use a regra do esqueleto)"}`);
   l.push(peso
     ? `Peso impresso na embalagem: "${peso}" — CONFIRMADO PELO OPERADOR, use exatamente este no campo MANTER EXATAMENTE`
-    : `Peso impresso na embalagem: (nao informado — LEIA na foto; se ilegivel, escreva [CONFIRMAR: peso ilegivel na referencia])`);
+    : `Peso impresso na embalagem: (nao informado — LEIA na foto; se estiver ilegivel ou a embalagem nao tiver peso impresso, escreva no campo "nao citar peso na arte; manter a embalagem exatamente como na referencia")`);
   if (capa.sem_texto) {
     l.push(`Este estilo NAO tem texto na capa: Barra inferior = "sem barra", Faixa superior = "sem faixa", Icones = "sem icones".`);
   } else {
@@ -170,6 +170,23 @@ function blocoOperador(capa: CapaEntrada | null): string {
   }
   l.push(`Fundo e composicao: ${fundo || "(livre — siga o estilo do esqueleto)"}`);
   return `\n\n═══ DADOS INFORMADOS PELO OPERADOR (valem mais que o esqueleto) ═══\n${l.join("\n")}`;
+}
+
+/**
+ * Tira os marcadores [CONFIRMAR ...] do prompt (12/out/2026, pedido do dono: gerar sem etapa de
+ * confirmação). Deixados no prompt, o gerador de imagem desenharia o texto na arte; por isso o
+ * campo vira a opção neutra (sem peso citado, sem barra, sem faixa, sem ícones).
+ */
+function semConfirmar(prompt: string): string {
+  if (!prompt.includes("[CONFIRMAR")) return prompt;
+  return prompt.split("\n").map((linha) => {
+    if (!linha.includes("[CONFIRMAR")) return linha;
+    if (/^\s*Peso impresso/i.test(linha)) return "Peso impresso na embalagem: nao citar peso na arte; manter a embalagem exatamente como na referencia";
+    if (/^\s*Barra inferior/i.test(linha)) return "Barra inferior de variacoes: sem barra";
+    if (/^\s*Faixa superior/i.test(linha)) return "Faixa superior: sem faixa";
+    if (/^\s*Icones/i.test(linha)) return "Icones de beneficios: sem icones";
+    return linha.replace(/\[CONFIRMAR[^\]]*\]/g, "(nao informado; nao escrever nada sobre isto na imagem)");
+  }).join("\n");
 }
 
 async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>) {
@@ -234,7 +251,7 @@ async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>)
         { type: "text", text: texto + operador + (regras ? `\n\nREGRAS QUE O PROMPT DEVE CARREGAR:\n${regras}` : "") },
       ];
       try {
-        const prompt = await claude(modelo, blocos, tipo.startsWith("imagem_capa_") ? 1400 : 900);
+        const prompt = semConfirmar(await claude(modelo, blocos, tipo.startsWith("imagem_capa_") ? 1400 : 900));
         const { error } = await db.from("ia_prompt_imagem").upsert({ sku: p.sku, tipo, prompt, modelo, editado_mao: false }, { onConflict: "sku,tipo" });
         if (error) throw new Error(error.message);
         feitos.push({ tipo, palavras: prompt.split(/\s+/).length, confirmar: prompt.includes("[CONFIRMAR") });
@@ -274,14 +291,19 @@ async function enfileirarImagens(db: DB, body: Record<string, any>) {
   const { alvo, ignoradas, planoCanal } = planoFotos(fotos, brf.data?.fotos_recomendadas, (cfgR.data as any)?.regras_extras?.plano_fotos, ativos, p.eh_kit);
   const promptPor = new Map(((prompts.data ?? []) as { tipo: string; prompt: string }[]).map((x) => [x.tipo, x.prompt]));
   const puladas: { tipo: string; motivo: string }[] = [];
-  const plano = alvo.filter((f) => {
-    if (!f.startsWith("imagem_capa_")) return true;
+  const plano: string[] = [];
+  for (const f of alvo) {
     const pr = promptPor.get(f);
-    if (!pr) { puladas.push({ tipo: f.replace("imagem_", ""), motivo: "capa sem prompt — prepare o prompt antes" }); return false; }
-    // o gerador mandava a capa com "[CONFIRMAR: ...]" e o texto saía impresso na arte
-    if (pr.includes("[CONFIRMAR")) { puladas.push({ tipo: f.replace("imagem_", ""), motivo: "o prompt da capa tem [CONFIRMAR …] — edite o prompt antes" }); return false; }
-    return true;
-  });
+    if (!pr && f.startsWith("imagem_capa_")) { puladas.push({ tipo: f.replace("imagem_", ""), motivo: "capa sem prompt — prepare o prompt antes" }); continue; }
+    // o gerador mandava a capa com "[CONFIRMAR: ...]" e o texto saía impresso na arte: limpa o
+    // marcador (campo vira a opção neutra) e segue, sem pedir confirmação
+    if (pr && pr.includes("[CONFIRMAR")) {
+      const limpo = semConfirmar(pr);
+      await db.from("ia_prompt_imagem").update({ prompt: limpo }).eq("sku", r.sku).eq("tipo", f);
+      promptPor.set(f, limpo);
+    }
+    plano.push(f);
+  }
   if (!plano.length) return { ok: false, erro: "nenhuma foto a gerar", puladas, ignoradas };
 
   // ordem estável: plano do canal = 1..N; demais tipos reusam a ordem que já têm ou pegam > 100

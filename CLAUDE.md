@@ -1936,6 +1936,14 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   `imagem_lifestyle`, `imagem_detalhe`, `imagem_angulo` e `imagem_kit` ganharam a **versão 2**
   (v1 desligada, não apagada) pedindo o texto. `imagem_principal` segue sem texto (regra dos
   marketplaces para a foto de catálogo).
+- **Sem etapa de confirmação (12/out, pedido do dono):** a capa era barrada quando o prompt
+  trazia `[CONFIRMAR: …]` (peso ilegível na foto, barra não informada). Agora "imagem" = prompt +
+  imagem direto. `ia-anuncio` **v3 (deploy 4)**: `semConfirmar()` troca o campo marcado pela opção
+  neutra (peso: "nao citar peso na arte"; barra/faixa/ícones: "sem …"; outro marcador vira "nao
+  escrever nada sobre isto") ao SALVAR o prompt e, para prompt antigo, ao ENFILEIRAR (regrava a
+  linha). O `meta_prompt_imagem` ganhou a **versão 2** (v1 desligada): não pede mais `[CONFIRMAR]`
+  e proíbe marcador entre colchetes. Motivo de nunca deixar o marcador ir adiante: o gerador de
+  imagem desenha na arte tudo o que está escrito no prompt.
 - **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
   `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
 
@@ -1982,7 +1990,7 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
-| `ia-anuncio` | v2 (deploy 3) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
+| `ia-anuncio` | v3 (deploy 4) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v1 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

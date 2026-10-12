@@ -137,7 +137,7 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
 
       <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
         <p><b className="text-foreground">Prompt</b> é a instrução que a IA escreve para o modelo de imagem, a partir do briefing, da foto real e das referências. Você pode ler e editar antes de gerar.</p>
-        <p><b className="text-foreground">Imagem</b> é gerada a partir do prompt. Se a foto ainda não tem prompt, ele é escrito antes, automaticamente. Cada imagem é cobrada à parte.</p>
+        <p><b className="text-foreground">Imagem</b>: ao clicar, o prompt é escrito (se ainda não existe) e a imagem é gerada em seguida, sem etapa de confirmação. O que a IA não conseguir ler na foto (peso, por exemplo) simplesmente fica de fora da arte. Cada imagem é cobrada à parte.</p>
         <p>Faça <b className="text-foreground">uma foto por vez</b> pelos botões de cada linha, ou marque várias e use os botões de baixo.</p>
       </div>
 
