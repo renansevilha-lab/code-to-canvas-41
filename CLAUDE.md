@@ -1891,6 +1891,41 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   teste é do dono pela tela. Erros ficam em `ia_rascunho.erro` / `ia_etapa.erro` e nos logs das
   funções (`ia_imagem_gerada`, `ia_imagem_falhou`, `ia_imagem_extras_recusadas`).
 
+## 5.11.5 IA · Anúncios — fotos uma a uma e envio direto à Shopee (12/out/2026)
+
+1ª geração real feita pelo dono em 12/out (SKU 16170, texto pelo `gpt-5.5`, 5 imagens aprovadas).
+- **Fotos (`EtapaFotos.tsx`):** cada tipo tem uma linha de explicação (`DESCRICAO_FOTO` em
+  `src/lib/iaAnuncio.ts`, resumo dos templates `imagem_*`; tipo novo sem descrição só não mostra
+  a linha) e botões próprios **prompt** e **imagem/refazer** — uma foto por vez. Os botões de
+  baixo seguem fazendo as marcadas. Pela linha, o prompt existente é reescrito, menos o editado
+  à mão (esse só com a caixa "refazer os que já existem").
+- **Bloco "3 · Enviar anúncio" (`Publicar.tsx`):** cartões Shopee (disponível), Mercado Livre,
+  TikTok e Amazon (em preparação). O rascunho é POR canal — o cartão de outro canal só troca o
+  canal da tela.
+- **Edge fn `anuncio-publicar` v1** (JWT de usuário + `tem_modulo('ia')` conferido no código;
+  fonte no repositório): `previa` (só leitura: banco, Tiny e Shopee) e `enviar` (`confirmar:
+  true`). Só **Shopee**, anúncio **simples** (um SKU, sem variações). Loja pela empresa do
+  rascunho (ottz → 522186766, svl → 759046323). Monta: título (≤ 120), descrição = texto +
+  bullets (10–5.000), preço = `preco_aprovado` ou sugerido, até 9 fotos APROVADAS (capa na
+  frente), `item_sku` = nosso SKU, categoria = `category_recommend` pelo título (nomes da
+  `get_category`; a pessoa pode trocar), **marca e canais de envio copiados de anúncios que a
+  loja já tem** (marca: outro anúncio da mesma marca; sem achar → "Sem marca", com aviso), peso e
+  dimensões = digitado → `ia_produto_extra` → **Tiny ao vivo** (`GET /produtos/{id}`.`dimensoes`,
+  conta ottz) → `produtos.peso_bruto`. Estoque inicial padrão **0** e **fora do ar** (`UNLIST`)
+  por padrão: o Tiny só manda estoque depois de ligar o anúncio ao produto pelo SKU — vínculo
+  ainda **não conferido**. Exige texto aprovado e ≥ 1 foto aprovada. Envio: sobe as fotos
+  (`media_space/upload_image`, assinatura pública com queda para a de loja) e chama
+  `product/add_item` **sem repetição**. Rascunho já publicado só vai de novo com `de_novo`.
+- **`ia_publicacao`** (migração `ia_14_publicacao`): um registro por envio (estado
+  enviando/publicado/erro, `item_id`, `url`, `enviado`, `resposta`, quem). Só a função grava;
+  o app lê. `ia_produto_extra` ganhou `peso_kg`, `comprimento_cm`, `largura_cm`, `altura_cm`,
+  `gtin`, `ncm` (as medidas conferidas ficam salvas para o próximo anúncio do produto).
+- **Não testado:** nem a prévia nem o envio rodaram (exigem login). O formato do `add_item` e
+  do upload de imagem vem da documentação — se a Shopee recusar, a resposta crua fica em
+  `ia_publicacao.resposta` e a mensagem aparece na tela.
+- **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
+  `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -1936,6 +1971,7 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v2 (deploy 3) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
+| `anuncio-publicar` | v1 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

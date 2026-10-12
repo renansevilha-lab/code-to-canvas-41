@@ -10,6 +10,7 @@ import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
+import { Publicar } from "@/components/ia/anuncio/Publicar";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
@@ -18,7 +19,7 @@ import {
 // ============================================================================
 // /ia/gerar?sku= — gerar anúncio com IA dentro da gestão (Fase 2, 09/out/2026).
 // Blocos: produto → preço (taxas reais dos pedidos, não depende da IA) → texto →
-// fotos (prompts → imagens na fila → revisão). Entrada pela lista /ia/anuncios
+// fotos (prompts → imagens na fila → revisão) → enviar ao marketplace. Entrada pela lista /ia/anuncios
 // (catálogo ativo) ou pelo botão "Gerar anúncio" do Catálogo. O envio ao Tiny
 // é a Fase 3 — aqui aprovar só marca a etapa.
 // ============================================================================
@@ -166,6 +167,10 @@ function GerarAnuncioPage() {
         <EtapaFotos sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
           briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
           tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
+      )}
+
+      {rascunho && r !== "novo" && (
+        <Publicar rascunho={rascunho} onCanal={(c) => set({ canal: c, r: undefined })} />
       )}
     </div>
   );

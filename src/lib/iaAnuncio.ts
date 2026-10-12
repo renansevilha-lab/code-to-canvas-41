@@ -104,20 +104,27 @@ export const DESCRICAO_FOTO: Record<string, string> = {
   imagem_capa_ambientada_shopee: "Estilo 6: ambiente de uso com a faixa \"Menor Preço da Shopee\".",
 };
 
-/** Chama a edge fn ia-anuncio (exige login com o módulo IA). Erro vira exceção com a mensagem da função. */
-export async function chamarIa(modulo: string, body: Record<string, unknown>): Promise<any> {
+/** Chama uma edge fn da IA (exige login com o módulo IA). Erro vira exceção com a mensagem da função. */
+async function chamarFuncao(funcao: string, modulo: string, body: Record<string, unknown>): Promise<any> {
   const { data } = await supabaseExternal.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Faça login de novo.");
-  const r = await fetch(`${EXTERNAL_URL}/functions/v1/ia-anuncio?modulo=${modulo}`, {
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/${funcao}?modulo=${modulo}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.ok === false) throw new Error(j.erro ?? `HTTP ${r.status}`);
+  if (!r.ok || j.ok === false) {
+    const pend = Array.isArray(j.pendencias) && j.pendencias.length ? `: ${j.pendencias.join("; ")}` : "";
+    throw new Error((j.erro ?? `HTTP ${r.status}`) + pend);
+  }
   return j;
 }
+/** Geração: briefing, texto, prompts de imagem, imagens, foto de referência. */
+export const chamarIa = (modulo: string, body: Record<string, unknown>) => chamarFuncao("ia-anuncio", modulo, body);
+/** Envio do anúncio ao marketplace (`previa` só lê; `enviar` cria o anúncio). */
+export const chamarPublicar = (modulo: "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
 
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */
 export async function urlsAssinadas(paths: string[]): Promise<Record<string, string>> {
