@@ -29,9 +29,12 @@ const SITUACOES = [
   { id: "sem", rotulo: "Sem anúncio com IA" },
   { id: "andamento", rotulo: "Em andamento" },
   { id: "pronto", rotulo: "Prontos" },
+  // fila de capas a fazer: recebeu fotos aproveitadas da família e ainda não tem capa própria aprovada
+  { id: "sem_capa", rotulo: "Fotos da família, sem capa própria" },
 ];
 const ORDENS = [
   { id: "vendas", rotulo: "Mais vendidos (30 dias)" },
+  { id: "vendas120", rotulo: "Mais vendidos (geral · 120 dias)" },
   { id: "nome", rotulo: "Nome" },
   { id: "novos", rotulo: "SKU mais novo" },
   { id: "recentes", rotulo: "Anúncio mexido por último" },
@@ -109,7 +112,7 @@ function AnunciosPage() {
       </header>
 
       <div className="flex flex-wrap gap-1.5">
-        {SITUACOES.map((s) => {
+        {SITUACOES.filter((s) => s.id !== "sem_capa" || cat?.contagem.sem_capa !== undefined).map((s) => {
           const ativo = (sit ?? "todos") === s.id;
           return (
             <Button key={s.id} size="sm" variant={ativo ? "default" : "outline"} className="h-8 gap-1.5"
@@ -144,7 +147,7 @@ function AnunciosPage() {
         </Select>
         <Select value={ordem ?? "vendas"} onValueChange={(v) => set({ ordem: v === "vendas" ? undefined : v })}>
           <SelectTrigger className="h-9 w-[220px]"><SelectValue /></SelectTrigger>
-          <SelectContent>{ORDENS.map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
+          <SelectContent>{ORDENS.filter((o) => o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120").map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
         </Select>
         {catQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </div>
@@ -213,6 +216,7 @@ function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; c
           {x.tipo === "K" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">kit</Badge>}
           {x.tipo === "V" && filhas.length === 0 && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">com variações</Badge>}
           {variacao && <Badge variant="outline" className="text-[9.5px] py-0 px-1">variação</Badge>}
+          {x.sem_capa && <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-amber-500/60 text-amber-700 dark:text-amber-400">fotos da família · falta a capa</Badge>}
           {filhas.length > 0 && (
             <button type="button" onClick={() => setAberto((v) => !v)}
               className="inline-flex items-center gap-0.5 rounded bg-secondary px-1 text-[10px] font-medium text-secondary-foreground hover:bg-secondary/70">
@@ -237,6 +241,7 @@ function Linha({ x, canalPadrao, composicao, variacao }: { x: IaCatalogoLinha; c
       </span>
       <span className="w-16 text-right text-sm">
         {Number(x.un30) > 0 ? <><b>{Number(x.un30).toLocaleString("pt-BR")}</b> <span className="text-[10.5px] text-muted-foreground">un.</span></> : <span className="text-muted-foreground">—</span>}
+        {Number(x.un120) > 0 && <span className="block text-[10px] text-muted-foreground leading-tight">{Number(x.un120).toLocaleString("pt-BR")} em 120 d</span>}
       </span>
       <div className="w-full lg:w-[300px] flex flex-wrap gap-1">
         {x.canais.length === 0

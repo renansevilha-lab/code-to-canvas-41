@@ -34,6 +34,7 @@ begin
   ), rasc as (
     select r.sku, max(r.updated_at) as ultimo,
            bool_or(e.texto = 'aprovado' and e.imgs > 0 and e.imgs_ok = e.imgs) as pronto,
+           bool_or(e.da_familia > 0) as tem_familia, bool_or(e.capas_proprias > 0) as tem_capa,
            jsonb_agg(jsonb_build_object('id', r.id, 'canal', r.canal, 'empresa', r.empresa, 'texto', e.texto,
              'imgs', e.imgs, 'imgs_ok', e.imgs_ok, 'andando', e.andando,
              'preco', coalesce(r.preco_aprovado, r.preco_sugerido), 'atualizado', r.updated_at) order by r.updated_at desc) as lista
@@ -42,8 +43,13 @@ begin
       select max(t.status) filter (where t.etapa = 'texto') as texto,
              count(*) filter (where t.etapa = 'imagem') as imgs,
              count(*) filter (where t.etapa = 'imagem' and t.status = 'aprovado') as imgs_ok,
-             count(*) filter (where t.etapa = 'imagem' and t.status in ('na_fila', 'gerando')) as andando
-      from public.ia_etapa t where t.rascunho_id = r.id
+             count(*) filter (where t.etapa = 'imagem' and t.status in ('na_fila', 'gerando')) as andando,
+             count(*) filter (where t.etapa = 'imagem' and i.storage_path like 'compartilhado/%') as da_familia,
+             count(*) filter (where t.etapa = 'imagem' and t.status = 'aprovado' and i.tipo like 'capa\_%'
+                                and i.storage_path is not null and i.storage_path not like 'compartilhado/%') as capas_proprias
+      from public.ia_etapa t
+      left join public.ia_rascunho_imagem i on i.id = t.imagem_id
+      where t.rascunho_id = r.id
     ) e on true
     group by 1
   ), it as (
@@ -51,12 +57,13 @@ begin
     select l.sku, l.nome, l.marca, l.tipo, l.pai,
            coalesce(h.un30, 0) as un30, coalesce(h.un120, 0) as un120, h.canais, coalesce(h.lista, '{}'::text[]) as vende,
            r.lista as rascunhos, r.ultimo,
-           case when r.sku is null then 'sem' when r.pronto then 'pronto' else 'andamento' end as situacao
+           case when r.sku is null then 'sem' when r.pronto then 'pronto' else 'andamento' end as situacao,
+           (coalesce(r.tem_familia, false) and not coalesce(r.tem_capa, false)) as sem_capa
     from lig l left join hist h using (sku) left join rasc r using (sku)
   ), fam as (
     -- o que as variações somam ao pai
     select i.pai as sku, count(*) as n, sum(i.un30) as un30, sum(i.un120) as un120, max(i.ultimo) as ultimo,
-           bool_or(i.situacao = 'pronto') as pronto, bool_or(i.situacao <> 'sem') as tem,
+           bool_or(i.situacao = 'pronto') as pronto, bool_or(i.situacao <> 'sem') as tem, bool_or(i.sem_capa) as sem_capa,
            bool_or(v_b is not null and (i.sku ilike v_b || '%' or i.nome ilike '%' || v_b || '%')) as bate
     from it i where i.pai is not null group by 1
   ), fam_canais as (
@@ -75,40 +82,44 @@ begin
            coalesce(fc.canais, i.canais) as canais, i.rascunhos, greatest(i.ultimo, fm.ultimo) as ultimo,
            case when i.situacao = 'pronto' or coalesce(fm.pronto, false) then 'pronto'
                 when i.situacao <> 'sem' or coalesce(fm.tem, false) then 'andamento' else 'sem' end as situacao,
-           coalesce(fm.n, 0) as n_variacoes
+           coalesce(fm.n, 0) as n_variacoes, (i.sem_capa or coalesce(fm.sem_capa, false)) as sem_capa
     from it i left join fam fm on fm.sku = i.sku left join fam_canais fc on fc.sku = i.sku
     where i.pai is null
       and (v_b is null or i.sku ilike v_b || '%' or i.nome ilike '%' || v_b || '%' or coalesce(fm.bate, false))
       and (coalesce(p_marca, '') = '' or i.marca = p_marca)
       and (coalesce(p_sem_canal, '') = '' or not (p_sem_canal = any (i.vende || coalesce(fc.vende, '{}'::text[]))))
   ), g as (
-    select * from f where coalesce(p_situacao, 'todos') in ('todos', '') or situacao = p_situacao
+    select * from f
+    where coalesce(p_situacao, 'todos') in ('todos', '') or (p_situacao = 'sem_capa' and sem_capa) or situacao = p_situacao
   ), num as (
     select g.*, row_number() over (order by
         case when p_ordem = 'nome' then g.nome end asc nulls last,
         case when p_ordem = 'recentes' then g.ultimo end desc nulls last,
         case when p_ordem = 'novos' then g.sku end desc nulls last,
+        case when p_ordem = 'vendas120' then g.un120 end desc nulls last,
         g.un30 desc, g.un120 desc, g.sku) as rn
     from g
   ), pag as (
     select * from num where rn > v_off and rn <= v_off + v_lim
   )
   select jsonb_build_object(
+    'versao', 3,
     'total', (select count(*) from g),
     'contagem', (select jsonb_build_object('todos', count(*), 'sem', count(*) filter (where situacao = 'sem'),
-                   'andamento', count(*) filter (where situacao = 'andamento'), 'pronto', count(*) filter (where situacao = 'pronto')) from f),
+                   'andamento', count(*) filter (where situacao = 'andamento'), 'pronto', count(*) filter (where situacao = 'pronto'),
+                   'sem_capa', count(*) filter (where sem_capa)) from f),
     'marcas', (select coalesce(jsonb_agg(z.m order by z.m), '[]'::jsonb) from (select distinct marca as m from base where coalesce(marca, '') <> '') z),
     'historico_em', (select max(atualizado_em) from public.ia_hist_sku_canal),
     'linhas', (select coalesce(jsonb_agg(jsonb_build_object(
                  'sku', pag.sku, 'nome', pag.nome, 'marca', pag.marca, 'tipo', pag.tipo, 'foto', ft.foto, 'custo', c.cmv_efetivo,
                  'un30', pag.un30, 'un120', pag.un120, 'canais', coalesce(pag.canais, '[]'::jsonb),
-                 'rascunhos', coalesce(pag.rascunhos, '[]'::jsonb), 'situacao', pag.situacao,
+                 'rascunhos', coalesce(pag.rascunhos, '[]'::jsonb), 'situacao', pag.situacao, 'sem_capa', pag.sem_capa,
                  'n_variacoes', pag.n_variacoes,
                  'variacoes', case when pag.n_variacoes = 0 then '[]'::jsonb else (
                    select coalesce(jsonb_agg(jsonb_build_object(
                             'sku', vr.sku, 'nome', vr.nome, 'tipo', vr.tipo, 'foto', vf.foto, 'custo', vc.cmv_efetivo,
                             'un30', vr.un30, 'un120', vr.un120, 'canais', coalesce(vr.canais, '[]'::jsonb),
-                            'rascunhos', coalesce(vr.rascunhos, '[]'::jsonb), 'situacao', vr.situacao)
+                            'rascunhos', coalesce(vr.rascunhos, '[]'::jsonb), 'situacao', vr.situacao, 'sem_capa', vr.sem_capa)
                             order by vr.un30 desc, vr.un120 desc, vr.sku), '[]'::jsonb)
                    from it vr
                    left join public.view_foto_produto vf on vf.sku = vr.sku

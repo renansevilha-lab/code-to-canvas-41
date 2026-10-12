@@ -68,9 +68,13 @@ export interface IaCatalogoLinha {
   // variações dentro do pai, como no Tiny — só vêm depois que o banco souber o pai de cada variação
   // (produtos.sku_pai; ver docs/catalogo-espelho-tiny). Até lá ficam ausentes.
   n_variacoes?: number; variacoes?: IaCatalogoLinha[];
+  /** recebeu fotos aproveitadas da família e ainda não tem capa própria aprovada (RPC v1.1+). */
+  sem_capa?: boolean;
 }
 export interface IaCatalogo {
   total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];
+  /** 2 = a RPC já entende o filtro "sem_capa" e a ordem "vendas120". */
+  versao?: number;
 }
 export interface IaHistSku {
   sku: string; canal: string; empresa: string; unidades_30d: number; unidades_120d: number; pedidos_mono: number;
