@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v2 (12/out/2026)
+// Edge Function: tiny-produto-variacoes v3 (12/out/2026)
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -22,6 +22,8 @@
 // v2: os SKUs sugeridos são conferidos AO VIVO no Tiny (o espelho só se atualiza de madrugada: no 1º
 //  uso sugeriu 16476–16481, que o dono tinha criado no Tiny horas antes) e a mensagem de SKU ocupado
 //  deixa claro que o nome citado é o do OUTRO produto que já usa aquele número.
+// v3: grava no espelho `situacao`, `tipo_variacao` e `sku_pai` dos produtos criados (colunas do pacote do
+//  catálogo, 12/out): as variações já aparecem dentro do pai na lista, sem esperar a sincronização.
 // Regras: sessão de usuário com o módulo `ia`; escrita NÃO é repetida (um POST repetido criaria
 // produto em dobro); a v2 tem limite de 60 chamadas/min e no código 6 a função para.
 // ============================================================================
@@ -314,8 +316,10 @@ Deno.serve(async (req) => {
 
     // o app já enxerga os produtos novos, sem esperar a sincronização da madrugada
     const linhas = [
-      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, atualizado_em: agora },
-      ...variacoes.filter((v: any) => v.id).map((v: any) => ({ sku: v.sku, id_tiny: v.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: v.ok ? "K" : "S", preco: v.preco, ativo: true, atualizado_em: agora })),
+      // v3: situação e pai gravados na hora (o catálogo agrupa as variações dentro do pai por `sku_pai`).
+      // As duas formas de linha têm as MESMAS chaves: o upsert em lote exige isso.
+      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, situacao: "A", tipo_variacao: "P", sku_pai: null, id_tiny_pai: null, atualizado_em: agora },
+      ...variacoes.filter((v: any) => v.id).map((v: any) => ({ sku: v.sku, id_tiny: v.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: v.ok ? "K" : "S", preco: v.preco, ativo: true, situacao: "A", tipo_variacao: "V", sku_pai: pd.skuPai, id_tiny_pai: idPai, atualizado_em: agora })),
     ];
     const up = await db.from("produtos").upsert(linhas, { onConflict: "sku" });
     const kits = variacoes.filter((v: any) => v.ok).map((v: any) => ({

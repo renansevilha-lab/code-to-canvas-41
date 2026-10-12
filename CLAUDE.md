@@ -2069,14 +2069,11 @@ produto base (Xô Gatinho, Adestrador) servem para todos os kits dele — sem ge
 - **Kits como no Tiny:** composição (quantidade × componente) no topo de `/ia/gerar`
   (`ComposicaoKit`, com atalho para o componente) e na linha de `/ia/anuncios` (uma consulta a
   `produto_kits` só com os kits da página).
-- **Variações como no Tiny — PENDENTE do banco:** o espelho `produtos` não guarda quem é o pai
-  de cada variação (`sku_pai`). Depende do pacote do Catálogo (colunas novas + `tiny-sync-
-  produtos` v28), que é DDL e vai fora do horário comercial; hoje a linha só tem o selo "com
-  variações". **Tudo pronto em `docs/catalogo-espelho-tiny/`** (SQL, função v28, `ia_catalogo`
-  v2 testada como função temporária, ordem de aplicação no `LEIA-ME.md`). A tela
-  `/ia/anuncios` já sabe abrir as variações dentro do pai (campo `variacoes` da RPC); enquanto
-  o banco não muda, nada aparece diferente. Lição: arquivo preparado e não aplicado NÃO fica
-  em pasta temporária (foi limpa e o pacote teve de ser refeito a partir do histórico).
+- **Variações como no Tiny — NO AR desde 12/out à noite (§5.11.9):** o espelho `produtos`
+  guarda o pai de cada variação (`sku_pai`) e a lista `/ia/anuncios` mostra as variações
+  dentro do pai (campo `variacoes` da RPC `ia_catalogo` v2). Lição do caminho: arquivo
+  preparado e não aplicado NÃO fica em pasta temporária (foi limpa e o pacote teve de ser
+  refeito a partir do histórico) — vai para `docs/`.
 - **Não testado ao vivo:** nenhuma chamada com sessão de usuário (a prévia local para no
   login). Conferido: preflight 200, sem sessão 401, chave pública 401; `tsc` e `vite build` ok.
   A cópia de arquivo no Storage (`storage.copy`) é o passo a observar na 1ª vez.
@@ -2222,6 +2219,56 @@ faltou no anúncio criado direto na Shopee).
   **Quem mexer na `ia_catalogo` precisa manter os 8 parâmetros** — o pacote de variações
   (`docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql`) já foi ajustado (`versao: 4`).
 
+## 5.11.9 Catálogo = espelho do Tiny (aplicado em 12/out/2026, 19h50–20h10)
+
+Pacote de `docs/catalogo-espelho-tiny/` (aprovado em 07/out, "pode rodar" em 12/out). O que
+ficou no ar:
+- **Banco** (migrações `carga_09out_indices_escrow`, `catalogo_01_espelho_tiny`,
+  `ia_catalogo_v2_variacoes_no_pai`): colunas novas em `produtos` (`situacao` A/I/E, `gtin`,
+  `unidade`, `tipo_variacao`, **`sku_pai`**, `id_tiny_pai`, `tiny_alterado_em`,
+  `tiny_visto_em`, `estoque_atualizado_em`; `estoque` passou a ser preenchido), tabela
+  `tiny_sync_estado`, `view_catalogo` (security_invoker; 25 ms), RPC `catalogo_resumo()`.
+  De carona: 2 índices parciais e janela de 30 dias em `pedidos_sem_escrow_componente`
+  (4 s → 38 ms; não havia pendente mais velho que isso).
+- **`tiny-sync-produtos` v29** (v28 + ajuste): listagem **retomável** em 3 fases (ativos →
+  inativos → excluídos; estado em `tiny_sync_estado`; a passada inteira coube em 2 chamadas,
+  26 s + 6 s). Em I/E só marca `ativo=false` no que o Tiny DEVOLVEU. `detalhar` grava
+  estoque, situação, GTIN, unidade e o pai; o detalhe do pai liga os filhos de uma vez
+  (`detalhar&pais=1`). **v29: 404 no detalhe = produto apagado de vez no Tiny** (não vem em
+  lista nenhuma) → `ativo=false`, `situacao='E'` e detalhe carimbado. Motivo: 26 fantasmas
+  ficavam "ativos" para sempre e, por serem sempre os mais antigos, gastavam as vagas de TODA
+  rodada do refresh — o "ciclo de ~28 h" do §3 não era verdade (detalhe mais antigo: 01/ago).
+  Se o Tiny voltar a listar o SKU, a listagem do dia reativa sozinha.
+- **Resultado medido:** espelho 2.318 → **2.267 ativos** = 2.261 do Tiny + 6 criados pelo dono
+  no app na mesma hora. 80 saíram: 52 inativos no Tiny, 2 excluídos, 26 inexistentes (404).
+  Nenhum tinha saldo no Geral; com venda em 30 d só **15126** (Tapete Bumi 80x60, 4 un,
+  inativo no Tiny) e **14133** (Shampoo Duprat, 31 un, não existe mais no Tiny). Custo e tipo
+  de quem ficou: zero mudanças. `view_inventario_produtos` 1.149 → 1.099,
+  `view_produtos_margem` 2.331 → 2.267; cobertura e SKUs-alvo de compras iguais. 223 pais,
+  **985 variações ligadas**.
+- **`ia_catalogo` v2** (`versao: 4`, mesmos 8 parâmetros): variação com pai ativo sai do
+  topo e vem em `variacoes` do pai; o pai soma a venda, os canais e a situação delas e
+  aparece na busca pelo SKU/nome da filha. Topo: 2.293 → **1.296 linhas**; 1,0 s por página.
+  A migração se confere sozinha (total = contagem independente; senão desfaz tudo). A aba
+  "Kits" conta só kit SEM pai (381): kit que é variação fica dentro do pai, como no Tiny.
+- **Tela `/produtos` (Catálogo) nova:** lê `view_catalogo` paginado no banco + `catalogo_resumo`
+  (antes baixava `view_produtos_margem` inteira). Variações dentro do pai, composição do kit,
+  filtros tipo/marca/categoria e pendências (sem foto 279, sem custo 158, kit sem composição
+  14), cartão "Sincronização com o Tiny" e botão "Gerar anúncio" (módulo `ia`; não no pai).
+  **Não conferida na tela** (exige login) — tsc e build ok; leitura como usuário logado
+  testada no banco (2.281 linhas na hora).
+- **`tiny-produto-variacoes` v3:** o produto criado pelo app já nasce no espelho com
+  `situacao`, `tipo_variacao` e `sku_pai` (aparece agrupado na hora). 1º uso real do dono
+  (v2, 12/out ~19h55): pai **16486** "Areia Higiênica Bento Mix… 4kg a 20kg" + 5 variações
+  kit (4kg…20kg), todas viraram kit.
+- **Crons:** 19 (listagem) passou a `3,13,23 8 * * *` (a 2ª e a 3ª saem sem chamar o Tiny
+  quando a passada do dia já fechou).
+- **Reverter:** `_bkp_produtos_ativo_12out` guarda `ativo/tipo/custo/preco` de antes
+  (sem acesso pelo app; apagar depois de alguns dias). Função: publicar de novo
+  `tiny-sync-produtos-v27-no-ar.ts` (as colunas novas são ignoradas por ela).
+- **Fica para depois:** `produtos.tipo_variacao` nulo nas variações que só o pai ligou
+  (preenche na listagem do dia seguinte); 10 variações cujo pai é fantasma ficam soltas.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -2236,7 +2283,7 @@ faltou no anúncio criado direto na Shopee).
 | `estoque-conferir` | v1 | Fecha o ciclo da falta: lê o estoque **ao vivo** dos anúncios Shopee do SKU (`get_model_list` / `get_item_base_info`, duas lojas) e avisa no canal `estoque` se, depois do balanço 0 no Tiny, a Shopee ainda mostra estoque. `?modulo=conferir` (cron jobid 109, `4-59/5`), `&sku=X` força, `?modulo=estoque&sku=X` só leitura. Ver §5.0.2 |
 | `shopee-sync` | v20 | Pedidos Shopee |
 | `tiny-sync` | v44 | Pedidos Tiny |
-| `tiny-sync-produtos` | v12 | Produtos/kits/estoque Tiny — ver seção 4 e 9 |
+| `tiny-sync-produtos` | v29 | Produtos/kits/estoque Tiny — ver seção 4 e 9. v28/v29: listagem retomável (ativos → inativos → excluídos), `sku_pai` das variações, 404 no detalhe = inativo — ver §5.11.9. Fonte: `docs/catalogo-espelho-tiny/tiny-sync-produtos-v29.ts` (não há cópia em `supabase/functions`). `verify_jwt` **false** |
 | `amazon-sync-pedidos` | v19 | Pedidos Amazon (Orders API + OrderItems) — ver seção 9. Cron 33 (`dias=7`) só relê pedidos **criados** nos últimos 7 dias; **`modulo=pendentes`** (v19, cron 122 `29 11,23 * * *`) relê pelo ID (`AmazonOrderIds`, 50/chamada) os Pending mais velhos que 6 dias — antes ficavam presos para sempre (24/set: 94 presos desde jul → 44 enviados entraram no PI, 18 cancelados). Só grava status "enviado" junto com o preço |
 | `amazon-sync-financas` | v11 | Finanças Amazon (taxas reais + módulo `estimar`) — ver seção 9 |
 | `amazon-ads-oauth` | v1 | Conecta a **Amazon Ads API** (separada da SP-API; BR = região NA, consentimento em amazon.com, API advertising-api.amazon.com). `?help=1&conta=ottz\|svl` → link; state assinado (HMAC, 30 min); grava `oauth_tokens_amazon_ads` (só service_role) + `/v2/profiles` e o perfil BR. Secrets do dono: `AMAZON_ADS_CLIENT_ID/_SECRET` (security profile LwA próprio). verify_jwt OFF (redirect). Criada 02/out/2026 — aguardando o dono cadastrar o app |
@@ -2268,7 +2315,7 @@ faltou no anúncio criado direto na Shopee).
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
-| `tiny-produto-variacoes` | v2 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-produto-variacoes` | v3 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
