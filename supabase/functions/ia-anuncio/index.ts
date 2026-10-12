@@ -18,7 +18,7 @@
 // =============================================================================
 import {
   CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, templatesAtivos, escolherTemplate,
-  guardrails, blocoInstrucoes, regrasImagem, validar, carregarContextos, blocosContexto, claude, modeloTexto,
+  guardrails, blocoInstrucoes, regrasImagem, validar, carregarContextos, blocosContexto, claude, resolverModeloTexto,
   planoFotos, dispararWorker, preencher, type Bloco, type DB, type Produto, type Quem,
 } from "../_shared/ia.ts";
 
@@ -42,7 +42,7 @@ async function gerarBriefing(db: DB, p: Produto, forcar: boolean) {
     nome: p.nome, marca: p.marca, categoria: p.categoria, publico_alvo: p.publico_alvo,
     atributos: p.atributos, guardrails: blocoInstrucoes(gs),
   }, false);
-  const modelo = modeloTexto(tpl);
+  const modelo = await resolverModeloTexto(tpl);
   const bruto = await claude(modelo, [
     { type: "image", source: { type: "base64", media_type: foto.media_type, data: foto.data } },
     { type: "text", text: "Acima: a FOTO REAL do produto. Leia o rotulo." },
@@ -90,7 +90,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
     persona: brief.persona, dores: brief.dores, objecoes: brief.objecoes, beneficios: brief.beneficios,
     angulo: brief.angulo, tom: brief.tom, palavras_chave: brief.palavras_chave,
   };
-  const modelo = modeloTexto(tD);
+  const modelo = await resolverModeloTexto(tD);
   const { porAplica, anexos } = await carregarContextos(db, p.sku, ["titulo", "descricao", "bullet_points"]);
 
   async function rodar(tpl: { conteudo: string }, tipo: string, maxTokens: number) {
@@ -209,7 +209,7 @@ async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>)
     usados.push(c.nome);
   }
   const regras = regrasImagem(gs);
-  const modelo = modeloTexto(meta);
+  const modelo = await resolverModeloTexto(meta);
   const existentes = (jaTem.data ?? []) as Record<string, any>[];
   const feitos: unknown[] = []; const pulados: unknown[] = [];
 

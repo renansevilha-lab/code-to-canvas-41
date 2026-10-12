@@ -1831,8 +1831,7 @@ lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_histori
   Gemini recebia as imagens de contexto; **a OpenAI (modelo padrão) NÃO** — só a foto real, e o
   anexo virava a nota "(anexo nao suportado)". `ia-imagem-worker` **v2 (no repositório)** manda
   até 4 imagens de contexto como `image[]` do `images/edits` e, se a OpenAI recusar (400),
-  refaz só com a foto real. ⚠ **v2 ainda NÃO está no ar** (no ar = v1): fazer o deploy junto
-  com o 1º teste real, quando as chaves forem cadastradas. PDF nunca vai ao modelo de imagem.
+  refaz só com a foto real. **No ar desde 12/out** (deploy 3). PDF nunca vai ao modelo de imagem.
 - **Preço por margem:** `ia_calcular_preco(sku, canal, empresa, p_margem default null)` e
   `ia_analisar_preco(..., p_preco, p_margem default null)` (migração `ia_13_preco_por_margem`;
   as assinaturas antigas foram removidas — chamada com 3 argumentos nomeados continua valendo).
@@ -1853,6 +1852,30 @@ lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_histori
   do Tiny pelo SKU — a conferir com 1 anúncio de teste. Faltam na gestão: dimensões, EAN, NCM,
   origem (o Tiny tem). Recomendação: piloto com 1 produto na Shopee Ottz, não listado.
   **Aguardando decisão do dono** (caminho A/B/C e autorização do 1º teste de escrita).
+
+## 5.11.4 IA · Anúncios — texto pela OpenAI e 1ª ligação das chaves (12/out/2026)
+
+O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
+- **Provedor de texto automático** (`_shared/ia.ts`): com `ANTHROPIC_API_KEY` → Anthropic (como
+  antes); sem ela → **OpenAI** com a `OPENAI_API_KEY` (a mesma das imagens). Forçar: secret
+  `IA_TEXTO_PROVEDOR` = `openai`|`anthropic`. Modelo da OpenAI: secret `MODELO_TEXTO_OPENAI`;
+  sem ele, a função lista os modelos da chave e usa o GPT numerado mais novo sem sufixo
+  (`resolverModeloTexto()` — hoje **`gpt-5.5`**; o nome real fica em `ia_rascunho.modelo_texto`).
+  O `modelo` dos templates (`claude-sonnet-4-6`) só vale com a Anthropic. `claude()` manteve o
+  nome, mas roteia: `claude-*` → Anthropic, o resto → `chat/completions` (imagem = `image_url`
+  data-URL, PDF = `file`; `max_completion_tokens` folgado e `reasoning_effort: low`, com
+  repetição sem o parâmetro se o modelo recusar).
+- **Diagnóstico sem login:** `POST ia-imagem-worker` com corpo `{"status": true}` (chave
+  publicável) → quais secrets existem (só verdadeiro/falso), modelo de texto escolhido, modelos
+  de imagem que a chave enxerga e se o padrão existe. Medido em 12/out: só `openai` cadastrada;
+  texto `gpt-5.5`; imagem padrão `gpt-image-2.5-sunburst` existe. O campo `fonte_sha256` **não
+  funciona** (a função não lê o próprio código no runtime) — ignorar; a conferência do deploy foi
+  feita baixando o que está no ar (`get_edge_function`) e comparando com o repositório: idênticos.
+- **Deploy:** `ia-anuncio` e `ia-imagem-worker` na versão 3, iguais ao repositório. O arquivo
+  comum é enviado nas DUAS com o nome `../_shared/ia.ts` — mudou o comum, republica as duas.
+- **Ainda sem teste real:** a geração de texto e de imagem exige login com o módulo `ia`; o 1º
+  teste é do dono pela tela. Erros ficam em `ia_rascunho.erro` / `ia_etapa.erro` e nos logs das
+  funções (`ia_imagem_gerada`, `ia_imagem_falhou`, `ia_imagem_extras_recusadas`).
 
 ## 6. Edge Functions
 
@@ -1897,8 +1920,8 @@ lista de Anúncios "replica o catálogo ativo". Migrações `ia_11_preco_histori
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
-| `ia-anuncio` | v1 | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia` — ver §5.11.1 |
-| `ia-imagem-worker` | v1 no ar (v2 no repositório, falta deploy) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min) — ver §5.11.1 e §5.11.3 |
+| `ia-anuncio` | v2 (deploy 3) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
+| `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

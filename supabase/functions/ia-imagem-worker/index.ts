@@ -16,10 +16,11 @@
 //    images/edits (até 4). Antes só o Gemini as recebia; na OpenAI viravam uma nota
 //    "(anexo nao suportado)". Se a OpenAI recusar o conjunto (400), refaz só com a
 //    foto real, como na v1. PDF continua fora do modelo de imagem (não aceita).
+//    Corpo {"status": true} = diagnóstico das integrações de IA (sem chaves na resposta).
 // =============================================================================
 import {
   CORS, json, sb, carregarProduto, fotoReferencia, templatesAtivos, guardrails, regrasImagem,
-  carregarContextos, preencher, extDoMime, sha256hex, deB64, dispararWorker, BUCKET, type DB,
+  carregarContextos, preencher, extDoMime, sha256hex, deB64, dispararWorker, statusIa, BUCKET, type DB,
 } from "../_shared/ia.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -117,6 +118,8 @@ Deno.serve(async (req) => {
   const t0 = Date.now();
   const db = sb();
   const body = await req.json().catch(() => ({}));
+  // diagnóstico das integrações (sem chave nenhuma na resposta): {"status": true}
+  if (body?.status) return json({ ok: true, ...(await statusIa(db, { "ia-imagem-worker/index.ts": import.meta.url })) });
 
   const { data: pegos, error: eP } = await db.rpc("ia_imagem_fila_pegar", { p_etapa: body?.etapa_id ?? null });
   if (eP) return json({ erro: eP.message }, 500);

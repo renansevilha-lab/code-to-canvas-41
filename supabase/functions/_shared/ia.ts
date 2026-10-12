@@ -4,6 +4,7 @@
 // gerar-briefing v8 / gerar-texto v12 / gerar-prompts-imagem v5 / gerar-imagens
 // v17 / gerar-imagem-worker v2) para as tabelas ia_* da gestão.
 // Deploy via MCP: este arquivo vai junto, como `_shared/ia.ts`, nas duas fns.
+// 12/out/2026: texto também pela OpenAI (sem chave da Anthropic) + statusIa().
 // =============================================================================
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
@@ -252,8 +253,49 @@ export function blocosContexto(lista: Ctx[], anexos: Map<string, { mime: string;
   return { blocos, texto: textos.join("\n\n"), usados };
 }
 
-// ---------------------------------------------------------------- Anthropic
-export async function claude(modelo: string, blocos: Bloco[], maxTokens: number): Promise<string> {
+// ---------------------------------------------------------------- IA de texto (Claude ou GPT)
+// 12/out/2026 (pedido do dono: "iniciar somente com o GPT"): o texto roda na Anthropic
+// quando há ANTHROPIC_API_KEY; sem ela, roda na OpenAI com a OPENAI_API_KEY (a mesma das
+// imagens). Forçar: secret IA_TEXTO_PROVEDOR = openai | anthropic. Modelo da OpenAI:
+// secret MODELO_TEXTO_OPENAI; sem ele, a função pergunta à OpenAI quais modelos a chave
+// enxerga e usa o GPT de texto mais novo (sem sufixo -mini/-nano/-pro).
+const OPENAI_CHAT = "https://api.openai.com/v1/chat/completions";
+const OPENAI_MODELS = "https://api.openai.com/v1/models";
+let gptAuto: string | null = null;
+
+export function provedorTexto(): "anthropic" | "openai" {
+  const forcado = (Deno.env.get("IA_TEXTO_PROVEDOR") ?? "").trim().toLowerCase();
+  if (forcado === "openai" || forcado === "anthropic") return forcado;
+  return Deno.env.get("ANTHROPIC_API_KEY") ? "anthropic" : "openai";
+}
+
+/** Ids dos modelos que a chave da OpenAI enxerga. */
+export async function modelosOpenAI(key: string): Promise<string[]> {
+  const r = await fetch(OPENAI_MODELS, { headers: { Authorization: `Bearer ${key}` } });
+  if (!r.ok) throw new Error(`OpenAI ${r.status} ao listar modelos: ${(await r.text()).slice(0, 200)}`);
+  const d = await r.json();
+  return ((d.data ?? []) as { id: string }[]).map((m) => m.id);
+}
+
+/** Modelo de texto que será usado de fato (nome real, para ficar gravado no rascunho). */
+export async function resolverModeloTexto(tpl?: { modelo: string | null } | null): Promise<string> {
+  const env = (Deno.env.get("MODELO_TEXTO") ?? "").trim();
+  if (provedorTexto() === "anthropic") return env || tpl?.modelo || "claude-sonnet-4-6";
+  if (env && !env.startsWith("claude")) return env;
+  const fixo = (Deno.env.get("MODELO_TEXTO_OPENAI") ?? "").trim();
+  if (fixo) return fixo;
+  if (gptAuto) return gptAuto;
+  const key = Deno.env.get("OPENAI_API_KEY");
+  if (!key) throw new Error("nenhuma chave de IA cadastrada: cadastre OPENAI_API_KEY (ou ANTHROPIC_API_KEY) nos secrets do Supabase da gestão");
+  const ids = await modelosOpenAI(key);
+  const numerados = ids.filter((id) => /^gpt-\d+(\.\d+)?$/.test(id))
+    .sort((x, y) => parseFloat(y.slice(4)) - parseFloat(x.slice(4)));
+  gptAuto = numerados[0] ?? ["gpt-4.1", "gpt-4o"].find((m) => ids.includes(m)) ?? null;
+  if (!gptAuto) throw new Error("a chave da OpenAI não enxerga nenhum modelo GPT de texto; defina o secret MODELO_TEXTO_OPENAI");
+  return gptAuto;
+}
+
+async function viaAnthropic(modelo: string, blocos: Bloco[], maxTokens: number): Promise<string> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("ANTHROPIC_API_KEY não cadastrada nos secrets do Supabase da gestão");
   for (let t = 0; t < 3; t++) {
@@ -269,7 +311,84 @@ export async function claude(modelo: string, blocos: Bloco[], maxTokens: number)
   }
   throw new Error("Anthropic indisponível");
 }
-export const modeloTexto = (tpl?: { modelo: string | null } | null) => Deno.env.get("MODELO_TEXTO") ?? tpl?.modelo ?? "claude-sonnet-4-6";
+
+/** Blocos no formato da Anthropic (texto, imagem, PDF) → partes do chat da OpenAI. */
+function partesOpenAI(blocos: Bloco[]): Bloco[] {
+  const out: Bloco[] = [];
+  let pdf = 0;
+  for (const b of blocos) {
+    const src = b.source as { media_type?: string; data?: string } | undefined;
+    if (b.type === "text") out.push({ type: "text", text: b.text });
+    else if (b.type === "image" && src?.data) out.push({ type: "image_url", image_url: { url: `data:${src.media_type};base64,${src.data}` } });
+    else if (b.type === "document" && src?.data) out.push({ type: "file", file: { filename: `contexto-${++pdf}.pdf`, file_data: `data:application/pdf;base64,${src.data}` } });
+  }
+  return out;
+}
+
+async function viaOpenAITexto(modelo: string, blocos: Bloco[], maxTokens: number): Promise<string> {
+  const key = Deno.env.get("OPENAI_API_KEY");
+  if (!key) throw new Error("OPENAI_API_KEY não cadastrada nos secrets do Supabase da gestão");
+  // modelos que "pensam" gastam parte do limite pensando: o teto é folgado (só se paga o que usar)
+  const corpo: Record<string, unknown> = {
+    model: modelo, messages: [{ role: "user", content: partesOpenAI(blocos) }],
+    max_completion_tokens: Math.max(maxTokens * 4, 4000),
+  };
+  if (/^(gpt-5|o\d)/.test(modelo)) corpo.reasoning_effort = "low";
+  for (let t = 0; t < 4; t++) {
+    const r = await fetch(OPENAI_CHAT, {
+      method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify(corpo),
+    });
+    const txt = await r.text();
+    if ((r.status === 429 || r.status >= 500) && t < 2) { await new Promise((ok) => setTimeout(ok, 2000 * (t + 1))); continue; }
+    // parâmetro que o modelo não aceita: tira e tenta de novo (uma vez cada)
+    if (r.status === 400 && corpo.reasoning_effort && /reasoning_effort/.test(txt)) { delete corpo.reasoning_effort; continue; }
+    if (r.status === 400 && corpo.max_completion_tokens && /max_completion_tokens/.test(txt)) {
+      delete corpo.max_completion_tokens; corpo.max_tokens = maxTokens; continue;
+    }
+    if (!r.ok) throw new Error(`OpenAI ${r.status}: ${txt.slice(0, 300)}`);
+    const d = JSON.parse(txt);
+    const saida = String(d?.choices?.[0]?.message?.content ?? "").trim();
+    if (!saida) throw new Error(`OpenAI devolveu texto vazio (${d?.choices?.[0]?.finish_reason ?? "?"}) no modelo ${modelo}`);
+    return saida;
+  }
+  throw new Error("OpenAI indisponível");
+}
+
+/** Gera texto no provedor do modelo: `claude-*` na Anthropic, o resto na OpenAI. (Nome mantido do porte do gerador.) */
+export function claude(modelo: string, blocos: Bloco[], maxTokens: number): Promise<string> {
+  return modelo.startsWith("claude") ? viaAnthropic(modelo, blocos, maxTokens) : viaOpenAITexto(modelo, blocos, maxTokens);
+}
+
+/**
+ * Diagnóstico das integrações de IA — NÃO devolve chave nenhuma: só se cada secret existe,
+ * qual modelo de texto será usado e se o modelo de imagem padrão existe na conta da OpenAI.
+ */
+export async function statusIa(db: DB, fontes: Record<string, string> = {}) {
+  const openai = Deno.env.get("OPENAI_API_KEY");
+  const out: Record<string, any> = {
+    chaves: { anthropic: Boolean(Deno.env.get("ANTHROPIC_API_KEY")), openai: Boolean(openai), google: Boolean(Deno.env.get("GOOGLE_API_KEY")) },
+    texto: { provedor: provedorTexto(), modelo: null, erro: null },
+    imagem: { padrao: null, existe_na_openai: null, modelos_de_imagem_da_chave: null, erro: null },
+    fonte_sha256: {},
+  };
+  try { out.texto.modelo = await resolverModeloTexto(); } catch (e) { out.texto.erro = String(e instanceof Error ? e.message : e); }
+  const { data: m } = await db.from("ia_modelo_imagem").select("id, provider").eq("ativo", true).eq("padrao", true).maybeSingle();
+  out.imagem.padrao = m ? `${m.id} (${m.provider})` : null;
+  if (openai) {
+    try {
+      const ids = await modelosOpenAI(openai);
+      out.imagem.modelos_de_imagem_da_chave = ids.filter((id) => /image/.test(id)).sort();
+      if (m?.provider === "openai") out.imagem.existe_na_openai = ids.includes(m.id);
+      out.texto.modelos_gpt_da_chave = ids.filter((id) => /^gpt-\d+(\.\d+)?$/.test(id)).sort();
+    } catch (e) { out.imagem.erro = String(e instanceof Error ? e.message : e); }
+  }
+  // impressão digital do código no ar (confere se o deploy é igual ao repositório)
+  for (const [nome, url] of Object.entries({ "_shared/ia.ts": import.meta.url, ...fontes })) {
+    try { out.fonte_sha256[nome] = await sha256hex(new TextEncoder().encode(await Deno.readTextFile(new URL(url)))); }
+    catch (e) { out.fonte_sha256[nome] = `não lido: ${String(e instanceof Error ? e.message : e).slice(0, 80)}`; }
+  }
+  return out;
+}
 
 /** Lista de fotos (templates imagem_*) a partir do pedido, do briefing ou do plano do canal. */
 export function planoFotos(pedidas: string[] | null, recomendadas: unknown, planoCanal: unknown, ativos: Set<string>, ehKit: boolean) {
