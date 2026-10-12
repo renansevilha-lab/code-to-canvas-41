@@ -10,13 +10,16 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  chamarIa, rotuloFoto, urlsAssinadas, type IaBriefing, type IaEtapa, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
+  DESCRICAO_FOTO, ROTULO_ETAPA, chamarIa, rotuloFoto, urlsAssinadas, type IaBriefing, type IaEtapa, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
 import { SeloEtapa, decidirEtapa } from "./EtapaTexto";
 
 interface ModeloImg { id: string; label: string; custo_estimado_usd: number; padrao: boolean }
 
-/** Etapa 2: plano de fotos → prompts (editáveis) → imagens geradas na fila → revisão. */
+/**
+ * Etapa 2: plano de fotos → prompts (editáveis) → imagens geradas na fila → revisão.
+ * Dá para fazer tudo de uma vez (botões de baixo) ou UMA foto por vez (botões de cada linha).
+ */
 export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, imagens, etapas, tiposAtivos, planoCanal, modelos }: {
   sku: string; canal: string; ehKit: boolean; rascunho: IaRascunho; briefing: IaBriefing | null;
   prompts: IaPromptImagem[]; imagens: IaRascunhoImagem[]; etapas: IaEtapa[];
@@ -46,14 +49,20 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
   const [modelo, setModelo] = useState(modelos.find((m) => m.padrao)?.id ?? modelos[0]?.id ?? "");
   const [obs, setObs] = useState("");
   const [enfileirando, setEnfileirando] = useState(false);
+  // foto que está sendo feita sozinha pelos botões da linha: tipo → o que está rodando
+  const [umaVez, setUmaVez] = useState<Record<string, "prompt" | "imagem">>({});
+  const imagemPor = new Map(imagens.map((i) => [`imagem_${i.tipo}`, i]));
   const alternar = (t: string) => setSel((s) => { const n = new Set(s); if (n.has(t)) n.delete(t); else n.add(t); return n; });
   const temCapaSel = [...sel].some((t) => t.startsWith("imagem_capa_"));
 
-  async function prepararPrompts() {
-    if (!sel.size) { toast.error("Escolha ao menos uma foto"); return; }
-    setPreparando(true);
+  async function prepararPrompts(so?: string) {
+    const fotos = so ? [so] : [...sel];
+    if (!fotos.length) { toast.error("Escolha ao menos uma foto"); return; }
+    if (so) setUmaVez((u) => ({ ...u, [so]: "prompt" })); else setPreparando(true);
     try {
-      const r = await chamarIa("prompts-imagem", { sku, canal, fotos: [...sel], forcar, capa: temCapaSel ? capa : null });
+      const temCapa = fotos.some((t) => t.startsWith("imagem_capa_"));
+      // pela linha, refazer é o esperado quando o prompt já existe (o editado à mão só é trocado com a caixa marcada)
+      const r = await chamarIa("prompts-imagem", { sku, canal, fotos, forcar: so ? (forcar || !promptPor.get(so)?.editado_mao) : forcar, capa: temCapa ? capa : null });
       const feitos = (r.prompts_escritos ?? []) as { tipo: string; confirmar: boolean }[];
       const pulados = (r.pulados ?? []) as { tipo: string; motivo: string }[];
       toast.success(`${feitos.length} prompt(s) preparado(s)`, {
@@ -62,10 +71,10 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
       });
       recarregar();
     } catch (e) { toast.error("Falha ao preparar os prompts", { description: (e as Error).message }); }
-    finally { setPreparando(false); }
+    finally { if (so) setUmaVez((u) => { const n = { ...u }; delete n[so]; return n; }); else setPreparando(false); }
   }
-  async function gerarImagens(fotos: string[], observacao?: string) {
-    setEnfileirando(true);
+  async function gerarImagens(fotos: string[], observacao?: string, so?: string) {
+    if (so) setUmaVez((u) => ({ ...u, [so]: "imagem" })); else setEnfileirando(true);
     try {
       const r = await chamarIa("imagens", { rascunho_id: rascunho.id, fotos, modelo, observacao: observacao ?? (obs || undefined) });
       const puladas = (r.puladas ?? []) as { tipo: string; motivo: string }[];
@@ -74,18 +83,39 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
       });
       recarregar();
     } catch (e) { toast.error("Falha ao enfileirar", { description: (e as Error).message }); }
-    finally { setEnfileirando(false); }
+    finally { if (so) setUmaVez((u) => { const n = { ...u }; delete n[so]; return n; }); else setEnfileirando(false); }
   }
 
   const linha = (t: string) => {
     const p = promptPor.get(t);
+    const img = imagemPor.get(t);
+    const et = img ? etapaPorImagem.get(img.id) : undefined;
+    const andando = et && ["na_fila", "gerando"].includes(et.status);
+    const st = et ? ROTULO_ETAPA[et.status] : null;
+    const rodando = umaVez[t];
     return (
-      <label key={t} className="flex items-center gap-2 text-sm cursor-pointer">
-        <Checkbox checked={sel.has(t)} onCheckedChange={() => alternar(t)} />
-        <span className="capitalize">{rotuloFoto(t)}</span>
-        {p && <span className="text-[10px] text-muted-foreground">{p.editado_mao ? "prompt editado" : "prompt pronto"}</span>}
-        {p?.prompt.includes("[CONFIRMAR") && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-label="prompt pede confirmação" />}
-      </label>
+      <div key={t} className="flex items-start gap-2 py-1.5">
+        <Checkbox className="mt-0.5" checked={sel.has(t)} onCheckedChange={() => alternar(t)} id={`foto-${t}`} />
+        <label htmlFor={`foto-${t}`} className="min-w-0 flex-1 cursor-pointer">
+          <div className="flex flex-wrap items-center gap-x-1.5 text-sm">
+            <span className="capitalize font-medium">{rotuloFoto(t)}</span>
+            {p && <span className="text-[10px] text-muted-foreground">{p.editado_mao ? "prompt editado" : "prompt pronto"}</span>}
+            {p?.prompt.includes("[CONFIRMAR") && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-label="prompt pede confirmação" />}
+            {st && <span className="text-[10px] font-semibold" style={{ color: st.cor }}>· imagem {st.rotulo}</span>}
+          </div>
+          {DESCRICAO_FOTO[t] && <div className="text-[11px] text-muted-foreground leading-snug">{DESCRICAO_FOTO[t]}</div>}
+        </label>
+        <div className="flex gap-1 shrink-0">
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] gap-1" disabled={!!rodando || preparando}
+            title={p ? "Escrever de novo o prompt só desta foto" : "Escrever o prompt só desta foto"} onClick={() => void prepararPrompts(t)}>
+            {rodando === "prompt" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}prompt
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-[11px] gap-1" disabled={!!rodando || enfileirando || !!andando}
+            title={img?.storage_path ? "Gerar de novo só esta imagem" : "Gerar só esta imagem"} onClick={() => void gerarImagens([t], undefined, t)}>
+            {rodando === "imagem" || andando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}{img?.storage_path ? "refazer" : "imagem"}
+          </Button>
+        </div>
+      </div>
     );
   };
 
@@ -93,14 +123,20 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
     <Card><CardContent className="p-5 space-y-5">
       <h3 className="font-semibold">2 · Fotos</h3>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-muted-foreground">Fotos do anúncio (marcadas = plano sugerido)</p>
-          {outros.map(linha)}
+      <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
+        <p><b className="text-foreground">Prompt</b> é a instrução que a IA escreve para o modelo de imagem, a partir do briefing, da foto real e das referências. Você pode ler e editar antes de gerar.</p>
+        <p><b className="text-foreground">Imagem</b> é gerada a partir do prompt (sem prompt, usa o modelo padrão da foto). Cada imagem é cobrada à parte.</p>
+        <p>Faça <b className="text-foreground">uma foto por vez</b> pelos botões de cada linha, ou marque várias e use os botões de baixo.</p>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-x-6 gap-y-4">
+        <div>
+          <p className="text-[11px] text-muted-foreground mb-1">Fotos do anúncio (marcadas = plano sugerido)</p>
+          <div className="divide-y">{outros.map(linha)}</div>
         </div>
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-muted-foreground">Capas (estilos)</p>
-          {capas.map(linha)}
+        <div>
+          <p className="text-[11px] text-muted-foreground mb-1">Capas (a primeira foto do anúncio; escolha um estilo)</p>
+          <div className="divide-y">{capas.map(linha)}</div>
           {temCapaSel && (
             <div className="rounded-md border p-2.5 mt-2 space-y-1.5">
               <p className="text-[11px] font-medium">Dados da capa (vazio = a IA decide; barra vazia = sem barra)</p>
@@ -122,7 +158,7 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
 
       <div className="flex flex-wrap items-center gap-2 border-t pt-3">
         <Button size="sm" variant="outline" className="gap-1.5" disabled={preparando || !sel.size} onClick={() => void prepararPrompts()}>
-          {preparando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}Preparar prompts ({sel.size})
+          {preparando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}Preparar prompts das marcadas ({sel.size})
         </Button>
         <label className="flex items-center gap-1.5 text-xs cursor-pointer">
           <Checkbox checked={forcar} onCheckedChange={(v) => setForcar(v === true)} />refazer os que já existem (inclusive editados à mão)
@@ -133,7 +169,7 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
         </select>
         <Input className="h-8 max-w-[240px] text-xs" value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Observação para a imagem (opcional)" />
         <Button size="sm" className="gap-1.5" disabled={enfileirando || !sel.size} onClick={() => void gerarImagens([...sel])}>
-          {enfileirando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}Gerar imagens ({sel.size})
+          {enfileirando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}Gerar imagens das marcadas ({sel.size})
         </Button>
       </div>
 

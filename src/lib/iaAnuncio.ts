@@ -80,6 +80,29 @@ export interface IaPreco {
 }
 /** Rótulo legível do tipo de foto (template imagem_*). */
 export const rotuloFoto = (t: string) => t.replace(/^imagem_/, "").replace(/_/g, " ");
+/** O que é cada foto, em uma linha (resumo do template de mesmo nome em /ia/prompts). */
+export const DESCRICAO_FOTO: Record<string, string> = {
+  imagem_principal: "Foto de catálogo: o produto igual ao real, em fundo branco.",
+  imagem_angulo: "O mesmo produto girado, mostrando a lateral e o verso da embalagem.",
+  imagem_detalhe: "Close de um detalhe real: textura, material ou fecho.",
+  imagem_beneficios: "Cartão com o produto e 3 benefícios em ícones (só os do briefing).",
+  imagem_conteudo: "O que vem dentro da embalagem.",
+  imagem_uso: "O produto sendo usado, para mostrar que é fácil.",
+  imagem_passo_a_passo: "Infográfico de como usar, em 3 ou 4 passos.",
+  imagem_lifestyle: "Cena em casa, com o pet usando o produto.",
+  imagem_emocional: "Vínculo entre tutor e pet: vende o sentimento, não a ficha técnica.",
+  imagem_publico: "Deixa claro para quem o produto serve.",
+  imagem_escala: "Referência de tamanho, para o comprador não imaginar maior ou menor.",
+  imagem_variantes: "A linha completa: sabores, tamanhos ou versões.",
+  imagem_kit: "Os itens do kit lado a lado, vistos de cima.",
+  imagem_cta: "Foto de fechamento, reunindo os argumentos principais.",
+  imagem_capa_shopee_basica: "Estilo 1: fiel à foto real, com a faixa \"Menor Preço da Shopee\".",
+  imagem_capa_ml_branca: "Estilo 2: fundo branco puro, no padrão do Mercado Livre.",
+  imagem_capa_shopee_livre: "Estilo 3: faixa da Shopee, com fundo e composição livres.",
+  imagem_capa_ambientada_texto: "Estilo 4: produto no ambiente de uso, com um título curto.",
+  imagem_capa_ambientada_limpa: "Estilo 5: produto no ambiente de uso, sem nenhum texto.",
+  imagem_capa_ambientada_shopee: "Estilo 6: ambiente de uso com a faixa \"Menor Preço da Shopee\".",
+};
 
 /** Chama a edge fn ia-anuncio (exige login com o módulo IA). Erro vira exceção com a mensagem da função. */
 export async function chamarIa(modulo: string, body: Record<string, unknown>): Promise<any> {
