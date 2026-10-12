@@ -1423,6 +1423,20 @@ Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?a
   ⚠ A `shopee-flashsale` no ar é a **v8** (deploy 20), não v3: `programar` não usa
   `flashsale_config.max_itens_bloco` (1 sale/dia, até 50 itens, completa a existente) e o
   "já está" é por `item_id` inteiro.
+- **Relâmpago em dias alternados (12/out/2026) — `shopee-flashsale` v9 (deploy 22; fonte agora em
+  `supabase/functions/shopee-flashsale/`):** o clone pelo ⚡ grava `estoque_promo = 1000`; a Shopee
+  recusa (1400101726) e a v8 reenviava o estoque **inteiro** do anúncio. A relâmpago do dia ficava
+  com tudo reservado (conferido: Bumi Mix 4 kg com `campaign_stock` 999 de 999) e a do dia seguinte
+  — montada às 18h07 com a de hoje ainda no ar — era recusada: o produto entrava dia sim, dia não.
+  v9: o reenvio manda **metade do estoque livre** = `stock_info_v2.seller_stock` (total do vendedor)
+  menos o `campaign_stock` das OUTRAS relâmpagos ativas/programadas (`lerReservas`, lido só quando
+  há reenvio; variação com `status` 0 na promoção não reserva). Livre < 1 → problema "estoque todo
+  reservado pela relampago em andamento". **Armadilha:** com o anúncio numa relâmpago em andamento,
+  `total_available_stock` passa a ser o estoque DA CAMPANHA (ex.: 10), não o total (47) — por isso o
+  espelho `shopee_anuncios_variacao.estoque` também cai nesses dias. `?modulo=modelos` mostra os três
+  números (`estoque`, `estoque_vendedor`, `reservado_futuro`). Os 9 itens Bumi Mix da SVL ficaram com
+  `estoque_promo` ≈ 1/3 do estoque (300/150/100/80/60). O reenvio novo só roda de verdade no cron das
+  18h07 — conferir `flashsale_criadas.detalhe.acoes` (`ler-reservas`, `add-retry`) do dia seguinte.
 - **Minha Promoção** = módulo **`v2.discount`** da Open API. Edge fn **`shopee-promocoes`**
   (verify_jwt + exige JWT `authenticated`/service role — chave publicável e o Bearer anon dos
   crons dão 401): `list` / `detalhe` / `item-promo` (leitura) e, com `confirmar=1`,
@@ -1884,7 +1898,7 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `shopee-sync-ads` | v66 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1. v66: `imprimir` usa a fila própria quando a impressora é nossa (§5.9) |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-catalogo-itens` | v2 | Relê do catálogo Shopee **só os anúncios pedidos** (v2: `modulo=recentes` = anúncios novos/alterados nos últimos N dias que o espelho não tem; fonte em `supabase/functions/`) (≤30/chamada, `pendentes` = reenviar) e faz upsert no espelho com o MESMO mapeamento do `shopee-sync-ads?modulo=catalogo`. Só leitura na Shopee; JWT de usuário. Usado pelo "Atualizar da Shopee" da Minha Promoção — ver seção 5.9.1 |
-| `shopee-flashsale` | v3 | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
+| `shopee-flashsale` | v9 (deploy 22; a descrição ao lado é da v3 — ver §5.9.1 para v8/v9) | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |
 | `produtos-peso` | v2 | Peso real do produto (`dimensoes.pesoBruto` do Tiny) → `produtos.peso_bruto`. Base da divisão de separação por peso — ver §5.0.3. `?modulo=preencher` (cron jobid 113, `9,39`), `refresh`, `sku=X`, `&dry=1` |
