@@ -1975,6 +1975,15 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
   promoção. `ia_publicacao.operacao` (`criar`|`atualizar`, migração `ia_15`). A trava "já foi
   enviado" vale só para criar. Atualização mexe em anúncio NO AR — sempre com a confirmação da
   tela. **Não testado** (nem prévia nem envio do modo atualizar rodaram).
+- **Fotos no modo atualizar NÃO substituem mais em bloco (`anuncio-publicar` v3, pedido do dono
+  ao ver a 1ª prévia: 7 fotos atuais seriam trocadas por 1):** `opcoes.fotos = {manter: [image_id
+  das atuais], novas: [caminho das aprovadas], posicao: inicio|fim}`. Padrão: TODAS as atuais
+  ficam e todas as novas entram (no início se a 1ª nova é capa; senão no fim). Na tela, as fotos
+  do anúncio e as novas são clicáveis (manter/tirar, incluir/não), com a escolha da posição e a
+  fila final; a conferência se refaz sozinha 0,7 s depois do último clique. Limite de 9 fotos e
+  "nada muda" viram pendência. A lista enviada mistura os `image_id` que já eram do anúncio com
+  os das fotos novas recém-subidas — reaproveitar id antigo no `update_item` ainda não foi
+  testado.
 - **Próximos:** Mercado Livre (modelo User Products: `family_name`, BRAND, GTIN; tem validador
   `/items/validate`), TikTok, Amazon; anúncio com variações na Shopee.
 
@@ -2023,7 +2032,7 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v2 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
+| `anuncio-publicar` | v3 | Envia o anúncio da IA direto ao marketplace (v1: Shopee, anúncio simples): `previa` só lê, `enviar` com `confirmar: true` cria o anúncio. JWT de usuário + módulo `ia` — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

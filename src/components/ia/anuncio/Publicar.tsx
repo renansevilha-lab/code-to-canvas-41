@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, Loader2, Send } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, ExternalLink, Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,9 @@ import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type
 // DIRETO para o marketplace. Funciona hoje para a SHOPEE (edge fn
 // `anuncio-publicar`), em dois modos:
 //  - ATUALIZAR um anúncio que já existe (padrão quando o SKU já está anunciado
-//    na loja): troca só o que for marcado — título, descrição, fotos, preço;
+//    na loja): troca só o que for marcado — título, descrição, fotos, preço.
+//    Nas fotos, as atuais do anúncio FICAM por padrão e as novas entram; a
+//    pessoa escolhe quais atuais manter, quais novas incluir e a posição;
 //  - CRIAR um anúncio novo (nasce fora do ar por padrão).
 // Sempre: conferência do que será enviado → confirmação → envio.
 // Cada cartão de canal mostra se o produto JÁ está anunciado ali (espelhos da
@@ -43,7 +45,8 @@ interface Previa {
   // atualizar
   alvo?: Existente & { n_variacoes: number; situacao: string | null };
   campos?: { titulo: boolean; descricao: boolean; fotos: boolean; preco: boolean };
-  atual?: { titulo: string; descricao: string; fotos: string[]; preco: number | null };
+  atual?: { titulo: string; descricao: string; fotos: { id: string; url: string }[]; preco: number | null };
+  fotos_plano?: { manter: string[]; novas: string[]; posicao: "inicio" | "fim" };
 }
 interface Publicacao { id: string; canal: string; empresa: string; operacao: string; estado: string; item_id: string | null; url: string | null; fora_do_ar: boolean | null; erro: string | null; criado_por_nome: string | null; criado_em: string }
 interface Resposta { ok: boolean; disponivel: boolean; motivo?: string; modo?: "criar" | "atualizar"; existentes?: Existente[]; previa?: Previa; pendencias?: string[]; avisos?: string[]; publicacoes?: Publicacao[] }
@@ -140,6 +143,25 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
     staleTime: 30 * 60_000,
     queryFn: () => urlsAssinadas((p?.fotos ?? []).map((f) => f.path)),
   });
+  // escolha de fotos no modo atualizar: mora em op (f_manter / f_novas / f_pos); sem escolha = o padrão da função
+  const lista = (k: string, padrao: string[]) => (typeof op[k] === "string" ? String(op[k]).split("|").filter(Boolean) : padrao);
+  const manter = lista("f_manter", p?.fotos_plano?.manter ?? []);
+  const novas = lista("f_novas", p?.fotos_plano?.novas ?? []);
+  const posicao = op.f_pos === "inicio" || op.f_pos === "fim" ? op.f_pos : (p?.fotos_plano?.posicao ?? "fim");
+  const chaveFotos = (o: Op) => `${o.f_manter ?? "~"}#${o.f_novas ?? "~"}#${o.f_pos ?? "~"}`;
+  // a conferência é refeita sozinha, pouco depois do último clique nas fotos
+  useEffect(() => {
+    if (chaveFotos(op) === chaveFotos(aplicado)) return;
+    const t = setTimeout(() => setAplicado((a) => {
+      const n: Op = { ...a };
+      for (const k of ["f_manter", "f_novas", "f_pos"]) { if (op[k] === undefined) delete n[k]; else n[k] = op[k]; }
+      return n;
+    }), 700);
+    return () => clearTimeout(t);
+  }, [op.f_manter, op.f_novas, op.f_pos]);
+  /** Marca/desmarca uma foto mantendo a ordem da lista de origem. */
+  const alternarFoto = (k: "f_manter" | "f_novas", id: string, marcadas: string[], origem: string[]) =>
+    setOp({ ...op, [k]: origem.filter((x) => marcadas.includes(x) !== (x === id)).join("|") });
   const campo = (k: string, padrao: number | null | undefined) => (typeof op[k] === "string" ? String(op[k]) : txt(padrao));
   const mudou = JSON.stringify(op) !== JSON.stringify(aplicado);
   // trocar de modo ou de anúncio refaz a conferência na hora (são leituras diferentes na Shopee)
@@ -152,7 +174,7 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
     const c = p.campos;
     const aviso = modo === "atualizar" ? [
       `Atualizar o anúncio ${p.alvo?.item_id} na ${p.loja}?`, "",
-      `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (${p.fotos.length})` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
+      `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
@@ -224,7 +246,7 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
               const sel = p.alvo?.item_id === e.item_id;
               return (
                 <label key={e.item_id} className={`flex items-start gap-2 rounded border px-2 py-1.5 cursor-pointer ${sel ? "border-primary/60 bg-primary/5" : ""}`}>
-                  <input type="radio" className="mt-1" checked={sel} disabled={previaQ.isFetching} onChange={() => trocar({ modo: "atualizar", item_id: e.item_id })} />
+                  <input type="radio" className="mt-1" checked={sel} disabled={previaQ.isFetching} onChange={() => { const n: Op = { ...op, modo: "atualizar", item_id: e.item_id }; delete n.f_manter; delete n.f_novas; delete n.f_pos; setOp(n); setAplicado(n); }} />
                   <span className="min-w-0 flex-1 text-xs">
                     <span className="block truncate text-sm">{e.nome ?? e.item_id}</span>
                     <span className="text-muted-foreground">
@@ -251,19 +273,38 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
             antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} />
           <div className="flex items-start gap-2">
             <Checkbox className="mt-1" checked={op.c_fotos !== false} onCheckedChange={(v) => trocar({ c_fotos: v === true })} />
-            <div className="min-w-0 flex-1 space-y-1">
+            <div className={`min-w-0 flex-1 space-y-2 ${op.c_fotos !== false ? "" : "opacity-60 pointer-events-none"}`}>
               <b className="text-sm">Fotos</b>
-              <div className="flex flex-wrap items-center gap-2">
-                <Miniaturas urls={p.atual.fotos} />
-                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Miniaturas urls={p.fotos.map((f) => fotosQ.data?.[f.path] ?? "")} legendas={p.fotos.map((f) => rotuloFoto(f.tipo))} />
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Do anúncio hoje · clique para manter ou tirar</div>
+                <Selecao itens={p.atual.fotos.map((f) => ({ id: f.id, url: f.url }))} marcados={manter} fora="sai"
+                  onAlternar={(id) => alternarFoto("f_manter", id, manter, p.atual!.fotos.map((f) => f.id))} />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Novas, aprovadas aqui · clique para incluir ou não</div>
+                <Selecao itens={p.fotos.map((f) => ({ id: f.path, url: fotosQ.data?.[f.path] ?? "", legenda: rotuloFoto(f.tipo) }))} marcados={novas} fora="não entra"
+                  onAlternar={(id) => alternarFoto("f_novas", id, novas, p.fotos.map((f) => f.path))} />
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground">As novas entram:</span>
+                <Button size="sm" variant={posicao === "inicio" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setOp({ ...op, f_pos: "inicio" })}>no início (a 1ª vira a capa)</Button>
+                <Button size="sm" variant={posicao === "fim" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setOp({ ...op, f_pos: "fim" })}>no fim</Button>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Vai ficar com {manter.length + novas.length} de 9 fotos ({manter.length} das atuais + {novas.length} nova{novas.length === 1 ? "" : "s"})
+                </div>
+                <Miniaturas urls={(() => {
+                  const n = p.fotos.filter((f) => novas.includes(f.path)).map((f) => fotosQ.data?.[f.path] ?? "");
+                  const m = p.atual!.fotos.filter((f) => manter.includes(f.id)).map((f) => f.url);
+                  return posicao === "inicio" ? [...n, ...m] : [...m, ...n];
+                })()} />
               </div>
             </div>
           </div>
           <Troca rotulo="Preço" marcado={op.c_preco === true} onMarcar={(v) => trocar({ c_preco: v })}
             antes={p.atual.preco != null ? formatBRL(p.atual.preco) : "—"} depois={p.preco != null ? formatBRL(p.preco) : "—"}
             nota="Desmarcado por padrão: mexer no preço pode afetar promoção em andamento." />
-          {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Atualizar a conferência com o que mudei</Button>}
         </div>
       ) : (
         <div className="rounded-md border p-3 space-y-3">
@@ -326,7 +367,7 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
             <Checkbox checked={deNovo} onCheckedChange={(v) => setDeNovo(v === true)} />este rascunho já criou um anúncio; criar outro mesmo assim
           </label>
         )}
-        {mudou && <span className="text-xs text-muted-foreground">Atualize a conferência antes de enviar.</span>}
+        {mudou && <span className="text-xs text-muted-foreground">{modo === "atualizar" ? "Refazendo a conferência…" : "Atualize a conferência antes de enviar."}</span>}
       </div>
 
       {(d?.publicacoes ?? []).length > 0 && (
@@ -351,12 +392,16 @@ function EnvioShopee({ rascunho, jaExiste }: { rascunho: IaRascunho; jaExiste: E
 /** Monta as opções da função: tira os vazios, troca vírgula por ponto e junta os c_* em `campos`. */
 function limpar(op: Op): Record<string, unknown> {
   const out: Record<string, unknown> = {}; const campos: Record<string, boolean> = {};
+  const fotos: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(op)) {
     if (k.startsWith("c_")) { campos[k.slice(2)] = v === true; continue; }
+    if (k === "f_manter" || k === "f_novas") { fotos[k.slice(2)] = String(v).split("|").filter(Boolean); continue; }
+    if (k === "f_pos") { fotos.posicao = v; continue; }
     if (typeof v === "boolean") out[k] = v;
     else if (v.trim() !== "") out[k] = v.trim().replace(",", ".");
   }
   out.campos = campos;
+  if (Object.keys(fotos).length) out.fotos = fotos;
   return out;
 }
 const resumo = (t: string) => `${t.length.toLocaleString("pt-BR")} caracteres · ${t.replace(/\s+/g, " ").slice(0, 150)}${t.length > 150 ? "…" : ""}`;
@@ -386,6 +431,30 @@ function Troca({ rotulo, marcado, onMarcar, antes, depois, nota }: { rotulo: str
         </div>
         {nota && <p className="text-[11px] text-muted-foreground mt-0.5">{nota}</p>}
       </div>
+    </div>
+  );
+}
+/** Fotos clicáveis: marcada = fica/entra; desmarcada = fica apagada com o rótulo `fora`. */
+function Selecao({ itens, marcados, fora, onAlternar }: {
+  itens: { id: string; url: string; legenda?: string }[]; marcados: string[]; fora: string; onAlternar: (id: string) => void;
+}) {
+  if (!itens.length) return <span className="text-xs text-muted-foreground">nenhuma foto</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {itens.map((f) => {
+        const on = marcados.includes(f.id);
+        return (
+          <button key={f.id} type="button" onClick={() => onAlternar(f.id)} className="w-16 text-left" title={on ? "clique para tirar" : "clique para incluir"}>
+            <div className={`relative h-16 w-16 rounded border-2 overflow-hidden bg-muted/30 ${on ? "border-primary" : "border-dashed border-muted-foreground/40"}`}>
+              {f.url && <img src={f.url} alt="" loading="lazy" className={`h-full w-full object-cover ${on ? "" : "opacity-30 grayscale"}`} />}
+              <span className={`absolute top-0.5 right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                {on ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+              </span>
+            </div>
+            <div className="text-[9.5px] truncate capitalize text-muted-foreground">{on ? (f.legenda ?? "fica") : fora}</div>
+          </button>
+        );
+      })}
     </div>
   );
 }

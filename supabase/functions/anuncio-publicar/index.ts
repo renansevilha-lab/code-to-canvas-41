@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v2 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v3 (12/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // Só a SHOPEE por enquanto (ver docs/ia-fase3-publicacao-direta.md).
@@ -16,7 +16,11 @@
 //                 e, para o preço, product.update_price. O anúncio já está ligado ao Tiny
 //                 e mantém vendas e avaliações. Padrão quando o SKU já tem anúncio na loja.
 //                 O estado ANTERIOR (título, descrição, fotos, preço) fica gravado no envio.
-// opcoes: {modo, item_id, campos, categoria_id, estoque, fora_do_ar, peso_kg,
+// v3: no modo atualizar as fotos NÃO são mais substituídas em bloco. opcoes.fotos =
+//   {manter: [image_id das fotos atuais que ficam], novas: [caminho das aprovadas que entram],
+//    posicao: "inicio" | "fim"}. Padrão: todas as atuais ficam e todas as novas entram
+//   (no início, se a primeira nova for capa; senão no fim). Limite da Shopee: 9 fotos.
+// opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
 //  - exige sessão de usuário com o módulo `ia` (ou service role);
@@ -364,7 +368,6 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
   if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
   if (campos.titulo) pendencias.push(...b.problemas.titulo);
   if (campos.descricao) pendencias.push(...b.problemas.descricao);
-  if (campos.fotos) pendencias.push(...b.problemas.fotos);
   if (campos.preco) pendencias.push(...b.problemas.preco);
 
   // o anúncio como está AGORA na Shopee (para mostrar o antes e guardar no registro)
@@ -387,8 +390,23 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
     if (campos.preco && !m) pendencias.push("não achei, neste anúncio, a variação com o SKU deste produto para trocar o preço");
     if (campos.titulo || campos.descricao || campos.fotos) avisos.push(`este anúncio tem ${nVariacoes} variações: título, descrição e fotos valem para o anúncio INTEIRO, não só para este SKU`);
   }
+  // FOTOS: por padrão as atuais FICAM e as novas entram. A pessoa escolhe quais atuais manter,
+  // quais novas incluir e se as novas vão para o início (a primeira vira a capa) ou para o fim.
+  const idsAtuais = ((it.image?.image_id_list ?? []) as unknown[]).map(String);
   const fotosAtuais = ((it.image?.image_url_list ?? []) as string[]);
-  if (campos.fotos) avisos.push(`as ${fotosAtuais.length} fotos atuais do anúncio serão SUBSTITUÍDAS pelas ${b.fotos.length} aprovadas aqui`);
+  const todasNovas = d.fotos.map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
+  const selF = (op.fotos ?? {}) as Record<string, any>;
+  const manter = Array.isArray(selF.manter) ? idsAtuais.filter((id) => (selF.manter as unknown[]).map(String).includes(id)) : idsAtuais;
+  const novas = Array.isArray(selF.novas) ? todasNovas.filter((f) => (selF.novas as unknown[]).map(String).includes(f.path)) : todasNovas;
+  const posicao: "inicio" | "fim" = selF.posicao === "inicio" || selF.posicao === "fim" ? selF.posicao
+    : (String(novas[0]?.tipo ?? "").startsWith("capa_") ? "inicio" : "fim");
+  if (campos.fotos) {
+    const total = manter.length + novas.length;
+    if (total === 0) pendencias.push("o anúncio precisa de ao menos 1 foto");
+    if (total > 9) pendencias.push(`a Shopee aceita 9 fotos e há ${total} marcadas (${manter.length} atuais + ${novas.length} novas): desmarque ${total - 9}`);
+    if (novas.length === 0 && manter.length === idsAtuais.length) pendencias.push("nada muda nas fotos: desmarque \"Fotos\" ou escolha o que entra e o que sai");
+    if (manter.length < idsAtuais.length) avisos.push(`${idsAtuais.length - manter.length} foto(s) atual(is) do anúncio sai(em)`);
+  }
   if (campos.descricao && estendida) avisos.push("este anúncio usa descrição com imagens; ao atualizar, a descrição passa a ser só o texto novo");
   if (campos.preco) avisos.push("troca de preço: se o anúncio estiver em promoção, a Shopee pode recusar ou a promoção pode ser afetada");
   if (it.item_status && it.item_status !== "NORMAL") avisos.push(`o anúncio está com a situação ${it.item_status} na Shopee`);
@@ -408,11 +426,12 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
   const antes = { titulo: String(it.item_name ?? ""), descricao: descAtual, descricao_tipo: it.description_type ?? "normal",
     fotos: fotosAtuais, image_id_list: (it.image?.image_id_list ?? []) as string[], preco: precoAtual };
   return {
-    corpo, corpoPreco, pendencias: [...new Set(pendencias)], avisos, campos, antes,
+    corpo, corpoPreco, pendencias: [...new Set(pendencias)], avisos, campos, antes, plano: { manter, novas, posicao },
     previa: {
-      loja: loja.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: b.descricao, preco: b.preco, fotos: b.fotos,
+      loja: loja.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: b.descricao, preco: b.preco, fotos: todasNovas,
+      fotos_plano: { manter, novas: novas.map((f) => f.path), posicao },
       alvo: { ...alvo, n_variacoes: nVariacoes, situacao: it.item_status ?? null }, campos,
-      atual: { titulo: antes.titulo, descricao: antes.descricao, fotos: antes.fotos, preco: antes.preco },
+      atual: { titulo: antes.titulo, descricao: antes.descricao, fotos: idsAtuais.map((id, i) => ({ id, url: fotosAtuais[i] ?? "" })), preco: antes.preco },
     },
   };
 }
@@ -468,7 +487,8 @@ Deno.serve(async (req) => {
         item_id: mA ? mA.previa.alvo.item_id : null, fora_do_ar: mC ? mC.previa.fora_do_ar : null, criado_por: quem.id, criado_por_nome: quem.nome,
       }).select("id").single();
       if (ePub || !pub) return json({ ok: false, erro: `banco: ${ePub?.message}` }, 500);
-      const registro = () => (mC ? mC.corpo : { campos: mA!.campos, corpo: mA!.corpo, preco: mA!.corpoPreco, antes: mA!.antes });
+      const registro = () => (mC ? mC.corpo : { campos: mA!.campos, corpo: mA!.corpo, preco: mA!.corpoPreco, antes: mA!.antes,
+        fotos: { mantidas: mA!.plano.manter, novas: mA!.plano.novas.map((f) => f.path), posicao: mA!.plano.posicao } });
       const falhar = async (erro: string, resposta: unknown = null) => {
         await db.from("ia_publicacao").update({ estado: "erro", erro: erro.slice(0, 500), enviado: registro(), resposta }).eq("id", pub.id);
         return json({ ok: false, erro, resposta }, 200);
@@ -495,8 +515,10 @@ Deno.serve(async (req) => {
       const respostas: Record<string, unknown> = {};
       const feitos: string[] = [];
       if (a.campos.fotos) {
-        try { a.corpo.image.image_id_list = await subirFotos(c, a.previa.fotos); }
-        catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
+        try {
+          const novosIds = await subirFotos(c, a.plano.novas);
+          a.corpo.image.image_id_list = a.plano.posicao === "inicio" ? [...novosIds, ...a.plano.manter] : [...a.plano.manter, ...novosIds];
+        } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
       }
       if (a.campos.titulo || a.campos.descricao || a.campos.fotos) {
         const resp = await shopeePost(c, "/api/v2/product/update_item", a.corpo);
