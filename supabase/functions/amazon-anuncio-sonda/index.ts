@@ -5,6 +5,7 @@
 //  - lê o anúncio do SKU na conta (GET listings item);
 //  - ensaia a atualização com `mode=VALIDATION_PREVIEW` (a Amazon só valida, não aplica).
 // GET ?conta=ottz|svl&sku=15819[&titulo=...][&foto=<url>]
+// GET ?conta=ottz&sku=14560&busca=texto  -> o produto ja existe no catalogo da Amazon? podemos vender nele?
 //   sem `titulo`: o ensaio reenvia o MESMO título que já está lá (só para ver o formato da resposta).
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
@@ -46,6 +47,23 @@ Deno.serve(async (req) => {
     const out: Record<string, unknown> = { conta, sku, token_valido_ate: tk.expires_at, tem_merchant_token: Boolean(tk.merchant_token) };
     if (!tk.merchant_token) return json({ ...out, erro: "falta o código de vendedor (merchant token) desta conta" });
     const mkt = tk.marketplace_id || MKT_BR; const seller = String(tk.merchant_token); const token = String(tk.access_token);
+
+    // ?busca=texto : o produto JA existe no catalogo da Amazon? (so leitura) + podemos vender nele? + tipo de produto sugerido
+    const busca = (u.searchParams.get("busca") || "").trim();
+    if (busca) {
+      const cat = await sp(token, "GET", "/catalog/2022-04-01/items", { marketplaceIds: mkt, keywords: busca, pageSize: "8", includedData: "summaries,identifiers" });
+      const itens = ((cat.body?.items ?? []) as any[]).map((i) => ({
+        asin: i.asin, titulo: String(i.summaries?.[0]?.itemName ?? "").slice(0, 110), marca: i.summaries?.[0]?.brand ?? null, tipo: i.summaries?.[0]?.productType ?? null,
+        ean: ((i.identifiers?.[0]?.identifiers ?? []) as any[]).filter((x) => /EAN|GTIN|UPC/.test(String(x.identifierType))).map((x) => x.identifier).slice(0, 2),
+      }));
+      const restricoes: any[] = [];
+      for (const it of itens.slice(0, 4)) {
+        const r = await sp(token, "GET", "/listings/2021-08-01/restrictions", { asin: it.asin, sellerId: seller, marketplaceIds: mkt, conditionType: "new_new" });
+        restricoes.push({ asin: it.asin, http: r.status, restricoes: ((r.body?.restrictions ?? []) as any[]).flatMap((x) => (x.reasons ?? []).map((m: any) => `${m.reasonCode ?? ""}: ${String(m.message ?? "").slice(0, 160)}`)) });
+      }
+      const tipos = await sp(token, "GET", "/definitions/2020-09-01/productTypes", { marketplaceIds: mkt, keywords: busca, locale: "pt_BR" });
+      return json({ ...out, busca, catalogo_http: cat.status, itens, restricoes, tipos_sugeridos: ((tipos.body?.productTypes ?? []) as any[]).slice(0, 6).map((p) => p.name) });
+    }
 
     // de qual SKU da Amazon estamos falando: o próprio, FBA-<sku>, o de-para e o que o estoque do FBA conhece
     const [map, fulf] = await Promise.all([
