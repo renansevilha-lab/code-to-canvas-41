@@ -2145,6 +2145,17 @@ anúncio é um só e o marketplace é escolhido nos cartões do bloco "3 · Envi
 - **Estrutura real de anúncio com variação de quantidade (print do dono):** Tiny tem um produto
   pai tipo V (ex.: 16181 "1 a 3 un") cujas variações são KITS do produto base (16176/16177/16178
   = 1×/2×/3× 15820); na Shopee o anúncio tem `item_sku` = pai e cada modelo com o SKU do kit.
+- **Fotos em lote na família (12/out, pedido do dono):** botão "Atualizar as fotos em todos os
+  anúncios da família" no bloco de aproveitar (`DialogoFamilia` em `Aproveitar.tsx`; só tela,
+  sem função nova). **Regra do dono: em cada anúncio a CAPA atual fica (1ª foto) e as demais
+  são trocadas pelas escolhidas** (`fotos: {manter_pos: [0], novas, posicao: "fim"}`, só o
+  campo Fotos). Passos: escolher fotos aprovadas + produtos da família → `existentes` de cada
+  SKU ao vivo (Shopee Ottz/Bumi, Mercado Livre Ottz/SVL, Amazon ACZ), deduplicado por anúncio
+  (um anúncio com variações serve a vários SKUs) → confirmar → `ia-aproveitar aplicar-lote`
+  (as fotos entram no rascunho de cada produto, `substituir: true`) → `anuncio-publicar
+  enviar` um anúncio por vez, com "Parar". Anúncio de catálogo do ML vem desmarcado. Catálogo
+  da Amazon (consulta de 12/out): Xô Gatinho unidade = ASIN B09SJT22QN (Pet Clean), Kit 2 =
+  B0GNTS7RHT, sem restrição para a ACZ. **Não testado ao vivo.**
 
 ## 6. Edge Functions
 
