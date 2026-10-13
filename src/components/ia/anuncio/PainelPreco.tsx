@@ -80,9 +80,17 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
     setAnalise(null);
   }, [rascunho?.id, precoSalvo, canal, empresa]);
 
+  const canalQ = useQuery({
+    queryKey: ["ia-anuncio", "canal-margem", canal],
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<number | null> => {
+      const { data } = await supabaseExternal.from("ia_canal_config").select("margem_alvo_pct").eq("canal", canal).maybeSingle();
+      return data?.margem_alvo_pct != null ? Number(data.margem_alvo_pct) : null;
+    },
+  });
   const p = precoQ.data;
   const mem = p?.memoria_calculo ?? {};
-  const padrao = Number(mem.margem_padrao_pct ?? (p as any)?.margem_padrao_pct ?? 0.175);
+  const padrao = Number(mem.margem_padrao_pct ?? (p as any)?.margem_padrao_pct ?? canalQ.data ?? 0.175);
   const alvo = Number(mem.margem_alvo_pct ?? margem ?? padrao);
   const hist = histQ.data ?? [];
   const aqui = hist.find((h) => h.canal === canal && h.empresa === empresa);

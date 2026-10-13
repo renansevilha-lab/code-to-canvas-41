@@ -14,6 +14,7 @@ import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
 import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
+import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -31,11 +32,12 @@ import {
 // é a Fase 3 — aqui aprovar só marca a etapa.
 // ============================================================================
 
-type Aba = "analise" | "preco";
+type Aba = "fotos" | "analise" | "preco";
 type Busca = { sku: string; canal: string; empresa: string; r?: string; aba?: Aba };
 // abas da página (na URL): o anúncio em si, a análise do produto e o preço/promoção nos marketplaces
 const ABAS: { id: Aba | undefined; rotulo: string }[] = [
   { id: undefined, rotulo: "Anúncio" },
+  { id: "fotos", rotulo: "Fotos" },
   { id: "analise", rotulo: "Análise" },
   { id: "preco", rotulo: "Preço e promoção" },
 ];
@@ -46,7 +48,7 @@ export const Route = createFileRoute("/ia/gerar")({
     canal: CANAIS.some((c) => c.id === s.canal) ? String(s.canal) : "shopee",
     empresa: s.empresa === "svl" ? "svl" : "ottz",
     r: typeof s.r === "string" && s.r ? s.r : undefined,
-    aba: s.aba === "analise" || s.aba === "preco" ? s.aba : undefined,
+    aba: s.aba === "fotos" || s.aba === "analise" || s.aba === "preco" ? s.aba : undefined,
   }),
   component: GerarAnuncioPage,
 });
@@ -174,6 +176,32 @@ function GerarAnuncioPage() {
         ))}
       </div>
 
+      {aba === "fotos" && (<>
+        {/* 1) o que já existe: fotos da família de kit e de qualquer outro anúncio parecido */}
+        {r !== "novo" && (
+          <Aproveitar key={`apr-${sku}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
+            imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
+        )}
+        <FotosDeOutros key={`fo-${sku}`} sku={sku} nome={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+          rascunho={r === "novo" ? null : rascunho} onDestino={(id) => set({ r: id })} />
+
+        {/* 2) as fotos deste anúncio: gerar com IA e revisar */}
+        {rascunho && r !== "novo" && apoioQ.data ? (
+          <EtapaFotos sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
+            briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
+            tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
+        ) : (
+          <Card><CardContent className="p-4 text-sm text-muted-foreground">
+            Para GERAR fotos com IA, crie antes o texto na aba Anúncio (a IA usa o briefing do produto). Para usar fotos prontas de outro anúncio não precisa: escolha acima e o anúncio é criado com elas.
+          </CardContent></Card>
+        )}
+
+        {/* produto com variações (pai): uma foto por variação, com a quantidade de embalagens de cada uma */}
+        {dados.produto.tipo === "V" && apoioQ.data && (
+          <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+            briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
+        )}
+      </>)}
       {aba === "analise" && <AnaliseProduto key={`an-${sku}`} sku={sku} />}
       {aba === "preco" && <PrecoPromocao key={`pp-${sku}`} sku={sku} empresa={empresa} />}
 
@@ -191,11 +219,6 @@ function GerarAnuncioPage() {
         </CardContent></Card>
       )}
 
-      {r !== "novo" && (
-        <Aproveitar key={`apr-${sku}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
-          imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
-      )}
-
       <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho} />
 
       <Referencias key={`ref-${sku}`} sku={sku} marca={dados.produto.marca} />
@@ -204,17 +227,16 @@ function GerarAnuncioPage() {
         etapa={etapas.find((e) => e.etapa === "texto")} briefing={apoioQ.data?.briefing ?? null}
         onCriado={(id) => set({ r: id })} />
 
-      {rascunho && r !== "novo" && apoioQ.data && (
-        <EtapaFotos sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
-          briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
-          tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
-      )}
-
-      {/* produto com variações (pai): uma foto por variação, com a quantidade de embalagens de cada uma */}
-      {dados.produto.tipo === "V" && apoioQ.data && (
-        <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
-          briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
-      )}
+      {/* as fotos têm aba própria: aqui fica só o resumo e o atalho */}
+      <Card><CardContent className="p-4 flex flex-wrap items-center gap-3 text-sm">
+        <b>2 · Fotos</b>
+        {(() => {
+          const comArquivo = (etapasQ.data?.imagens ?? []).filter((i) => i.storage_path);
+          const aprovadas = comArquivo.filter((i) => etapas.some((e) => e.imagem_id === i.id && e.status === "aprovado")).length;
+          return <span className="text-muted-foreground">{comArquivo.length === 0 ? "este anúncio ainda não tem fotos" : `${aprovadas} aprovada(s) de ${comArquivo.length}`} — gerar, revisar ou usar as de outro anúncio</span>;
+        })()}
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => set({ aba: "fotos" })}>Abrir a aba Fotos</Button>
+      </CardContent></Card>
 
       {/* produto pai na Shopee: as opções (variações) que entram no anúncio assim que ele é criado pelo envio abaixo */}
       {dados.produto.tipo === "V" && canal === "shopee" && (

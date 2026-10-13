@@ -145,7 +145,7 @@ function GradeEscolha({ fotos, sel, onAlternar, nota }: {
 const alternarEm = (s: Set<string>, id: string) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; };
 
 // ---------------------------------------------------------------- trazer (de outro rascunho para este)
-function DialogoTrazer({ fonte, dados, sku, canal, empresa, rascunho, onFechar, onDestino }: {
+export function DialogoTrazer({ fonte, dados, sku, canal, empresa, rascunho, onFechar, onDestino }: {
   fonte: IaFonte; dados: IaFontes; sku: string; canal: string; empresa: string; rascunho: IaRascunho | null;
   onFechar: () => void; onDestino: (id: string) => void;
 }) {

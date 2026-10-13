@@ -2494,6 +2494,27 @@ principais vão para o Tiny (na lista de anúncios o 16453 aparecia sem foto, co
   (PNG grande, com `?token=` na URL). Se recusar, a mensagem do Tiny aparece no bloco. Foto das
   VARIAÇÕES (cada kit com a sua) ainda não vai — só as do produto do anúncio.
 
+## 5.11.11.2 Aba Fotos e fotos de outro anúncio (13/out/2026)
+
+Pedido do dono: aba própria para as fotos e poder usar as fotos de outro anúncio parecido (ex.: o
+16500 "Granulado 100% Mandioca 2kg" usar as do Granulado de 2 kg já feito), em vez de gerar do zero.
+- **Abas de `/ia/gerar`:** Anúncio · **Fotos** · Análise · Preço e promoção (`?aba=fotos`). A aba
+  Fotos tem, nesta ordem: `Aproveitar` (família de KIT), **`FotosDeOutros`** (qualquer outro
+  anúncio), `EtapaFotos` (gerar/revisar) e `FotosVariacoes`. Na aba Anúncio ficou só o cartão
+  "2 · Fotos" com a contagem e o atalho. O envio (`Publicar`) continua na aba Anúncio e usa as
+  fotos aprovadas.
+- **`FotosDeOutros.tsx`:** lista os rascunhos de OUTROS produtos que têm fotos (fora o próprio e a
+  família de kit, que já aparece no bloco de cima), os mais parecidos pelo nome primeiro (palavras
+  em comum; número com unidade, tipo "2kg", pesa o dobro), com busca por nome ou SKU. "Escolher
+  fotos" abre o mesmo `DialogoTrazer` do Aproveitar (agora exportado) → `ia-aproveitar?modulo=
+  aplicar`, que **não exige família** (qualquer `origem_id` serve) e cria o rascunho se o produto
+  ainda não tem — dá para montar o anúncio só com fotos prontas, sem texto. Sem função nova.
+  As capas vêm desmarcadas (capa de outro produto pode trazer nome/peso/quantidade diferentes).
+- **Bloco Preço:** "padrão do canal" aparecia 17,5% em produto SEM custo (a `ia_calcular_preco`
+  devolve o erro antes de ler o canal e a tela caía no valor fixo). Agora lê
+  `ia_canal_config.margem_alvo_pct` direto (Shopee = 30%).
+- **Não testado na tela** (exige login).
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
