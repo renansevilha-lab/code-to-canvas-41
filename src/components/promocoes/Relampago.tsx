@@ -197,7 +197,7 @@ export function Relampago({ shopId }: { shopId: number }) {
         </div>
         <span className="text-[12px] text-muted-foreground"
           title="Limite real da Shopee, medido em produção: o create numa data que já tem promoção volta 'already exist', e a promoção aceita dezenas de produtos.">
-          1 promoção por dia · até 50 produtos
+          1 promoção por dia · até 50 variações
         </span>
         <div className="flex-1" />
         <Button size="sm" variant="outline" className="h-8 gap-1.5"
@@ -303,7 +303,7 @@ export function Relampago({ shopId }: { shopId: number }) {
       </div>
       {prog.length > 0 && (
         <p className="text-[11.5px] text-muted-foreground -mt-2">
-          {ativos.length} de {prog.length} item(ns) ativos · 1 promoção por dia com até 50 produtos (limite Shopee) ·
+          {ativos.length} de {prog.length} item(ns) ativos · 1 promoção por dia com até 50 variações (limite Shopee; cada linha conta){ativos.length > 50 ? ` — ${ativos.length - 50} não entram: ficam os que mais vendem` : ""} ·
           desconto mínimo do critério: ~1% (1 centavo é recusado) · estoque promo precisa existir no anúncio ·
           MC estimada com a tabela de comissão Shopee vigente e imposto real dos últimos 60 dias.
         </p>
@@ -357,7 +357,7 @@ export function Relampago({ shopId }: { shopId: number }) {
         <ul className="mt-2 space-y-1 list-disc pl-5">
           <li>A Shopee abre <b>um slot por dia</b> (00:00 → 00:00). O sistema sempre programa o dia de <b>amanhã</b>.</li>
           <li>Às <b>18h</b> (ou pelo botão), ele compara esta lista com a promoção de amanhã na Shopee e adiciona <b>só o que falta</b> — se você incluir um produto depois, a próxima rodada completa a promoção, sem duplicar.</li>
-          <li>A Shopee permite <b>1 promoção relâmpago por dia</b>, com até <b>50 produtos</b> — o sistema completa a existente; o que não couber é reportado.</li>
+          <li>A Shopee permite <b>1 promoção relâmpago por dia</b>, com até <b>50 variações</b> (cada opção do anúncio conta) — o sistema completa a existente com os que mais vendem; o que não couber é reportado.</li>
           <li><b>Desconto mínimo ~1%</b>: promo "1 centavo abaixo" é recusada pelo critério de preço da Shopee (foi a causa da maioria das falhas). E a promo não pode ficar acima do <b>menor preço dos últimos 7 dias</b> do item.</li>
           <li>Blocos que você desativar no Seller Center continuam desativados — o sistema não religa promoção desligada na mão.</li>
           <li>Proteção de preço: item com promo <b>maior/igual ao preço atual</b> ou <b>abaixo de 50%</b> dele é pulado e reportado no Discord.</li>
@@ -384,7 +384,7 @@ export function Relampago({ shopId }: { shopId: number }) {
                     Faltam <b>{r.faltam}</b>{r.sales_existentes > 0
                       ? <> — entram na promoção existente</>
                       : <> — a promoção do dia será criada e ativada</>}.
-                    {r.nao_cabem > 0 && <> <span style={{ color: AMBER }}>{r.nao_cabem} não cabem (limite Shopee: 1 promoção/dia, 50 produtos).</span></>}
+                    {r.nao_cabem > 0 && <> <span style={{ color: AMBER }}>{r.nao_cabem} variações não cabem (limite Shopee: 1 promoção/dia, 50 variações).</span></>}
                   </p>
                   {(r.pulados ?? []).length > 0 && (
                     <p className="text-[12px]" style={{ color: AMBER }}>
