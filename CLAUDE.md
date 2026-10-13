@@ -2375,6 +2375,27 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
 - **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
   variações: não feito.
 
+## 5.9.1.1 Relâmpago: o limite de 50 é por VARIAÇÃO (13/out/2026)
+
+A Ottz ficou **5 dias sem relâmpago** (09 a 13/out: 0 itens) e a Bumi em 13/out. A tela
+mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit per promotion".
+- **Causa:** a Shopee aceita **50 variações (modelos) por relâmpago** — anúncio sem variação
+  conta 1 — e, quando o envio passa disso, **recusa TUDO** (`shop_flash_sale_exceed_max_item_
+  criteria`), não só o excedente. A `shopee-flashsale` contava 50 ANÚNCIOS. Medido: 41 e 43
+  variações entram; 58 e 72 não. Estourou quando a programação cresceu (Ottz: +29 linhas em
+  07/out → 72; Bumi: +16 em 12/out → 58).
+- **v10 (deploy 23):** cada envio leva anúncios INTEIROS até somar 50 variações (o que a
+  relâmpago do dia já tem conta, lido de `get_shop_flash_sale_items`), na ordem de **quem vende
+  mais em 30 dias** (RPC `promo_mc_base`); o resto vira "não coube". `dia` = hoje passa a
+  enxergar a relâmpago EM ANDAMENTO (`type: 2`), para completar a do dia que nasceu vazia. A
+  prévia devolve tudo em variações + `nao_cabem_skus`.
+- **Na data:** Ottz 83 linhas ativas (81 válidas) → 50 entram, 31 ficam de fora; Bumi 59 → 50
+  entram, 9 ficam. Quem fica de fora é sempre quem vende menos (inclusive produto novo sem
+  venda): para entrar, pausar outra linha na programação. Só existe 1 relâmpago por dia.
+- **Lição:** falha do cron das 18h07 fica em `flashsale_criadas.status = 'erro'` e vai ao
+  Discord (#atualizações), mas ninguém viu por 5 dias — vale um alerta mais forte quando a
+  relâmpago do dia fecha com 0 itens.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -2382,7 +2403,7 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
 | `shopee-sync-ads` | v66 | Etiquetas (pregerar/imprimir), catálogo, ADS — ver seção 5.1. v66: `imprimir` usa a fila própria quando a impressora é nossa (§5.9) |
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-catalogo-itens` | v2 | Relê do catálogo Shopee **só os anúncios pedidos** (v2: `modulo=recentes` = anúncios novos/alterados nos últimos N dias que o espelho não tem; fonte em `supabase/functions/`) (≤30/chamada, `pendentes` = reenviar) e faz upsert no espelho com o MESMO mapeamento do `shopee-sync-ads?modulo=catalogo`. Só leitura na Shopee; JWT de usuário. Usado pelo "Atualizar da Shopee" da Minha Promoção — ver seção 5.9.1 |
-| `shopee-flashsale` | v9 (deploy 22; a descrição ao lado é da v3 — ver §5.9.1 para v8/v9) | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
+| `shopee-flashsale` | v10 (deploy 23 — limite de 50 VARIAÇÕES por relâmpago, §5.9.1.1); antes: v9 (deploy 22; a descrição ao lado é da v3 — ver §5.9.1 para v8/v9) | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
 | `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |
 | `produtos-peso` | v2 | Peso real do produto (`dimensoes.pesoBruto` do Tiny) → `produtos.peso_bruto`. Base da divisão de separação por peso — ver §5.0.3. `?modulo=preencher` (cron jobid 113, `9,39`), `refresh`, `sku=X`, `&dry=1` |
