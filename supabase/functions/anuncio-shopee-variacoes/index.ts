@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v2 (13/out/2026)
+// Edge Function: anuncio-shopee-variacoes v3 (13/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -12,6 +12,9 @@
 // v2 (pedido do dono): PESO e MEDIDAS POR VARIAÇÃO — cada item de `variacoes` aceita `peso_kg` e
 //   `comprimento_cm`/`largura_cm`/`altura_cm` (os três juntos); vão no modelo como `weight` e
 //   `dimension {package_length, package_width, package_height}`. Em branco = valem os do anúncio.
+// v3 (pedido do dono: enviar já ATIVO): `ativar: true` → depois de criar as variações, põe o
+//   anúncio NO AR (`product/unlist_item`, unlist=false). Assim o anúncio de variações nasce fora
+//   do ar e só aparece para o comprador quando as opções e os preços delas já existem.
 // Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
 // variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
@@ -195,7 +198,20 @@ Deno.serve(async (req) => {
     });
     if (erro) return json({ ok: false, erro: `a Shopee recusou as variações: ${erro}`, resposta: r }, 200);
     const modelos = ((r?.response?.model ?? []) as any[]).map((m) => ({ model_id: m.model_id, sku: m.model_sku, tier_index: m.tier_index }));
-    return json({ ok: true, anuncio, modelos, aviso: r?.warning || null });
+    let ativado: boolean | null = null; let avisoAtivar: string | null = null;
+    if (body.ativar === true) {
+      const at = await lerJson(await fetch((await urlLoja(c, "/api/v2/product/unlist_item")).toString(), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_list: [{ item_id: itemId, unlist: false }] }),
+      }));
+      const falha = at?.error ? `${at.error} ${at.message ?? ""}`.trim() : (((at?.response?.failure_list ?? []) as any[])[0]?.failed_reason ?? null);
+      ativado = !falha;
+      if (falha) avisoAtivar = `as variações foram criadas, mas NÃO consegui pôr o anúncio no ar (${falha}) — ative no Seller Center`;
+      await db.from("debug_fulfillment").insert({
+        modulo: "anuncio-shopee-variacoes", etapa: `${itemId}:ativar`, status_http: falha ? 400 : 200,
+        resultado: { quem: quem.nome, shop_id: shopId, resposta: at },
+      });
+    }
+    return json({ ok: true, anuncio, modelos, aviso: r?.warning || null, ativado, aviso_ativar: avisoAtivar });
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500);
   }

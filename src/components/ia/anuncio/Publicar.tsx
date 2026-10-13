@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
-import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaRascunho } from "@/lib/iaAnuncio";
+import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
 // 3 · Enviar anúncio (12/out/2026, pedido do dono): manda o anúncio montado aqui
@@ -73,7 +74,7 @@ type Op = Record<string, string | boolean>;
 
 const txt = (v: number | null | undefined) => (v == null ? "" : String(v).replace(".", ","));
 // no Mercado Livre o título começa desmarcado: o ML recusa a troca em anúncio que já vendeu
-const opInicial = (canal: string): Op => ({ fora_do_ar: true, c_titulo: canal !== "mercado_livre", c_descricao: true, c_fotos: true, c_preco: false });
+const opInicial = (canal: string): Op => ({ fora_do_ar: canal !== "shopee", c_titulo: canal !== "mercado_livre", c_descricao: true, c_fotos: true, c_preco: false });
 const situacao = (st?: string | null) => (!st || st === "NORMAL" || st === "active" ? "" : st === "UNLIST" ? "fora do ar" : st === "paused" ? "pausado" : st);
 
 /** Lojas de cada marketplace: o destino do envio é sempre canal + empresa. */
@@ -84,8 +85,10 @@ const LOJAS: Record<string, { rotulo: string; empresa: string }[]> = {
   amazon: [{ rotulo: "ACZ", empresa: "ottz" }, { rotulo: "SVL", empresa: "svl" }],
 };
 
-export function Publicar({ rascunho, canal, empresa, onDestino }: {
+export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
   rascunho: IaRascunho; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
+  /** bloco extra dentro da conferência de CRIAR (ex.: cadastrar em Minha Promoção, na Shopee) */
+  noEnvio?: ReactNode;
 }) {
   const exQ = useQuery({
     queryKey: ["ia-anuncio", "existentes", rascunho.sku],
@@ -157,7 +160,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
       </div>
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} outros={outros} />
+            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
     </CardContent></Card>
   );
@@ -167,8 +170,8 @@ export function Publicar({ rascunho, canal, empresa, onDestino }: {
 interface Outro { empresa: string; rotulo: string; e: Existente }
 
 /** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
-  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[];
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio }: {
+  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
 }) {
   const qc = useQueryClient();
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
@@ -186,6 +189,38 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
   // ajustes feitos na própria conferência (13/out, pedido do dono): título e tirar foto mexem no rascunho
   const [tituloTxt, setTituloTxt] = useState<string | null>(null);
   const [mexendo, setMexendo] = useState(false);
+  // PREÇO PADRÃO (13/out, pedido do dono): sem preço aprovado para este destino, a conferência já
+  // abre com o preço da margem padrão do canal (Shopee = 30%, em IA › Prompts › Canais), calculado
+  // agora — o "sugerido" guardado no rascunho é o da margem antiga.
+  const proprioD = rascunho.canal === canal && rascunho.empresa === empresa;
+  const aprovadoD = proprioD ? rascunho.preco_aprovado : rascunho.memoria_calculo?.destinos?.[`${canal}:${empresa}`]?.preco;
+  const padraoQ = useQuery({
+    queryKey: ["ia-anuncio", "produto", rascunho.sku, "preco", canal, empresa, null],
+    enabled: canal === "shopee" && aprovadoD == null,
+    queryFn: async (): Promise<IaPreco> => {
+      const { data, error } = await supabaseExternal.rpc("ia_calcular_preco", { p_sku: rascunho.sku, p_canal: canal, p_empresa: empresa, p_margem: null });
+      if (error) throw error;
+      return (data ?? {}) as IaPreco;
+    },
+  });
+  const precoPadrao = canal === "shopee" && aprovadoD == null ? padraoQ.data?.preco_sugerido ?? null : null;
+  const margemPadrao = padraoQ.data?.memoria_calculo?.margem_padrao_pct as number | undefined;
+  const padraoPosto = useRef<string | null>(null);
+  useEffect(() => {
+    if (precoPadrao == null || padraoPosto.current != null) return;
+    const s = String(precoPadrao);
+    padraoPosto.current = s;
+    setOp((o) => (o.preco === undefined ? { ...o, preco: s } : o));
+    setAplicado((a) => (a.preco === undefined ? { ...a, preco: s } : a));
+  }, [precoPadrao]);
+  // aprovou um preco no bloco Preco depois de abrir aqui: o padrao sai da frente (o aprovado manda)
+  useEffect(() => {
+    const posto = padraoPosto.current;
+    if (aprovadoD == null || posto == null) return;
+    padraoPosto.current = null;
+    const tirar = (o: Op): Op => { if (o.preco !== posto) return o; const n = { ...o }; delete n.preco; return n; };
+    setOp(tirar); setAplicado(tirar);
+  }, [aprovadoD]);
 
   const previaQ = useQuery({
     queryKey: ["ia-anuncio", "publicar", rascunho.id, canal, empresa, rascunho.updated_at, JSON.stringify(aplicado)],
@@ -296,6 +331,10 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
   async function enviar() {
     if (!p) return;
     const c = p.campos;
+    const junto: VaiCriar = { canal, empresa, sku: rascunho.sku, variacoes: false, promocao: null };
+    if (modo !== "atualizar") window.dispatchEvent(new CustomEvent(EV_VAI_CRIAR, { detail: junto }));
+    // com variações, o anúncio simples nasce fora do ar e só vai ao ar depois que elas existem
+    const ativarDepois = modo !== "atualizar" && canal === "shopee" && junto.variacoes && !p.fora_do_ar;
     const aviso = modo === "atualizar" ? [
       `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
       `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
@@ -308,19 +347,30 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
       `${p.titulo}`, `Preço: ${p.preco != null ? formatBRL(p.preco) : "—"} · Estoque inicial: ${p.estoque} · ${p.fotos.length} foto(s)`,
       p.fora_do_ar
         ? (ml ? "Vai ser PAUSADO logo depois de criado. Você reativa depois no Mercado Livre." : "Vai nascer FORA DO AR (não listado). Você ativa depois no Seller Center.")
-        : "Vai nascer NO AR, visível para os compradores.",
+        : ativarDepois
+          ? "Nasce fora do ar e vai ao AR logo depois que as variações forem criadas (segundos)."
+          : "Vai nascer NO AR, visível para os compradores.",
+      ...(junto.variacoes ? ["Em seguida: cria as variações (bloco Variações deste anúncio)."] : []),
+      ...(junto.promocao ? [`Em seguida: cadastra na promoção ${junto.promocao} — o preço promocional vale na hora.`] : []),
     ].join("\n");
     if (!window.confirm(aviso)) return;
     setEnviando(true);
     try {
       const opc: Record<string, unknown> = { ...limpar(aplicado), modo, de_novo: deNovo };
       if (ordem) opc.fotos = { ...((opc.fotos as Record<string, unknown> | undefined) ?? {}), ordem: finalOrdem };
+      if (ativarDepois) opc.fora_do_ar = true;
       const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: opc, confirmar: true });
       if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
       else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
       // produto pai na Shopee: o bloco "Variações deste anúncio" ouve este aviso e cria as opções no anúncio recém-criado
       if (modo !== "atualizar" && r.item_id) {
-        window.dispatchEvent(new CustomEvent("ia-anuncio-criado", { detail: { canal, empresa, sku: rascunho.sku, item_id: String(r.item_id) } }));
+        const criadoAgora: AnuncioCriado = { canal, empresa, sku: rascunho.sku, item_id: String(r.item_id), ativar: ativarDepois, preco: p.preco ?? null };
+        window.dispatchEvent(new CustomEvent(EV_CRIADO, { detail: criadoAgora }));
+        // anúncio simples já está completo: a promoção (se escolhida) entra agora; com variações, quem avisa é o bloco delas
+        if (!junto.variacoes) {
+          const pronto: AnuncioPronto = { canal, empresa, sku: rascunho.sku, item_id: String(r.item_id), precos: p.preco != null ? { [rascunho.sku]: Number(p.preco) } : {} };
+          window.dispatchEvent(new CustomEvent(EV_PRONTO, { detail: pronto }));
+        }
       }
       // o que deu certo pela metade (ex.: criado mas não pausou) não pode passar batido
       for (const av of ((r.avisos ?? []) as string[]).filter((x) => /^(ATENÇÃO|o anúncio foi criado, mas)/.test(x))) toast.warning(av, { duration: 30000 });
@@ -470,7 +520,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
               </div>
             </label>
             <label className="block">
-              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio</span>
+              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · padrão: margem de ${(margemPadrao * 100).toFixed(0)}%` : ""}</span>
               <Input className="h-8 mt-1 w-[150px] text-sm tabular-nums" inputMode="decimal" placeholder="defina o preço"
                 value={campo("preco", p.preco)} onChange={(e) => setOp({ ...op, preco: e.target.value })} />
             </label>
@@ -527,11 +577,14 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
               </div>
             </div>
           )}
+          {canal === "shopee" && noEnvio}
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
             <span>
               {ml ? <>Criar e <b>pausar</b> em seguida</> : <>Criar <b>fora do ar</b> (não listado)</>}
-              <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e {ml ? "reative depois no Mercado Livre" : "ative depois no Seller Center"}.</span>
+              <span className="block text-[11px] text-muted-foreground">{ml
+                ? "Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e reative depois no Mercado Livre."
+                : "Desmarcado (padrão): o anúncio nasce NO AR. Marque para criar sem listar e ativar depois no Seller Center."}</span>
             </span>
           </label>
           {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Atualizar a conferência com o que mudei</Button>}

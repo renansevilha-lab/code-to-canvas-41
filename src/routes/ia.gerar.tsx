@@ -13,6 +13,7 @@ import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
 import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
 import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
+import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -216,7 +217,8 @@ function GerarAnuncioPage() {
       )}
 
       {rascunho && r !== "novo" && (
-        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
+        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}
+          noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />} />
       )}
       </>)}
     </div>

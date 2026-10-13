@@ -2390,6 +2390,35 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
     `init_tier_variation`. Em branco não manda (valem os do anúncio). A tela sugere o peso
     quando a opção é "8kg"/"500g". **Não testado ao vivo:** se a Shopee recusar esses campos no
     `init_tier_variation`, o caminho é `product/update_model` depois de criar.
+- **Shopee: preço padrão a 30% de MC, nasce NO AR, e já entra em Minha Promoção (13/out/2026, à
+  tarde, pedido do dono):**
+  - **Preço padrão:** `ia_canal_config.margem_alvo_pct` da Shopee passou de 0,175 para **0,30**
+    (dado, editável em IA › Prompts › Canais). O `preco_sugerido` guardado nos rascunhos antigos
+    é o da margem velha e a `anuncio-publicar` lê o guardado — por isso a conferência (`Publicar`)
+    calcula na hora `ia_calcular_preco(sku, 'shopee', empresa, null)` e já abre com esse preço
+    em `opcoes.preco` quando o destino NÃO tem preço aprovado (preço aprovado no bloco Preço
+    continua mandando). As variações (`VariacoesShopee`) também nascem com o preço da margem
+    padrão, SKU a SKU (kit incluso); sem custo na gestão, fica o preço do Tiny.
+  - **No ar:** `opInicial` da Shopee = `fora_do_ar: false` (Mercado Livre segue pausando). Com
+    variações, o anúncio simples nasce FORA do ar e a `anuncio-shopee-variacoes` **v3**
+    (`ativar: true`) o põe no ar com `product/unlist_item` (unlist=false) logo depois de criar
+    as opções — o comprador nunca vê o anúncio sem as variações/preços. Se a ativação falhar, as
+    variações ficam criadas e a tela avisa para ativar no Seller Center.
+  - **Minha Promoção no envio** (`PromocaoNoEnvio.tsx`, dentro da conferência de CRIAR): escolhe
+    uma promoção em andamento ou programada (`shopee-promocoes?modulo=list`) e a margem do preço
+    promocional — **10%, 15%, 17,25% ou 20%** (`FAIXAS_PROMO`; padrão 17,25%). Preço promocional
+    de cada SKU = `ia_calcular_preco(sku, 'shopee', empresa, faixa)`, editável. Anúncio pronto →
+    `add-itens&confirmar=1&propagar=1` (item simples = `item_promotion_price`; variações =
+    `model_list` com o `model_id` da resposta do `init_tier_variation` ou, na falta, do espelho
+    `shopee_anuncios_variacao`). Promocional ≥ preço cheio ou sem preço = fica de fora, com aviso.
+    Sem repetição automática: "Tentar cadastrar de novo" é clique. A última promoção/margem
+    escolhida fica no `localStorage` (`ia.envio.promo.<empresa>`).
+  - **Como os blocos conversam** (`src/lib/iaEnvioEventos.ts`): `ia-anuncio-vai-criar` (síncrono,
+    detalhe mutável: variações e promoção dizem o que farão — entra no texto da confirmação) →
+    `ia-anuncio-criado` (`ativar`) → `ia-anuncio-pronto` (item, modelos, preços cheios).
+  - **Não testado ao vivo:** nada disto (`unlist_item`, `add_discount_item` em anúncio recém-criado
+    — pode haver atraso de indexação —, e a faixa de preço: no degrau dos R$ 80 da tarifa a
+    conta dá saltos, ex. 16497 a 30% = R$ 108,70 e a 20% = R$ 69,00).
 - **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
   variações: não feito.
 
@@ -2513,7 +2542,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
-| `anuncio-shopee-variacoes` | v2 (peso e medidas por variação) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
+| `anuncio-shopee-variacoes` | v3 (peso e medidas por variação; `ativar` põe no ar depois das variações) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v4 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |

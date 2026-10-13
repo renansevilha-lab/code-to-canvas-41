@@ -10,6 +10,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnuncio";
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
+import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
 // "Variações deste anúncio na Shopee" (12/out/2026, pedido do dono). A Shopee cria anúncio com
@@ -24,7 +25,7 @@ import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const TIPOS_FOTO = ["capa_ambientada_limpa", "capa_ambientada_texto"];
-export const EVENTO_ANUNCIO_CRIADO = "ia-anuncio-criado";
+export const EVENTO_ANUNCIO_CRIADO = EV_CRIADO;
 interface Linha {
   sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null;
   /** peso e medidas DESTA variação (em branco = valem os do anúncio) */
@@ -50,6 +51,10 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const { data: vs } = await supabaseExternal.from("produtos").select("sku, nome, preco").eq("sku_pai", sku).eq("ativo", true).order("sku");
       const vars = (vs ?? []) as { sku: string; nome: string | null; preco: number | null }[];
       const skus = vars.map((v) => v.sku);
+      // PREÇO PADRÃO (13/out, pedido do dono): o da margem padrão da Shopee (30%), SKU a SKU; sem custo, o do Tiny
+      const calc = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: null })));
+      const pelaMargem = new Map(skus.map((s, i) => [s, Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));
+      const margemPadrao = Number((calc.map((c) => (c.data as { memoria_calculo?: { margem_padrao_pct?: number } } | null)?.memoria_calculo?.margem_padrao_pct).find((x) => x != null)) ?? 0) || null;
       const [k, pub, esp, rasc] = await Promise.all([
         skus.length ? supabaseExternal.from("produto_kits").select("sku_kit, quantidade").in("sku_kit", skus) : Promise.resolve({ data: [] }),
         supabaseExternal.from("ia_publicacao").select("item_id, operacao, criado_em").eq("sku", sku).eq("canal", "shopee").eq("empresa", empresa).eq("estado", "publicado").order("criado_em", { ascending: false }).limit(5),
@@ -71,13 +76,13 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const opcao = (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20);
         return {
           sku: v.sku, opcao, peso: pesoDaOpcao(opcao), comp: "", larg: "", alt: "",
-          preco: v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: "0",
+          preco: pelaMargem.get(v.sku) ? dinheiro(pelaMargem.get(v.sku)!) : v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: "0",
           foto_path: foto?.storage_path ?? null, foto_url: foto ? urls[foto.storage_path] ?? null : null,
         };
       }).sort((a, z) => (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1) || a.sku.localeCompare(z.sku));
       const criado = ((pub.data ?? []) as { item_id: string | null; operacao: string | null }[]).find((p) => p.item_id)?.item_id ?? null;
       const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null }[];
-      return { linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho };
+      return { linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
 
@@ -89,7 +94,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const [previa, setPrevia] = useState<{ chave: string; dados: Previa } | null>(null);
   const [ocupado, setOcupado] = useState<"" | "conferindo" | "criando">("");
   const [feito, setFeito] = useState<string | null>(null);
-  const [recemCriado, setRecemCriado] = useState<string | null>(null);
+  const [recemCriado, setRecemCriado] = useState<{ item: string; ativar: boolean } | null>(null);
+  const [noAr, setNoAr] = useState<boolean | null>(null);
   // preenche uma vez só: recarregar a consulta não pode apagar o que o operador já ajustou
   const iniciado = useRef(false);
   useEffect(() => {
@@ -101,13 +107,20 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
   useEffect(() => {
     const ouvir = (ev: Event) => {
-      const d = ((ev as CustomEvent).detail ?? {}) as { canal?: string; empresa?: string; sku?: string; item_id?: string };
+      const d = ((ev as CustomEvent).detail ?? {}) as Partial<AnuncioCriado>;
       if (d.canal !== "shopee" || d.empresa !== empresa || d.sku !== sku || !d.item_id) return;
-      setItemId(String(d.item_id)); setFeito(null); setRecemCriado(String(d.item_id));
+      setItemId(String(d.item_id)); setFeito(null); setRecemCriado({ item: String(d.item_id), ativar: d.ativar === true });
     };
-    window.addEventListener(EVENTO_ANUNCIO_CRIADO, ouvir);
-    return () => window.removeEventListener(EVENTO_ANUNCIO_CRIADO, ouvir);
+    // antes de o envio confirmar: digo se as variações vão junto (aí o anúncio só vai ao ar depois delas)
+    const vaiCriar = (ev: Event) => {
+      const d = (ev as CustomEvent).detail as VaiCriar;
+      if (d.canal === "shopee" && d.empresa === empresa && d.sku === sku) d.variacoes = junto.current;
+    };
+    window.addEventListener(EV_CRIADO, ouvir); window.addEventListener(EV_VAI_CRIAR, vaiCriar);
+    return () => { window.removeEventListener(EV_CRIADO, ouvir); window.removeEventListener(EV_VAI_CRIAR, vaiCriar); };
   }, [sku, empresa]);
+  const junto = useRef(false);
+  junto.current = auto && linhas.length >= 2;
 
   const todasComFoto = linhas.length > 0 && linhas.every((l) => l.foto_path);
   const mandarFotos = comFotos && todasComFoto;
@@ -119,22 +132,38 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     })),
   });
 
-  async function criar(item: string) {
+  /** `doEnvio`: veio do envio do anúncio (ativa se pedido e avisa a promoção); o caminho manual só cria. */
+  async function criar(item: string, doEnvio?: { ativar: boolean }) {
     setOcupado("criando");
     try {
-      const r = (await chamarVariacoesShopee("criar", { ...corpo(item), confirmar: true })) as { anuncio?: { url: string } };
+      const r = (await chamarVariacoesShopee("criar", { ...corpo(item), confirmar: true, ativar: doEnvio?.ativar === true })) as {
+        anuncio?: { url: string }; modelos?: { model_id: number; sku: string }[]; ativado?: boolean | null; aviso_ativar?: string | null;
+      };
       setFeito(r.anuncio?.url ?? `https://shopee.com.br/product/${shopId}/${item}`);
-      toast.success(`${linhas.length} variações criadas no anúncio ${item}`);
+      setNoAr(doEnvio?.ativar ? r.ativado === true : null);
+      toast.success(`${linhas.length} variações criadas no anúncio ${item}${r.ativado ? " · anúncio no ar" : ""}`);
+      if (r.aviso_ativar) toast.warning(r.aviso_ativar, { duration: 30000 });
       // o espelho do app passa a enxergar as variações sem esperar a sincronização da madrugada
-      void atualizarCatalogoShopee(shopId, [Number(item)]).catch(() => undefined);
+      const espelhar = atualizarCatalogoShopee(shopId, [Number(item)]).catch(() => undefined);
+      if (doEnvio) {
+        // a promoção (se escolhida no envio) precisa do código de cada variação: o da resposta ou, sem ele, o do espelho
+        let modelos = (r.modelos ?? []).filter((m) => m.model_id && m.sku).map((m) => ({ model_id: Number(m.model_id), sku: String(m.sku) }));
+        if (modelos.length < linhas.length) {
+          await espelhar;
+          const { data } = await supabaseExternal.from("shopee_anuncios_variacao").select("model_id, sku").eq("shop_id", shopId).eq("item_id", Number(item));
+          modelos = ((data ?? []) as { model_id: number; sku: string | null }[]).filter((m) => m.sku).map((m) => ({ model_id: Number(m.model_id), sku: String(m.sku) }));
+        }
+        const pronto: AnuncioPronto = { canal: "shopee", empresa, sku, item_id: item, modelos, precos: Object.fromEntries(linhas.map((l) => [l.sku, paraNumero(l.preco) || 0])) };
+        window.dispatchEvent(new CustomEvent(EV_PRONTO, { detail: pronto }));
+      }
     } catch (e) {
       toast.error("O anúncio existe, mas as variações NÃO foram criadas", { description: `${(e as Error).message} — ajuste aqui e use "Criar as variações na Shopee".`, duration: 30000 });
     } finally { setOcupado(""); }
   }
   useEffect(() => {
     if (!recemCriado) return;
-    const item = recemCriado; setRecemCriado(null);
-    if (auto && linhas.length >= 2) void criar(item);
+    const { item, ativar } = recemCriado; setRecemCriado(null);
+    if (auto && linhas.length >= 2) void criar(item, { ativar });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recemCriado]);
 
@@ -181,7 +210,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         {feito ? (
           <p className="text-sm text-emerald-600 flex flex-wrap items-center gap-2"><CheckCircle2 className="h-4 w-4" />Variações criadas.
             <a className="underline inline-flex items-center gap-1" href={feito} target="_blank" rel="noreferrer">ver o anúncio<ExternalLink className="h-3.5 w-3.5" /></a>
-            <span className="text-xs text-muted-foreground">Confira no Tiny se o anúncio foi ligado aos produtos pelo SKU e ative no Seller Center.</span></p>
+            <span className="text-xs text-muted-foreground">{noAr === true ? "O anúncio já está no ar. Confira no Tiny se foi ligado aos produtos pelo SKU." : "Confira no Tiny se o anúncio foi ligado aos produtos pelo SKU e ative no Seller Center."}</span></p>
         ) : (
           <>
             <div className="grid gap-3 sm:grid-cols-[200px_1fr] items-end">
@@ -221,7 +250,10 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
                 ))}
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">Peso e medidas por variação: é o que a Shopee usa para o frete de cada opção. Em branco, valem o peso e as medidas do anúncio.</p>
+            <p className="text-[11px] text-muted-foreground">
+              Preço: já vem pela margem de contribuição padrão da Shopee{q.data.margemPadrao ? ` (${(q.data.margemPadrao * 100).toFixed(0)}%)` : ""}, variação a variação{q.data.semMargem.length ? ` — sem custo na gestão, ${q.data.semMargem.join(", ")} ficou com o preço do Tiny` : ""}.
+              Peso e medidas por variação: é o que a Shopee usa para o frete de cada opção; em branco, valem os do anúncio.
+            </p>
             {faltas.length > 0 && <p className="text-xs text-destructive">Antes de enviar: {faltas.join(" · ")}.</p>}
             {semEstoque > 0 && <p className="text-[11px] text-amber-600">{semEstoque} variação(ões) com estoque 0: nascem esgotadas até o Tiny mandar o estoque (depois do vínculo pelo SKU).</p>}
 
