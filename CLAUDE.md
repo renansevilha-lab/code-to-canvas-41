@@ -2574,6 +2574,27 @@ Pedido do dono: ao trocar o destino do envio, aproveitar peso e tamanho da embal
   a margem de contribuição que ele dá (`ia_analisar_preco` → `lucro_pct`/`lucro_reais`), e ela
   acompanha o que for digitado à mão (atraso de 0,45 s). Vermelho < 0, âmbar < 10%, verde acima.
 
+## 5.11.11.6 Texto da IA "explicando de onde tirou a informação" (13/out/2026)
+
+Relato do dono: descrições com "Marca visível na embalagem: Great Pets", "Produto identificado no
+nome como mandioca mista", "Pelo rótulo, ela oferece…" — a IA contava ao comprador como descobriu
+cada dado.
+- **Causa:** as regras de texto (`ia_prompt_guardrail`, tipo `instrucao`, que entram em todo
+  prompt como "REGRAS OBRIGATORIAS") dizem quais são as fontes — `inst_sem_invencao` ("suas duas
+  fontes de verdade são o NOME e a FOTO…") e os templates ("o que você LÊ NA FOTO") — e nenhuma
+  dizia que isso é interno. Piora quando o cadastro está sem marca: `inst_sem_marca_terceira` só
+  permite a marca do campo `{{marca}}`, e a IA, vendo outra no rótulo, hesita por escrito.
+- **Feito (dado, não código — aparece em IA › Prompts › Regras):** regra **`inst_sem_citar_fonte`**
+  (instrução, ativa): escrever como o vendedor, afirmar o fato direto, nunca dizer de onde veio;
+  na dúvida, omitir; única exceção é orientar o uso ("siga o modo de uso do rótulo"). E o alerta
+  **`cita_a_fonte_da_informacao`** (regex, ação `avisar`): se a frase escapar, o bloco Texto mostra
+  "Avisos: cita_a_fonte_da_informacao". ARMADILHA: os padrões regex vão para `new RegExp(p,
+  "giu")` — o `(?i)` das regras antigas (herdadas do gerador) é inválido em JS e elas são puladas.
+- **Textos já gerados:** 12 dos 19 rascunhos com texto têm a frase (20 ocorrências), 9 deles já
+  publicados (10933, 14091, 14258, 14560, 14983, 16452, 16453, 16486, 16500). A regra só vale para
+  geração nova — corrigir os antigos é refazer o texto ou editar à mão e reenviar.
+- **Não testado:** não rodei uma geração nova (precisa de sessão e gasta IA).
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
