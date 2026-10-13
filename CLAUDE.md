@@ -2513,6 +2513,13 @@ Pedido do dono: aba própria para as fotos e poder usar as fotos de outro anúnc
 - **Bloco Preço:** "padrão do canal" aparecia 17,5% em produto SEM custo (a `ia_calcular_preco`
   devolve o erro antes de ler o canal e a tela caía no valor fixo). Agora lê
   `ia_canal_config.margem_alvo_pct` direto (Shopee = 30%).
+- **Fotos das variações: "SKU … sem foto de referência" (13/out, relato do dono).** A
+  `ia-anuncio` resolve a referência por SKU (`ia_produto_extra.foto_ref_path`, senão a foto do
+  catálogo). Variação criada pelo app a partir de base SEM foto no Tiny (16503–16505, pai 16500,
+  base 16453) não tinha nenhuma das duas, embora o PAI tivesse a referência que o dono subiu
+  (`ref/16500/…`). `FotosVariacoes.garantirReferencia` agora grava na variação a referência do
+  pai (ou do `sku_base`) antes de gerar — aponta para o MESMO arquivo, não copia; a função baixa
+  qualquer caminho do bucket. Variação com referência própria não é tocada.
 - **Não testado na tela** (exige login).
 
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)

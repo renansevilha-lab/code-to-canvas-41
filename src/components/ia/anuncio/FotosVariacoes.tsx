@@ -109,9 +109,28 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
   const custo = (n: number) => (modelo ? `US$ ${(n * Number(modelo.custo_estimado_usd)).toFixed(2).replace(".", ",")}` : "");
   const marca = (s: string, texto?: string) => setRodando((r) => { const n = { ...r }; if (texto) n[s] = texto; else delete n[s]; return n; });
 
-  /** Uma variação: briefing → prompt → rascunho → fila. Devolve o erro (ou null). */
+  /** FOTO DE REFERÊNCIA (13/out): a variação é o MESMO produto do pai em outra quantidade. Sem foto real própria,
+   *  ela passa a usar a foto de referência do produto pai (ou do produto base) — sem isso a IA recusa a variação
+   *  ("SKU … sem foto de referência"), mesmo com o pai tendo a foto certa. Devolve o erro (ou null). */
+  async function garantirReferencia(skuVar: string): Promise<string | null> {
+    const { data: pai } = await supabaseExternal.from("produtos").select("sku_base").eq("sku", sku).maybeSingle();
+    const base = (pai?.sku_base as string | null) ?? null;
+    const { data: ex, error: e1 } = await supabaseExternal.from("ia_produto_extra").select("sku, foto_ref_path").in("sku", [skuVar, sku, ...(base ? [base] : [])]);
+    if (e1) return `referência: ${e1.message}`;
+    const ref = (x: string) => ((ex ?? []) as { sku: string; foto_ref_path: string | null }[]).find((l) => l.sku === x)?.foto_ref_path ?? null;
+    if (ref(skuVar)) return null;
+    const herdada = ref(sku) ?? (base ? ref(base) : null);
+    if (!herdada) return null; // sem referência no pai: a função tenta a foto do catálogo e, se não houver, avisa
+    const { error } = await supabaseExternal.from("ia_produto_extra").upsert({ sku: skuVar, foto_ref_path: herdada, fotos_ref: [herdada] }, { onConflict: "sku" });
+    return error ? `referência: ${error.message}` : null;
+  }
+
+  /** Uma variação: referência → briefing → prompt → rascunho → fila. Devolve o erro (ou null). */
   async function gerarUma(v: Variacao): Promise<string | null> {
     try {
+      marca(v.sku, "foto de referência…");
+      const erroRef = await garantirReferencia(v.sku);
+      if (erroRef) return erroRef;
       if (!v.temBriefing) {
         if (!briefing) return "gere o texto deste produto antes (o briefing dele é a base das fotos das variações)";
         marca(v.sku, "briefing…");
@@ -139,7 +158,10 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
       const ri = await chamarIa("imagens", { rascunho_id: rascunhoId, fotos: [tipo], modelo: modelo?.id });
       if (!((ri.enfileiradas ?? []) as unknown[]).length) return ((ri.puladas ?? []) as { motivo: string }[])[0]?.motivo ?? "a foto não entrou na fila";
       return null;
-    } catch (e) { return (e as Error).message; }
+    } catch (e) {
+      const m = (e as Error).message;
+      return /sem foto de refer/i.test(m) ? `${m} — suba a foto real do produto no topo da página (botão Trocar): as variações usam a do produto pai` : m;
+    }
     finally { marca(v.sku); }
   }
   async function gerar(alvo: Variacao[]) {
