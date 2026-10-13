@@ -110,6 +110,11 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
   const [abrir, setAbrir] = useState(0);
   // todos os anúncios deste produto no canal escolhido (todas as lojas): servem ao "Atualizar também"
   const outros: Outro[] = (LOJAS[canal] ?? []).flatMap((l) => (listaDe(canal, l.empresa) ?? []).map((e) => ({ empresa: l.empresa, rotulo: l.rotulo, e })));
+  // ENVIAR TAMBÉM (13/out, pedido do dono): criado num lugar, a conferência já oferece os outros
+  const demais: Demais[] = DESTINOS.filter((d) => d.pronto).flatMap((d) => (LOJAS[d.canal] ?? [])
+    .filter((l) => !(d.canal === canal && l.empresa === empresa))
+    .map((l) => ({ canal: d.canal, empresa: l.empresa, rotulo: `${nomeCanal(d.canal)} · ${l.rotulo}`, lista: listaDe(d.canal, l.empresa) })));
+  const irPara = (c: string, e: string) => { setAbrir((n) => n + 1); onDestino(c, e); };
   return (
     <Card><CardContent className="p-5 space-y-4">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -160,18 +165,22 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
       </div>
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} />
+            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} demais={demais} onIr={irPara} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
     </CardContent></Card>
   );
 }
 
+/** Outro destino (marketplace + loja) deste mesmo anúncio: undefined = ainda lendo; null = não deu para consultar. */
+interface Demais { canal: string; empresa: string; rotulo: string; lista: Existente[] | null | undefined }
+
 /** Um anúncio deste produto numa loja do canal (candidato ao "Atualizar também"). */
 interface Outro { empresa: string; rotulo: string; e: Existente }
 
 /** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio }: {
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr }: {
   rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
+  demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
 }) {
   const qc = useQueryClient();
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
@@ -186,6 +195,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const [aplicado, setAplicado] = useState<Op>(() => opInicial(canal));
   const [enviando, setEnviando] = useState(false);
   const [deNovo, setDeNovo] = useState(false);
+  // acabou de criar aqui: os outros destinos aparecem na hora, sem esperar a conferência recarregar
+  const [recem, setRecem] = useState<string | null>(null);
   // ajustes feitos na própria conferência (13/out, pedido do dono): título e tirar foto mexem no rascunho
   const [tituloTxt, setTituloTxt] = useState<string | null>(null);
   const [mexendo, setMexendo] = useState(false);
@@ -364,6 +375,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
       // produto pai na Shopee: o bloco "Variações deste anúncio" ouve este aviso e cria as opções no anúncio recém-criado
       if (modo !== "atualizar" && r.item_id) {
+        setRecem(String(r.item_id));
         const criadoAgora: AnuncioCriado = { canal, empresa, sku: rascunho.sku, item_id: String(r.item_id), ativar: ativarDepois, preco: p.preco ?? null };
         window.dispatchEvent(new CustomEvent(EV_CRIADO, { detail: criadoAgora }));
         // anúncio simples já está completo: a promoção (se escolhida) entra agora; com variações, quem avisa é o bloco delas
@@ -630,6 +642,31 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
         )}
         {mudou && <span className="text-xs text-muted-foreground">{modo === "atualizar" ? "Refazendo a conferência…" : "Atualize a conferência antes de enviar."}</span>}
       </div>
+
+      {(recem || criado) && onIr && (demais ?? []).length > 0 && (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-2">
+          <div className="text-sm">
+            <CheckCircle2 className="h-4 w-4 inline mr-1.5 -mt-0.5 text-emerald-600" />
+            <b>Anúncio criado {NO} {MK}{recem ? ` (${recem})` : ""}.</b> <span className="text-xs text-muted-foreground">Enviar também para — o mesmo texto e as mesmas fotos; a conferência de cada um abre aqui:</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(demais ?? []).map((x) => {
+              const n = x.lista?.length ?? 0;
+              const soAtualiza = x.canal === "amazon";
+              const parado = soAtualiza && x.lista !== undefined && n === 0;
+              return (
+                <Button key={`${x.canal}:${x.empresa}`} size="sm" variant={n > 0 ? "outline" : "default"} className="h-8 gap-1.5" disabled={enviando || parado}
+                  title={parado ? "criar anúncio novo na Amazon ainda não está pronto por aqui" : undefined} onClick={() => onIr(x.canal, x.empresa)}>
+                  <ArrowRight className="h-3.5 w-3.5" />{x.rotulo}
+                  <span className="text-[10.5px] font-normal opacity-80">
+                    {x.lista === undefined ? "verificando…" : x.lista === null ? "não consegui verificar" : n > 0 ? `já anunciado${n > 1 ? ` (${n})` : ""} · atualizar` : parado ? "ainda não cria por aqui" : "ainda não anunciado"}
+                  </span>
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {(d?.publicacoes ?? []).length > 0 && (
         <div className="rounded-md border divide-y text-xs">

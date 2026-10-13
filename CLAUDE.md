@@ -2416,7 +2416,16 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
   - **Como os blocos conversam** (`src/lib/iaEnvioEventos.ts`): `ia-anuncio-vai-criar` (síncrono,
     detalhe mutável: variações e promoção dizem o que farão — entra no texto da confirmação) →
     `ia-anuncio-criado` (`ativar`) → `ia-anuncio-pronto` (item, modelos, preços cheios).
-  - **Não testado ao vivo:** nada disto (`unlist_item`, `add_discount_item` em anúncio recém-criado
+  - **1º uso real (13/out, print do dono):** SKU 16453 criado NO AR na Shopee Ottz (item
+    56419164656) e cadastrado na hora na promoção escolhida a 15% (R$ 26,73) — anúncio SIMPLES:
+    criar ativo + `add_discount_item` imediato funcionam. Variações (`unlist_item` + promoção por
+    `model_id`) seguem sem teste real.
+  - **Enviar também (13/out):** depois de criar num destino, a conferência mostra o quadro verde
+    "Anúncio criado … Enviar também para" com um botão por marketplace/loja pronta (Shopee
+    Ottz/Bumi, Mercado Livre Ottz/SVL, Amazon ACZ/SVL), dizendo se já existe anúncio lá; o clique
+    troca o destino e abre a conferência dele no mesmo lugar (`demais`/`onIr` no `Envio`).
+    Amazon sem anúncio fica desabilitada (ainda não cria).
+  - **Não testado ao vivo (variações):** (`unlist_item`, `add_discount_item` em anúncio recém-criado
     — pode haver atraso de indexação —, e a faixa de preço: no degrau dos R$ 80 da tarifa a
     conta dá saltos, ex. 16497 a 30% = R$ 108,70 e a 20% = R$ 69,00).
 - **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
