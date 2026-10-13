@@ -2342,6 +2342,32 @@ sempre). Pedido do dono; **começa pela Shopee**. Nenhuma edge function nova.
 - **Não testado na tela nem com escrita real** (exige login): tsc/build ok, RPC conferida no
   banco com 15836 (kit), 16486 (pai) e 15679 (simples).
 
+## 5.11.11 Anúncio COM variações na Shopee — 2º passo (12/out/2026, ~23h)
+
+O dono não conseguia "enviar direto" anúncio com variações: a `anuncio-publicar` só cria
+anúncio SIMPLES (aviso "este produto tem variações no Tiny…"). Em vez de mexer nela (1.243
+linhas, crítica), entrou o 2º passo que a própria Shopee pede:
+- **Edge fn `anuncio-shopee-variacoes` v1** (JWT de usuário + módulo `ia`): `previa` lê o
+  anúncio ao vivo (`get_item_base_info`) e confere; `criar {…, confirmar: true}` chama
+  **`product/init_tier_variation`** com `tier_variation: [{name, option_list: [{option,
+  image?}]}]` e `model: [{tier_index: [i], original_price, model_sku, seller_stock:
+  [{stock}]}]`. Limites conferidos antes: grupo até 14 letras, opção até 20, 2 a 50 variações,
+  foto da opção = todas ou nenhuma, aviso se a mais cara passa de 5× a mais barata. **Recusa
+  anúncio que já tem variações** (trocar opção de anúncio que vende derruba o histórico). Sem
+  repetição da escrita; registro em `debug_fulfillment` (`modulo = 'anuncio-shopee-variacoes'`,
+  `etapa` = item_id).
+- **Tela:** bloco "Variações no anúncio da Shopee" (`VariacoesShopee.tsx`) na aba Anúncio do
+  produto PAI, quando o destino é Shopee, logo abaixo do envio. Traz o ID do anúncio criado
+  (`ia_publicacao` ou o espelho; dá para digitar), o nome do grupo ("Tamanho"), e por variação:
+  opção (o fim do nome, ex. "8kg"), SKU, preço (o do Tiny) e estoque; usa a foto da variação
+  (bloco Fotos das variações) quando TODAS têm. Conferir → Criar (com confirmação) → relê o
+  anúncio no espelho.
+- **Fluxo do dono:** (1) preço no bloco Preço + peso/medidas → "Criar o anúncio na Shopee" (fora
+  do ar); (2) neste bloco, "Criar as variações na Shopee"; (3) conferir no Tiny o vínculo pelo
+  SKU e ativar no Seller Center.
+- **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
+  variações: não feito.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -2388,6 +2414,7 @@ sempre). Pedido do dono; **começa pela Shopee**. Nenhuma edge function nova.
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
+| `anuncio-shopee-variacoes` | v1 | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v4 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |

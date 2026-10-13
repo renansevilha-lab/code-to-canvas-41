@@ -12,6 +12,7 @@ import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
 import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
 import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
+import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -211,6 +212,10 @@ function GerarAnuncioPage() {
 
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
+      )}
+      {/* produto pai: 2º passo do envio à Shopee — criar as opções (variações) no anúncio já criado */}
+      {dados.produto.tipo === "V" && canal === "shopee" && (
+        <VariacoesShopee key={`vs-${sku}-${empresa}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
       )}
       </>)}
     </div>
