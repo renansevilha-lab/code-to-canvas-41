@@ -2688,7 +2688,7 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   supabase_admin, não aceita CLUSTER: copia + TRUNCATE + reinsere). Feito às 08h40 com o OK do
   dono ("pode fazer agora"); nenhum cron falhou. **Causa do inchaço de `pedidos`:** crons 43
   e 46 reescrevem ~37 mil pedidos toda noite para mudar ~4 — correção pronta em
-  `docs/crons-43-46-so-o-que-mudou.sql` (IS DISTINCT FROM), aguardando o dono mandar aplicar.
+  `docs/crons-43-46-so-o-que-mudou.sql` (IS DISTINCT FROM), **aplicada em 13/out de manhã** — conferir no registro dos jobs 43 e 46 que o UPDATE caiu de ~37 mil para poucas dezenas.
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e

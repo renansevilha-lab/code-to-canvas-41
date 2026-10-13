@@ -1,5 +1,6 @@
 -- Crons 43 (refresh-cmv-materializado, 00:00 BRT) e 46 (recalcular-margem, 00:20 BRT)
--- PREPARADO em 13/out/2026 — NÃO APLICADO. Aplicar = rodar o bloco "APLICAR" (vale na rodada da meia-noite).
+-- APLICADO em 13/out/2026 de manhã, com o OK do dono (cron.alter_job nos dois; os 3 comandos foram
+-- conferidos com EXPLAIN). A 1ª rodada com o filtro é a da meia-noite de 13 para 14/out.
 --
 -- Problema: os dois reescrevem TODOS os pedidos dos últimos 90 dias toda noite, mesmo quando o
 -- valor não mudou. Medido em 13/out: cron 43 = UPDATE 37.745 (43 s); cron 46 = dois UPDATEs de
