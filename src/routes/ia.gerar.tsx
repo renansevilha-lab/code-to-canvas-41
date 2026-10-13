@@ -240,7 +240,7 @@ function GerarAnuncioPage() {
 
       {/* produto pai na Shopee: as opções (variações) que entram no anúncio assim que ele é criado pelo envio abaixo */}
       {dados.produto.tipo === "V" && canal === "shopee" && (
-        <VariacoesShopee key={`vs-${sku}-${empresa}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
+        <VariacoesShopee key={`vs-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
       )}
 
       {rascunho && r !== "novo" && (

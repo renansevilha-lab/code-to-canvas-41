@@ -2540,6 +2540,21 @@ aceito como valor e a cadeia nunca chegava ao recurso seguinte. Agora só vale n
   padrão"). 99 dos 2.271 produtos ativos estão com peso 0 no cadastro (23 kits) — o conserto de
   verdade é preencher no Tiny.
 
+## 5.11.11.4 Peso e medidas acompanham a troca de marketplace/loja (13/out/2026)
+
+Pedido do dono: ao trocar o destino do envio, aproveitar peso e tamanho da embalagem já informados.
+- **Conferência (`Publicar`):** `peso_kg`/`comprimento_cm`/`largura_cm`/`altura_cm` DIGITADOS num
+  destino ficam em `medidasComuns` (por rascunho) e a conferência do destino seguinte já abre com
+  eles aplicados (sem "Atualizar a conferência"). Depois de um envio, a `anuncio-publicar` v8 já
+  guardava as medidas conferidas em `ia_produto_extra`; isto cobre a troca ANTES de enviar.
+- **Variações (`VariacoesShopee`):** a tela não remonta mais ao trocar Ottz ↔ Bumi (chave só pelo
+  SKU). Na troca de loja mudam preço (o imposto é por empresa), anúncio e foto; ficam nome da
+  opção, estoque, **peso e medidas** de cada variação. Ao criar as variações com sucesso, peso e
+  medidas de cada uma são gravados em `ia_produto_extra` do SKU da variação e voltam preenchidos
+  na próxima vez (outra loja, outro dia). Sair da Shopee (ex.: ir ao Mercado Livre) desmonta o
+  bloco: aí vale só o que já foi gravado.
+- **Não testado na tela.**
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só

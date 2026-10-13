@@ -55,12 +55,16 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const calc = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: null })));
       const pelaMargem = new Map(skus.map((s, i) => [s, Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));
       const margemPadrao = Number((calc.map((c) => (c.data as { memoria_calculo?: { margem_padrao_pct?: number } } | null)?.memoria_calculo?.margem_padrao_pct).find((x) => x != null)) ?? 0) || null;
-      const [k, pub, esp, rasc] = await Promise.all([
+      const [k, pub, esp, rasc, med] = await Promise.all([
         skus.length ? supabaseExternal.from("produto_kits").select("sku_kit, quantidade").in("sku_kit", skus) : Promise.resolve({ data: [] }),
         supabaseExternal.from("ia_publicacao").select("item_id, operacao, criado_em").eq("sku", sku).eq("canal", "shopee").eq("empresa", empresa).eq("estado", "publicado").order("criado_em", { ascending: false }).limit(5),
         supabaseExternal.from("shopee_anuncios").select("item_id, nome, tem_variacao, status").eq("shop_id", shopId).eq("sku_pai", sku).in("status", ["NORMAL", "UNLIST"]),
         skus.length ? supabaseExternal.from("ia_rascunho").select("id, sku").in("sku", skus) : Promise.resolve({ data: [] }),
+        // peso e medidas já conferidos de cada variação (gravados no 1º envio): valem para a outra loja e para depois
+        skus.length ? supabaseExternal.from("ia_produto_extra").select("sku, peso_kg, comprimento_cm, largura_cm, altura_cm").in("sku", skus) : Promise.resolve({ data: [] }),
       ]);
+      const conferidas = new Map(((med.data ?? []) as { sku: string; peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null }[]).map((m) => [m.sku, m]));
+      const emTexto = (x: number | null | undefined) => (x != null && Number(x) > 0 ? String(Number(x)).replace(".", ",") : "");
       const rascunhos = (rasc.data ?? []) as { id: string; sku: string }[];
       const im = rascunhos.length
         ? await supabaseExternal.from("ia_rascunho_imagem").select("rascunho_id, storage_path, gerado_em, status").in("rascunho_id", rascunhos.map((r) => r.id)).in("tipo", TIPOS_FOTO).not("storage_path", "is", null)
@@ -75,7 +79,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const foto = imagens.find((i) => meus.has(i.rascunho_id)) ?? null;
         const opcao = (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20);
         return {
-          sku: v.sku, opcao, peso: pesoDaOpcao(opcao), comp: "", larg: "", alt: "",
+          sku: v.sku, opcao, peso: emTexto(conferidas.get(v.sku)?.peso_kg) || pesoDaOpcao(opcao),
+          comp: emTexto(conferidas.get(v.sku)?.comprimento_cm), larg: emTexto(conferidas.get(v.sku)?.largura_cm), alt: emTexto(conferidas.get(v.sku)?.altura_cm),
           preco: pelaMargem.get(v.sku) ? dinheiro(pelaMargem.get(v.sku)!) : v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: "0",
           foto_path: foto?.storage_path ?? null, foto_url: foto ? urls[foto.storage_path] ?? null : null,
         };
@@ -96,14 +101,24 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const [feito, setFeito] = useState<string | null>(null);
   const [recemCriado, setRecemCriado] = useState<{ item: string; ativar: boolean } | null>(null);
   const [noAr, setNoAr] = useState<boolean | null>(null);
-  // preenche uma vez só: recarregar a consulta não pode apagar o que o operador já ajustou
-  const iniciado = useRef(false);
+  // preenche uma vez por LOJA: recarregar a consulta não pode apagar o que o operador já ajustou.
+  // Ao trocar de loja (Ottz ↔ Bumi) o preço, o anúncio e a foto são os da loja nova; o nome da opção, o
+  // estoque, o PESO e as MEDIDAS que já estavam na tela ficam (13/out, pedido do dono).
+  const iniciado = useRef<string | null>(null);
   useEffect(() => {
-    if (!q.data || iniciado.current) return;
-    iniciado.current = true;
-    setLinhas(q.data.linhas); setItemId(q.data.item);
-    setComFotos(q.data.linhas.length > 0 && q.data.linhas.every((l) => l.foto_path));
-  }, [q.data]);
+    if (!q.data || iniciado.current === empresa) return;
+    const nova = q.data.linhas;
+    if (iniciado.current === null) { setLinhas(nova); setComFotos(nova.length > 0 && nova.every((l) => l.foto_path)); }
+    else {
+      setLinhas((antes) => nova.map((n) => {
+        const a = antes.find((x) => x.sku === n.sku);
+        return a ? { ...n, opcao: a.opcao, estoque: a.estoque, peso: a.peso, comp: a.comp, larg: a.larg, alt: a.alt } : n;
+      }));
+      setFeito(null); setPrevia(null); setNoAr(null);
+    }
+    setItemId(q.data.item);
+    iniciado.current = empresa;
+  }, [q.data, empresa]);
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
   useEffect(() => {
     const ouvir = (ev: Event) => {
@@ -143,6 +158,13 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       setNoAr(doEnvio?.ativar ? r.ativado === true : null);
       toast.success(`${linhas.length} variações criadas no anúncio ${item}${r.ativado ? " · anúncio no ar" : ""}`);
       if (r.aviso_ativar) toast.warning(r.aviso_ativar, { duration: 30000 });
+      // peso e medidas conferidos ficam guardados por SKU: servem à outra loja e aos outros marketplaces
+      void Promise.all(linhas.map(async (l) => {
+        const m: Record<string, number> = {};
+        if (paraNumero(l.peso) > 0) m.peso_kg = paraNumero(l.peso);
+        if (paraNumero(l.comp) > 0 && paraNumero(l.larg) > 0 && paraNumero(l.alt) > 0) { m.comprimento_cm = paraNumero(l.comp); m.largura_cm = paraNumero(l.larg); m.altura_cm = paraNumero(l.alt); }
+        if (Object.keys(m).length) await supabaseExternal.from("ia_produto_extra").upsert({ sku: l.sku, ...m }, { onConflict: "sku" });
+      })).catch(() => undefined);
       // o espelho do app passa a enxergar as variações sem esperar a sincronização da madrugada
       const espelhar = atualizarCatalogoShopee(shopId, [Number(item)]).catch(() => undefined);
       if (doEnvio) {

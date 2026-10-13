@@ -118,6 +118,8 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
   const irPara = (c: string, e: string) => { setAbrir((n) => n + 1); onDestino(c, e); };
   // a ordem das fotos arrumada num destino vale para os outros (o anúncio é um só)
   const [ordemComum, setOrdemComum] = useState<{ id: string; ordem: string[] } | null>(null);
+  // peso e medidas da embalagem digitados num destino valem para os outros (13/out, pedido do dono)
+  const [medidasComuns, setMedidasComuns] = useState<{ id: string; m: Record<string, string> } | null>(null);
   // ao escolher um destino, a conferência dele fica à vista (a tela não sobe nem desce sozinha)
   const caixa = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -175,7 +177,9 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
             abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} demais={demais} onIr={irPara}
-            ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })} />
+            ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })}
+            medidasIniciais={medidasComuns?.id === rascunho.id ? medidasComuns.m : null}
+            onMedidas={(m) => setMedidasComuns((a) => ({ id: rascunho.id, m: { ...(a?.id === rascunho.id ? a.m : {}), ...m } }))} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
       </div>
     </CardContent></Card>
@@ -189,11 +193,16 @@ interface Demais { canal: string; empresa: string; rotulo: string; lista: Existe
 interface Outro { empresa: string; rotulo: string; e: Existente }
 
 /** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr, ordemInicial, onOrdem }: {
+/** Peso e medidas da embalagem: digitados na conferência de um destino, acompanham a troca de marketplace/loja. */
+const MEDIDAS = ["peso_kg", "comprimento_cm", "largura_cm", "altura_cm"] as const;
+
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
   rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
   demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
   /** ordem das fotos já arrumada em outro destino deste anúncio */
   ordemInicial?: string[] | null; onOrdem?: (ordem: string[]) => void;
+  /** peso e medidas já digitados em outro destino deste anúncio */
+  medidasIniciais?: Record<string, string> | null; onMedidas?: (m: Record<string, string>) => void;
 }) {
   const qc = useQueryClient();
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
@@ -204,8 +213,12 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(abertoInicial === true);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
-  const [op, setOp] = useState<Op>(() => opInicial(canal));
-  const [aplicado, setAplicado] = useState<Op>(() => opInicial(canal));
+  const [op, setOp] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}) }));
+  const [aplicado, setAplicado] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}) }));
+  useEffect(() => {
+    const m = Object.fromEntries(MEDIDAS.filter((k) => typeof op[k] === "string" && String(op[k]).trim() !== "").map((k) => [k, String(op[k])]));
+    if (Object.keys(m).length) onMedidas?.(m);
+  }, [op.peso_kg, op.comprimento_cm, op.largura_cm, op.altura_cm]);
   const [enviando, setEnviando] = useState(false);
   const [deNovo, setDeNovo] = useState(false);
   // acabou de criar aqui: os outros destinos aparecem na hora, sem esperar a conferência recarregar
