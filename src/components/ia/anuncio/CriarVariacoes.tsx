@@ -234,7 +234,7 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
                 ))}
                 <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={adicionar}><Plus className="h-3.5 w-3.5" />variação</Button>
                 <p className="text-[11px] text-muted-foreground">
-                  Os SKUs sugeridos são os próximos números livres, conferidos agora no Tiny (ele exige o SKU na criação pela API); troque se preferir. O preço sugerido é o do produto base × a quantidade.
+                  Os SKUs sugeridos são os próximos números livres, conferidos agora no Tiny (ele exige o SKU na criação pela API); troque se preferir. O preço sugerido é o do produto base × a quantidade. O pai e cada variação nascem com a foto principal do produto base.
                 </p>
               </div>
 

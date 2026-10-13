@@ -70,6 +70,8 @@ export interface IaCatalogoLinha {
   n_variacoes?: number; variacoes?: IaCatalogoLinha[];
   /** recebeu fotos aproveitadas da família e ainda não tem capa própria aprovada (RPC v1.1+). */
   sem_capa?: boolean;
+  /** produto criado pelo app em "Criar produto com variações" (RPC versao 5). */
+  criado_app?: boolean;
 }
 export interface IaCatalogo {
   total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];
@@ -170,7 +172,7 @@ export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "ap
   chamarFuncao("ia-aproveitar", modulo, body);
 
 /** Criar no Tiny um produto com variações (cada variação = kit do produto base) — edge fn `tiny-produto-variacoes`. */
-export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit", body: Record<string, unknown>) =>
+export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" | "foto", body: Record<string, unknown>) =>
   chamarFuncao("tiny-produto-variacoes", modulo, body);
 
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */

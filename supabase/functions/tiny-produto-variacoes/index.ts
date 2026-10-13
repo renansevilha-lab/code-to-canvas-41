@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v3 (12/out/2026)
+// Edge Function: tiny-produto-variacoes v4 (12/out/2026)
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -24,6 +24,11 @@
 //  deixa claro que o nome citado é o do OUTRO produto que já usa aquele número.
 // v3: grava no espelho `situacao`, `tipo_variacao` e `sku_pai` dos produtos criados (colunas do pacote do
 //  catálogo, 12/out): as variações já aparecem dentro do pai na lista, sem esperar a sincronização.
+// v4 (pedido do dono): o produto criado HERDA A FOTO PRINCIPAL do produto base (1º anexo dele no Tiny),
+//  no pai e em cada variação — `POST /produtos/{id}/anexos`, primeiro pedindo ao Tiny uma cópia
+//  (`externo: false`) e, se ele recusar, como endereço externo. O espelho marca quem nasceu aqui
+//  (`produtos.criado_app_em` + `sku_base`), base do filtro "Criados no app" da lista de anúncios.
+//   POST ?modulo=foto {sku_pai, confirmar: true} → põe a foto do produto base em quem da família ainda não tem
 // Regras: sessão de usuário com o módulo `ia`; escrita NÃO é repetida (um POST repetido criaria
 // produto em dobro); a v2 tem limite de 60 chamadas/min e no código 6 a função para.
 // ============================================================================
@@ -182,6 +187,8 @@ async function conferir(token: string, pd: Pedido) {
   }
   if (!V2_TOKEN) pend.push("falta a chave da API antiga do Tiny (TINY_V2_TOKEN): sem ela a variação não vira kit");
   if (base.custo == null) avisos.push("o produto base está sem custo na gestão: o kit vai ficar sem CMV");
+  if (!fotoPrincipal(base.det)) avisos.push("o produto base não tem foto no Tiny: o produto novo vai nascer sem foto");
+  else avisos.push("o pai e cada variação recebem a foto principal do produto base");
   avisos.push("o produto é criado no Tiny e fica ATIVO; excluir pela API não funciona — se criar por engano, apague na tela do Tiny");
   avisos.push("o estoque de cada variação é o do kit (sai do produto base); o envio para a Shopee é feito depois, pelo Tiny");
   const d = base.det;
@@ -223,23 +230,78 @@ async function virarKit(token: string, idVariacao: number, idBase: number, quant
   return { ok: certo, erro: certo ? null : "o Tiny respondeu OK, mas a variação não ficou como kit — confira no Tiny", sku: c.body?.sku, tipo: c.body?.tipo, kit, preco: num(c.body?.precos?.preco) };
 }
 
+/** Foto principal de um produto do Tiny = o 1º anexo com endereço (a mesma regra do `foto_capa` do espelho). */
+const fotoPrincipal = (det: any): string | null => {
+  const a = ((det?.anexos ?? []) as any[]).find((x) => x?.url);
+  return a ? String(a.url) : null;
+};
+/** Põe UMA foto no produto. 1ª tentativa: o Tiny guarda uma cópia (`externo: false`) — assim a foto não depende do
+ *  arquivo do produto base, que o Tiny apaga quando a foto de lá é trocada. Se ele recusar o pedido (400/422, nada
+ *  foi gravado), vai como endereço externo. Erro de outro tipo não é repetido (repetir poderia pôr a foto em dobro). */
+async function porFoto(token: string, id: number, url: string, externo?: boolean) {
+  let erro = "";
+  for (const modo of (externo === undefined ? [false, true] : [externo])) {
+    const r = await v3(token, "POST", `/produtos/${id}/anexos`, [{ url, externo: modo }]);
+    if (r.status >= 200 && r.status < 300) {
+      const lista = (Array.isArray(r.body) ? r.body : []) as any[];
+      return { ok: true, externo: modo, url: String(lista.find((x) => x?.url)?.url ?? url), resposta: lista, erro: null as string | null };
+    }
+    erro = erroV3(r.body) || String(r.status);
+    if (r.status !== 400 && r.status !== 422) break;
+  }
+  return { ok: false, externo: null, url: null, resposta: null, erro: `o Tiny recusou a foto: ${erro}` };
+}
+/** A família criada pelo app (pai + variações) recebe a foto principal do produto base — só quem ainda não tem foto. */
+async function fotosDaFamilia(token: string, skuPai: string, dry: boolean, externo?: boolean) {
+  if (!/^[A-Za-z0-9._-]{1,30}$/.test(skuPai)) return { ok: false, erro: "informe sku_pai" };
+  const { data } = await db.from("produtos").select("sku, id_tiny, nome, sku_base, criado_app_em")
+    .or(`sku.eq.${skuPai},sku_pai.eq.${skuPai}`).not("criado_app_em", "is", null).not("id_tiny", "is", null).order("sku");
+  const linhas = (data ?? []) as any[];
+  const pai = linhas.find((x) => x.sku === skuPai);
+  if (!pai?.sku_base) return { ok: false, erro: `o produto ${skuPai} não foi criado pelo app (não sei qual é o produto base dele)` };
+  const base = await carregarBase(token, String(pai.sku_base));
+  const url = fotoPrincipal(base.det);
+  if (!url) return { ok: false, erro: `o produto base ${pai.sku_base} não tem foto no Tiny` };
+  const itens: Record<string, unknown>[] = [];
+  for (const p of linhas) {
+    const g = await v3(token, "GET", `/produtos/${p.id_tiny}`);
+    if (g.status !== 200) { itens.push({ sku: p.sku, ok: false, erro: erroV3(g.body) || g.status }); continue; }
+    const atual = fotoPrincipal(g.body);
+    if (atual) { itens.push({ sku: p.sku, ok: true, ja_tinha: true, url: atual }); continue; }
+    if (dry) { itens.push({ sku: p.sku, ok: true, faria: true }); continue; }
+    const r = await porFoto(token, Number(p.id_tiny), url, externo);
+    if (r.ok) await db.from("produtos").update({ foto_capa: r.url }).eq("sku", p.sku);
+    itens.push({ sku: p.sku, ok: r.ok, externo: r.externo, url: r.url, erro: r.erro, resposta: r.resposta });
+  }
+  return { ok: itens.every((i) => i.ok), base_sku: pai.sku_base, foto: url, dry, itens };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  // limpeza do ensaio de 12/out: INATIVA produto cujo nome começa com "TESTE APP" (excluir pela API não funciona).
-  // Só com o código do ensaio e até o prazo; depois disso este trecho não faz nada.
+  // ensaio da foto (12/out, noite): só com o código do ensaio e até o prazo; depois disso este trecho não faz nada.
+  //  ?ids=…&base_sku=… → põe a foto do produto base em produto DE TESTE (nome começa com "TESTE APP")
+  //  ?sku_pai=…        → a família criada pelo app recebe a foto do produto base dela (&dry=1 só mostra)
   const u0 = new URL(req.url);
-  if (u0.searchParams.get("modulo") === "inativar-teste") {
-    if (Date.now() > Date.parse("2026-10-13T03:00:00Z") || u0.searchParams.get("chave") !== "k7Qx-ensaio-9f2b61c4a8") return json({ erro: "encerrado" }, 410);
-    const tk = await tokenTiny(); const out: Record<string, unknown>[] = [];
-    for (const id of (u0.searchParams.get("ids") || "").split(",").map(Number).filter(Boolean)) {
-      const g = await v3(tk, "GET", `/produtos/${id}`);
-      if (g.status !== 200 || !String(g.body?.descricao ?? "").startsWith("TESTE APP")) { out.push({ id, pulado: "não é produto de teste" }); continue; }
-      const produto = { sequencia: "1", id, codigo: g.body.sku, nome: g.body.descricao, unidade: "UN", preco: Number(g.body.precos?.preco ?? 0), origem: "0", situacao: "I", tipo: "P" };
-      const ret = await v2("produto.alterar.php", { produto: JSON.stringify({ produtos: [{ produto }] }) });
-      const c = await v3(tk, "GET", `/produtos/${id}`);
-      out.push({ id, sku: g.body.sku, v2: ret?.registros?.[0]?.registro?.status ?? ret?.status, erro: erroV2(ret).texto, situacao: c.body?.situacao });
-    }
-    return json({ ok: true, out });
+  if (u0.searchParams.get("modulo") === "foto-ensaio") {
+    if (Date.now() > Date.parse("2026-10-13T03:00:00Z") || u0.searchParams.get("chave") !== "f90c81b7390da6003544") return json({ erro: "encerrado" }, 410);
+    try {
+      const tk = await tokenTiny();
+      const ex = u0.searchParams.get("externo"); const externo = ex === "1" ? true : ex === "0" ? false : undefined;
+      const dry = u0.searchParams.get("dry") === "1";
+      const skuPai = u0.searchParams.get("sku_pai");
+      if (skuPai) return json(await fotosDaFamilia(tk, skuPai, dry, externo));
+      const base = await carregarBase(tk, String(u0.searchParams.get("base_sku") ?? ""));
+      const url = fotoPrincipal(base.det); const out: Record<string, unknown>[] = [];
+      for (const id of (u0.searchParams.get("ids") || "").split(",").map(Number).filter(Boolean)) {
+        const g = await v3(tk, "GET", `/produtos/${id}`);
+        if (g.status !== 200 || !String(g.body?.descricao ?? "").startsWith("TESTE APP")) { out.push({ id, pulado: "não é produto de teste" }); continue; }
+        if (dry || !url) { out.push({ id, sku: g.body.sku, anexos: g.body.anexos ?? [] }); continue; }
+        const r = await porFoto(tk, id, url, externo);
+        const c = await v3(tk, "GET", `/produtos/${id}`);
+        out.push({ id, sku: g.body.sku, antes: g.body.anexos ?? [], envio: r, depois: c.body?.anexos ?? [] });
+      }
+      return json({ ok: true, base: { sku: base.espelho.sku, anexos: base.det.anexos ?? [] }, out });
+    } catch (e) { return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500); }
   }
   if (req.method !== "POST") return json({ erro: "use POST" }, 405);
   const quem = await exigirAcesso(req);
@@ -262,6 +324,11 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (modulo === "foto") {
+      if (body.confirmar !== true && body.dry !== true) return json({ ok: false, erro: "exige confirmar: true" }, 400);
+      return json(await fotosDaFamilia(token, String(body.sku_pai ?? "").trim(), body.confirmar !== true));
+    }
+
     if (modulo === "kit") {
       if (body.confirmar !== true) return json({ ok: false, erro: "exige confirmar: true" }, 400);
       const base = await carregarBase(token, String(body.base_sku ?? "").trim());
@@ -278,7 +345,7 @@ Deno.serve(async (req) => {
     if (!pd.baseSku) return json({ ok: false, erro: "informe base_sku" }, 400);
     const c = await conferir(token, pd);
     if (modulo === "previa") return json({ ok: true, previa: c.previa, pendencias: c.pendencias, avisos: c.avisos });
-    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar ou kit" }, 400);
+    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar, kit ou foto" }, 400);
     if (body.confirmar !== true) return json({ ok: false, erro: "criar exige confirmar: true" }, 400);
     if (c.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: c.pendencias }, 400);
 
@@ -314,12 +381,23 @@ Deno.serve(async (req) => {
       variacoes.push({ ...v, id: cv.id, ok: k.ok, erro: k.erro ?? null, tipo: (k as any).tipo ?? "S" });
     }
 
+    // PASSO 3 — o pai e cada variação herdam a FOTO PRINCIPAL do produto base (produto recém-criado não tem foto)
+    const fotoBase = fotoPrincipal(c.base.det);
+    const fotoDe = new Map<string, string>(); const semFoto: string[] = [];
+    if (fotoBase) {
+      for (const alvo of [{ sku: pd.skuPai, id: idPai }, ...criadas]) {
+        const f = await porFoto(token, alvo.id, fotoBase);
+        if (f.ok) fotoDe.set(alvo.sku, String(f.url)); else semFoto.push(alvo.sku);
+      }
+      passos.push({ passo: "foto principal do produto base", ok: semFoto.length === 0, com_foto: fotoDe.size, sem_foto: semFoto });
+    }
+
     // o app já enxerga os produtos novos, sem esperar a sincronização da madrugada
     const linhas = [
       // v3: situação e pai gravados na hora (o catálogo agrupa as variações dentro do pai por `sku_pai`).
       // As duas formas de linha têm as MESMAS chaves: o upsert em lote exige isso.
-      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, situacao: "A", tipo_variacao: "P", sku_pai: null, id_tiny_pai: null, atualizado_em: agora },
-      ...variacoes.filter((v: any) => v.id).map((v: any) => ({ sku: v.sku, id_tiny: v.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: v.ok ? "K" : "S", preco: v.preco, ativo: true, situacao: "A", tipo_variacao: "V", sku_pai: pd.skuPai, id_tiny_pai: idPai, atualizado_em: agora })),
+      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, situacao: "A", tipo_variacao: "P", sku_pai: null, id_tiny_pai: null, foto_capa: fotoDe.get(pd.skuPai) ?? null, criado_app_em: agora, sku_base: pd.baseSku, atualizado_em: agora },
+      ...variacoes.filter((v: any) => v.id).map((v: any) => ({ sku: v.sku, id_tiny: v.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: v.ok ? "K" : "S", preco: v.preco, ativo: true, situacao: "A", tipo_variacao: "V", sku_pai: pd.skuPai, id_tiny_pai: idPai, foto_capa: fotoDe.get(v.sku) ?? null, criado_app_em: agora, sku_base: pd.baseSku, atualizado_em: agora })),
     ];
     const up = await db.from("produtos").upsert(linhas, { onConflict: "sku" });
     const kits = variacoes.filter((v: any) => v.ok).map((v: any) => ({
@@ -330,10 +408,16 @@ Deno.serve(async (req) => {
       await db.from("produto_kits").insert(kits);
     }
     const falhas = variacoes.filter((v: any) => !v.ok).length;
+    const avisosFim = [
+      falhas ? `${falhas} variação(ões) ficaram como produto simples (sem a composição do kit): use "tentar de novo" ou ajuste no Tiny antes de vender` : null,
+      !fotoBase ? "o produto base não tem foto no Tiny: o produto novo ficou sem foto"
+        : semFoto.length ? `a foto do produto base não entrou em ${semFoto.join(", ")}: use "Copiar a foto do produto base" no menu do produto` : null,
+    ].filter(Boolean);
     await registrar(201, { quem: quem.nome, base: pd.baseSku, pai: { sku: pd.skuPai, id: idPai }, variacoes, espelho: up.error?.message ?? "ok" });
     return json({
       ok: true, pai: { sku: pd.skuPai, id: idPai, nome: pd.nome }, variacoes, passos, base_sku: pd.baseSku,
-      aviso: falhas ? `${falhas} variação(ões) ficaram como produto simples (sem a composição do kit): use "tentar de novo" ou ajuste no Tiny antes de vender` : null,
+      foto: { url: fotoBase, com_foto: fotoDe.size, sem_foto: semFoto },
+      aviso: avisosFim.length ? avisosFim.join(" · ") : null,
     });
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500);

@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, Layers, Loader2, MoreHorizontal, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, Search, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
+import { chamarVariacoes } from "@/lib/iaAnuncio";
 import {
   CANAIS, CANAIS_COM_HISTORICO, ROTULO_ETAPA, nomeCanal, nomeEmpresa,
   type IaCanalHist, type IaCatalogo, type IaCatalogoLinha, type IaRascunhoResumo,
@@ -47,6 +49,8 @@ const TIPOS = [
   { id: "S", rotulo: "Simples" },
   { id: "K", rotulo: "Kits" },
   { id: "V", rotulo: "Com variações" },
+  // criados pelo app em "Criar produto com variações" (produtos.criado_app_em); só aparece quando a RPC conta
+  { id: "APP", rotulo: "Criados no app" },
 ];
 const POR_PAGINA = 50;
 const TODAS = "__todas";
@@ -58,7 +62,7 @@ export const Route = createFileRoute("/ia/anuncios")({
     q: texto(s.q),
     marca: texto(s.marca),
     sit: SITUACOES.some((x) => x.id === s.sit) && s.sit !== "todos" ? String(s.sit) : undefined,
-    tipo: ["S", "K", "V"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
+    tipo: ["S", "K", "V", "APP"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
     sem: CANAIS_COM_HISTORICO.includes(String(s.sem)) ? String(s.sem) : undefined,
     ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== "vendas" ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
@@ -138,7 +142,7 @@ function AnunciosPage() {
 
       {cat?.tipos && (
         <div className="flex flex-wrap gap-1.5">
-          {TIPOS.map((x) => {
+          {TIPOS.filter((x) => x.id !== "APP" || cat.tipos?.APP !== undefined).map((x) => {
             const ativo = (tipo ?? "todos") === x.id;
             return (
               <Button key={x.id} size="sm" variant={ativo ? "secondary" : "ghost"} className={`h-7 gap-1.5 text-xs ${ativo ? "ring-1 ring-primary/40" : ""}`}
@@ -224,6 +228,22 @@ function AnunciosPage() {
 
 interface Componente { sku_componente: string; quantidade: number; nome_componente: string | null }
 
+/** Produto criado pelo app: põe a foto principal do produto base no pai e nas variações que ainda não têm foto no Tiny. */
+async function copiarFotoDoBase(sku: string) {
+  if (!window.confirm(`Pôr no Tiny a foto principal do produto base em ${sku} e nas variações que ainda estão sem foto?`)) return;
+  const aviso = toast.loading("Copiando a foto do produto base…");
+  try {
+    const r = (await chamarVariacoes("foto", { sku_pai: sku, confirmar: true })) as {
+      ok: boolean; erro?: string; itens?: { sku: string; ok: boolean; ja_tinha?: boolean; erro?: string | null }[];
+    };
+    const itens = r.itens ?? [];
+    const novas = itens.filter((i) => i.ok && !i.ja_tinha).length;
+    const falhas = itens.filter((i) => !i.ok);
+    if (r.erro || falhas.length) toast.error("A foto não entrou em tudo", { id: aviso, description: r.erro ?? falhas.map((i) => `${i.sku}: ${i.erro}`).join(" · "), duration: 15000 });
+    else toast.success(novas ? `Foto copiada para ${novas} produto(s)` : "Todos já tinham foto", { id: aviso, description: "Na lista, a foto aparece em até 3 horas.", duration: 8000 });
+  } catch (e) { toast.error("Não consegui copiar a foto", { id: aviso, description: (e as Error).message, duration: 15000 }); }
+}
+
 /**
  * Uma linha do catálogo. Como no Tiny: o kit mostra a composição, e o produto com variações
  * abre as variações logo abaixo (cada uma com venda, canais e anúncio próprios).
@@ -248,6 +268,7 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes }: {
           {x.tipo === "K" && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">kit</Badge>}
           {x.tipo === "V" && filhas.length === 0 && <Badge variant="secondary" className="text-[9.5px] py-0 px-1">com variações</Badge>}
           {variacao && <Badge variant="outline" className="text-[9.5px] py-0 px-1">variação</Badge>}
+          {x.criado_app && <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-primary/50 text-primary">criado no app</Badge>}
           {x.sem_capa && <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-amber-500/60 text-amber-700 dark:text-amber-400">fotos da família · falta a capa</Badge>}
           {filhas.length > 0 && (
             <button type="button" onClick={() => setAberto((v) => !v)}
@@ -295,6 +316,11 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes }: {
               <Layers className="h-4 w-4 mr-2" />Criar produto com variações
               {x.tipo !== "S" && <span className="ml-2 text-[10px] text-muted-foreground">só produto simples</span>}
             </DropdownMenuItem>
+            {x.criado_app && !variacao && (
+              <DropdownMenuItem onSelect={() => copiarFotoDoBase(x.sku)}>
+                <ImagePlus className="h-4 w-4 mr-2" />Copiar a foto do produto base
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

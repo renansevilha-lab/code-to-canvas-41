@@ -9,6 +9,8 @@
 --   * `total` e `contagem` passam a contar linhas de topo (pai + produtos sem pai).
 -- Enquanto `sku_pai` estiver vazio o resultado é o mesmo da v1 (+ `n_variacoes` 0 e `variacoes` []).
 -- desde 12/out a função tem 8 parâmetros (p_tipo no fim): este arquivo mantém a mesma assinatura
+-- v2.1 (12/out, noite): p_tipo = 'APP' filtra os produtos criados pelo app (produtos.criado_app_em);
+--   `tipos` ganha a contagem 'APP', cada linha ganha `criado_app`, `versao` 5.
 create or replace function public.ia_catalogo(
   p_busca text default null, p_marca text default null, p_situacao text default 'todos',
   p_sem_canal text default null, p_ordem text default 'vendas', p_offset integer default 0, p_limit integer default 50,
@@ -21,12 +23,12 @@ declare
 begin
   if not public.tem_modulo('ia') then raise exception 'Sem acesso ao módulo IA.'; end if;
   with base as (
-    select p.sku, p.nome, coalesce(p.marca_manual, p.marca) as marca, p.tipo, p.sku_pai
+    select p.sku, p.nome, coalesce(p.marca_manual, p.marca) as marca, p.tipo, p.sku_pai, (p.criado_app_em is not null) as app
     from public.produtos p
     where p.ativo and not coalesce(p.arquivado, false)
   ), lig as (
     -- pai = o pai da variação, só quando ele também está no catálogo ativo (senão fica solta)
-    select b.sku, b.nome, b.marca, b.tipo,
+    select b.sku, b.nome, b.marca, b.tipo, b.app,
            (select x.sku from base x where x.sku = b.sku_pai and x.sku <> b.sku) as pai
     from base b
   ), hist as (
@@ -57,7 +59,7 @@ begin
     group by 1
   ), it as (
     -- cada SKU (pai, variação ou produto sem pai) com os números dele
-    select l.sku, l.nome, l.marca, l.tipo, l.pai,
+    select l.sku, l.nome, l.marca, l.tipo, l.pai, l.app,
            coalesce(h.un30, 0) as un30, coalesce(h.un120, 0) as un120, h.canais, coalesce(h.lista, '{}'::text[]) as vende,
            r.lista as rascunhos, r.ultimo,
            case when r.sku is null then 'sem' when r.pronto then 'pronto' else 'andamento' end as situacao,
@@ -80,7 +82,7 @@ begin
       where l.pai is not null group by 1, 2, 3
     ) x group by 1
   ), f as (
-    select i.sku, i.nome, i.marca, i.tipo,
+    select i.sku, i.nome, i.marca, i.tipo, i.app,
            i.un30 + coalesce(fm.un30, 0) as un30, i.un120 + coalesce(fm.un120, 0) as un120,
            coalesce(fc.canais, i.canais) as canais, i.rascunhos, greatest(i.ultimo, fm.ultimo) as ultimo,
            case when i.situacao = 'pronto' or coalesce(fm.pronto, false) then 'pronto'
@@ -93,7 +95,7 @@ begin
       and (coalesce(p_sem_canal, '') = '' or not (p_sem_canal = any (i.vende || coalesce(fc.vende, '{}'::text[]))))
   ), g as (
     select * from f
-    where (v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit) and (v_tipo is null or tipo = v_tipo)
+    where (v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit) and (v_tipo is null or (v_tipo = 'APP' and app) or tipo = v_tipo)
   ), num as (
     select g.*, row_number() over (order by
         case when p_ordem = 'nome' then g.nome end asc nulls last,
@@ -106,20 +108,20 @@ begin
     select * from num where rn > v_off and rn <= v_off + v_lim
   )
   select jsonb_build_object(
-    'versao', 4,
+    'versao', 5,
     'total', (select count(*) from g),
     'contagem', (select jsonb_build_object('todos', count(*), 'sem', count(*) filter (where situacao = 'sem'),
                    'andamento', count(*) filter (where situacao = 'andamento'), 'pronto', count(*) filter (where situacao = 'pronto'),
-                   'sem_capa', count(*) filter (where sem_capa)) from f where v_tipo is null or tipo = v_tipo),
+                   'sem_capa', count(*) filter (where sem_capa)) from f where v_tipo is null or (v_tipo = 'APP' and app) or tipo = v_tipo),
     'tipos', (select jsonb_build_object('todos', count(*), 'S', count(*) filter (where tipo = 'S'), 'K', count(*) filter (where tipo = 'K'),
-                   'V', count(*) filter (where tipo = 'V')) from f where v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit),
+                   'V', count(*) filter (where tipo = 'V'), 'APP', count(*) filter (where app)) from f where v_sit = 'todos' or (v_sit = 'sem_capa' and sem_capa) or situacao = v_sit),
     'marcas', (select coalesce(jsonb_agg(z.m order by z.m), '[]'::jsonb) from (select distinct marca as m from base where coalesce(marca, '') <> '') z),
     'historico_em', (select max(atualizado_em) from public.ia_hist_sku_canal),
     'linhas', (select coalesce(jsonb_agg(jsonb_build_object(
                  'sku', pag.sku, 'nome', pag.nome, 'marca', pag.marca, 'tipo', pag.tipo, 'foto', ft.foto, 'custo', c.cmv_efetivo,
                  'un30', pag.un30, 'un120', pag.un120, 'canais', coalesce(pag.canais, '[]'::jsonb),
                  'rascunhos', coalesce(pag.rascunhos, '[]'::jsonb), 'situacao', pag.situacao, 'sem_capa', pag.sem_capa,
-                 'n_variacoes', pag.n_variacoes,
+                 'n_variacoes', pag.n_variacoes, 'criado_app', pag.app,
                  'variacoes', case when pag.n_variacoes = 0 then '[]'::jsonb else (
                    select coalesce(jsonb_agg(jsonb_build_object(
                             'sku', vr.sku, 'nome', vr.nome, 'tipo', vr.tipo, 'foto', vf.foto, 'custo', vc.cmv_efetivo,

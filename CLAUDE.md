@@ -2202,6 +2202,28 @@ faltou no anúncio criado direto na Shopee).
   opções nascem "4kg, 8kg, 12kg…" (peso da embalagem × quantidade do kit), o nome do pai troca
   o peso pela faixa ("… 4kg a 20kg"), o padrão é 1–5 embalagens e os atalhos são em kg. Demais
   produtos seguem em "N unidades".
+- **v4 (12/out, ~21h50) — foto herdada + filtro "Criados no app" (pedido do dono):**
+  - **Foto:** o pai e cada variação nascem com a **foto principal do produto base** (1º anexo
+    dele no Tiny). `POST /produtos/{id}/anexos` com corpo `[{url, externo}]`: com
+    **`externo: false` o Tiny BAIXA e guarda uma cópia própria** (arquivo novo no S3 dele, 221 kB
+    conferidos) — a foto não morre quando a do base for trocada; a função só cai para
+    `externo: true` se o Tiny recusar (400/422). A resposta do POST às vezes vem sem o endereço
+    da cópia (3 de 6): o espelho fica com o endereço do base até o detalhe reler. Módulo
+    `foto {sku_pai, confirmar}` põe a foto em quem da família ainda não tem (menu "…" do pai →
+    "Copiar a foto do produto base"). Feito na família 16486 (base 16452): 6 de 6 com foto no
+    Tiny. Na lista a foto vem de `mv_foto_produto_v2` (refresh 3/3 h).
+  - **Marca de origem:** `produtos.criado_app_em` + `sku_base` (migração
+    `produtos_criado_app_e_filtro`; a listagem do Tiny não toca nelas; backfill pelo registro em
+    `debug_fulfillment`).
+  - **Filtro:** `ia_catalogo` **v2.1** (`versao: 5`): `p_tipo = 'APP'` = produtos criados no app,
+    `tipos.APP` com a contagem, `criado_app` em cada linha. A migração troca 9 trechos da função
+    NO AR (cada um precisa existir uma vez) e confere o resultado na mesma transação; o
+    arquivo `docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql` recebeu as mesmas trocas (md5
+    do corpo igual ao do banco). Na tela: botão "Criados no app" na fileira de tipos e selo
+    "criado no app" na linha.
+  - O produto de teste `TESTE-APP-208691-2` ganhou a foto do 16452 no ensaio (é para apagar).
+    A rota de ensaio `foto-ensaio` da função morre sozinha à meia-noite de 12/out (prazo no
+    código), como a `inativar-teste` que ela substituiu.
 - **Lista de anúncios (mesmo dia):** filtro "Fotos da família, sem capa própria" e ordem "Mais
   vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC `ia_catalogo` responde
   `versao >= 2`. **RPC v1.1 APLICADA em 12/out às 18h18** (migração
@@ -2315,7 +2337,7 @@ ficou no ar:
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
-| `tiny-produto-variacoes` | v3 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar`, `kit`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-produto-variacoes` | v4 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
