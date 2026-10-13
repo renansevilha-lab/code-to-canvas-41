@@ -2410,6 +2410,12 @@ mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit
 - **Na data:** Ottz 83 linhas ativas (81 válidas) → 50 entram, 31 ficam de fora; Bumi 59 → 50
   entram, 9 ficam. Quem fica de fora é sempre quem vende menos (inclusive produto novo sem
   venda): para entrar, pausar outra linha na programação. Só existe 1 relâmpago por dia.
+- **Relâmpago que JÁ COMEÇOU não aceita produto (testado 13/out, 11h, com o OK do dono):**
+  `add_shop_flash_sale_items` na relâmpago em andamento das duas lojas devolveu
+  `shop_flash_sale_is_not_enabled_or_upcoming` para os 50 itens — nada foi alterado. Ou seja,
+  o `type: 2` da v10 serve só para ENXERGAR a do dia (não criar outra por cima); **dia que
+  nasceu vazio fica vazio**, não há conserto pela API depois da meia-noite. O que salva é
+  conferir ANTES: a relâmpago de amanhã é criada às 18h07 e pode ser completada até 23h59.
 - **Lição:** falha do cron das 18h07 fica em `flashsale_criadas.status = 'erro'` e vai ao
   Discord (#atualizações), mas ninguém viu por 5 dias — vale um alerta mais forte quando a
   relâmpago do dia fecha com 0 itens.
