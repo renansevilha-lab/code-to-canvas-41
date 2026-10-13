@@ -2677,6 +2677,18 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   (cópia exata da chave única `transaction_id`). **NÃO remover**
   `pedido_itens_tiny_uniq` (0 usos, mas trata NULL com COALESCE — protege contra
   item duplicado que a chave `_uniq_key` deixa passar).
+- **Compactação de 13/out/2026 — 530 MB → 444 MB, sem apagar dado.** As rotinas de limpeza
+  rodavam todas (crons 47, 102, 107, 131, 132, 150), mas esvaziar coluna/linha não devolve o
+  espaço ao disco. `CLUSTER tabela USING <pkey>` reescreve a tabela e os índices (preserva
+  FKs, gatilhos e permissões; roda dentro de transação, ao contrário do VACUUM FULL), com
+  `set lock_timeout = '4s'` antes para não enfileirar atrás de um cron. Medido:
+  `print_jobs` 27,3 → 8,2 MB (3 s) · `escrow_componentes` 88,9 → 66,6 MB (**33 s de tabela
+  travada** — o TOAST de 47 MB é lento; fazer à noite) · `transacoes_carteira` 29,9 → 21,7 MB
+  (6 s) · `pedidos` 54,4 → 24,8 MB (6 s) · `cron.job_run_details` 15,9 → 8,7 MB (dona =
+  supabase_admin, não aceita CLUSTER: copia + TRUNCATE + reinsere). Feito às 08h40 com o OK do
+  dono ("pode fazer agora"); nenhum cron falhou. **Causa do inchaço de `pedidos`:** crons 43
+  e 46 reescrevem ~37 mil pedidos toda noite para mudar ~4 — correção pronta em
+  `docs/crons-43-46-so-o-que-mudou.sql` (IS DISTINCT FROM), aguardando o dono mandar aplicar.
 - **DELETE não devolve espaço; TRUNCATE devolve.** Para encolher tabela grande
   sem `VACUUM FULL`: copie o que fica para uma tabela auxiliar, `TRUNCATE` a
   original, reinsira e derrube a auxiliar — tudo numa transação (atômico, e
