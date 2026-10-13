@@ -96,6 +96,22 @@ function AnunciosPage() {
     },
   });
   const cat = catQ.data;
+  // FOTO NA HORA: a lista lê a foto de uma tabela que só é refeita a cada 3 h; quem ainda aparece sem
+  // foto é conferido direto no cadastro (`produtos.foto_capa`, que o envio de fotos ao Tiny grava na hora)
+  const semFoto = (cat?.linhas ?? []).flatMap((x) => [x, ...(x.variacoes ?? [])]).filter((x) => !x.foto).map((x) => x.sku);
+  const capasQ = useQuery({
+    queryKey: ["ia-anuncio", "capas", semFoto.join(",")],
+    enabled: semFoto.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const { data } = await supabaseExternal.from("produtos").select("sku, foto_capa").in("sku", semFoto).not("foto_capa", "is", null);
+      return Object.fromEntries(((data ?? []) as { sku: string; foto_capa: string }[]).map((d) => [d.sku, d.foto_capa]));
+    },
+  });
+  const comCapa = (x: IaCatalogoLinha): IaCatalogoLinha => ({
+    ...x, foto: x.foto ?? capasQ.data?.[x.sku] ?? null,
+    ...(x.variacoes ? { variacoes: x.variacoes.map((v) => ({ ...v, foto: v.foto ?? capasQ.data?.[v.sku] ?? null })) } : {}),
+  });
   const total = cat?.total ?? 0;
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const canalPadrao = sem ?? "shopee";
@@ -201,7 +217,7 @@ function AnunciosPage() {
         ) : !cat?.linhas.length ? (
           <div className="p-10 text-center text-muted-foreground">Nenhum produto com esses filtros.</div>
         ) : (
-          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={x} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe} />)}</div>
+          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={comCapa(x)} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe} />)}</div>
         )}
       </Card>
 

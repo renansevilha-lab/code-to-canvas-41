@@ -172,7 +172,7 @@ export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "ap
   chamarFuncao("ia-aproveitar", modulo, body);
 
 /** Criar no Tiny um produto com variações (cada variação = kit do produto base) — edge fn `tiny-produto-variacoes`. */
-export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" | "foto", body: Record<string, unknown>) =>
+export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" | "foto" | "fotos-anuncio", body: Record<string, unknown>) =>
   chamarFuncao("tiny-produto-variacoes", modulo, body);
 /** Cria as variações (opções) num anúncio simples da Shopee — edge fn anuncio-shopee-variacoes. */
 export const chamarVariacoesShopee = (modulo: "previa" | "criar", body: Record<string, unknown>) =>

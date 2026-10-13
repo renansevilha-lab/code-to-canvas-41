@@ -73,14 +73,16 @@ function GerarAnuncioPage() {
     queryKey: ["ia-anuncio", "produto", sku],
     enabled: !!sku,
     queryFn: async () => {
-      const [p, cmv, ex] = await Promise.all([
+      const [p, cmv, ex, capa] = await Promise.all([
         supabaseExternal.from("ia_produto").select("sku, nome, marca, categoria_caminho, tipo, foto").eq("sku", sku).maybeSingle(),
         supabaseExternal.from("view_cmv_efetivo").select("cmv_efetivo").eq("sku", sku).maybeSingle(),
         supabaseExternal.from("ia_produto_extra").select("*").eq("sku", sku).maybeSingle(),
+        // a foto do catálogo só é refeita a cada 3 h: a do cadastro (Tiny) vale na hora
+        supabaseExternal.from("produtos").select("foto_capa").eq("sku", sku).maybeSingle(),
       ]);
       if (p.error) throw p.error;
       return {
-        produto: p.data as ProdutoIa | null,
+        produto: (p.data ? { ...(p.data as ProdutoIa), foto: (p.data as ProdutoIa).foto ?? (capa.data?.foto_capa as string | null) ?? null } : null) as ProdutoIa | null,
         custo: cmv.data?.cmv_efetivo != null ? Number(cmv.data.cmv_efetivo) : null,
         extra: (ex.data ?? null) as IaProdutoExtra | null,
       };

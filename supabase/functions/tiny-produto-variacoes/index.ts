@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v4 (12/out/2026)
+// Edge Function: tiny-produto-variacoes v5 (13/out/2026)
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -29,6 +29,12 @@
 //  (`externo: false`) e, se ele recusar, como endereço externo. O espelho marca quem nasceu aqui
 //  (`produtos.criado_app_em` + `sku_base`), base do filtro "Criados no app" da lista de anúncios.
 //   POST ?modulo=foto {sku_pai, confirmar: true} → põe a foto do produto base em quem da família ainda não tem
+// v5 (pedido do dono): FOTOS DO ANÚNCIO → TINY.
+//   POST ?modulo=fotos-anuncio {itens: [{sku, paths: [caminho no bucket ia-anuncios]}], confirmar?}
+//   Sem `confirmar`: só diz quantas fotos o produto tem no Tiny. Com: cada foto entra no produto como CÓPIA
+//   do Tiny (`externo: false` — o endereço assinado daqui vence, então nunca como endereço externo) e o 1º
+//   anexo do produto passa a ser a foto dele no sistema na hora (`produtos.foto_capa`). Só aceita foto que é
+//   do anúncio daquele SKU. Para aos ~24 s e devolve `faltou` (o que não deu tempo), para a tela continuar.
 // Regras: sessão de usuário com o módulo `ia`; escrita NÃO é repetida (um POST repetido criaria
 // produto em dobro); a v2 tem limite de 60 chamadas/min e no código 6 a função para.
 // ============================================================================
@@ -327,6 +333,55 @@ Deno.serve(async (req) => {
     if (modulo === "foto") {
       if (body.confirmar !== true && body.dry !== true) return json({ ok: false, erro: "exige confirmar: true" }, 400);
       return json(await fotosDaFamilia(token, String(body.sku_pai ?? "").trim(), body.confirmar !== true));
+    }
+
+    if (modulo === "fotos-anuncio") {
+      const itens = (Array.isArray(body.itens) ? body.itens : []).slice(0, 8).map((x: any) => ({
+        sku: String(x?.sku ?? "").trim(),
+        paths: [...new Set((Array.isArray(x?.paths) ? x.paths : []).map((p: unknown) => String(p)))].slice(0, 9) as string[],
+      })).filter((x: { sku: string }) => /^[A-Za-z0-9._-]{1,30}$/.test(x.sku));
+      if (!itens.length) return json({ ok: false, erro: "informe itens: [{sku, paths}]" }, 400);
+      const inicio = Date.now(); const LIMITE = 24_000;
+      const saida: any[] = [];
+      for (const it of itens) {
+        const { data: prod } = await db.from("produtos").select("sku, nome, id_tiny").eq("sku", it.sku).maybeSingle();
+        if (!prod?.id_tiny) { saida.push({ sku: it.sku, ok: false, erro: "produto sem cadastro no Tiny" }); continue; }
+        // só foto que é do anúncio deste produto
+        const { data: rs } = await db.from("ia_rascunho").select("id").eq("sku", it.sku);
+        const ids = ((rs ?? []) as any[]).map((r) => r.id);
+        const { data: ims } = ids.length && it.paths.length
+          ? await db.from("ia_rascunho_imagem").select("storage_path").in("rascunho_id", ids).in("storage_path", it.paths)
+          : { data: [] as any[] };
+        const validas = new Set(((ims ?? []) as any[]).map((i) => String(i.storage_path)));
+        const paths = it.paths.filter((p: string) => validas.has(p));
+        const id = Number(prod.id_tiny);
+        const det = await v3(token, "GET", `/produtos/${id}`);
+        if (det.status !== 200) { saida.push({ sku: it.sku, ok: false, erro: `não consegui ler o produto no Tiny: ${erroV3(det.body) || det.status}` }); continue; }
+        const linha: any = {
+          sku: it.sku, nome: prod.nome, id_tiny: id, fotos_no_tiny: ((det.body?.anexos ?? []) as any[]).length,
+          validas: paths.length, ignoradas: it.paths.length - paths.length, enviadas: [] as any[], faltou: [] as string[],
+        };
+        if (body.confirmar !== true) { saida.push({ ...linha, ok: true }); continue; }
+        for (const p of paths) {
+          if (Date.now() - inicio > LIMITE) { linha.faltou.push(p); continue; }
+          const s = await db.storage.from("ia-anuncios").createSignedUrl(p, 7200);
+          if (s.error || !s.data?.signedUrl) { linha.enviadas.push({ path: p, ok: false, erro: "não consegui abrir a foto no armazenamento" }); continue; }
+          const r = await porFoto(token, id, s.data.signedUrl, false);
+          linha.enviadas.push({ path: p, ok: r.ok, erro: r.erro });
+          await sleep(350);
+        }
+        // a foto principal do Tiny (1º anexo) passa a valer no sistema na hora — nunca o endereço assinado daqui
+        const dep = await v3(token, "GET", `/produtos/${id}`);
+        if (dep.status === 200) {
+          linha.fotos_no_tiny = ((dep.body?.anexos ?? []) as any[]).length;
+          const capa = fotoPrincipal(dep.body);
+          if (capa && !/supabase\.co\//.test(capa)) { await db.from("produtos").update({ foto_capa: capa }).eq("sku", it.sku); linha.foto_capa = capa; }
+        }
+        linha.ok = linha.enviadas.length > 0 && linha.enviadas.every((e: any) => e.ok) && !linha.faltou.length;
+        saida.push(linha);
+        await db.from("debug_fulfillment").insert({ modulo: "tiny-fotos-anuncio", etapa: it.sku, status_http: linha.ok ? 200 : 207, resultado: { quem: quem.nome, ...linha } });
+      }
+      return json({ ok: true, itens: saida });
     }
 
     if (modulo === "kit") {

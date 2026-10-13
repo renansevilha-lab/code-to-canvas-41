@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
+import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
 import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
@@ -376,6 +377,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           : "Vai nascer NO AR, visível para os compradores.",
       ...(junto.variacoes ? ["Em seguida: cria as variações (bloco Variações deste anúncio)."] : []),
       ...(junto.promocao ? [`Em seguida: cadastra na promoção ${junto.promocao} — o preço promocional vale na hora.`] : []),
+      ...(junto.tiny ? [`Também: manda ${junto.tiny} para o produto no Tiny.`] : []),
     ].join("\n");
     if (!window.confirm(aviso)) return;
     setEnviando(true);
@@ -626,6 +628,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           ))}
         </div>
       )}
+
+      <FotosTiny sku={rascunho.sku} canal={canal} empresa={empresa} urls={fotosQ.data ?? {}}
+        paths={[...finalOrdem.filter((x) => p.fotos.some((f) => f.path === x)), ...p.fotos.map((f) => f.path).filter((x) => !finalOrdem.includes(x))].slice(0, 9)} />
 
       {pend.length > 0 && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">

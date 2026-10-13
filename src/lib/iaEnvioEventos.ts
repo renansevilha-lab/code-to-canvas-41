@@ -4,7 +4,7 @@
 
 /** Antes de confirmar o envio: SÍNCRONO, com o detalhe mutável — cada bloco diz o que fará junto. */
 export const EV_VAI_CRIAR = "ia-anuncio-vai-criar";
-export interface VaiCriar { canal: string; empresa: string; sku: string; variacoes: boolean; promocao: string | null }
+export interface VaiCriar { canal: string; empresa: string; sku: string; variacoes: boolean; promocao: string | null; /** fotos que vão ao Tiny junto */ tiny?: string | null }
 
 /** O anúncio (simples) acabou de ser criado. `ativar`: pôr no ar depois de criar as variações. */
 export const EV_CRIADO = "ia-anuncio-criado";

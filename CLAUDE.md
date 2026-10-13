@@ -2467,6 +2467,33 @@ mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit
   Discord (#atualizações), mas ninguém viu por 5 dias — vale um alerta mais forte quando a
   relâmpago do dia fecha com 0 itens.
 
+## 5.11.11.1 Fotos do anúncio → Tiny, e a foto do produto no sistema na hora (13/out/2026)
+
+Pedido do dono: quando as fotos de um produto são cadastradas, o sistema já mostra a foto e as
+principais vão para o Tiny (na lista de anúncios o 16453 aparecia sem foto, com anúncio criado).
+- **Edge fn `tiny-produto-variacoes` v5** (deploy 7), módulo **`fotos-anuncio`**
+  `{itens: [{sku, paths}], confirmar?}`: sem `confirmar` devolve só quantas fotos o produto tem no
+  Tiny; com, cada foto aprovada (bucket privado `ia-anuncios`, endereço assinado de 2 h) entra por
+  `POST /produtos/{id}/anexos` com **`externo: false`** — o Tiny guarda uma CÓPIA; nunca como
+  endereço externo, porque o assinado vence. Só aceita caminho que é de um rascunho daquele SKU.
+  Depois relê o produto e grava o 1º anexo em **`produtos.foto_capa`** (a foto do produto no
+  sistema). Para aos ~24 s e devolve `faltou`; a tela continua de onde parou (não repete foto já
+  enviada). Registro em `debug_fulfillment` (`modulo = 'tiny-fotos-anuncio'`).
+- **Tela:** bloco "Fotos no Tiny" na conferência do envio (`FotosTiny.tsx`, dentro do `Envio`,
+  vale para qualquer marketplace): mostra se o produto tem foto no Tiny, quantas mandar (1, 3, 5 ou
+  todas — padrão 5, na ordem do envio), caixa "Mandar junto, assim que o anúncio for criado"
+  (ligada quando o produto está SEM foto no Tiny; entra no texto da confirmação pelo
+  `ia-anuncio-vai-criar`) e botão "Mandar agora ao Tiny" (com confirmação) para anúncio já criado.
+  As fotos entram DEPOIS das que o produto já tem: a principal do Tiny só muda se ele estava sem
+  foto. **A API do Tiny não apaga anexo** — tirar foto é na tela do Tiny.
+- **Foto na hora, sem DDL:** `view_foto_produto` é a `mv_foto_produto_v2` (refeita a cada 3 h) e
+  `ia_produto`/`ia_catalogo` leem dela. Para não esperar, a lista `/ia/anuncios` confere em
+  `produtos.foto_capa` os SKUs da página que vieram sem foto (`.in()` só dos visíveis) e a página
+  do anúncio faz o mesmo. As outras telas enxergam no próximo refresh da MV.
+- **Não testado ao vivo:** o Tiny baixar a foto de um endereço assinado do nosso armazenamento
+  (PNG grande, com `?token=` na URL). Se recusar, a mensagem do Tiny aparece no bloco. Foto das
+  VARIAÇÕES (cada kit com a sua) ainda não vai — só as do produto do anúncio.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -2561,7 +2588,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
 | `anuncio-shopee-variacoes` | v3 (peso e medidas por variação; `ativar` põe no ar depois das variações) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
-| `tiny-produto-variacoes` | v4 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
