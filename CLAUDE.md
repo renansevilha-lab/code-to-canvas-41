@@ -2224,6 +2224,25 @@ faltou no anúncio criado direto na Shopee).
   - O produto de teste `TESTE-APP-208691-2` ganhou a foto do 16452 no ensaio (é para apagar).
     A rota de ensaio `foto-ensaio` da função morre sozinha à meia-noite de 12/out (prazo no
     código), como a `inativar-teste` que ela substituiu.
+- **Fotos das variações (12/out, ~22h30, pedido do dono):** na página do produto PAI
+  (`/ia/gerar?sku=<pai>`, tipo V) o bloco "Fotos das variações"
+  (`src/components/ia/anuncio/FotosVariacoes.tsx`) gera UMA foto por variação: cena ambientada
+  com a quantidade de embalagens da variação (quantidade do kit em `produto_kits`). Caixa "Selo
+  só com o peso/quantidade" (ligada por padrão): ligada usa o estilo 4
+  (`imagem_capa_ambientada_texto`) com o selo recebendo SÓ o nome da opção ("8kg"); desligada
+  usa o estilo 5 (`imagem_capa_ambientada_limpa`, nenhum texto). **Sem função nova no
+  servidor** — a tela encadeia, por variação: (1) copia o briefing do pai para o SKU da
+  variação (`ia_briefing` é por SKU e o `prompts-imagem` exige um; não gasta IA); (2)
+  `ia-anuncio?modulo=prompts-imagem` com `capa {quantidade, peso (o da embalagem, lido do nome
+  do componente), faixa, sem_texto}` e `forcar`; (3) `ia_rascunho_criar` se a variação não tem
+  rascunho; (4) `ia-anuncio?modulo=imagens`. A foto mora no rascunho da PRÓPRIA variação (tipo
+  `capa_ambientada_*`), então aparece também ao abrir a variação. A referência é a foto da
+  variação no Tiny (nas criadas pelo app = a foto principal do base). Custo: o do modelo
+  (US$ 0,21 por foto no padrão), mostrado antes de confirmar. **Não testado de ponta a ponta**
+  (precisa de sessão e gasta imagem): só tsc/build e os dados conferidos no banco.
+  **Não feito:** mandar essa foto ao Tiny como foto da variação e criar na Shopee o anúncio COM
+  variações (`anuncio-publicar` só cria anúncio simples — é o aviso "este produto tem
+  variações no Tiny" da tela de envio).
 - **Lista de anúncios (mesmo dia):** filtro "Fotos da família, sem capa própria" e ordem "Mais
   vendidos (geral · 120 dias)" — a tela só mostra os dois quando a RPC `ia_catalogo` responde
   `versao >= 2`. **RPC v1.1 APLICADA em 12/out às 18h18** (migração

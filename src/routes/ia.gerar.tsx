@@ -9,6 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
+import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -177,6 +178,12 @@ function GerarAnuncioPage() {
         <EtapaFotos sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
           briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
           tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
+      )}
+
+      {/* produto com variações (pai): uma foto por variação, com a quantidade de embalagens de cada uma */}
+      {dados.produto.tipo === "V" && apoioQ.data && (
+        <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+          briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
       )}
 
       {rascunho && r !== "novo" && (
