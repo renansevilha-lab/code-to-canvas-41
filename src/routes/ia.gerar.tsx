@@ -65,7 +65,9 @@ function GerarAnuncioPage() {
   const { sku, canal, empresa, r, aba } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/gerar" });
   const visivel = useVisivel();
-  const set = (p: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, ...p }), replace: true });
+  // `resetScroll: false`: trocar de destino ou de aba não pode jogar a tela para o topo (13/out — parecia
+  // que o anúncio tinha de ser aprovado de novo); texto e fotos são os mesmos, só o destino muda.
+  const set = (p: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, ...p }), replace: true, resetScroll: false });
 
   const produtoQ = useQuery({
     queryKey: ["ia-anuncio", "produto", sku],
@@ -118,6 +120,7 @@ function GerarAnuncioPage() {
   const apoioQ = useQuery({
     queryKey: ["ia-anuncio", "apoio", sku, canal],
     enabled: !!sku,
+    placeholderData: (anterior) => anterior,
     queryFn: async () => {
       const [b, pr, tp, cf, md] = await Promise.all([
         supabaseExternal.from("ia_briefing").select("*").eq("sku", sku).maybeSingle(),
@@ -187,7 +190,7 @@ function GerarAnuncioPage() {
       )}
 
       {r !== "novo" && (
-        <Aproveitar key={`apr-${sku}-${canal}-${empresa}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
+        <Aproveitar key={`apr-${sku}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
           imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
       )}
 

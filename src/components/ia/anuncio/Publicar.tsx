@@ -115,6 +115,13 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
     .filter((l) => !(d.canal === canal && l.empresa === empresa))
     .map((l) => ({ canal: d.canal, empresa: l.empresa, rotulo: `${nomeCanal(d.canal)} · ${l.rotulo}`, lista: listaDe(d.canal, l.empresa) })));
   const irPara = (c: string, e: string) => { setAbrir((n) => n + 1); onDestino(c, e); };
+  // a ordem das fotos arrumada num destino vale para os outros (o anúncio é um só)
+  const [ordemComum, setOrdemComum] = useState<{ id: string; ordem: string[] } | null>(null);
+  // ao escolher um destino, a conferência dele fica à vista (a tela não sobe nem desce sozinha)
+  const caixa = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (abrir > 0) caixa.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [abrir, canal, empresa]);
   return (
     <Card><CardContent className="p-5 space-y-4">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -163,10 +170,13 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
           );
         })}
       </div>
+      <div ref={caixa} className="scroll-mt-20 scroll-mb-6">
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} demais={demais} onIr={irPara} />
+            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} demais={demais} onIr={irPara}
+            ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })} />
         : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
+      </div>
     </CardContent></Card>
   );
 }
@@ -178,9 +188,11 @@ interface Demais { canal: string; empresa: string; rotulo: string; lista: Existe
 interface Outro { empresa: string; rotulo: string; e: Existente }
 
 /** Conferência + envio (Shopee e Mercado Livre: mesma tela, textos e campos mudam pelo canal). */
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr }: {
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr, ordemInicial, onOrdem }: {
   rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
   demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
+  /** ordem das fotos já arrumada em outro destino deste anúncio */
+  ordemInicial?: string[] | null; onOrdem?: (ordem: string[]) => void;
 }) {
   const qc = useQueryClient();
   // o destino vai em toda chamada: o mesmo rascunho serve a qualquer marketplace/loja
@@ -257,7 +269,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const posicao = op.f_pos === "inicio" || op.f_pos === "fim" ? op.f_pos : (p?.fotos_plano?.posicao ?? "fim");
   // ORDEM FINAL das fotos: a que a pessoa arrumou (arrastando ou pelas setas) ou, sem mexer, atuais/novas pela
   // posição. Fica só na tela e vai junto no envio (não refaz a conferência a cada troca de lugar).
-  const [ordem, setOrdem] = useState<string[] | null>(null);
+  const [ordem, setOrdem] = useState<string[] | null>(ordemInicial ?? null);
+  useEffect(() => { if (ordem) onOrdem?.(ordem); }, [ordem]);
   const idsAtuais = (p?.atual?.fotos ?? []).map((f) => f.id);
   const baseOrdem = modo === "atualizar"
     ? (() => {

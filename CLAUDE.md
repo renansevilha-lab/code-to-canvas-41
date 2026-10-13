@@ -2425,6 +2425,15 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
     Ottz/Bumi, Mercado Livre Ottz/SVL, Amazon ACZ/SVL), dizendo se já existe anúncio lá; o clique
     troca o destino e abre a conferência dele no mesmo lugar (`demais`/`onIr` no `Envio`).
     Amazon sem anúncio fica desabilitada (ainda não cria).
+  - **Trocar de marketplace jogava a tela para o topo (13/out, relato do dono: "como que para
+    aprovar novamente e escolher as fotos de novo"):** o roteador tem `scrollRestoration: true` e
+    toda troca de destino é uma navegação (`nav({search})`) — sem `resetScroll: false` a página
+    voltava ao início. Além disso o `apoioQ` de `ia.gerar.tsx` é por canal e, enquanto
+    recarregava, o bloco Fotos sumia e voltava do zero, e o `Aproveitar` remontava. Agora:
+    `set()` com `resetScroll: false`, `placeholderData` no `apoioQ`, `Aproveitar` com chave só
+    pelo SKU, a conferência do destino escolhido rola para a vista (`scrollIntoView` "nearest") e
+    a **ordem das fotos** arrumada num destino vale nos outros (`ordemComum` no `Publicar`).
+    Regra: navegação que só muda parâmetro da tela (aba, filtro, destino) leva `resetScroll: false`.
   - **Não testado ao vivo (variações):** (`unlist_item`, `add_discount_item` em anúncio recém-criado
     — pode haver atraso de indexação —, e a faixa de preço: no degrau dos R$ 80 da tarifa a
     conta dá saltos, ex. 16497 a 30% = R$ 108,70 e a 20% = R$ 69,00).
