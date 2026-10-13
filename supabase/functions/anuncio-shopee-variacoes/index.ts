@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v1 (12/out/2026)
+// Edge Function: anuncio-shopee-variacoes v2 (13/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -9,6 +9,9 @@
 //   POST ?modulo=previa {empresa, item_id, grade, variacoes:[{sku, opcao, preco, estoque, foto_path?}]}
 //        → lê o anúncio ao vivo, confere tudo e devolve o que SERIA enviado. Não escreve.
 //   POST ?modulo=criar  {…o mesmo…, confirmar: true}
+// v2 (pedido do dono): PESO e MEDIDAS POR VARIAÇÃO — cada item de `variacoes` aceita `peso_kg` e
+//   `comprimento_cm`/`largura_cm`/`altura_cm` (os três juntos); vão no modelo como `weight` e
+//   `dimension {package_length, package_width, package_height}`. Em branco = valem os do anúncio.
 // Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
 // variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
@@ -90,7 +93,11 @@ async function subirImagem(c: Ctx, bytes: Uint8Array, mime: string, nome: string
   return String(id);
 }
 
-interface Variacao { sku: string; opcao: string; preco: number; estoque: number; foto_path: string | null }
+interface Variacao {
+  sku: string; opcao: string; preco: number; estoque: number; foto_path: string | null;
+  peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null;
+}
+const positivo = (v: unknown): number | null => { const n = num(v); return n > 0 ? n : null; };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -107,6 +114,7 @@ Deno.serve(async (req) => {
     const variacoes: Variacao[] = (Array.isArray(body.variacoes) ? body.variacoes : []).map((v: any) => ({
       sku: String(v?.sku ?? "").trim(), opcao: String(v?.opcao ?? "").trim(), preco: num(v?.preco),
       estoque: Math.max(0, Math.floor(num(v?.estoque))), foto_path: v?.foto_path ? String(v.foto_path) : null,
+      peso_kg: positivo(v?.peso_kg), comprimento_cm: positivo(v?.comprimento_cm), largura_cm: positivo(v?.largura_cm), altura_cm: positivo(v?.altura_cm),
     }));
     const pend: string[] = []; const avisos: string[] = [];
     if (!shopId) pend.push("loja inválida (empresa = ottz ou svl)");
@@ -121,6 +129,8 @@ Deno.serve(async (req) => {
       else if (v.opcao.length > 20) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 20)`);
       if (!v.sku) pend.push(`${n}: sem SKU`);
       if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
+      const medidas = [v.comprimento_cm, v.largura_cm, v.altura_cm].filter((x) => x != null).length;
+      if (medidas > 0 && medidas < 3) pend.push(`${n}: preencha comprimento, largura e altura juntos (ou deixe os três em branco)`);
     });
     if (new Set(variacoes.map((v) => v.opcao.toLowerCase())).size !== variacoes.length) pend.push("há duas opções com o mesmo nome");
     if (new Set(variacoes.map((v) => v.sku)).size !== variacoes.length) pend.push("há SKU repetido entre as variações");
@@ -152,7 +162,12 @@ Deno.serve(async (req) => {
     const montar = (ids: Map<string, string>) => ({
       item_id: itemId,
       tier_variation: [{ name: grade, option_list: variacoes.map((v) => semFoto(v, ids.get(v.sku))) }],
-      model: variacoes.map((v, i) => ({ tier_index: [i], original_price: v.preco, model_sku: v.sku, seller_stock: [{ stock: v.estoque }] })),
+      model: variacoes.map((v, i) => ({
+        tier_index: [i], original_price: v.preco, model_sku: v.sku, seller_stock: [{ stock: v.estoque }],
+        ...(v.peso_kg != null ? { weight: v.peso_kg } : {}),
+        ...(v.comprimento_cm != null && v.largura_cm != null && v.altura_cm != null
+          ? { dimension: { package_length: Math.round(v.comprimento_cm), package_width: Math.round(v.largura_cm), package_height: Math.round(v.altura_cm) } } : {}),
+      })),
     });
     if (modulo === "previa") return json({ ok: true, anuncio, pendencias, avisos, com_foto: comFoto === variacoes.length && comFoto > 0, payload: montar(new Map()) });
 

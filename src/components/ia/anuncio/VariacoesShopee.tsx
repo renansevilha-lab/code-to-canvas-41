@@ -25,7 +25,18 @@ import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const TIPOS_FOTO = ["capa_ambientada_limpa", "capa_ambientada_texto"];
 export const EVENTO_ANUNCIO_CRIADO = "ia-anuncio-criado";
-interface Linha { sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null }
+interface Linha {
+  sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null;
+  /** peso e medidas DESTA variação (em branco = valem os do anúncio) */
+  peso: string; comp: string; larg: string; alt: string;
+}
+/** "8kg" / "500g" no nome da opção → peso em kg (sugestão para o campo de peso da variação). */
+const pesoDaOpcao = (opcao: string): string => {
+  const m = /^(\d+(?:[.,]\d+)?)\s*(kg|g)$/i.exec(opcao.trim());
+  if (!m) return "";
+  const v = Number(m[1].replace(",", ".")) / (m[2].toLowerCase() === "g" ? 1000 : 1);
+  return v > 0 ? String(v).replace(".", ",") : "";
+};
 interface Previa { anuncio: { item_id: number; nome: string; situacao: string; tem_variacao: boolean; url: string } | null; pendencias: string[]; avisos: string[] }
 
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
@@ -57,8 +68,9 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const nome = v.nome ?? v.sku;
         const meus = new Set(rascunhos.filter((r) => r.sku === v.sku).map((r) => r.id));
         const foto = imagens.find((i) => meus.has(i.rascunho_id)) ?? null;
+        const opcao = (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20);
         return {
-          sku: v.sku, opcao: (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20),
+          sku: v.sku, opcao, peso: pesoDaOpcao(opcao), comp: "", larg: "", alt: "",
           preco: v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: "0",
           foto_path: foto?.storage_path ?? null, foto_url: foto ? urls[foto.storage_path] ?? null : null,
         };
@@ -101,7 +113,10 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const mandarFotos = comFotos && todasComFoto;
   const corpo = (item = itemId) => ({
     empresa, item_id: item.trim(), grade: grade.trim(),
-    variacoes: linhas.map((l) => ({ sku: l.sku, opcao: l.opcao.trim(), preco: paraNumero(l.preco) || 0, estoque: Number(l.estoque) || 0, foto_path: mandarFotos ? l.foto_path : null })),
+    variacoes: linhas.map((l) => ({
+      sku: l.sku, opcao: l.opcao.trim(), preco: paraNumero(l.preco) || 0, estoque: Number(l.estoque) || 0, foto_path: mandarFotos ? l.foto_path : null,
+      peso_kg: paraNumero(l.peso) || null, comprimento_cm: paraNumero(l.comp) || null, largura_cm: paraNumero(l.larg) || null, altura_cm: paraNumero(l.alt) || null,
+    })),
   });
 
   async function criar(item: string) {
@@ -134,6 +149,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     linhas.some((l) => !l.opcao.trim()) ? "há opção sem nome" : "",
     new Set(linhas.map((l) => l.opcao.trim().toLowerCase())).size !== linhas.length ? "há duas opções com o mesmo nome" : "",
     linhas.some((l) => !(paraNumero(l.preco) > 0)) ? "há variação sem preço" : "",
+    linhas.some((l) => { const n = [l.comp, l.larg, l.alt].filter((x) => paraNumero(x) > 0).length; return n > 0 && n < 3; }) ? "medidas da variação: preencha comprimento, largura e altura juntos (ou deixe os três em branco)" : "",
   ].filter(Boolean);
   const semEstoque = linhas.filter((l) => !(Number(l.estoque) > 0)).length;
 
@@ -185,20 +201,27 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
             </div>
             {jaTem && <p className="text-xs text-destructive">No cadastro do app este anúncio já aparece com variações — a Shopee vai recusar.</p>}
 
-            <div className="space-y-1.5">
-              <div className="grid grid-cols-[44px_1fr_90px_110px_90px] gap-2 text-[11px] text-muted-foreground">
-                <span /><span>Opção (até 20 letras)</span><span>SKU</span><span>Preço (R$)</span><span>Estoque</span>
-              </div>
-              {linhas.map((l, i) => (
-                <div key={l.sku} className="grid grid-cols-[44px_1fr_90px_110px_90px] gap-2 items-center">
-                  <div className="h-10 w-10 rounded border bg-muted/40 overflow-hidden">{l.foto_url && <img src={l.foto_url} alt="" className="h-full w-full object-cover" />}</div>
-                  <Input className="h-8" value={l.opcao} maxLength={20} onChange={(e) => mudar(i, { opcao: e.target.value })} />
-                  <span className="font-mono text-xs">{l.sku}</span>
-                  <Input className="h-8 text-right tabular-nums" inputMode="decimal" value={l.preco} onChange={(e) => mudar(i, { preco: e.target.value })} />
-                  <Input className="h-8 text-right tabular-nums" inputMode="numeric" value={l.estoque} onChange={(e) => mudar(i, { estoque: e.target.value.replace(/\D/g, "") })} />
+            <div className="overflow-x-auto">
+              <div className="space-y-1.5 min-w-[860px]">
+                <div className="grid grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px] gap-2 text-[11px] text-muted-foreground">
+                  <span /><span>Opção (até 20 letras)</span><span>SKU</span><span>Preço (R$)</span><span>Estoque</span><span>Peso (kg)</span><span>Compr.</span><span>Larg.</span><span>Alt. (cm)</span>
                 </div>
-              ))}
+                {linhas.map((l, i) => (
+                  <div key={l.sku} className="grid grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px] gap-2 items-center">
+                    <div className="h-14 w-14 rounded border bg-muted/40 overflow-hidden">{l.foto_url && <a href={l.foto_url} target="_blank" rel="noreferrer" title="abrir a foto"><img src={l.foto_url} alt="" className="h-full w-full object-cover" /></a>}</div>
+                    <Input className="h-8" value={l.opcao} maxLength={20} onChange={(e) => mudar(i, { opcao: e.target.value })} />
+                    <span className="font-mono text-xs">{l.sku}</span>
+                    <Input className="h-8 text-right tabular-nums" inputMode="decimal" value={l.preco} onChange={(e) => mudar(i, { preco: e.target.value })} />
+                    <Input className="h-8 text-right tabular-nums" inputMode="numeric" value={l.estoque} onChange={(e) => mudar(i, { estoque: e.target.value.replace(/\D/g, "") })} />
+                    <Input className="h-8 text-right tabular-nums" inputMode="decimal" placeholder="anúncio" value={l.peso} onChange={(e) => mudar(i, { peso: e.target.value })} />
+                    <Input className="h-8 text-right tabular-nums px-1.5" inputMode="decimal" placeholder="—" value={l.comp} onChange={(e) => mudar(i, { comp: e.target.value })} />
+                    <Input className="h-8 text-right tabular-nums px-1.5" inputMode="decimal" placeholder="—" value={l.larg} onChange={(e) => mudar(i, { larg: e.target.value })} />
+                    <Input className="h-8 text-right tabular-nums px-1.5" inputMode="decimal" placeholder="—" value={l.alt} onChange={(e) => mudar(i, { alt: e.target.value })} />
+                  </div>
+                ))}
+              </div>
             </div>
+            <p className="text-[11px] text-muted-foreground">Peso e medidas por variação: é o que a Shopee usa para o frete de cada opção. Em branco, valem o peso e as medidas do anúncio.</p>
             {faltas.length > 0 && <p className="text-xs text-destructive">Antes de enviar: {faltas.join(" · ")}.</p>}
             {semEstoque > 0 && <p className="text-[11px] text-amber-600">{semEstoque} variação(ões) com estoque 0: nascem esgotadas até o Tiny mandar o estoque (depois do vínculo pelo SKU).</p>}
 

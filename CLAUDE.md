@@ -2372,6 +2372,24 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
   empresa, sku, item_id}`) e o bloco chama o `criar` no anúncio novo, sem outro clique. Se as
   variações falharem, o anúncio simples fica criado e o bloco mostra o ID para tentar de novo. O
   aviso do servidor ("criar gera um anúncio simples") é reescrito na tela.
+- **Ajustes na conferência do envio (13/out/2026, pedido do dono):**
+  - **Fotos maiores** (144 px, clique amplia) e **X para tirar** a foto no modo "criar". A
+    `anuncio-publicar` não tem exclusão de foto ao criar (`opcoes.fotos.ordem` só ordena; manda
+    as 9 primeiras APROVADAS), então tirar = **rejeitar a etapa da imagem** (`ia_rascunho_imagem`
+    por `storage_path` → `ia_etapa.imagem_id` → RPC `ia_etapa_rejeitar`). Vale para TODOS os
+    destinos do rascunho; volta aprovando de novo no bloco Fotos. No modo "atualizar" seguem os
+    seletores manter/incluir.
+  - **Preço editável** na caixa: vai em `opcoes.preco` (a função já aceitava) — só deste envio,
+    não muda o preço aprovado; precisa "Atualizar a conferência".
+  - **Título editável** na caixa: a função só lê `ia_rascunho.titulo`, então "Salvar título"
+    grava no rascunho (o mesmo para todos os destinos) e reaprova a etapa de texto se ela estava
+    aprovada (o gatilho devolve a "para revisar" quando o texto muda).
+  - **Peso e medidas por variação** (`anuncio-shopee-variacoes` **v2**): cada variação aceita
+    `peso_kg` e `comprimento_cm`/`largura_cm`/`altura_cm` (os três juntos) → `weight` e
+    `dimension {package_length, package_width, package_height}` (cm inteiros) no `model` do
+    `init_tier_variation`. Em branco não manda (valem os do anúncio). A tela sugere o peso
+    quando a opção é "8kg"/"500g". **Não testado ao vivo:** se a Shopee recusar esses campos no
+    `init_tier_variation`, o caminho é `product/update_model` depois de criar.
 - **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
   variações: não feito.
 
@@ -2442,7 +2460,7 @@ mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
-| `anuncio-shopee-variacoes` | v1 | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
+| `anuncio-shopee-variacoes` | v2 (peso e medidas por variação) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v4 | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |

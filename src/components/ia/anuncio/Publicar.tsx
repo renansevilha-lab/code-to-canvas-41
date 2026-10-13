@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
+import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaRascunho } from "@/lib/iaAnuncio";
 
 // ============================================================================
@@ -181,6 +183,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
   const [aplicado, setAplicado] = useState<Op>(() => opInicial(canal));
   const [enviando, setEnviando] = useState(false);
   const [deNovo, setDeNovo] = useState(false);
+  // ajustes feitos na própria conferência (13/out, pedido do dono): título e tirar foto mexem no rascunho
+  const [tituloTxt, setTituloTxt] = useState<string | null>(null);
+  const [mexendo, setMexendo] = useState(false);
 
   const previaQ = useQuery({
     queryKey: ["ia-anuncio", "publicar", rascunho.id, canal, empresa, rascunho.updated_at, JSON.stringify(aplicado)],
@@ -245,6 +250,40 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
   /** Marca/desmarca uma foto mantendo a ordem da lista de origem. */
   const alternarFoto = (k: "f_manter" | "f_novas", id: string, marcadas: string[], origem: string[]) =>
     setOp({ ...op, [k]: origem.filter((x) => marcadas.includes(x) !== (x === id)).join("|") });
+  /** Tira a foto do anúncio: ela deixa de estar aprovada (fica "rejeitada" no bloco Fotos, onde dá para aprovar de novo). */
+  async function tirarFoto(path: string) {
+    if (!window.confirm("Tirar esta foto do anúncio?\n\nEla deixa de estar aprovada — vale para todos os destinos. Para voltar, aprove de novo no bloco Fotos.")) return;
+    setMexendo(true);
+    try {
+      const im = await supabaseExternal.from("ia_rascunho_imagem").select("id").eq("rascunho_id", rascunho.id).eq("storage_path", path).limit(1);
+      const idImagem = (im.data ?? [])[0]?.id;
+      const et = idImagem ? await supabaseExternal.from("ia_etapa").select("id").eq("imagem_id", idImagem).limit(1) : { data: [] as { id: string }[] };
+      const idEtapa = (et.data ?? [])[0]?.id;
+      if (!idEtapa) throw new Error("não achei esta foto no rascunho");
+      await decidirEtapa(String(idEtapa), false);
+      setOrdem((o) => (o ? o.filter((x) => x !== path) : o));
+      await qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+    } catch (e) { toast.error("Não consegui tirar a foto", { description: (e as Error).message, duration: 12000 }); }
+    finally { setMexendo(false); }
+  }
+  /** Título editado na conferência: grava no anúncio (é o mesmo para todos os destinos) e mantém o texto aprovado. */
+  async function salvarTitulo() {
+    const novo = (tituloTxt ?? "").trim();
+    if (!novo || novo === p?.titulo) { setTituloTxt(null); return; }
+    setMexendo(true);
+    try {
+      const et = await supabaseExternal.from("ia_etapa").select("id, status").eq("rascunho_id", rascunho.id).eq("etapa", "texto").limit(1);
+      const etapa = (et.data ?? [])[0] as { id: string; status: string } | undefined;
+      const { error } = await supabaseExternal.from("ia_rascunho").update({ titulo: novo }).eq("id", rascunho.id);
+      if (error) throw error;
+      // mudar o texto devolve a etapa a "para revisar"; quem editou o título aqui já o aprovou
+      if (etapa?.status === "aprovado") await decidirEtapa(String(etapa.id), true);
+      setTituloTxt(null);
+      await qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+      toast.success("Título atualizado", { description: "Vale para todos os destinos deste anúncio." });
+    } catch (e) { toast.error("Não consegui salvar o título", { description: (e as Error).message, duration: 12000 }); }
+    finally { setMexendo(false); }
+  }
   const campo = (k: string, padrao: number | null | undefined) => (typeof op[k] === "string" ? String(op[k]) : txt(padrao));
   const mudou = JSON.stringify(op) !== JSON.stringify(aplicado);
   // trocar de modo ou de anúncio refaz a conferência na hora (são leituras diferentes na Shopee)
@@ -416,8 +455,25 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
         <div className="rounded-md border p-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-sm"><b>{p.loja}</b><span className="text-muted-foreground">SKU {p.sku} · anúncio novo</span></div>
           <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-            <Linha rotulo="Título" valor={`${p.titulo} (${p.titulo.length}/${limTitulo})`} />
-            <Linha rotulo="Preço" valor={p.preco != null ? formatBRL(p.preco) : "—"} />
+            <label className="block md:col-span-2">
+              <span className={`text-[11px] ${(tituloTxt ?? p.titulo).length > limTitulo ? "text-destructive" : "text-muted-foreground"}`}>
+                Título ({(tituloTxt ?? p.titulo).length}/{limTitulo}) · o mesmo para todos os destinos
+              </span>
+              <div className="flex gap-2 mt-1">
+                <Input className="h-8 text-sm" value={tituloTxt ?? p.titulo} disabled={mexendo} onChange={(e) => setTituloTxt(e.target.value)} />
+                {tituloTxt != null && tituloTxt.trim() !== p.titulo && (
+                  <>
+                    <Button size="sm" className="h-8 shrink-0" disabled={mexendo || !tituloTxt.trim()} onClick={() => void salvarTitulo()}>Salvar título</Button>
+                    <Button size="sm" variant="ghost" className="h-8 shrink-0" disabled={mexendo} onClick={() => setTituloTxt(null)}>Desfazer</Button>
+                  </>
+                )}
+              </div>
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio</span>
+              <Input className="h-8 mt-1 w-[150px] text-sm tabular-nums" inputMode="decimal" placeholder="defina o preço"
+                value={campo("preco", p.preco)} onChange={(e) => setOp({ ...op, preco: e.target.value })} />
+            </label>
             {p.marca && <Linha rotulo="Marca" valor={p.marca.nome} />}
             <Linha rotulo="Código de barras" valor={p.ean ?? (ml ? "sem código — vai como \"produto sem código cadastrado\"" : "sem código no Tiny")} />
             {p.logistica && <Linha rotulo="Canais de envio" valor={p.logistica.map((l) => l.nome).join(", ") || "—"} />}
@@ -425,8 +481,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
             <Linha rotulo="Descrição" valor={`${p.descricao.length.toLocaleString("pt-BR")} caracteres (texto + bullets)`} />
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Fotos, na ordem em que vão · arraste ou use as setas para mudar</div>
-            <Ordenavel itens={itensOrdem} max={limFotos} onOrdem={setOrdem} />
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Fotos, na ordem em que vão · clique para ampliar · arraste ou use as setas para mudar · o X tira a foto</div>
+            <Ordenavel itens={itensOrdem} max={limFotos} onOrdem={setOrdem} onTirar={mexendo ? undefined : (id) => void tirarFoto(id)} />
           </div>
           <div className="flex flex-wrap items-end gap-3 text-sm border-t pt-3">
             <label className="block min-w-[260px] flex-1">
@@ -656,8 +712,11 @@ function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPr
 }
 
 /** Fotos na ordem final: arraste ou use as setas para mudar de lugar. A primeira é a capa. */
-function Ordenavel({ itens, max, onOrdem }: { itens: { id: string; url: string; legenda?: string }[]; max: number; onOrdem: (ids: string[]) => void }) {
+function Ordenavel({ itens, max, onOrdem, onTirar }: {
+  itens: { id: string; url: string; legenda?: string }[]; max: number; onOrdem: (ids: string[]) => void; onTirar?: (id: string) => void;
+}) {
   const [pego, setPego] = useState<string | null>(null);
+  const [grande, setGrande] = useState<string | null>(null);
   if (!itens.length) return <span className="text-xs text-muted-foreground">nenhuma foto</span>;
   const ids = itens.map((x) => x.id);
   const mover = (id: string, para: number) => {
@@ -666,20 +725,31 @@ function Ordenavel({ itens, max, onOrdem }: { itens: { id: string; url: string; 
     const n = [...ids]; n.splice(de, 1); n.splice(para, 0, id); onOrdem(n);
   };
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2.5">
+      {grande && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={() => setGrande(null)}>
+          <img src={grande} alt="" className="max-h-full max-w-full rounded-lg shadow-2xl" />
+        </div>
+      )}
       {itens.map((f, i) => (
         <div key={f.id} draggable onDragStart={() => setPego(f.id)} onDragEnd={() => setPego(null)}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (pego) mover(pego, i); setPego(null); }}
-          className={`w-16 cursor-grab ${pego === f.id || i >= max ? "opacity-40" : ""}`} title={i >= max ? "passa do limite de fotos: não vai" : "arraste para mudar a ordem"}>
-          <div className={`relative h-16 w-16 rounded border-2 overflow-hidden bg-muted/30 ${i === 0 ? "border-primary" : "border-border"}`}>
-            {f.url && <img src={f.url} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />}
-            <span className="absolute top-0 left-0 bg-background/85 px-1 text-[9.5px] font-semibold rounded-br">{i === 0 ? "capa" : i + 1}</span>
+          className={`w-36 cursor-grab ${pego === f.id || i >= max ? "opacity-40" : ""}`} title={i >= max ? "passa do limite de fotos: não vai" : "arraste para mudar a ordem"}>
+          <div className={`relative h-36 w-36 rounded-md border-2 overflow-hidden bg-muted/30 ${i === 0 ? "border-primary" : "border-border"}`}>
+            {f.url && <img src={f.url} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover cursor-zoom-in" onClick={() => setGrande(f.url)} />}
+            <span className="absolute top-0 left-0 bg-background/85 px-1.5 py-0.5 text-[11px] font-semibold rounded-br">{i === 0 ? "capa" : i + 1}</span>
+            {onTirar && (
+              <button type="button" title="tirar esta foto do anúncio" onClick={() => onTirar(f.id)}
+                className="absolute top-1 right-1 h-6 w-6 rounded-full bg-background/90 shadow flex items-center justify-center hover:bg-destructive hover:text-white">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <div className="flex items-center justify-between mt-0.5">
             <button type="button" className="h-4 w-4 rounded hover:bg-muted disabled:opacity-30" disabled={i === 0} onClick={() => mover(f.id, i - 1)} title="mais para a frente">
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-            <span className="text-[9px] text-muted-foreground truncate capitalize px-0.5">{f.legenda ?? ""}</span>
+            <span className="text-[11px] text-muted-foreground truncate capitalize px-0.5">{f.legenda ?? ""}</span>
             <button type="button" className="h-4 w-4 rounded hover:bg-muted disabled:opacity-30" disabled={i === itens.length - 1} onClick={() => mover(f.id, i + 1)} title="mais para trás">
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
