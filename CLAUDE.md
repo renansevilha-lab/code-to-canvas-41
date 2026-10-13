@@ -2420,6 +2420,53 @@ mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit
   Discord (#atualizações), mas ninguém viu por 5 dias — vale um alerta mais forte quando a
   relâmpago do dia fecha com 0 itens.
 
+## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
+
+Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
+ATUALIZA (v7). Ensaiado ao vivo na conta ACZ com o validador (`PUT listings item` +
+`mode=VALIDATION_PREVIEW`, não aplica) pela sonda `amazon-anuncio-sonda` **v2** (slot
+`amazon-lwa-debug` v15; `?ensaio=criar&sku=[&tipo=][&canal=fba|proprio][&forcar=novo][&completo=1]`,
+`&bruto=1` devolve todos os atributos de um anúncio nosso = molde). A função recusa qualquer
+escrita sem `VALIDATION_PREVIEW`.
+- **Dois caminhos, decididos pelo EAN no catálogo** (`GET /catalog/2022-04-01/items?identifiers=
+  &identifiersType=EAN`):
+  - **A — o produto já existe na Amazon** (marca de terceiro): `requirements:
+    LISTING_OFFER_ONLY` com `merchant_suggested_asin`, `condition_type`, `purchasable_offer`
+    e `fulfillment_availability`. Do galpão (`DEFAULT` + `quantity`) = **VALID com esses 4
+    campos**; FBA (`AMAZON_NA`) pede mais `supplier_declared_dg_hz_regulation` e
+    `batteries_required`. `restrictions` veio vazio para o Pet Clean.
+  - **B — ficha nova (ASIN novo, marca própria)**: `requirements: LISTING`. O esquema do tipo
+    diz 6 obrigatórios, mas o validador cobra **~16–18**: além de título, marca, bullets,
+    descrição, país e produto perigoso → `manufacturer`, `model_name`, `model_number`,
+    `directions`, `specific_uses_for_product`, `color`, `warranty_description`,
+    `external_testing_certification`, `batteries_required`, `number_of_boxes`, `unit_count`,
+    `list_price` (`value_with_tax`, não `value`), `item_package_weight`,
+    `item_package_dimensions` (+ `included_components`, `contains_liquid_contents`,
+    `is_expiration_dated_product` em PET_SUPPLIES; ANIMAL_LITTER ignora esses três). Com tudo
+    preenchido: **VALID** para Bumi Pet Care (creme dental 15814 e kit de areia 16034).
+- **Marca:** "Bumi Pet Care" passa; **"Ottz Pet" = erro 5665 (marca não aprovada pela Amazon)** —
+  areia Ottz (16054) não cria ficha até o dono pedir a aprovação da marca no Seller Central.
+  Produto sem marca no cadastro (ex.: o pai 16486) = "marca obrigatória".
+- **Tipo de produto:** areia = `ANIMAL_LITTER` (103 campos); os nossos anúncios de higiene estão
+  em `PET_SUPPLIES` (109); a Amazon troca sozinha quando acha melhor (creme dental →
+  `TOOTH_CLEANING_AGENT`, só aviso). A busca de tipo por palavras do nome falha às vezes —
+  a tela precisa deixar escolher.
+- **EAN é o ponto fraco do cadastro:** 789 de 2.267 ativos têm EAN (kits: 150 de 1.165) e **kit
+  herda o EAN da unidade** (o "Kit 2/3/4/5" da areia 2 kg têm todos o mesmo). Na Amazon um EAN =
+  um produto: o validador NÃO acusa a repetição, mas na criação real o 2º kit cairia na ficha
+  do 1º. Kit precisa de EAN próprio, isenção de GTIN, ou entrar como variação (tema de
+  quantidade) de uma ficha só. Achado na mesma linha: o EAN do kit 10933 no Tiny é o da
+  unidade (aponta para outro ASIN que não o do nosso anúncio).
+- **Tudo que vendemos na Amazon é FBA** (90 dias: ACZ 1.253, SVL 1.188 pedidos; zero do galpão).
+  Criar o anúncio FBA não vende nada sozinho: precisa do envio ao CD (a aba Fulfillment › Envios
+  já cuida do packing; o plano de envio é feito no Seller Central — a API de inbound deu 403).
+  Vender do galpão exigiria estoque e pedidos Amazon pelo Tiny, que hoje só tem "Amazon FBA
+  Classic".
+- **SVL segue sem `merchant_token`** → nada de Listings nessa conta.
+- **Não ensaiado:** fotos por endereço assinado na criação (só no atualizar), variações
+  (`parentage_level`/`child_parent_sku_relationship`/`variation_theme`), e a criação REAL
+  (o validador não pega tudo — ex.: conflito de EAN, revisão da ficha).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
