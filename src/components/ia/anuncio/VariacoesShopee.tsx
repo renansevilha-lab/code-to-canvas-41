@@ -86,7 +86,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         };
       }).sort((a, z) => (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1) || a.sku.localeCompare(z.sku));
       const criado = ((pub.data ?? []) as { item_id: string | null; operacao: string | null }[]).find((p) => p.item_id)?.item_id ?? null;
-      const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null }[];
+      const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null; status: string | null }[];
       return { linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
@@ -189,7 +189,23 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recemCriado]);
 
+  /** Põe no ar um anúncio que ficou fora (a ativação automática falhou, ou ele foi criado sem listar). */
+  async function ativar(item: string) {
+    if (!window.confirm(`Pôr o anúncio ${item} NO AR na Shopee · ${nomeEmpresa(empresa)}?\n\nEle passa a aparecer para os compradores.`)) return;
+    setOcupado("criando");
+    try {
+      const r = (await chamarVariacoesShopee("ativar", { empresa, item_id: item, confirmar: true })) as { ativado?: boolean; erro?: string | null };
+      if (r.ativado) {
+        setNoAr(true); toast.success(`Anúncio ${item} no ar`);
+        void atualizarCatalogoShopee(shopId, [Number(item)]).then(() => q.refetch()).catch(() => undefined);
+      } else toast.error("A Shopee não deixou pôr o anúncio no ar", { description: r.erro ?? "sem detalhe", duration: 30000 });
+    } catch (e) { toast.error("Não consegui pôr o anúncio no ar", { description: (e as Error).message, duration: 20000 }); }
+    finally { setOcupado(""); }
+  }
+
   if (q.isLoading || !q.data || q.data.linhas.length < 2) return null;
+  // fora do ar: a ativação desta tela falhou agora, ou o cadastro do app mostra o anúncio como não listado
+  const foraDoAr = !!itemId.trim() && (noAr === false || (noAr === null && q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.status === "UNLIST"));
   const chave = JSON.stringify(corpo());
   const conferido = previa?.chave === chave ? previa.dados : null;
   const mudar = (i: number, x: Partial<Linha>) => setLinhas((ls) => ls.map((l, j) => (j === i ? { ...l, ...x } : l)));
@@ -228,7 +244,14 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
               : <>Este produto já tem anúncio na Shopee ({itemId.trim()}). Confira e crie nele as {linhas.length} variações — só funciona em anúncio que ainda não tem variações.</>}
           </p>
         </div>
-        {ocupado === "criando" && <p className="text-sm flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Criando as variações no anúncio…</p>}
+        {ocupado === "criando" && <p className="text-sm flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Enviando para a Shopee…</p>}
+        {foraDoAr && (
+          <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-2.5 text-sm flex flex-wrap items-center gap-3">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <span>O anúncio <b className="font-mono">{itemId.trim()}</b> está <b>fora do ar</b> na Shopee.</span>
+            <Button size="sm" className="h-7 text-xs" disabled={!!ocupado} onClick={() => void ativar(itemId.trim())}>Pôr no ar agora</Button>
+          </div>
+        )}
         {feito ? (
           <p className="text-sm text-emerald-600 flex flex-wrap items-center gap-2"><CheckCircle2 className="h-4 w-4" />Variações criadas.
             <a className="underline inline-flex items-center gap-1" href={feito} target="_blank" rel="noreferrer">ver o anúncio<ExternalLink className="h-3.5 w-3.5" /></a>

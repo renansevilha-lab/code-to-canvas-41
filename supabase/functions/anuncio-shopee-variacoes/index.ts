@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v3 (13/out/2026)
+// Edge Function: anuncio-shopee-variacoes v4 (13/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -15,6 +15,11 @@
 // v3 (pedido do dono: enviar já ATIVO): `ativar: true` → depois de criar as variações, põe o
 //   anúncio NO AR (`product/unlist_item`, unlist=false). Assim o anúncio de variações nasce fora
 //   do ar e só aparece para o comprador quando as opções e os preços delas já existem.
+// v4 (dono: SEMPRE no ar na Shopee): a ativação falhou no 1º uso da Bumi (item 53619183224 —
+//   "external error … get_shop_listing_limit … check_product_lock", logo depois de criar as variações)
+//   e o anúncio ficou fora do ar. `unlist_item` só define o estado (repetir não duplica nada), então
+//   agora há UMA nova tentativa depois de 6 s; e `POST ?modulo=ativar {empresa, item_id, confirmar}`
+//   põe no ar um anúncio que ficou de fora (botão "Pôr no ar agora" da tela).
 // Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
 // variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
@@ -96,6 +101,26 @@ async function subirImagem(c: Ctx, bytes: Uint8Array, mime: string, nome: string
   return String(id);
 }
 
+/** Põe o anúncio no ar (`unlist: false`). Devolve o motivo da falha (ou null). É só mudança de estado: por isso,
+ *  e só por isso, tem UMA segunda tentativa — a 1ª costuma falhar quando o anúncio ainda está sendo processado. */
+async function porNoAr(c: Ctx, itemId: number, quem: string | null): Promise<string | null> {
+  let falha: string | null = null;
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    if (tentativa > 1) await new Promise((r) => setTimeout(r, 6000));
+    const at = await lerJson(await fetch((await urlLoja(c, "/api/v2/product/unlist_item")).toString(), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_list: [{ item_id: itemId, unlist: false }] }),
+    }));
+    const motivo = ((at?.response?.failure_list ?? []) as any[])[0]?.failed_reason ?? null;
+    falha = motivo ? String(motivo) : at?.error ? `${at.error} ${at.message ?? ""}`.trim() : null;
+    await db.from("debug_fulfillment").insert({
+      modulo: "anuncio-shopee-variacoes", etapa: `${itemId}:ativar`, status_http: falha ? 400 : 200,
+      resultado: { quem, shop_id: c.shopId, tentativa, resposta: at },
+    });
+    if (!falha) return null;
+  }
+  return falha;
+}
+
 interface Variacao {
   sku: string; opcao: string; preco: number; estoque: number; foto_path: string | null;
   peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null;
@@ -108,9 +133,17 @@ Deno.serve(async (req) => {
   const quem = await exigirAcesso(req);
   if (quem instanceof Response) return quem;
   const modulo = new URL(req.url).searchParams.get("modulo") ?? "";
-  if (modulo !== "previa" && modulo !== "criar") return json({ ok: false, erro: "use ?modulo=previa ou criar" }, 400);
+  if (modulo !== "previa" && modulo !== "criar" && modulo !== "ativar") return json({ ok: false, erro: "use ?modulo=previa, criar ou ativar" }, 400);
   const body = await req.json().catch(() => ({})) as Record<string, any>;
   try {
+    if (modulo === "ativar") {
+      const loja = LOJA[String(body.empresa ?? "")];
+      const id = Number(String(body.item_id ?? "").replace(/\D/g, ""));
+      if (!loja || !id) return json({ ok: false, erro: "informe empresa (ottz ou svl) e item_id" }, 400);
+      if (body.confirmar !== true) return json({ ok: false, erro: "ativar exige confirmar: true" }, 400);
+      const falha = await porNoAr(await ctxShopee(loja), id, quem.nome);
+      return json({ ok: !falha, ativado: !falha, erro: falha });
+    }
     const shopId = LOJA[String(body.empresa ?? "")];
     const itemId = Number(String(body.item_id ?? "").replace(/\D/g, ""));
     const grade = String(body.grade ?? "").trim();
@@ -200,16 +233,9 @@ Deno.serve(async (req) => {
     const modelos = ((r?.response?.model ?? []) as any[]).map((m) => ({ model_id: m.model_id, sku: m.model_sku, tier_index: m.tier_index }));
     let ativado: boolean | null = null; let avisoAtivar: string | null = null;
     if (body.ativar === true) {
-      const at = await lerJson(await fetch((await urlLoja(c, "/api/v2/product/unlist_item")).toString(), {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_list: [{ item_id: itemId, unlist: false }] }),
-      }));
-      const falha = at?.error ? `${at.error} ${at.message ?? ""}`.trim() : (((at?.response?.failure_list ?? []) as any[])[0]?.failed_reason ?? null);
+      const falha = await porNoAr(c, itemId, quem.nome);
       ativado = !falha;
-      if (falha) avisoAtivar = `as variações foram criadas, mas NÃO consegui pôr o anúncio no ar (${falha}) — ative no Seller Center`;
-      await db.from("debug_fulfillment").insert({
-        modulo: "anuncio-shopee-variacoes", etapa: `${itemId}:ativar`, status_http: falha ? 400 : 200,
-        resultado: { quem: quem.nome, shop_id: shopId, resposta: at },
-      });
+      if (falha) avisoAtivar = `as variações foram criadas, mas NÃO consegui pôr o anúncio no ar (${falha}) — use "Pôr no ar agora"`;
     }
     return json({ ok: true, anuncio, modelos, aviso: r?.warning || null, ativado, aviso_ativar: avisoAtivar });
   } catch (e) {

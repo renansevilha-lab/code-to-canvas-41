@@ -175,7 +175,7 @@ export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "ap
 export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" | "foto" | "fotos-anuncio", body: Record<string, unknown>) =>
   chamarFuncao("tiny-produto-variacoes", modulo, body);
 /** Cria as variações (opções) num anúncio simples da Shopee — edge fn anuncio-shopee-variacoes. */
-export const chamarVariacoesShopee = (modulo: "previa" | "criar", body: Record<string, unknown>) =>
+export const chamarVariacoesShopee = (modulo: "previa" | "criar" | "ativar", body: Record<string, unknown>) =>
   chamarFuncao("anuncio-shopee-variacoes", modulo, body);
 
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote. */

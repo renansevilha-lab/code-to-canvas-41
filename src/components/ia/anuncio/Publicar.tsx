@@ -618,15 +618,18 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
             </div>
           )}
           {canal === "shopee" && noEnvio}
-          <label className="flex items-start gap-2 text-sm cursor-pointer">
-            <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
-            <span>
-              {ml ? <>Criar e <b>pausar</b> em seguida</> : <>Criar <b>fora do ar</b> (não listado)</>}
-              <span className="block text-[11px] text-muted-foreground">{ml
-                ? "Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e reative depois no Mercado Livre."
-                : "Desmarcado (padrão): o anúncio nasce NO AR. Marque para criar sem listar e ativar depois no Seller Center."}</span>
-            </span>
-          </label>
+          {/* Shopee: sempre NO AR (13/out, decisão do dono) — a opção de criar sem listar saiu */}
+          {canal === "shopee" ? (
+            <p className="text-xs text-muted-foreground">O anúncio nasce <b>no ar</b> na Shopee{p.fora_do_ar ? "" : ", visível para os compradores"}.</p>
+          ) : (
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
+              <span>
+                {ml ? <>Criar e <b>pausar</b> em seguida</> : <>Criar <b>fora do ar</b> (não listado)</>}
+                <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e {ml ? "reative depois no Mercado Livre" : "ative depois"}.</span>
+              </span>
+            </label>
+          )}
           {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Atualizar a conferência com o que mudei</Button>}
         </div>
       )}

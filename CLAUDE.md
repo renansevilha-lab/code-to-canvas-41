@@ -2555,6 +2555,25 @@ Pedido do dono: ao trocar o destino do envio, aproveitar peso e tamanho da embal
   bloco: aí vale só o que já foi gravado.
 - **Não testado na tela.**
 
+## 5.11.11.5 Shopee sempre no ar + margem do preço promocional (13/out/2026, noite)
+
+- **1º uso real das variações (o que os registros mostram):** 16500 → Ottz item 55419192648:
+  variações criadas com `weight` e `dimension` por modelo (**a Shopee aceita os dois no
+  `init_tier_variation`**) e `unlist_item` OK → NORMAL. Bumi item 53619183224: variações criadas,
+  mas a ativação falhou (`product.error_unlist_item_all_failed` — "external error, source:
+  …account_health_metric_api.get_shop_listing_limit … marketplace.listing.upload.lock.
+  check_product_lock, code 332700006") e o anúncio ficou UNLIST. Não se sabe se é trava de
+  processamento logo após criar as variações ou limite de anúncios da loja.
+- **Sempre no ar (decisão do dono):** a caixa "Criar fora do ar" saiu da conferência da Shopee
+  (`Publicar`; Mercado Livre continua pausando). `anuncio-shopee-variacoes` **v4**: `porNoAr` tenta
+  de novo UMA vez depois de 6 s (é só mudança de estado — repetir não duplica nada; única exceção
+  à regra de não repetir escrita) e ganhou `?modulo=ativar {empresa, item_id, confirmar}`. Na tela
+  das variações, anúncio fora do ar (falha desta sessão, ou `shopee_anuncios.status = 'UNLIST'` no
+  espelho) mostra a faixa amarela com **"Pôr no ar agora"**.
+- **Margem do preço promocional:** em "Minha Promoção" (no envio), cada SKU mostra ao lado do preço
+  a margem de contribuição que ele dá (`ia_analisar_preco` → `lucro_pct`/`lucro_reais`), e ela
+  acompanha o que for digitado à mão (atraso de 0,45 s). Vermelho < 0, âmbar < 10%, verde acima.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -2648,7 +2667,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
 | `anuncio-publicar` | v8 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
-| `anuncio-shopee-variacoes` | v3 (peso e medidas por variação; `ativar` põe no ar depois das variações) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
+| `anuncio-shopee-variacoes` | v4 (peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |

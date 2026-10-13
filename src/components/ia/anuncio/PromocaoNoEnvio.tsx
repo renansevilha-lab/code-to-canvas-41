@@ -31,6 +31,35 @@ const dia = (t: number) => new Date(t * 1000).toLocaleDateString("pt-BR", { day:
 interface Desconto { discount_id: number; discount_name: string; start_time: number; end_time: number; status: string }
 interface Resultado { ok: number; falhas: string[]; nome: string }
 
+/** A margem de contribuição que o SKU dá neste preço promocional (a conta do bloco Preço: `ia_analisar_preco`).
+ *  Acompanha o que é digitado, com um pequeno atraso para não consultar a cada tecla. */
+function MargemDoPreco({ sku, empresa, preco }: { sku: string; empresa: string; preco: number | null }) {
+  const [p, setP] = useState(preco);
+  useEffect(() => { const x = setTimeout(() => setP(preco), 450); return () => clearTimeout(x); }, [preco]);
+  const q = useQuery({
+    queryKey: ["ia-anuncio", "margem-do-preco", sku, empresa, p],
+    enabled: p != null && p > 0,
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<{ lucro_pct?: number; lucro_reais?: number; erro?: string }> => {
+      const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: sku, p_canal: "shopee", p_empresa: empresa, p_preco: p, p_margem: null });
+      if (error) throw error;
+      return (data ?? {}) as { lucro_pct?: number; lucro_reais?: number; erro?: string };
+    },
+  });
+  if (!(preco != null && preco > 0)) return <span className="text-[11px] text-muted-foreground">—</span>;
+  const d = q.data;
+  if (!d) return q.isError ? <span className="text-[11px] text-destructive">sem margem</span> : <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />;
+  if (d.erro || d.lucro_pct == null) return <span className="text-[11px] text-muted-foreground truncate" title={d.erro ?? ""}>sem margem ({d.erro ?? "sem custo"})</span>;
+  const cor = d.lucro_pct < 0 ? "#C9432F" : d.lucro_pct < 0.1 ? "#B7791F" : "#0E8A5F";
+  return (
+    <span className={`text-xs font-semibold tabular-nums whitespace-nowrap ${q.isFetching || p !== preco ? "opacity-50" : ""}`} style={{ color: cor }}
+      title="margem de contribuição neste preço promocional: depois de custo, comissão da Shopee e imposto">
+      margem {(d.lucro_pct * 100).toFixed(1).replace(".", ",")}% · {formatBRL(Number(d.lucro_reais ?? 0))}
+    </span>
+  );
+}
+
 export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: string; nome: string; empresa: string; comVariacoes: boolean }) {
   const shopId = LOJA[empresa] ?? LOJA.ottz;
   const guarda = `ia.envio.promo.${empresa}`;
@@ -190,18 +219,19 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
             {skus.map((s) => {
               const c = calc[s.sku]; const v = promoDe(s.sku);
               return (
-                <div key={s.sku} className="grid grid-cols-[70px_1fr_110px] gap-2 items-center text-xs">
+                <div key={s.sku} className="grid grid-cols-[70px_1fr_110px_170px] gap-2 items-center text-xs">
                   <span className="font-mono">{s.sku}</span>
                   <span className="truncate text-muted-foreground" title={s.nome}>{s.nome}{c?.erro ? <span className="text-destructive"> · {c.erro}</span> : null}</span>
                   <Input className="h-7 text-right tabular-nums text-xs" inputMode="decimal" placeholder={c?.preco != null ? dinheiro(c.preco) : "sem preço"}
                     value={mao[s.sku] ?? (c?.preco != null ? dinheiro(c.preco) : "")} onChange={(e) => setMao({ ...mao, [s.sku]: e.target.value })}
                     title={v != null ? `preço promocional: ${formatBRL(v)}` : "sem preço promocional: fica de fora"} />
+                  <MargemDoPreco sku={s.sku} empresa={empresa} preco={v} />
                 </div>
               );
             })}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço). Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
+            Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço); se você mudar o preço à mão, a margem ao lado mostra quanto ele rende. Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
           </p>
         </>
       )}
