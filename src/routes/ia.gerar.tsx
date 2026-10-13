@@ -10,6 +10,8 @@ import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
+import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
+import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -27,7 +29,14 @@ import {
 // é a Fase 3 — aqui aprovar só marca a etapa.
 // ============================================================================
 
-type Busca = { sku: string; canal: string; empresa: string; r?: string };
+type Aba = "analise" | "preco";
+type Busca = { sku: string; canal: string; empresa: string; r?: string; aba?: Aba };
+// abas da página (na URL): o anúncio em si, a análise do produto e o preço/promoção nos marketplaces
+const ABAS: { id: Aba | undefined; rotulo: string }[] = [
+  { id: undefined, rotulo: "Anúncio" },
+  { id: "analise", rotulo: "Análise" },
+  { id: "preco", rotulo: "Preço e promoção" },
+];
 
 export const Route = createFileRoute("/ia/gerar")({
   validateSearch: (s: Record<string, unknown>): Busca => ({
@@ -35,6 +44,7 @@ export const Route = createFileRoute("/ia/gerar")({
     canal: CANAIS.some((c) => c.id === s.canal) ? String(s.canal) : "shopee",
     empresa: s.empresa === "svl" ? "svl" : "ottz",
     r: typeof s.r === "string" && s.r ? s.r : undefined,
+    aba: s.aba === "analise" || s.aba === "preco" ? s.aba : undefined,
   }),
   component: GerarAnuncioPage,
 });
@@ -50,7 +60,7 @@ function useVisivel() {
 }
 
 function GerarAnuncioPage() {
-  const { sku, canal, empresa, r } = Route.useSearch();
+  const { sku, canal, empresa, r, aba } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/gerar" });
   const visivel = useVisivel();
   const set = (p: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, ...p }), replace: true });
@@ -148,6 +158,19 @@ function GerarAnuncioPage() {
       <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} extra={dados.extra} canal={canal} empresa={empresa}
         onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
 
+      <div className="flex flex-wrap gap-1 border-b">
+        {ABAS.map((x) => (
+          <button key={x.rotulo} type="button" onClick={() => set({ aba: x.id })}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${aba === x.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+            {x.rotulo}
+          </button>
+        ))}
+      </div>
+
+      {aba === "analise" && <AnaliseProduto key={`an-${sku}`} sku={sku} />}
+      {aba === "preco" && <PrecoPromocao key={`pp-${sku}`} sku={sku} empresa={empresa} />}
+
+      {!aba && (<>
       {outros.length > 0 && (
         <Card><CardContent className="p-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="text-muted-foreground">Outros rascunhos deste SKU:</span>
@@ -189,6 +212,7 @@ function GerarAnuncioPage() {
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
       )}
+      </>)}
     </div>
   );
 }

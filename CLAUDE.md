@@ -2310,6 +2310,38 @@ ficou no ar:
 - **Fica para depois:** `produtos.tipo_variacao` nulo nas variações que só o pai ligou
   (preenche na listagem do dia seguinte); 10 variações cujo pai é fantasma ficam soltas.
 
+## 5.11.10 Abas do anúncio: Análise e Preço e promoção (12/out/2026, ~22h40)
+
+A página `/ia/gerar` ganhou abas na URL (`?aba=analise|preco`; sem `aba` = o anúncio de
+sempre). Pedido do dono; **começa pela Shopee**. Nenhuma edge function nova.
+- **Análise** (`AnaliseProduto.tsx`) — uma chamada à RPC **`ia_analise_sku(p_sku, p_dias)`**
+  (`docs/ia-analise-sku.sql`, security definer + `tem_modulo('ia')`): `dias` (unidades e
+  receita por dia e marketplace, de `pedido_itens` × `pedidos_validos`, dia em Brasília),
+  `canais` e `anuncios` (30 dias: margem de contribuição, ADS e margem pós-ADS da matview
+  `ads_margem_anuncio` — Shopee e ML; o app NÃO tem grant nessa matview, por isso a RPC),
+  `historico` (`ia_hist_sku_canal`, cobre Amazon/TikTok sem ADS) e `estoque` por SKU
+  FÍSICO (kit = o componente): Geral do Tiny, Full, em trânsito, custo, **valor em estoque**,
+  venda/dia e cobertura (`view_cobertura_fornecedor`, que explode os kits — o Full guardado
+  como kit no CD só aparece nela). Produto pai = soma das variações. SKU vendido = `sku_filho`;
+  `sku_pai` só sem variação ou na Amazon. A 1ª chamada numa conexão fria levou 6–8 s (as
+  seguintes < 1 s) — o limite do app é 8 s; se estourar, recarregar resolve.
+- **Preço e promoção** (`PrecoPromocao.tsx`) — por loja Shopee (a da tela primeiro): os
+  anúncios do SKU e as variações (espelho `shopee_anuncios`/`_variacao`; anúncio cujo
+  `sku_pai` é o produto entra com TODAS as variações), preço de hoje × cheio, **MC no preço**
+  (mesma regra da tela Promoções: `promo_mc_base` + `calcMc` + tabela de comissão), e:
+  - **Minha Promoção:** a tela descobre os descontos do anúncio lendo `shopee-promocoes
+    ?modulo=list` (em andamento + programados, até 15) e o `detalhe` de cada um — não existe
+    módulo "em qual desconto este item está". Editar o preço chama o MESMO
+    `atualizar-itens&confirmar=1&propagar=1` da tela Promoções (o item vai com todas as
+    variações do desconto; só a alterada muda), com confirmação mostrando de → para e a MC.
+  - **Relâmpago:** o preço fica em `flashsale_programacao` (editar, pausar, ou "Pôr na
+    relâmpago" com o teto estimado de `tetoRelampago`). Vale para as PRÓXIMAS relâmpagos que o
+    app cria; **a API não troca o preço de item que já está numa relâmpago** (a
+    `shopee-flashsale` não tem módulo para isso — só remover o anúncio inteiro e pôr de novo).
+  - Não muda o preço CHEIO do anúncio (isso é no envio, aba Anúncio).
+- **Não testado na tela nem com escrita real** (exige login): tsc/build ok, RPC conferida no
+  banco com 15836 (kit), 16486 (pai) e 15679 (simples).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
