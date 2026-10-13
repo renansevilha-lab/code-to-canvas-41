@@ -210,12 +210,13 @@ function GerarAnuncioPage() {
           briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
       )}
 
-      {rascunho && r !== "novo" && (
-        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
-      )}
-      {/* produto pai: 2º passo do envio à Shopee — criar as opções (variações) no anúncio já criado */}
+      {/* produto pai na Shopee: as opções (variações) que entram no anúncio assim que ele é criado pelo envio abaixo */}
       {dados.produto.tipo === "V" && canal === "shopee" && (
         <VariacoesShopee key={`vs-${sku}-${empresa}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
+      )}
+
+      {rascunho && r !== "novo" && (
+        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} />
       )}
       </>)}
     </div>

@@ -2365,6 +2365,13 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
 - **Fluxo do dono:** (1) preço no bloco Preço + peso/medidas → "Criar o anúncio na Shopee" (fora
   do ar); (2) neste bloco, "Criar as variações na Shopee"; (3) conferir no Tiny o vínculo pelo
   SKU e ativar no Seller Center.
+- **Um envio só para o operador (ajuste do mesmo dia):** o dono abriu a tela e, sem anúncio criado,
+  os botões do bloco ficavam apagados ("não aparece para enviar as variações"). O bloco subiu
+  para ANTES do envio e ganhou a caixa "Criar as variações junto com o anúncio" (ligada): ao
+  terminar de criar o anúncio, o `Publicar` dispara o evento `ia-anuncio-criado` (`{canal,
+  empresa, sku, item_id}`) e o bloco chama o `criar` no anúncio novo, sem outro clique. Se as
+  variações falharem, o anúncio simples fica criado e o bloco mostra o ID para tentar de novo. O
+  aviso do servidor ("criar gera um anúncio simples") é reescrito na tela.
 - **Não testado ao vivo** (precisa de sessão e cria de verdade). Mercado Livre e Amazon com
   variações: não feito.
 

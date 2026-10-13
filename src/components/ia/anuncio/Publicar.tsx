@@ -279,6 +279,10 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
       const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: opc, confirmar: true });
       if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
       else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
+      // produto pai na Shopee: o bloco "Variações deste anúncio" ouve este aviso e cria as opções no anúncio recém-criado
+      if (modo !== "atualizar" && r.item_id) {
+        window.dispatchEvent(new CustomEvent("ia-anuncio-criado", { detail: { canal, empresa, sku: rascunho.sku, item_id: String(r.item_id) } }));
+      }
       // o que deu certo pela metade (ex.: criado mas não pausou) não pode passar batido
       for (const av of ((r.avisos ?? []) as string[]).filter((x) => /^(ATENÇÃO|o anúncio foi criado, mas)/.test(x))) toast.warning(av, { duration: 30000 });
       setDeNovo(false);
@@ -497,7 +501,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros }: {
       )}
       {avisos.length > 0 && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs space-y-1 text-amber-700 dark:text-amber-400">
-          {avisos.map((x) => <div key={x}>• {x}</div>)}
+          {avisos.map((x) => (
+            <div key={x}>• {/criar gera um anúncio simples/.test(x)
+              ? "este produto tem variações: o anúncio é criado e, em seguida, as opções do bloco “Variações deste anúncio na Shopee” (logo acima) entram nele"
+              : x}</div>
+          ))}
         </div>
       )}
 

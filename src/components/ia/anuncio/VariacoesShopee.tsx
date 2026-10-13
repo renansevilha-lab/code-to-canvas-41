@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, ExternalLink, Layers, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,15 +12,19 @@ import { chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnunc
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
 
 // ============================================================================
-// "Variações no anúncio da Shopee" (12/out/2026, pedido do dono): o envio cria o anúncio do
-// produto PAI como anúncio simples; este bloco é o 2º passo — cria nele as opções (4kg, 8kg…)
-// com o SKU, o preço e o estoque de cada variação e, se houver, a foto de cada uma
-// (edge fn `anuncio-shopee-variacoes` → `product/init_tier_variation`).
-// Só para anúncio que ainda NÃO tem variações. Conferir antes de criar; a criação pede confirmação.
+// "Variações deste anúncio na Shopee" (12/out/2026, pedido do dono). A Shopee cria anúncio com
+// variações em dois tempos: o anúncio (edge fn `anuncio-publicar`) e depois as opções
+// (`anuncio-shopee-variacoes` → `product/init_tier_variation`). Para o operador é UM envio:
+// ele ajusta aqui as opções (nome, preço, estoque e foto de cada variação) e envia o anúncio
+// logo abaixo; quando o envio termina, o `Publicar` avisa (evento `ia-anuncio-criado`) e este
+// bloco cria as variações no anúncio recém-criado, sem outro clique.
+// Também serve para um anúncio simples que já existe: informar o ID, Conferir e Criar.
+// Só para anúncio que ainda NÃO tem variações.
 // ============================================================================
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const TIPOS_FOTO = ["capa_ambientada_limpa", "capa_ambientada_texto"];
+export const EVENTO_ANUNCIO_CRIADO = "ia-anuncio-criado";
 interface Linha { sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null }
 interface Previa { anuncio: { item_id: number; nome: string; situacao: string; tem_variacao: boolean; url: string } | null; pendencias: string[]; avisos: string[] }
 
@@ -69,25 +73,69 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const [grade, setGrade] = useState("Tamanho");
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [comFotos, setComFotos] = useState(true);
+  const [auto, setAuto] = useState(true);
   const [previa, setPrevia] = useState<{ chave: string; dados: Previa } | null>(null);
   const [ocupado, setOcupado] = useState<"" | "conferindo" | "criando">("");
   const [feito, setFeito] = useState<string | null>(null);
+  const [recemCriado, setRecemCriado] = useState<string | null>(null);
+  // preenche uma vez só: recarregar a consulta não pode apagar o que o operador já ajustou
+  const iniciado = useRef(false);
   useEffect(() => {
-    if (!q.data) return;
+    if (!q.data || iniciado.current) return;
+    iniciado.current = true;
     setLinhas(q.data.linhas); setItemId(q.data.item);
     setComFotos(q.data.linhas.length > 0 && q.data.linhas.every((l) => l.foto_path));
   }, [q.data]);
+  // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
+  useEffect(() => {
+    const ouvir = (ev: Event) => {
+      const d = ((ev as CustomEvent).detail ?? {}) as { canal?: string; empresa?: string; sku?: string; item_id?: string };
+      if (d.canal !== "shopee" || d.empresa !== empresa || d.sku !== sku || !d.item_id) return;
+      setItemId(String(d.item_id)); setFeito(null); setRecemCriado(String(d.item_id));
+    };
+    window.addEventListener(EVENTO_ANUNCIO_CRIADO, ouvir);
+    return () => window.removeEventListener(EVENTO_ANUNCIO_CRIADO, ouvir);
+  }, [sku, empresa]);
 
-  if (q.isLoading || !q.data || q.data.linhas.length < 2) return null;
-  const todasComFoto = linhas.every((l) => l.foto_path);
+  const todasComFoto = linhas.length > 0 && linhas.every((l) => l.foto_path);
   const mandarFotos = comFotos && todasComFoto;
-  const corpo = () => ({
-    empresa, item_id: itemId.trim(), grade: grade.trim(),
+  const corpo = (item = itemId) => ({
+    empresa, item_id: item.trim(), grade: grade.trim(),
     variacoes: linhas.map((l) => ({ sku: l.sku, opcao: l.opcao.trim(), preco: paraNumero(l.preco) || 0, estoque: Number(l.estoque) || 0, foto_path: mandarFotos ? l.foto_path : null })),
   });
+
+  async function criar(item: string) {
+    setOcupado("criando");
+    try {
+      const r = (await chamarVariacoesShopee("criar", { ...corpo(item), confirmar: true })) as { anuncio?: { url: string } };
+      setFeito(r.anuncio?.url ?? `https://shopee.com.br/product/${shopId}/${item}`);
+      toast.success(`${linhas.length} variações criadas no anúncio ${item}`);
+      // o espelho do app passa a enxergar as variações sem esperar a sincronização da madrugada
+      void atualizarCatalogoShopee(shopId, [Number(item)]).catch(() => undefined);
+    } catch (e) {
+      toast.error("O anúncio existe, mas as variações NÃO foram criadas", { description: `${(e as Error).message} — ajuste aqui e use "Criar as variações na Shopee".`, duration: 30000 });
+    } finally { setOcupado(""); }
+  }
+  useEffect(() => {
+    if (!recemCriado) return;
+    const item = recemCriado; setRecemCriado(null);
+    if (auto && linhas.length >= 2) void criar(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recemCriado]);
+
+  if (q.isLoading || !q.data || q.data.linhas.length < 2) return null;
   const chave = JSON.stringify(corpo());
   const conferido = previa?.chave === chave ? previa.dados : null;
   const mudar = (i: number, x: Partial<Linha>) => setLinhas((ls) => ls.map((l, j) => (j === i ? { ...l, ...x } : l)));
+  const semAnuncio = !itemId.trim();
+  // o que já dá para ver daqui, antes de enviar (o servidor confere de novo)
+  const faltas = [
+    !grade.trim() ? "dê um nome ao grupo de opções" : "",
+    linhas.some((l) => !l.opcao.trim()) ? "há opção sem nome" : "",
+    new Set(linhas.map((l) => l.opcao.trim().toLowerCase())).size !== linhas.length ? "há duas opções com o mesmo nome" : "",
+    linhas.some((l) => !(paraNumero(l.preco) > 0)) ? "há variação sem preço" : "",
+  ].filter(Boolean);
+  const semEstoque = linhas.filter((l) => !(Number(l.estoque) > 0)).length;
 
   async function conferir() {
     setOcupado("conferindo");
@@ -95,19 +143,10 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     catch (e) { toast.error("Não consegui conferir", { description: (e as Error).message, duration: 12000 }); }
     finally { setOcupado(""); }
   }
-  async function criar() {
+  async function criarComConfirmacao() {
     if (!conferido?.anuncio) return;
     if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${conferido.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).`)) return;
-    setOcupado("criando");
-    try {
-      const r = (await chamarVariacoesShopee("criar", { ...corpo(), confirmar: true })) as { ok: boolean; erro?: string; anuncio?: { url: string } };
-      if (!r.ok) { toast.error("As variações não foram criadas", { description: r.erro, duration: 20000 }); return; }
-      setFeito(r.anuncio?.url ?? conferido.anuncio.url);
-      toast.success(`${linhas.length} variações criadas na Shopee`);
-      // o espelho do app passa a enxergar as variações sem esperar a sincronização da madrugada
-      void atualizarCatalogoShopee(shopId, [Number(itemId)]).catch(() => undefined);
-    } catch (e) { toast.error("As variações não foram criadas", { description: (e as Error).message, duration: 20000 }); }
-    finally { setOcupado(""); }
+    await criar(itemId.trim());
   }
   const jaTem = q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.tem_variacao;
 
@@ -115,29 +154,34 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     <Card>
       <CardContent className="p-4 space-y-3">
         <div>
-          <h2 className="text-base font-semibold flex items-center gap-2"><Layers className="h-4 w-4" />Variações no anúncio da Shopee · {nomeEmpresa(empresa)}</h2>
+          <h2 className="text-base font-semibold flex items-center gap-2"><Layers className="h-4 w-4" />Variações deste anúncio na Shopee · {nomeEmpresa(empresa)}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            O envio acima cria o anúncio deste produto como anúncio simples. Aqui você cria nele as opções (uma por variação), com SKU, preço e estoque.
-            Faça logo depois de criar o anúncio, antes de colocá-lo no ar.
+            {semAnuncio
+              ? <>Ajuste aqui as opções e depois <b>envie o anúncio no bloco logo abaixo</b>: assim que ele for criado, as {linhas.length} variações entram nele sozinhas, com SKU, preço, estoque e foto.</>
+              : <>Este produto já tem anúncio na Shopee ({itemId.trim()}). Confira e crie nele as {linhas.length} variações — só funciona em anúncio que ainda não tem variações.</>}
           </p>
         </div>
+        {ocupado === "criando" && <p className="text-sm flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Criando as variações no anúncio…</p>}
         {feito ? (
           <p className="text-sm text-emerald-600 flex flex-wrap items-center gap-2"><CheckCircle2 className="h-4 w-4" />Variações criadas.
             <a className="underline inline-flex items-center gap-1" href={feito} target="_blank" rel="noreferrer">ver o anúncio<ExternalLink className="h-3.5 w-3.5" /></a>
-            <span className="text-xs text-muted-foreground">Confira no Tiny se o anúncio foi ligado aos produtos pelo SKU.</span></p>
+            <span className="text-xs text-muted-foreground">Confira no Tiny se o anúncio foi ligado aos produtos pelo SKU e ative no Seller Center.</span></p>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-[220px_200px_1fr] items-end">
-              <label className="text-xs font-medium">ID do anúncio na Shopee
-                <Input className="h-8 mt-1 font-mono" value={itemId} placeholder="crie o anúncio acima primeiro" onChange={(e) => setItemId(e.target.value)} />
-              </label>
+            <div className="grid gap-3 sm:grid-cols-[200px_1fr] items-end">
               <label className="text-xs font-medium">Nome do grupo de opções
                 <Input className="h-8 mt-1" value={grade} maxLength={14} onChange={(e) => setGrade(e.target.value)} />
               </label>
-              <label className={`flex items-center gap-2 text-xs select-none ${todasComFoto ? "cursor-pointer" : "text-muted-foreground"}`}>
-                <input type="checkbox" className="h-4 w-4 accent-primary" checked={mandarFotos} disabled={!todasComFoto} onChange={(e) => setComFotos(e.target.checked)} />
-                {todasComFoto ? "Usar a foto de cada variação como foto da opção" : "Sem foto por opção: nem todas as variações têm foto gerada (bloco Fotos das variações)"}
-              </label>
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                <label className={`flex items-center gap-2 text-xs select-none ${todasComFoto ? "cursor-pointer" : "text-muted-foreground"}`}>
+                  <input type="checkbox" className="h-4 w-4 accent-primary" checked={mandarFotos} disabled={!todasComFoto} onChange={(e) => setComFotos(e.target.checked)} />
+                  {todasComFoto ? "Usar a foto de cada variação como foto da opção" : "Sem foto por opção: nem todas as variações têm foto gerada (bloco Fotos das variações)"}
+                </label>
+                <label className="flex items-center gap-2 text-xs select-none cursor-pointer">
+                  <input type="checkbox" className="h-4 w-4 accent-primary" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+                  Criar as variações junto com o anúncio (ao enviar)
+                </label>
+              </div>
             </div>
             {jaTem && <p className="text-xs text-destructive">No cadastro do app este anúncio já aparece com variações — a Shopee vai recusar.</p>}
 
@@ -155,34 +199,50 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
                 </div>
               ))}
             </div>
+            {faltas.length > 0 && <p className="text-xs text-destructive">Antes de enviar: {faltas.join(" · ")}.</p>}
+            {semEstoque > 0 && <p className="text-[11px] text-amber-600">{semEstoque} variação(ões) com estoque 0: nascem esgotadas até o Tiny mandar o estoque (depois do vínculo pelo SKU).</p>}
 
-            {conferido && (
-              <div className="space-y-2">
-                {conferido.anuncio && (
-                  <p className="text-xs">Anúncio: <b>{conferido.anuncio.nome}</b> · {conferido.anuncio.situacao === "UNLIST" ? "fora do ar" : conferido.anuncio.situacao}
-                    {" · "}<a className="underline" href={conferido.anuncio.url} target="_blank" rel="noreferrer">abrir</a></p>
-                )}
-                {conferido.pendencias.length > 0 && (
-                  <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-sm text-destructive">
-                    <div className="font-medium flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />Falta resolver</div>
-                    {conferido.pendencias.map((x) => <div key={x}>• {x}</div>)}
+            {semAnuncio ? (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs">
+                {auto
+                  ? <>Pronto para enviar: use <b>“Conferir e enviar para a Shopee”</b> logo abaixo. O aviso de lá (“criar gera um anúncio simples”) é só o 1º tempo — as variações acima são criadas em seguida, automaticamente.</>
+                  : <>Com a caixa desmarcada, o envio cria só o anúncio simples; depois volte aqui para criar as variações.</>}
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-[220px_1fr] items-end">
+                  <label className="text-xs font-medium">ID do anúncio na Shopee
+                    <Input className="h-8 mt-1 font-mono" value={itemId} onChange={(e) => setItemId(e.target.value)} />
+                  </label>
+                </div>
+                {conferido && (
+                  <div className="space-y-2">
+                    {conferido.anuncio && (
+                      <p className="text-xs">Anúncio: <b>{conferido.anuncio.nome}</b> · {conferido.anuncio.situacao === "UNLIST" ? "fora do ar" : conferido.anuncio.situacao}
+                        {" · "}<a className="underline" href={conferido.anuncio.url} target="_blank" rel="noreferrer">abrir</a></p>
+                    )}
+                    {conferido.pendencias.length > 0 && (
+                      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-sm text-destructive">
+                        <div className="font-medium flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />Falta resolver</div>
+                        {conferido.pendencias.map((x) => <div key={x}>• {x}</div>)}
+                      </div>
+                    )}
+                    {conferido.avisos.length > 0 && (
+                      <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs text-amber-700 dark:text-amber-400">{conferido.avisos.map((x) => <div key={x}>• {x}</div>)}</div>
+                    )}
                   </div>
                 )}
-                {conferido.avisos.length > 0 && (
-                  <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs text-amber-700 dark:text-amber-400">{conferido.avisos.map((x) => <div key={x}>• {x}</div>)}</div>
-                )}
-              </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={!!ocupado} onClick={() => void conferir()}>
+                    {ocupado === "conferindo" && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Conferir
+                  </Button>
+                  <Button size="sm" disabled={!!ocupado || !conferido || conferido.pendencias.length > 0} onClick={() => void criarComConfirmacao()}>
+                    Criar as variações na Shopee
+                  </Button>
+                  {!conferido && <span className="text-xs text-muted-foreground">Confira antes de criar (se mudar algo, confira de novo).</span>}
+                </div>
+              </>
             )}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" disabled={!!ocupado || !itemId.trim()} onClick={() => void conferir()}>
-                {ocupado === "conferindo" && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Conferir
-              </Button>
-              <Button size="sm" disabled={!!ocupado || !conferido || conferido.pendencias.length > 0} onClick={() => void criar()}>
-                {ocupado === "criando" && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Criar as variações na Shopee
-              </Button>
-              {!conferido && itemId.trim() && <span className="text-xs text-muted-foreground">Confira antes de criar (se mudar algo, confira de novo).</span>}
-            </div>
           </>
         )}
       </CardContent>
