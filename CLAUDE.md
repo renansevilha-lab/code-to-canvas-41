@@ -2522,6 +2522,24 @@ Pedido do dono: aba própria para as fotos e poder usar as fotos de outro anúnc
   qualquer caminho do bucket. Variação com referência própria não é tocada.
 - **Não testado na tela** (exige login).
 
+## 5.11.11.3 Peso e medidas do envio nunca travam por cadastro zerado (13/out/2026, `anuncio-publicar` v8)
+
+Criar anúncio travava em "informe o peso / comprimento, largura e altura" com os campos em **0**
+(caso: 16500, pai com variações 16503/4/5 — kits de 2/4/5 × 16453; o Tiny tem peso e medidas
+ZERADOS no pai, nos kits e no produto base). Causa: `num(0) ?? próximo` — o zero do Tiny era
+aceito como valor e a cadeia nunca chegava ao recurso seguinte. Agora só vale número **> 0**
+(`pos()`), em Shopee e Mercado Livre (`medidasDoAnuncio`):
+- **Peso:** digitado → `ia_produto_extra.peso_kg` → Tiny ao vivo → **o que a gestão sabe**
+  (`pesosDoSistema`): `produtos.peso_bruto` → peso já conferido em outro anúncio → **kit = soma
+  da composição** (`produto_kits` × peso do componente) → peso escrito no nome ("… 2kg", última
+  ocorrência). Produto com variações (tipo V) usa **a menor variação** (16500 → 4 kg); cada
+  variação segue com o seu peso no bloco de variações. Só vira pendência se nada disso der peso.
+- **Medidas:** digitadas → conferidas → Tiny → **embalagem padrão 40 × 30 × 15 cm** (decisão do
+  dono). O padrão NÃO é gravado em `ia_produto_extra` como medida conferida (`medidasSalvar`).
+- A conferência avisa de onde veio cada número ("peso puxado do sistema (…)", "medidas no
+  padrão"). 99 dos 2.271 produtos ativos estão com peso 0 no cadastro (23 kits) — o conserto de
+  verdade é preencher no Tiny.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -2614,7 +2632,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
 | `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
-| `anuncio-publicar` | v7 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição. JWT de usuário + módulo `ia` — ver §5.11.5 e §5.11.7 |
+| `anuncio-publicar` | v8 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v3 (peso e medidas por variação; `ativar` põe no ar depois das variações) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |

@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v7 (12/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v8 (13/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -45,6 +45,12 @@
 //   (a principal + 8; a Amazon baixa cada foto nova de um endereço assinado do nosso armazenamento).
 //   A prévia passa as alterações no VALIDADOR da Amazon (mode=VALIDATION_PREVIEW, não aplica nada).
 //   Preço e criar anúncio novo na Amazon ainda não.
+// v8: PESO E MEDIDAS nunca travam por cadastro zerado (pedido do dono). O Tiny devolve 0 para
+//   produto sem peso/medida e o 0 era aceito como valor, sem cair no recurso seguinte. Agora só
+//   vale número MAIOR que zero. Peso: digitado → já conferido (ia_produto_extra) → Tiny ao vivo →
+//   o que a gestão sabe (peso do cadastro; kit = soma da composição; produto com variações = a
+//   menor variação; por último o peso escrito no nome, "… 2kg"). Medidas: digitadas → conferidas
+//   → Tiny → EMBALAGEM PADRÃO 40 × 30 × 15 cm. A tela avisa de onde veio cada número.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -271,6 +277,96 @@ async function medidasTiny(idTiny: number | null): Promise<Record<string, any>> 
   } catch { return {}; }
 }
 
+/** Só número MAIOR que zero conta (o Tiny devolve 0 para o que não foi cadastrado). */
+const pos = (v: unknown): number | null => { const n = num(v); return n !== null && n > 0 ? n : null; };
+// embalagem padrão quando nem a tela, nem o que já foi conferido, nem o Tiny têm medidas (dono, 13/out/2026)
+const MEDIDAS_PADRAO = { comprimento_cm: 40, largura_cm: 30, altura_cm: 15 };
+
+/** "… 2kg" / "500 g" no nome → kg (a última ocorrência). Último recurso, quando o cadastro não tem peso. */
+function pesoDoNome(nome: unknown): number | null {
+  const ms = [...String(nome ?? "").matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g)\b/gi)];
+  const m = ms[ms.length - 1];
+  if (!m) return null;
+  const v = Number(m[1].replace(",", "."));
+  if (!(v > 0)) return null;
+  return m[2].toLowerCase() === "kg" ? v : v / 1000;
+}
+type PesoAchado = { kg: number; origem: string };
+/** Peso de cada SKU pelo que a gestão sabe: cadastro → já conferido em outro anúncio → composição do kit → nome. */
+async function pesosDoSistema(skus: string[]): Promise<Map<string, PesoAchado>> {
+  const out = new Map<string, PesoAchado>();
+  if (!skus.length) return out;
+  const { data: kitsD } = await db.from("produto_kits").select("sku_kit, sku_componente, quantidade").in("sku_kit", skus);
+  const kits = (kitsD ?? []) as any[];
+  const todos = [...new Set([...skus, ...kits.map((k) => String(k.sku_componente))])];
+  const [prods, extras] = await Promise.all([
+    db.from("produtos").select("sku, nome, peso_bruto").in("sku", todos),
+    db.from("ia_produto_extra").select("sku, peso_kg").in("sku", todos),
+  ]);
+  const cad = new Map(((prods.data ?? []) as any[]).map((x) => [String(x.sku), x]));
+  const conf = new Map(((extras.data ?? []) as any[]).map((x) => [String(x.sku), pos(x.peso_kg)]));
+  const proprio = (sku: string): PesoAchado | null => {
+    const c = pos(cad.get(sku)?.peso_bruto); if (c) return { kg: c, origem: "peso do cadastro" };
+    const e = conf.get(sku); if (e) return { kg: e, origem: "peso já conferido em outro anúncio" };
+    return null;
+  };
+  for (const sku of skus) {
+    const direto = proprio(sku);
+    if (direto) { out.set(sku, direto); continue; }
+    const comps = kits.filter((k) => String(k.sku_kit) === sku);
+    if (comps.length) {
+      let soma = 0; let completo = true;
+      for (const k of comps) {
+        const sc = String(k.sku_componente);
+        const u = proprio(sc)?.kg ?? pesoDoNome(cad.get(sc)?.nome);
+        if (!u) { completo = false; break; }
+        soma += u * (Number(k.quantidade) || 1);
+      }
+      if (completo && soma > 0) {
+        out.set(sku, { kg: Math.round(soma * 1000) / 1000, origem: `soma da composição do kit (${comps.map((k) => `${k.quantidade} × ${k.sku_componente}`).join(" + ")})` });
+        continue;
+      }
+    }
+    const n = pesoDoNome(cad.get(sku)?.nome);
+    if (n) out.set(sku, { kg: n, origem: "peso escrito no nome do produto" });
+  }
+  return out;
+}
+/** Peso e medidas da embalagem do anúncio (iguais para Shopee e Mercado Livre) + de onde vieram. */
+async function medidasDoAnuncio(d: Dados, op: Opcoes, tiny: Record<string, any>) {
+  const sku = String(d.r.sku);
+  const avisos: string[] = [];
+  let peso = pos(op.peso_kg) ?? pos(d.extra?.peso_kg) ?? pos(tiny.peso_kg);
+  if (!peso) {
+    let achado = (await pesosDoSistema([sku])).get(sku) ?? null;
+    if (d.produto?.tipo === "V") {
+      // produto com variações: o peso do anúncio é o da menor variação (cada variação leva o seu no bloco de variações)
+      const { data: filhos } = await db.from("produtos").select("sku").eq("sku_pai", sku).limit(40);
+      const dosFilhos = [...(await pesosDoSistema(((filhos ?? []) as any[]).map((f) => String(f.sku)))).values()].sort((x, y) => x.kg - y.kg);
+      if (dosFilhos[0]) achado = { kg: dosFilhos[0].kg, origem: `a menor variação — ${dosFilhos[0].origem}` };
+    }
+    if (achado) {
+      peso = achado.kg;
+      avisos.push(`peso de ${String(achado.kg).replace(".", ",")} kg puxado do sistema (${achado.origem}): o cadastro do Tiny deste produto está sem peso — confira`);
+    }
+  }
+  const dim = (k: "comprimento_cm" | "largura_cm" | "altura_cm") => pos(op[k]) ?? pos(d.extra?.[k]) ?? pos(tiny[k]);
+  const lidas = { comprimento_cm: dim("comprimento_cm"), largura_cm: dim("largura_cm"), altura_cm: dim("altura_cm") };
+  const usouPadrao = !lidas.comprimento_cm || !lidas.largura_cm || !lidas.altura_cm;
+  if (usouPadrao) {
+    avisos.push(`medidas da embalagem no padrão ${MEDIDAS_PADRAO.comprimento_cm} × ${MEDIDAS_PADRAO.largura_cm} × ${MEDIDAS_PADRAO.altura_cm} cm (o cadastro não tem medidas): troque nos campos se a caixa for outra`);
+  }
+  const medidas = {
+    peso_kg: peso,
+    comprimento_cm: lidas.comprimento_cm ?? MEDIDAS_PADRAO.comprimento_cm,
+    largura_cm: lidas.largura_cm ?? MEDIDAS_PADRAO.largura_cm,
+    altura_cm: lidas.altura_cm ?? MEDIDAS_PADRAO.altura_cm,
+  };
+  // o que fica salvo para o próximo anúncio do produto: o padrão NÃO é gravado como medida conferida
+  const salvar = { peso_kg: peso, comprimento_cm: lidas.comprimento_cm, largura_cm: lidas.largura_cm, altura_cm: lidas.altura_cm };
+  return { medidas, salvar, avisos, faltaPeso: !peso };
+}
+
 function montarDescricao(r: Record<string, any>): string {
   const bullets = Array.isArray(r.bullet_points) ? (r.bullet_points as string[]).map((b) => String(b).trim()).filter(Boolean) : [];
   return [String(r.descricao ?? "").trim(), bullets.length ? bullets.map((b) => `• ${b}`).join("\n") : ""].filter(Boolean).join("\n\n");
@@ -337,16 +433,12 @@ async function montarCriar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: number
   if (d.fotos.length > 9) avisos.push(`há ${d.fotos.length} fotos aprovadas; a Shopee aceita 9 — vão as 9 primeiras (capa na frente)`);
   if (d.produto?.tipo === "V") avisos.push("este produto tem variações no Tiny: criar gera um anúncio simples, só deste SKU");
 
-  // medidas: o que a pessoa digitou → o que já foi salvo → cadastro do Tiny → peso da gestão
+  // medidas: o que a pessoa digitou → o que já foi salvo → cadastro do Tiny → o que a gestão sabe → embalagem padrão
   const tiny = await medidasTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null);
-  const medidas = {
-    peso_kg: num(op.peso_kg) ?? num(d.extra?.peso_kg) ?? tiny.peso_kg ?? num(d.cad?.peso_bruto),
-    comprimento_cm: num(op.comprimento_cm) ?? num(d.extra?.comprimento_cm) ?? tiny.comprimento_cm ?? null,
-    largura_cm: num(op.largura_cm) ?? num(d.extra?.largura_cm) ?? tiny.largura_cm ?? null,
-    altura_cm: num(op.altura_cm) ?? num(d.extra?.altura_cm) ?? tiny.altura_cm ?? null,
-  };
-  if (!(medidas.peso_kg && medidas.peso_kg > 0)) pendencias.push("informe o peso da embalagem (kg)");
-  if (!(medidas.comprimento_cm && medidas.largura_cm && medidas.altura_cm)) pendencias.push("informe comprimento, largura e altura da embalagem (cm)");
+  const med = await medidasDoAnuncio(d, op, tiny);
+  const medidas = med.medidas;
+  avisos.push(...med.avisos);
+  if (med.faltaPeso) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
 
   // categoria: a Shopee sugere pelo título; os nomes vêm da árvore de categorias
   const [rec, arv] = await Promise.all([
@@ -407,7 +499,7 @@ async function montarCriar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: number
     item_status: foraDoAr ? "UNLIST" : "NORMAL", condition: "NEW", pre_order: { is_pre_order: false },
   };
   return {
-    corpo, pendencias, avisos, medidas, tiny,
+    corpo, pendencias, avisos, medidas, medidasSalvar: med.salvar, tiny,
     previa: {
       loja: loja.nome, titulo: b.titulo, descricao: b.descricao, preco: b.preco, estoque, fora_do_ar: foraDoAr, sku: String(d.r.sku), medidas,
       categoria: categoriaId ? { id: categoriaId, caminho: caminho(categoriaId) } : null, categorias_sugeridas: sugeridas,
@@ -642,14 +734,10 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
   else if (!cat?.existe) pendencias.push(`a categoria ${categoriaId} não existe no Mercado Livre`);
   else if (!cat.final) pendencias.push("a categoria escolhida não é uma categoria final do Mercado Livre");
 
-  const medidas = {
-    peso_kg: num(op.peso_kg) ?? num(d.extra?.peso_kg) ?? tiny.peso_kg ?? num(d.cad?.peso_bruto),
-    comprimento_cm: num(op.comprimento_cm) ?? num(d.extra?.comprimento_cm) ?? tiny.comprimento_cm ?? null,
-    largura_cm: num(op.largura_cm) ?? num(d.extra?.largura_cm) ?? tiny.largura_cm ?? null,
-    altura_cm: num(op.altura_cm) ?? num(d.extra?.altura_cm) ?? tiny.altura_cm ?? null,
-  };
-  if (!(medidas.peso_kg && medidas.peso_kg > 0)) pendencias.push("informe o peso da embalagem (kg)");
-  if (!(medidas.comprimento_cm && medidas.largura_cm && medidas.altura_cm)) pendencias.push("informe comprimento, largura e altura da embalagem (cm)");
+  const med = await medidasDoAnuncio(d, op, tiny);
+  const medidas = med.medidas;
+  avisos.push(...med.avisos);
+  if (med.faltaPeso) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
 
   // características da categoria: obrigatórias (*) e as que o ML pede para a ficha
   const previstos = new Map<string, string>();
@@ -720,7 +808,7 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
   }
 
   return {
-    corpo, pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], medidas, tiny, gtin,
+    corpo, pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], medidas, medidasSalvar: med.salvar, tiny, gtin,
     previa: {
       loja: conta.nome, titulo: b.titulo, descricao: b.descricao, preco: b.preco, estoque, fora_do_ar: foraDoAr, sku: String(d.r.sku), medidas,
       categoria: cat ? { id: cat.id, caminho: cat.caminho } : (categoriaId ? { id: categoriaId, caminho: categoriaId } : null),
@@ -831,7 +919,7 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
 
   // ------------------------------------------------ CRIAR
   if (mC) {
-    await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...mC.medidas, gtin: mC.gtin, ncm: d.extra?.ncm ?? mC.tiny.ncm ?? null }, { onConflict: "sku" });
+    await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...mC.medidasSalvar, gtin: mC.gtin, ncm: d.extra?.ncm ?? mC.tiny.ncm ?? null }, { onConflict: "sku" });
     try { mC.corpo.pictures = (await subirFotosMl(token, mC.previa.fotos)).map((id) => ({ id })); }
     catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
     // sem repetição automática: um POST repetido criaria anúncio em dobro
@@ -1191,7 +1279,7 @@ Deno.serve(async (req) => {
       // ------------------------------------------------ CRIAR
       if (mC) {
         // as medidas conferidas ficam salvas para o próximo anúncio do mesmo produto
-        await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...mC.medidas, gtin: d.extra?.gtin ?? mC.tiny.gtin ?? null, ncm: d.extra?.ncm ?? mC.tiny.ncm ?? null }, { onConflict: "sku" });
+        await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...mC.medidasSalvar, gtin: d.extra?.gtin ?? mC.tiny.gtin ?? null, ncm: d.extra?.ncm ?? mC.tiny.ncm ?? null }, { onConflict: "sku" });
         try { mC.corpo.image.image_id_list = await subirFotos(c, mC.previa.fotos); }
         catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
         // sem repetição automática
