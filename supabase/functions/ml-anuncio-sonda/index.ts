@@ -1,4 +1,5 @@
-// ml-anuncio-sonda v3 (12/out/2026) - DIAGNOSTICO, nao publica nem altera nada.
+// ml-anuncio-sonda v4 (14/out/2026) - DIAGNOSTICO. So o modo ?teste=limite escreve (regrava os termos de venda com os mesmos valores).
+// v3 (12/out/2026): nao publica nem altera nada.
 // Ensaia, so com LEITURA e com o VALIDADOR do Mercado Livre (/items/validate confere o corpo e
 // nao cria anuncio), as chamadas que a `anuncio-publicar` v4 faz para o Mercado Livre:
 //   GET ?conta=ottz|svl&sku=15984[&titulo=...]
@@ -26,6 +27,28 @@ Deno.serve(async (req) => {
   const { data: tk } = await sb.from("oauth_tokens_ml").select("access_token").eq("user_id", userId).maybeSingle();
   if (!tk) return json({ erro: "sem token" }, 400);
   const token = tk.access_token as string;
+
+  // v4 (14/out/2026, autorizado pelo dono): o limite de unidades por compra (sale_term
+  // PURCHASE_MAX_QUANTITY) pode ser alterado pela API? O validador recusa na criacao; aqui o teste
+  // e no anuncio EXISTENTE, regravando os termos de venda com os MESMOS valores que ele ja tem
+  // (nada muda no anuncio). Uma chamada, sem repeticao. Expira no fim de 15/out.
+  if (u.searchParams.get("teste") === "limite") {
+    if (Date.now() > Date.parse("2026-10-16T03:00:00Z")) return json({ erro: "teste expirado" }, 410);
+    const mlb = String(u.searchParams.get("mlb") || "");
+    if (!/^MLB\d+$/.test(mlb)) return json({ erro: "mlb invalido" }, 400);
+    const antes = await ml(token, `/items/${mlb}?attributes=id,seller_id,status,sale_terms`);
+    if (antes.status !== 200 || Number(antes.body?.seller_id) !== userId) return json({ erro: "anuncio nao e desta conta", status: antes.status }, 400);
+    const termos = ((antes.body?.sale_terms ?? []) as any[]).map((t) => ({ id: String(t.id), value_name: t.value_name }));
+    if (!termos.some((t) => t.id === "PURCHASE_MAX_QUANTITY")) return json({ erro: "anuncio sem limite de unidades", termos }, 400);
+    const put = await ml(token, `/items/${mlb}`, "PUT", { sale_terms: termos });
+    const depois = await ml(token, `/items/${mlb}?attributes=id,status,sale_terms`);
+    return json({
+      mlb, enviado: { sale_terms: termos }, put_status: put.status,
+      put_resposta: put.status === 200 ? { sale_terms: put.body?.sale_terms } : { mensagem: put.body?.message ?? null, erro: put.body?.error ?? null,
+        causas: (put.body?.cause ?? []).map((c: any) => `${c.type}:${c.code}:${String(c.message).slice(0, 220)}`) },
+      antes: antes.body?.sale_terms, depois: depois.body?.sale_terms,
+    });
+  }
 
   // existentes
   const s = await ml(token, `/users/${userId}/items/search?seller_sku=${encodeURIComponent(sku)}&limit=50`);
