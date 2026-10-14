@@ -2654,6 +2654,14 @@ o motivo só aparecia num aviso de 30 s na tela.
   (`etapa = '<item>:pendencias'`, com as pendências e o que foi enviado). Tela: o motivo fica num
   quadro vermelho no bloco das variações; "Criar as variações na Shopee" (caminho manual) agora
   também põe o anúncio no ar no fim.
+- **Tela depois da falha (relato do dono: "as variações ainda não estão sendo preenchidas
+  automaticamente"):** anúncio que já existe sem variações NÃO recebe as opções sozinho ao abrir a
+  página — a criação automática só acontece no instante do envio (escrita em marketplace não roda
+  sem confirmação). O bloco passou a dizer isso e o botão virou **"Criar as variações e pôr no
+  ar"**, de um clique: confere ao vivo (`previa`), mostra a pendência se houver, pede a
+  confirmação e cria. O que é digitado (opção, estoque, peso, medidas, nome do grupo) fica em
+  `localStorage` (`ia.variacoes.<sku do pai>`): volta ao recarregar e vale para a outra loja mesmo
+  quando a 1ª criação falhou (antes só era gravado no sucesso).
 - **Os dois anúncios seguem sem variações e fora do ar.** Conserto pela tela: abrir o 16506 em cada
   loja → Conferir → Criar as variações na Shopee. Se repetir, a pendência estará em
   `debug_fulfillment`.

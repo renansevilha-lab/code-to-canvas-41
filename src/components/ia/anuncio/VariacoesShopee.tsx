@@ -107,10 +107,25 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   // Ao trocar de loja (Ottz ↔ Bumi) o preço, o anúncio e a foto são os da loja nova; o nome da opção, o
   // estoque, o PESO e as MEDIDAS que já estavam na tela ficam (13/out, pedido do dono).
   const iniciado = useRef<string | null>(null);
+  // O QUE FOI DIGITADO (nome da opção, estoque, peso e medidas) fica guardado neste navegador, por produto:
+  // volta ao recarregar a página e vale para a outra loja mesmo que a 1ª criação tenha falhado.
+  const guarda = `ia.variacoes.${sku}`;
+  type Digitado = Pick<Linha, "opcao" | "estoque" | "peso" | "comp" | "larg" | "alt">;
   useEffect(() => {
     if (!q.data || iniciado.current === empresa) return;
     const nova = q.data.linhas;
-    if (iniciado.current === null) { setLinhas(nova); setComFotos(nova.length > 0 && nova.every((l) => l.foto_path)); }
+    if (iniciado.current === null) {
+      let salvo: { grade?: string; linhas?: Record<string, Partial<Digitado>> } = {};
+      try { salvo = JSON.parse(localStorage.getItem(guarda) ?? "{}") ?? {}; } catch { /* sem armazenamento: segue com o padrão */ }
+      if (salvo.grade) setGrade(String(salvo.grade).slice(0, 14));
+      setLinhas(nova.map((n) => {
+        const d = salvo.linhas?.[n.sku];
+        if (!d) return n;
+        const ou = (v: string | undefined, padrao: string) => (v != null && String(v).trim() !== "" ? String(v) : padrao);
+        return { ...n, opcao: ou(d.opcao, n.opcao).slice(0, 20), estoque: ou(d.estoque, n.estoque), peso: ou(d.peso, n.peso), comp: ou(d.comp, n.comp), larg: ou(d.larg, n.larg), alt: ou(d.alt, n.alt) };
+      }));
+      setComFotos(nova.length > 0 && nova.every((l) => l.foto_path));
+    }
     else {
       setLinhas((antes) => nova.map((n) => {
         const a = antes.find((x) => x.sku === n.sku);
@@ -121,6 +136,12 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     setItemId(q.data.item);
     iniciado.current = empresa;
   }, [q.data, empresa]);
+  useEffect(() => {
+    if (iniciado.current === null || !linhas.length) return;
+    try {
+      localStorage.setItem(guarda, JSON.stringify({ grade, linhas: Object.fromEntries(linhas.map((l) => [l.sku, { opcao: l.opcao, estoque: l.estoque, peso: l.peso, comp: l.comp, larg: l.larg, alt: l.alt }])) }));
+    } catch { /* sem armazenamento: só não lembra */ }
+  }, [linhas, grade, guarda]);
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
   useEffect(() => {
     const ouvir = (ev: Event) => {
@@ -232,8 +253,17 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     finally { setOcupado(""); }
   }
   async function criarComConfirmacao() {
-    if (!conferido?.anuncio) return;
-    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${conferido.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).\nO anúncio vai ao AR em seguida.`)) return;
+    // um clique: confere ao vivo e, sem pendência, pede a confirmação e cria
+    setOcupado("conferindo"); setFalha(null);
+    let dados: Previa;
+    try { dados = (await chamarVariacoesShopee("previa", corpo())) as Previa; setPrevia({ chave, dados }); }
+    catch (e) { toast.error("Não consegui conferir", { description: (e as Error).message, duration: 12000 }); setOcupado(""); return; }
+    setOcupado("");
+    if (!dados.anuncio || dados.pendencias.length) {
+      toast.error("Há pendência para criar as variações", { description: dados.pendencias.join(" · ") || "anúncio não encontrado na Shopee", duration: 20000 });
+      return;
+    }
+    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${dados.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).\nO anúncio vai ao AR em seguida.`)) return;
     await criar(itemId.trim());
   }
   const jaTem = q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.tem_variacao;
@@ -246,7 +276,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
           <p className="text-xs text-muted-foreground mt-0.5">
             {semAnuncio
               ? <>Ajuste aqui as opções e depois <b>envie o anúncio no bloco logo abaixo</b>: assim que ele for criado, as {linhas.length} variações entram nele sozinhas, com SKU, preço, estoque e foto.</>
-              : <>Este produto já tem anúncio na Shopee ({itemId.trim()}). Confira e crie nele as {linhas.length} variações — só funciona em anúncio que ainda não tem variações.</>}
+              : <>Este produto já tem anúncio na Shopee ({itemId.trim()}), ainda sem as variações: use <b>“Criar as variações e pôr no ar”</b> no fim deste bloco para pôr nele as {linhas.length} opções abaixo. (As variações só entram sozinhas no momento em que o anúncio é criado pelo envio.)</>}
           </p>
         </div>
         {ocupado === "criando" && <p className="text-sm flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Enviando para a Shopee…</p>}
@@ -348,10 +378,10 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
                   <Button size="sm" variant="outline" disabled={!!ocupado} onClick={() => void conferir()}>
                     {ocupado === "conferindo" && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Conferir
                   </Button>
-                  <Button size="sm" disabled={!!ocupado || !conferido || conferido.pendencias.length > 0} onClick={() => void criarComConfirmacao()}>
-                    Criar as variações na Shopee
+                  <Button size="sm" disabled={!!ocupado || faltas.length > 0} onClick={() => void criarComConfirmacao()}>
+                    {ocupado === "criando" && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Criar as variações e pôr no ar
                   </Button>
-                  {!conferido && <span className="text-xs text-muted-foreground">Confira antes de criar (se mudar algo, confira de novo).</span>}
+                  <span className="text-xs text-muted-foreground">Um clique: confere na Shopee, mostra o que vai ser criado e pede a sua confirmação.</span>
                 </div>
               </>
             )}
