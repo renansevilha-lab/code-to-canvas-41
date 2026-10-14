@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v8 (13/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v9 (14/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -45,6 +45,10 @@
 //   (a principal + 8; a Amazon baixa cada foto nova de um endereço assinado do nosso armazenamento).
 //   A prévia passa as alterações no VALIDADOR da Amazon (mode=VALIDATION_PREVIEW, não aplica nada).
 //   Preço e criar anúncio novo na Amazon ainda não.
+// v9 (14/out/2026): PRODUTO PAI acha o anúncio pelas VARIAÇÕES. O anúncio da Shopee pode ter outro
+//   `item_sku` (ex.: 15182 → anúncio 23297086602 com item_sku 14423, o SKU antigo) e mesmo assim ser o anúncio
+//   dele: as variações têm os SKUs dos filhos (15177/15178/15186/15187). Antes a tela dizia "ainda não
+//   anunciado" e o envio CRIAVA outro anúncio. Agora `existentesShopee` também procura os SKUs dos filhos.
 // v8: PESO E MEDIDAS nunca travam por cadastro zerado (pedido do dono). O Tiny devolve 0 para
 //   produto sem peso/medida e o 0 era aceito como valor, sem cair no recurso seguinte. Agora só
 //   vale número MAIOR que zero. Peso: digitado → já conferido (ia_produto_extra) → Tiny ao vivo →
@@ -217,6 +221,22 @@ async function existentesShopee(shopId: number, sku: string): Promise<Existente[
       item_id: String(a.item_id), nome: a.nome ?? null, status: a.status ?? null, url: `https://shopee.com.br/product/${shopId}/${a.item_id}`,
       variacao: false, model_id: null, nome_variacao: null, preco: num(a.preco_min),
     });
+  }
+  // v9: produto PAI — o anúncio dele é o que tem as variações com os SKUs dos filhos, qualquer que seja o item_sku
+  const { data: filhos } = await db.from("produtos").select("sku").eq("sku_pai", sku).limit(60);
+  const skusFilhos = ((filhos ?? []) as any[]).map((f) => String(f.sku));
+  if (skusFilhos.length) {
+    const { data: vf } = await db.from("shopee_anuncios_variacao").select("item_id, preco").eq("shop_id", shopId).in("sku", skusFilhos);
+    const ids = [...new Set(((vf ?? []) as any[]).map((v) => Number(v.item_id)))].filter((id) => !porItem.has(String(id)));
+    if (ids.length) {
+      const { data: ans } = await db.from("shopee_anuncios").select("item_id, nome, status, preco_min").eq("shop_id", shopId).in("item_id", ids).in("status", ["NORMAL", "UNLIST"]);
+      for (const a of (ans ?? []) as any[]) {
+        porItem.set(String(a.item_id), {
+          item_id: String(a.item_id), nome: a.nome ?? null, status: a.status ?? null, url: `https://shopee.com.br/product/${shopId}/${a.item_id}`,
+          variacao: false, model_id: null, nome_variacao: null, preco: num(a.preco_min),
+        });
+      }
+    }
   }
   return [...porItem.values()];
 }

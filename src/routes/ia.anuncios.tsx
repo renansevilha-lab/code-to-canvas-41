@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { CriarVariacoes } from "@/components/ia/anuncio/CriarVariacoes";
 import { CriarVariacoesCores } from "@/components/ia/anuncio/CriarVariacoesCores";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
@@ -343,7 +344,7 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
       <div className="w-full lg:w-[300px] flex flex-wrap gap-1">
         {x.canais.length === 0
           ? <span className="text-[11px] text-muted-foreground">sem venda em 120 dias</span>
-          : x.canais.slice(0, 5).map((c) => <SeloCanal key={`${c.canal}-${c.empresa}`} c={c} />)}
+          : x.canais.slice(0, 5).map((c) => <SeloCanal key={`${c.canal}-${c.empresa}`} c={c} skus={[x.sku, ...filhas.map((v) => v.sku)]} />)}
       </div>
       <div className="w-full lg:w-[230px] flex flex-wrap gap-1">
         {x.rascunhos.length === 0
@@ -382,16 +383,104 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
 }
 
 /** "Shopee Ottz · R$ 41,90 · 18%" — a margem é a real dos pedidos (soma da margem ÷ soma da venda). */
-function SeloCanal({ c }: { c: IaCanalHist }) {
+function SeloCanal({ c, skus }: { c: IaCanalHist; skus: string[] }) {
   const mc = c.mc_pct != null ? Number(c.mc_pct) : null;
   const cor = mc == null ? "#64748B" : mc >= 0.15 ? "#0E8A5F" : mc > 0 ? "#B7791F" : "#C9432F";
+  const [aberto, setAberto] = useState(false);
   return (
-    <span className="text-[10.5px] px-1.5 py-0.5 rounded border whitespace-nowrap"
-      title={`${Number(c.un30).toLocaleString("pt-BR")} un. em 30 dias · ${Number(c.un120).toLocaleString("pt-BR")} un. em 120 dias`}>
-      <b>{nomeCanal(c.canal)}</b> {nomeEmpresa(c.empresa)}
-      {c.preco != null && <> · {formatBRL(Number(c.preco))}</>}
-      {mc != null && <> · <span style={{ color: cor }} className="font-semibold">{(mc * 100).toFixed(0)}%</span></>}
-    </span>
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button type="button" className="text-[10.5px] px-1.5 py-0.5 rounded border whitespace-nowrap hover:bg-muted/60 cursor-pointer"
+          title={`${Number(c.un30).toLocaleString("pt-BR")} un. em 30 dias · ${Number(c.un120).toLocaleString("pt-BR")} un. em 120 dias — clique para ver o anúncio`}>
+          <b>{nomeCanal(c.canal)}</b> {nomeEmpresa(c.empresa)}
+          {c.preco != null && <> · {formatBRL(Number(c.preco))}</>}
+          {mc != null && <> · <span style={{ color: cor }} className="font-semibold">{(mc * 100).toFixed(0)}%</span></>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 p-3">
+        {aberto && <AnunciosDoCanal canal={c.canal} empresa={c.empresa} skus={skus} />}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const LOJA_SHOPEE: Record<string, number> = { ottz: 522186766, svl: 759046323 };
+interface AnuncioVinculado { id: string; nome: string | null; status: string | null; url: string | null; painel: string | null; detalhe: string | null }
+
+/** Os anúncios daquele canal/loja que vendem este produto (ou as variações dele), com o link para conferir. Só o espelho da gestão. */
+function AnunciosDoCanal({ canal, empresa, skus }: { canal: string; empresa: string; skus: string[] }) {
+  const q = useQuery({
+    queryKey: ["ia-anuncio", "anuncios-do-canal", canal, empresa, skus.join(",")],
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<{ lista: AnuncioVinculado[]; aviso: string | null }> => {
+      if (canal === "shopee") {
+        const shop = LOJA_SHOPEE[empresa];
+        if (!shop) return { lista: [], aviso: "loja Shopee desconhecida" };
+        const [v, a] = await Promise.all([
+          supabaseExternal.from("shopee_anuncios_variacao").select("item_id, sku, nome_variacao").eq("shop_id", shop).in("sku", skus).limit(200),
+          supabaseExternal.from("shopee_anuncios").select("item_id").eq("shop_id", shop).in("sku_pai", skus).limit(50),
+        ]);
+        const vars = (v.data ?? []) as { item_id: number; sku: string; nome_variacao: string | null }[];
+        const ids = [...new Set([...vars.map((x) => Number(x.item_id)), ...((a.data ?? []) as { item_id: number }[]).map((x) => Number(x.item_id))])];
+        if (!ids.length) return { lista: [], aviso: null };
+        const { data: ans } = await supabaseExternal.from("shopee_anuncios").select("item_id, nome, status, sku_pai").eq("shop_id", shop).in("item_id", ids);
+        return {
+          aviso: null,
+          lista: ((ans ?? []) as { item_id: number; nome: string | null; status: string | null; sku_pai: string | null }[]).map((x) => {
+            const desta = vars.filter((y) => Number(y.item_id) === Number(x.item_id));
+            return {
+              id: String(x.item_id), nome: x.nome, status: x.status,
+              url: `https://shopee.com.br/product/${shop}/${x.item_id}`, painel: `https://seller.shopee.com.br/portal/product/${x.item_id}`,
+              detalhe: [x.sku_pai ? `SKU do anúncio ${x.sku_pai}` : null, desta.length ? `variações ${desta.map((y) => y.sku).join(", ")}` : null].filter(Boolean).join(" · ") || null,
+            };
+          }).sort((p, z) => Number(z.status === "NORMAL") - Number(p.status === "NORMAL")),
+        };
+      }
+      if (canal === "mercado_livre") {
+        if (empresa !== "ottz") return { lista: [], aviso: "Os anúncios do Mercado Livre da SVL não têm espelho no app: confira no Mercado Livre." };
+        const { data } = await supabaseExternal.from("ml_anuncios").select("mlb, sku, titulo, status, permalink, catalog_listing").in("sku", skus).limit(50);
+        return {
+          aviso: null,
+          lista: ((data ?? []) as { mlb: string; sku: string; titulo: string | null; status: string | null; permalink: string | null; catalog_listing: boolean | null }[]).map((x) => ({
+            id: x.mlb, nome: x.titulo, status: x.status, url: x.permalink, painel: null,
+            detalhe: [`SKU ${x.sku}`, x.catalog_listing ? "catálogo" : null].filter(Boolean).join(" · "),
+          })).sort((p, z) => Number(z.status === "active") - Number(p.status === "active")),
+        };
+      }
+      if (canal === "tiktok") {
+        const { data } = await supabaseExternal.from("tiktok_produtos").select("product_id, seller_sku, titulo").in("seller_sku", skus).limit(50);
+        const porId = new Map(((data ?? []) as { product_id: string; seller_sku: string; titulo: string | null }[]).map((x) => [String(x.product_id), x]));
+        return { aviso: null, lista: [...porId.values()].map((x) => ({ id: String(x.product_id), nome: x.titulo, status: null, url: null, painel: null, detalhe: `SKU ${x.seller_sku}` })) };
+      }
+      return { lista: [], aviso: "A Amazon não tem espelho dos anúncios no app: confira no Seller Central." };
+    },
+  });
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="font-medium">{nomeCanal(canal)} {nomeEmpresa(empresa)} — anúncio(s) deste produto</div>
+      {q.isLoading ? <div className="text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />procurando…</div>
+        : q.isError ? <div className="text-xs text-destructive">{(q.error as Error).message}</div>
+        : q.data?.aviso ? <div className="text-xs text-muted-foreground">{q.data.aviso}</div>
+        : !q.data?.lista.length ? <div className="text-xs text-muted-foreground">Nenhum anúncio ligado a este SKU no espelho da gestão (a venda pode vir de um anúncio com outro SKU).</div>
+        : (
+          <div className="max-h-72 overflow-y-auto divide-y">
+            {q.data.lista.map((a) => (
+              <div key={a.id} className="py-1.5">
+                <div className="text-[12px] leading-snug line-clamp-2" title={a.nome ?? ""}>{a.nome ?? "(sem título)"}</div>
+                <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2">
+                  <span className="font-mono">{a.id}</span>
+                  {a.status && <span className={a.status === "NORMAL" || a.status === "active" ? "text-emerald-600" : "text-amber-600"}>{a.status}</span>}
+                  {a.detalhe && <span>{a.detalhe}</span>}
+                </div>
+                <div className="flex gap-3 text-[11px]">
+                  {a.url && <a className="underline" href={a.url} target="_blank" rel="noreferrer">ver o anúncio</a>}
+                  {a.painel && <a className="underline" href={a.painel} target="_blank" rel="noreferrer">abrir no Seller Center</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
   );
 }
 

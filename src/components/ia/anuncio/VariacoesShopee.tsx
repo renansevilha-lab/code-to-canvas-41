@@ -132,7 +132,17 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         linhas.sort((a, z) => ordem.indexOf(a.opcao) - ordem.indexOf(z.opcao) || (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1));
       }
       const criado = ((pub.data ?? []) as { item_id: string | null; operacao: string | null }[]).find((p) => p.item_id)?.item_id ?? null;
-      const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null; status: string | null }[];
+      type Espelho = { item_id: number; nome: string | null; tem_variacao: boolean | null; status: string | null };
+      const espelho = (esp.data ?? []) as Espelho[];
+      // o anúncio pode ter OUTRO item_sku (ex.: 15182 → anúncio com item_sku 14423): acha pelos SKUs das variações
+      if (skus.length) {
+        const { data: vf } = await supabaseExternal.from("shopee_anuncios_variacao").select("item_id").eq("shop_id", shopId).in("sku", skus);
+        const ids = [...new Set(((vf ?? []) as { item_id: number }[]).map((v) => Number(v.item_id)))].filter((id) => !espelho.some((e) => Number(e.item_id) === id));
+        if (ids.length) {
+          const { data: ans } = await supabaseExternal.from("shopee_anuncios").select("item_id, nome, tem_variacao, status").eq("shop_id", shopId).in("item_id", ids).in("status", ["NORMAL", "UNLIST"]);
+          espelho.push(...((ans ?? []) as Espelho[]).map((a) => ({ ...a, tem_variacao: true })));
+        }
+      }
       return { empresa, linhas, grades, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
@@ -326,6 +336,26 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     await criar(itemId.trim());
   }
   const jaTem = q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.tem_variacao;
+
+  // o anúncio da loja JÁ tem as variações (ex.: 15182 na Ottz): não há o que criar aqui; o envio abaixo atualiza o anúncio
+  if (jaTem && !feito && !ocupado) {
+    const a = q.data.espelho.find((e) => String(e.item_id) === itemId.trim());
+    return (
+      <Card>
+        <CardContent className="p-4 space-y-1">
+          <h2 className="text-base font-semibold flex items-center gap-2"><Layers className="h-4 w-4" />Variações deste anúncio na Shopee · {nomeEmpresa(empresa)}</h2>
+          <p className="text-sm">
+            Este produto já tem anúncio com variações nesta loja:{" "}
+            <a className="underline inline-flex items-center gap-1 font-mono" href={`https://shopee.com.br/product/${shopId}/${itemId.trim()}`} target="_blank" rel="noreferrer">
+              {itemId.trim()}<ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            {a?.nome ? <span className="text-muted-foreground"> · {a.nome}</span> : null}
+          </p>
+          <p className="text-xs text-muted-foreground">As variações já existem na Shopee: não há o que criar aqui. Para trocar texto ou fotos, use o envio logo abaixo — ele atualiza este anúncio.</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
