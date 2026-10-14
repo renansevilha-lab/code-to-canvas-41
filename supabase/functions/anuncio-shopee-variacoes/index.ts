@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v5 (13/out/2026)
+// Edge Function: anuncio-shopee-variacoes v6 (14/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -25,6 +25,10 @@
 //   Agora (1) a LEITURA do anúncio recém-criado tenta até 3× com 2,5 s (a Shopee às vezes ainda não o
 //   devolve no segundo seguinte; ler de novo não muda nada) e (2) toda recusa por pendência fica em
 //   `debug_fulfillment` (`etapa = <item>:pendencias`).
+// v6 (pedido do dono: carpete em cores × quantidades): DUAS GRADES. `grade2` ("Quantidade") e, em cada variação,
+//   `opcao2` ("2 un") → `tier_variation` com dois grupos e `tier_index: [cor, quantidade]`. A Shopee exige a grade
+//   completa (toda cor com toda quantidade). Foto da opção só existe no 1º grupo (a cor): vale a foto da 1ª variação
+//   de cada cor, e ou todas as cores têm foto, ou nenhuma. Sem `grade2`, igual à v5.
 // Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
 // variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
@@ -127,7 +131,7 @@ async function porNoAr(c: Ctx, itemId: number, quem: string | null): Promise<str
 }
 
 interface Variacao {
-  sku: string; opcao: string; preco: number; estoque: number; foto_path: string | null;
+  sku: string; opcao: string; opcao2: string; preco: number; estoque: number; foto_path: string | null;
   peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null;
 }
 const positivo = (v: unknown): number | null => { const n = num(v); return n > 0 ? n : null; };
@@ -152,8 +156,9 @@ Deno.serve(async (req) => {
     const shopId = LOJA[String(body.empresa ?? "")];
     const itemId = Number(String(body.item_id ?? "").replace(/\D/g, ""));
     const grade = String(body.grade ?? "").trim();
+    const grade2 = String(body.grade2 ?? "").trim(); // v6: 2º grupo de opções (ex.: Quantidade); vazio = um grupo só
     const variacoes: Variacao[] = (Array.isArray(body.variacoes) ? body.variacoes : []).map((v: any) => ({
-      sku: String(v?.sku ?? "").trim(), opcao: String(v?.opcao ?? "").trim(), preco: num(v?.preco),
+      sku: String(v?.sku ?? "").trim(), opcao: String(v?.opcao ?? "").trim(), opcao2: grade2 ? String(v?.opcao2 ?? "").trim() : "", preco: num(v?.preco),
       estoque: Math.max(0, Math.floor(num(v?.estoque))), foto_path: v?.foto_path ? String(v.foto_path) : null,
       peso_kg: positivo(v?.peso_kg), comprimento_cm: positivo(v?.comprimento_cm), largura_cm: positivo(v?.largura_cm), altura_cm: positivo(v?.altura_cm),
     }));
@@ -164,19 +169,34 @@ Deno.serve(async (req) => {
     else if (grade.length > 14) pend.push(`o nome do grupo tem ${grade.length} caracteres (a Shopee aceita até 14)`);
     if (variacoes.length < 2) pend.push("informe ao menos 2 variações");
     if (variacoes.length > 50) pend.push("no máximo 50 variações por anúncio");
+    if (grade2 && grade2.length > 14) pend.push(`o nome do 2º grupo tem ${grade2.length} caracteres (a Shopee aceita até 14)`);
+    if (grade2 && grade2.toLowerCase() === grade.toLowerCase()) pend.push("os dois grupos de opções têm o mesmo nome");
     variacoes.forEach((v, i) => {
       const n = `variação ${i + 1}`;
       if (!v.opcao) pend.push(`${n}: escreva o nome da opção`);
       else if (v.opcao.length > 20) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 20)`);
+      if (grade2 && !v.opcao2) pend.push(`${n}: escreva a opção de ${grade2}`);
+      else if (v.opcao2.length > 20) pend.push(`${n}: "${v.opcao2}" tem ${v.opcao2.length} caracteres (a Shopee aceita até 20)`);
       if (!v.sku) pend.push(`${n}: sem SKU`);
       if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
       const medidas = [v.comprimento_cm, v.largura_cm, v.altura_cm].filter((x) => x != null).length;
       if (medidas > 0 && medidas < 3) pend.push(`${n}: preencha comprimento, largura e altura juntos (ou deixe os três em branco)`);
     });
-    if (new Set(variacoes.map((v) => v.opcao.toLowerCase())).size !== variacoes.length) pend.push("há duas opções com o mesmo nome");
+    const chaveOpc = (v: Variacao) => `${v.opcao.toLowerCase()}|${v.opcao2.toLowerCase()}`;
+    if (new Set(variacoes.map(chaveOpc)).size !== variacoes.length) pend.push("há duas opções com o mesmo nome");
     if (new Set(variacoes.map((v) => v.sku)).size !== variacoes.length) pend.push("há SKU repetido entre as variações");
-    const comFoto = variacoes.filter((v) => v.foto_path).length;
-    if (comFoto > 0 && comFoto < variacoes.length) pend.push("foto da opção: ou todas as variações têm foto, ou nenhuma (regra da Shopee)");
+    // v6: opções de cada grupo, na ordem em que aparecem; com 2 grupos a grade tem de estar completa
+    const opcoes1 = [...new Set(variacoes.map((v) => v.opcao))];
+    const opcoes2 = grade2 ? [...new Set(variacoes.map((v) => v.opcao2))] : [];
+    if (grade2 && opcoes1.length * opcoes2.length !== variacoes.length) {
+      pend.push(`a Shopee exige a grade completa: ${opcoes1.length} ${grade} × ${opcoes2.length} ${grade2} = ${opcoes1.length * opcoes2.length} variações, mas há ${variacoes.length}`);
+    }
+    // foto da opção: só no 1º grupo; com 2 grupos, a da 1ª variação de cada opção do 1º grupo
+    const fotoDaOpcao = new Map<string, Variacao>();
+    for (const v of variacoes) if (v.foto_path && !fotoDaOpcao.has(v.opcao)) fotoDaOpcao.set(v.opcao, v);
+    const comFoto = grade2 ? opcoes1.filter((o) => fotoDaOpcao.has(o)).length : variacoes.filter((v) => v.foto_path).length;
+    const totalFoto = grade2 ? opcoes1.length : variacoes.length;
+    if (comFoto > 0 && comFoto < totalFoto) pend.push(grade2 ? `foto da opção: ou toda ${grade} tem foto, ou nenhuma (regra da Shopee)` : "foto da opção: ou todas as variações têm foto, ou nenhuma (regra da Shopee)");
     const precos = variacoes.map((v) => v.preco).filter((p) => p > 0);
     if (precos.length > 1 && Math.max(...precos) / Math.min(...precos) > 5) {
       avisos.push("a variação mais cara custa mais de 5× a mais barata: a Shopee costuma recusar essa diferença");
@@ -207,15 +227,21 @@ Deno.serve(async (req) => {
     const semFoto = (opt: Variacao, id?: string) => ({ option: opt.opcao, ...(id ? { image: { image_id: id } } : {}) });
     const montar = (ids: Map<string, string>) => ({
       item_id: itemId,
-      tier_variation: [{ name: grade, option_list: variacoes.map((v) => semFoto(v, ids.get(v.sku))) }],
+      tier_variation: grade2
+        ? [
+          { name: grade, option_list: opcoes1.map((o) => { const v = fotoDaOpcao.get(o); const id = v ? ids.get(v.sku) : undefined; return { option: o, ...(id ? { image: { image_id: id } } : {}) }; }) },
+          { name: grade2, option_list: opcoes2.map((o) => ({ option: o })) },
+        ]
+        : [{ name: grade, option_list: variacoes.map((v) => semFoto(v, ids.get(v.sku))) }],
       model: variacoes.map((v, i) => ({
-        tier_index: [i], original_price: v.preco, model_sku: v.sku, seller_stock: [{ stock: v.estoque }],
+        tier_index: grade2 ? [opcoes1.indexOf(v.opcao), opcoes2.indexOf(v.opcao2)] : [i],
+        original_price: v.preco, model_sku: v.sku, seller_stock: [{ stock: v.estoque }],
         ...(v.peso_kg != null ? { weight: v.peso_kg } : {}),
         ...(v.comprimento_cm != null && v.largura_cm != null && v.altura_cm != null
           ? { dimension: { package_length: Math.round(v.comprimento_cm), package_width: Math.round(v.largura_cm), package_height: Math.round(v.altura_cm) } } : {}),
       })),
     });
-    if (modulo === "previa") return json({ ok: true, anuncio, pendencias, avisos, com_foto: comFoto === variacoes.length && comFoto > 0, payload: montar(new Map()) });
+    if (modulo === "previa") return json({ ok: true, anuncio, pendencias, avisos, com_foto: comFoto === totalFoto && comFoto > 0, payload: montar(new Map()) });
 
     if (body.confirmar !== true) return json({ ok: false, erro: "criar exige confirmar: true" }, 400);
     if (pendencias.length || !c) {
@@ -228,8 +254,8 @@ Deno.serve(async (req) => {
 
     // fotos das opções (só mídia: se falhar aqui, nada foi mudado no anúncio)
     const ids = new Map<string, string>();
-    if (comFoto === variacoes.length) {
-      for (const v of variacoes) {
+    if (comFoto === totalFoto && comFoto > 0) {
+      for (const v of (grade2 ? [...fotoDaOpcao.values()] : variacoes)) {
         const dl = await db.storage.from(BUCKET).download(v.foto_path!);
         if (dl.error || !dl.data) throw new Error(`não consegui ler a foto da opção ${v.opcao}`);
         const mime = (dl.data.type || "image/png").split(";")[0];

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CriarVariacoes } from "@/components/ia/anuncio/CriarVariacoes";
+import { CriarVariacoesCores } from "@/components/ia/anuncio/CriarVariacoesCores";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -117,6 +118,10 @@ function AnunciosPage() {
   const canalPadrao = sem ?? "shopee";
   // menu "…" da linha → criar no Tiny um produto com variações a partir deste produto simples
   const [variacoesDe, setVariacoesDe] = useState<string | null>(null);
+  // seleção de produtos SIMPLES (vale entre páginas e buscas) → um produto com variações de cor × quantidade
+  const [selecionados, setSelecionados] = useState<string[]>([]);
+  const [coresAberto, setCoresAberto] = useState(false);
+  const alternar = (sku: string) => setSelecionados((s) => (s.includes(sku) ? s.filter((x) => x !== sku) : [...s, sku]));
 
   // kits como no Tiny: a composicao (quantidade x componente) aparece na linha. So os kits da pagina.
   const skusKit = (cat?.linhas ?? []).filter((x) => x.tipo === "K").map((x) => x.sku);
@@ -199,8 +204,21 @@ function AnunciosPage() {
         {catQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </div>
 
+      {selecionados.length > 0 && (
+        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-background/95 px-3 py-2 text-sm shadow-sm backdrop-blur">
+          <span><b>{selecionados.length}</b> produto(s) selecionado(s): <span className="font-mono text-xs text-muted-foreground">{selecionados.join(", ")}</span></span>
+          <div className="flex-1" />
+          <Button size="sm" className="h-8 gap-1.5" disabled={selecionados.length < 2} onClick={() => setCoresAberto(true)}
+            title={selecionados.length < 2 ? "Selecione ao menos 2 produtos (um por cor)" : undefined}>
+            <Layers className="h-4 w-4" />Criar produto com variações (cor × quantidade)
+          </Button>
+          <Button size="sm" variant="ghost" className="h-8" onClick={() => setSelecionados([])}>Limpar</Button>
+        </div>
+      )}
+
       <Card className="overflow-hidden">
         <div className="hidden lg:flex items-center gap-3 px-4 py-2 border-b bg-muted/30 text-[11px] font-medium text-muted-foreground">
+          <span className="w-4 shrink-0" />
           <span className="w-11 shrink-0" />
           <span className="flex-1">Produto</span>
           <span className="w-20 text-right">Custo</span>
@@ -217,11 +235,13 @@ function AnunciosPage() {
         ) : !cat?.linhas.length ? (
           <div className="p-10 text-center text-muted-foreground">Nenhum produto com esses filtros.</div>
         ) : (
-          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={comCapa(x)} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe} />)}</div>
+          <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={comCapa(x)} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe}
+            selecionado={selecionados.includes(x.sku)} onSelecionar={alternar} />)}</div>
         )}
       </Card>
 
       {variacoesDe && <CriarVariacoes sku={variacoesDe} onFechar={() => setVariacoesDe(null)} />}
+      {coresAberto && <CriarVariacoesCores skus={selecionados} onFechar={() => { setCoresAberto(false); setSelecionados([]); }} />}
 
       {total > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -264,15 +284,23 @@ async function copiarFotoDoBase(sku: string) {
  * Uma linha do catálogo. Como no Tiny: o kit mostra a composição, e o produto com variações
  * abre as variações logo abaixo (cada uma com venda, canais e anúncio próprios).
  */
-function Linha({ x, canalPadrao, composicao, variacao, onVariacoes }: {
+function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado, onSelecionar }: {
   x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; variacao?: boolean; onVariacoes?: (sku: string) => void;
+  selecionado?: boolean; onSelecionar?: (sku: string) => void;
 }) {
+  const podeSelecionar = !!onSelecionar && !variacao && x.tipo === "S";
   const primeiro = x.rascunhos[0];
   const filhas = x.variacoes ?? [];
   const [aberto, setAberto] = useState(false);
   return (
     <>
-    <div className={`flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-muted/20 ${variacao ? "lg:pl-12 bg-muted/10" : ""}`}>
+    <div className={`flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-muted/20 ${variacao ? "lg:pl-12 bg-muted/10" : ""} ${selecionado ? "bg-primary/5" : ""}`}>
+      <span className="w-4 shrink-0 flex items-center">
+        {podeSelecionar && (
+          <input type="checkbox" className="h-4 w-4 accent-primary cursor-pointer" checked={!!selecionado} onChange={() => onSelecionar!(x.sku)}
+            title="Selecionar para criar um produto com variações de cor × quantidade" />
+        )}
+      </span>
       <div className="h-11 w-11 rounded border bg-muted/30 overflow-hidden shrink-0 flex items-center justify-center">
         {x.foto ? <img src={x.foto} alt="" loading="lazy" className="h-full w-full object-cover" /> : <ImageOff className="h-4 w-4 text-muted-foreground" />}
       </div>

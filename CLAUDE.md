@@ -2231,6 +2231,32 @@ faltou no anúncio criado direto na Shopee).
   - O produto de teste `TESTE-APP-208691-2` ganhou a foto do 16452 no ensaio (é para apagar).
     A rota de ensaio `foto-ensaio` da função morre sozinha à meia-noite de 12/out (prazo no
     código), como a `inativar-teste` que ela substituiu.
+- **Cor × quantidade — várias bases, duas grades (14/out/2026, pedido do dono: Carpete
+  Autocolante 16075–16079, uma cor por SKU):** em `/ia/anuncios` cada produto SIMPLES tem uma
+  caixa de seleção; com 2+ marcados, "Criar produto com variações (cor × quantidade)" abre
+  `CriarVariacoesCores.tsx`: cores tiradas do nome (`[Bege]`, ou o que sobra depois do começo
+  comum), quantidades ("1, 2, 3"), grade COMPLETA cor × quantidade com SKU (próximos livres,
+  conferidos no Tiny) e preço (preço da cor × qtd) editáveis.
+  - **`tiny-produto-variacoes` v6 (deploy 8):** aceita `grades: ["Cor","Quantidade"]` e, por
+    variação, `base_sku` + `valores: ["Bege","2 un"]` → no Tiny `grade` com duas chaves e cada
+    variação vira kit de N× o produto DA COR dela (vender "Marrom · 2 un" baixa 2 do 16076). Sem
+    `grades` = formato antigo, uma base. Conferência: todas as bases simples, grade completa
+    (Shopee exige), até 50 variações, opção ≤ 20 letras e grade ≤ 14. SKUs ocupados conferidos no
+    Tiny de 6 em 6 (`sugerir` aceita até 51).
+  - **Tempo:** cada kit custa ~3 s (GET + v2 + GET) e o limite é ~30 s. O espelho (`produtos`,
+    `sku_base` = a cor) é gravado logo depois do POST; os kits param aos ~20 s e voltam com
+    `pendente: true`; a tela termina chamando `kit` um a um (código 6 da v2 = espera 60 s) e
+    depois `foto` até não haver `pendente` (a `foto` agora para aos ~22 s e pula quem já tem foto
+    no espelho). Cada variação recebe a foto do produto DA COR dela (`produto_kits` → componente).
+  - **`?modulo=grade {sku_pai}`** (só leitura): grades e valores de cada variação, ao vivo do Tiny.
+  - **Shopee (`anuncio-shopee-variacoes` v6):** `grade2` + `opcao2` → `tier_variation` com dois
+    grupos e `tier_index [cor, qtd]`; grade completa obrigatória; foto só no 1º grupo (a da 1ª
+    variação de cada cor). `VariacoesShopee` só lê a grade do Tiny quando as variações são kits de
+    produtos DIFERENTES (produto de uma base segue igual) e mostra a 2ª coluna de opção.
+  - `FotosVariacoes`: variação de outra cor usa a foto DELA (catálogo ou referência do produto da
+    cor), nunca a do pai.
+  - **Não testado ao vivo** (criação no Tiny e na Shopee exigem sessão). Os carpetes não têm foto
+    no Tiny: as variações nascem sem foto.
 - **Fotos das variações (12/out, ~22h30, pedido do dono):** na página do produto PAI
   (`/ia/gerar?sku=<pai>`, tipo V) o bloco "Fotos das variações"
   (`src/components/ia/anuncio/FotosVariacoes.tsx`) gera UMA foto por variação: cena ambientada
@@ -2827,8 +2853,8 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
 | `anuncio-publicar` | v8 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
-| `anuncio-shopee-variacoes` | v4 (peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
-| `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `anuncio-shopee-variacoes` | v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
+| `tiny-produto-variacoes` | v6 (deploy 8; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

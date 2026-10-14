@@ -149,12 +149,28 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
    *  ela passa a usar a foto de referência do produto pai (ou do produto base) — sem isso a IA recusa a variação
    *  ("SKU … sem foto de referência"), mesmo com o pai tendo a foto certa. Devolve o erro (ou null). */
   async function garantirReferencia(skuVar: string): Promise<string | null> {
-    const { data: pai } = await supabaseExternal.from("produtos").select("sku_base").eq("sku", sku).maybeSingle();
+    const [{ data: pai }, { data: kit }, { data: prod }] = await Promise.all([
+      supabaseExternal.from("produtos").select("sku_base").eq("sku", sku).maybeSingle(),
+      supabaseExternal.from("produto_kits").select("sku_componente").eq("sku_kit", skuVar),
+      supabaseExternal.from("produtos").select("foto_capa").eq("sku", skuVar).maybeSingle(),
+    ]);
     const base = (pai?.sku_base as string | null) ?? null;
-    const { data: ex, error: e1 } = await supabaseExternal.from("ia_produto_extra").select("sku, foto_ref_path").in("sku", [skuVar, sku, ...(base ? [base] : [])]);
+    // o produto DA variação (o componente do kit): com cores (14/out), cada variação é de um produto diferente
+    const comps = (kit ?? []) as { sku_componente: string }[];
+    const comp = comps.length === 1 ? comps[0].sku_componente : null;
+    const { data: ex, error: e1 } = await supabaseExternal.from("ia_produto_extra").select("sku, foto_ref_path").in("sku", [skuVar, sku, ...(base ? [base] : []), ...(comp ? [comp] : [])]);
     if (e1) return `referência: ${e1.message}`;
     const ref = (x: string) => ((ex ?? []) as { sku: string; foto_ref_path: string | null }[]).find((l) => l.sku === x)?.foto_ref_path ?? null;
     if (ref(skuVar)) return null;
+    // variação de um produto DIFERENTE do produto base do pai (outra cor): vale a foto dela, nunca a do pai.
+    // Com foto no catálogo, a função de imagem já usa essa foto; sem, a referência do produto da cor.
+    if (comp && base && comp !== base) {
+      if (prod?.foto_capa) return null;
+      const daCor = ref(comp);
+      if (!daCor) return null;
+      const { error } = await supabaseExternal.from("ia_produto_extra").upsert({ sku: skuVar, foto_ref_path: daCor, fotos_ref: [daCor] }, { onConflict: "sku" });
+      return error ? `referência: ${error.message}` : null;
+    }
     const herdada = ref(sku) ?? (base ? ref(base) : null);
     if (!herdada) return null; // sem referência no pai: a função tenta a foto do catálogo e, se não houver, avisa
     const { error } = await supabaseExternal.from("ia_produto_extra").upsert({ sku: skuVar, foto_ref_path: herdada, fotos_ref: [herdada] }, { onConflict: "sku" });

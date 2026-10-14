@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
-import { chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnuncio";
+import { chamarVariacoes, chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnuncio";
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
@@ -21,6 +21,9 @@ import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPro
 // bloco cria as variações no anúncio recém-criado, sem outro clique.
 // Também serve para um anúncio simples que já existe: informar o ID, Conferir e Criar.
 // Só para anúncio que ainda NÃO tem variações.
+// DUAS GRADES (14/out/2026, pedido do dono — carpete em cores × quantidades): quando as variações são kits de
+// produtos DIFERENTES (uma cor por produto), a grade de cada uma é lida do Tiny (`tiny-produto-variacoes` grade)
+// e o anúncio sai com dois grupos (ex.: Cor e Quantidade). Produto de uma base só segue com um grupo.
 // ============================================================================
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
@@ -29,7 +32,7 @@ const TIPOS_FOTO = ["capa_ambientada_limpa", "capa_ambientada_texto"];
 const MEDIDAS_PADRAO = { comprimento_cm: 40, largura_cm: 30, altura_cm: 15 };
 export const EVENTO_ANUNCIO_CRIADO = EV_CRIADO;
 interface Linha {
-  sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null;
+  sku: string; opcao: string; /** opção do 2º grupo (ex.: "2 un"); vazio = um grupo só */ opcao2: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null;
   /** peso e medidas DESTA variação (em branco = valem os do anúncio) */
   peso: string; comp: string; larg: string; alt: string;
 }
@@ -82,6 +85,14 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         supabaseExternal.from("ia_produto_extra").select("sku, peso_kg, comprimento_cm, largura_cm, altura_cm").in("sku", [sku, ...componentes]),
       ]);
       const estoqueDe = new Map(((est.data ?? []) as { sku: string; estoque: number | null }[]).map((x) => [x.sku, Number(x.estoque) || 0]));
+      // DUAS GRADES: variações de produtos base diferentes (ex.: uma cor por produto) → a grade vem do Tiny
+      let grades: string[] = []; const valoresDe = new Map<string, string[]>();
+      if (componentes.length > 1) {
+        try {
+          const g = (await chamarVariacoes("grade", { sku_pai: sku })) as { grades?: string[]; variacoes?: { sku: string; valores: string[] }[] };
+          if ((g.grades ?? []).length === 2) { grades = g.grades!; for (const v of g.variacoes ?? []) valoresDe.set(v.sku, v.valores); }
+        } catch { /* sem a grade do Tiny: segue com um grupo, pelo nome */ }
+      }
       const herdadas = new Map(((medPai.data ?? []) as Medida[]).map((m) => [m.sku, m]));
       const completa = (m?: Medida) => (m && Number(m.comprimento_cm) > 0 && Number(m.largura_cm) > 0 && Number(m.altura_cm) > 0 ? m : null);
       const padraoDe = (skuVar: string) => {
@@ -104,23 +115,31 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const nome = v.nome ?? v.sku;
         const meus = new Set(rascunhos.filter((r) => r.sku === v.sku).map((r) => r.id));
         const foto = imagens.find((i) => meus.has(i.rascunho_id)) ?? null;
-        const opcao = (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20);
+        const vals = valoresDe.get(v.sku);
+        const opcao = (vals?.[0] ?? (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome)).trim().slice(0, 20);
+        const opcao2 = (vals?.[1] ?? "").trim().slice(0, 20);
         const auto = padraoDe(v.sku);
         return {
-          sku: v.sku, opcao, peso: emTexto(conferidas.get(v.sku)?.peso_kg) || pesoDaOpcao(opcao),
+          sku: v.sku, opcao, opcao2, peso: emTexto(conferidas.get(v.sku)?.peso_kg) || pesoDaOpcao(opcao),
           comp: auto.comp, larg: auto.larg, alt: auto.alt,
           preco: pelaMargem.get(v.sku) ? dinheiro(pelaMargem.get(v.sku)!) : v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: auto.estoque,
           foto_path: foto?.storage_path ?? null, foto_url: foto ? urls[foto.storage_path] ?? null : null,
         };
       }).sort((a, z) => (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1) || a.sku.localeCompare(z.sku));
+      // com dois grupos: agrupado pela 1ª opção (a cor), na ordem em que aparece, e dentro dela pela quantidade
+      if (grades.length === 2) {
+        const ordem = [...new Set(linhas.map((l) => l.opcao))];
+        linhas.sort((a, z) => ordem.indexOf(a.opcao) - ordem.indexOf(z.opcao) || (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1));
+      }
       const criado = ((pub.data ?? []) as { item_id: string | null; operacao: string | null }[]).find((p) => p.item_id)?.item_id ?? null;
       const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null; status: string | null }[];
-      return { empresa, linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
+      return { empresa, linhas, grades, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
 
   const [itemId, setItemId] = useState("");
   const [grade, setGrade] = useState("Tamanho");
+  const [grade2, setGrade2] = useState(""); // 2º grupo (ex.: Quantidade); vazio = um grupo só
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [comFotos, setComFotos] = useState(true);
   const [auto, setAuto] = useState(true);
@@ -138,26 +157,28 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   // O QUE FOI DIGITADO (nome da opção, estoque, peso e medidas) fica guardado neste navegador, por produto:
   // volta ao recarregar a página e vale para a outra loja mesmo que a 1ª criação tenha falhado.
   const guarda = `ia.variacoes.${sku}`;
-  type Digitado = Pick<Linha, "opcao" | "estoque" | "peso" | "comp" | "larg" | "alt">;
+  type Digitado = Pick<Linha, "opcao" | "opcao2" | "estoque" | "peso" | "comp" | "larg" | "alt">;
   useEffect(() => {
     if (!q.data || q.isPlaceholderData || q.data.empresa !== empresa || iniciado.current === empresa) return;
     const nova = q.data.linhas;
     if (iniciado.current === null) {
-      let salvo: { grade?: string; linhas?: Record<string, Partial<Digitado>> } = {};
+      let salvo: { grade?: string; grade2?: string; linhas?: Record<string, Partial<Digitado>> } = {};
       try { salvo = JSON.parse(localStorage.getItem(guarda) ?? "{}") ?? {}; } catch { /* sem armazenamento: segue com o padrão */ }
-      if (salvo.grade) setGrade(String(salvo.grade).slice(0, 14));
+      const gs = q.data.grades ?? [];
+      if (gs.length === 2) { setGrade(String(salvo.grade || gs[0]).slice(0, 14)); setGrade2(String(salvo.grade2 || gs[1]).slice(0, 14)); }
+      else if (salvo.grade) setGrade(String(salvo.grade).slice(0, 14));
       setLinhas(nova.map((n) => {
         const d = salvo.linhas?.[n.sku];
         if (!d) return n;
         const ou = (v: string | undefined, padrao: string) => (v != null && String(v).trim() !== "" ? String(v) : padrao);
-        return { ...n, opcao: ou(d.opcao, n.opcao).slice(0, 20), estoque: ou(d.estoque === "0" ? "" : d.estoque, n.estoque), peso: ou(d.peso, n.peso), comp: ou(d.comp, n.comp), larg: ou(d.larg, n.larg), alt: ou(d.alt, n.alt) };
+        return { ...n, opcao: ou(d.opcao, n.opcao).slice(0, 20), opcao2: ou(d.opcao2, n.opcao2).slice(0, 20), estoque: ou(d.estoque === "0" ? "" : d.estoque, n.estoque), peso: ou(d.peso, n.peso), comp: ou(d.comp, n.comp), larg: ou(d.larg, n.larg), alt: ou(d.alt, n.alt) };
       }));
       setComFotos(nova.length > 0 && nova.every((l) => l.foto_path));
     }
     else {
       setLinhas((antes) => nova.map((n) => {
         const a = antes.find((x) => x.sku === n.sku);
-        return a ? { ...n, opcao: a.opcao, estoque: a.estoque, peso: a.peso, comp: a.comp, larg: a.larg, alt: a.alt } : n;
+        return a ? { ...n, opcao: a.opcao, opcao2: a.opcao2, estoque: a.estoque, peso: a.peso, comp: a.comp, larg: a.larg, alt: a.alt } : n;
       }));
       setFeito(null); setPrevia(null); setNoAr(null);
     }
@@ -168,14 +189,14 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     if (iniciado.current === null || !linhas.length) return;
     try {
       const padrao = new Map((q.data?.linhas ?? []).map((l) => [l.sku, l]));
-      const campos = ["opcao", "estoque", "peso", "comp", "larg", "alt"] as const;
+      const campos = ["opcao", "opcao2", "estoque", "peso", "comp", "larg", "alt"] as const;
       const mudou = Object.fromEntries(linhas.map((l) => {
         const p = padrao.get(l.sku);
         return [l.sku, Object.fromEntries(campos.filter((c) => !p || l[c] !== p[c]).map((c) => [c, l[c]]))];
       }).filter(([, v]) => Object.keys(v as object).length > 0));
-      localStorage.setItem(guarda, JSON.stringify({ grade, linhas: mudou }));
+      localStorage.setItem(guarda, JSON.stringify({ grade, grade2, linhas: mudou }));
     } catch { /* sem armazenamento: só não lembra */ }
-  }, [linhas, grade, guarda]);
+  }, [linhas, grade, grade2, guarda]);
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
   useEffect(() => {
     const ouvir = (ev: Event) => {
@@ -194,12 +215,16 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const junto = useRef(false);
   junto.current = auto && linhas.length >= 2;
 
-  const todasComFoto = linhas.length > 0 && linhas.every((l) => l.foto_path);
+  const doisGrupos = !!grade2.trim();
+  // foto da opção: com dois grupos, a Shopee só tem foto no 1º (a cor) — basta uma foto por cor
+  const todasComFoto = linhas.length > 0 && (doisGrupos
+    ? [...new Set(linhas.map((l) => l.opcao))].every((o) => linhas.some((l) => l.opcao === o && l.foto_path))
+    : linhas.every((l) => l.foto_path));
   const mandarFotos = comFotos && todasComFoto;
   const corpo = (item = itemId) => ({
-    empresa, item_id: item.trim(), grade: grade.trim(),
+    empresa, item_id: item.trim(), grade: grade.trim(), ...(doisGrupos ? { grade2: grade2.trim() } : {}),
     variacoes: linhas.map((l) => ({
-      sku: l.sku, opcao: l.opcao.trim(), preco: paraNumero(l.preco) || 0, estoque: Number(l.estoque) || 0, foto_path: mandarFotos ? l.foto_path : null,
+      sku: l.sku, opcao: l.opcao.trim(), ...(doisGrupos ? { opcao2: l.opcao2.trim() } : {}), preco: paraNumero(l.preco) || 0, estoque: Number(l.estoque) || 0, foto_path: mandarFotos ? l.foto_path : null,
       peso_kg: paraNumero(l.peso) || null, comprimento_cm: paraNumero(l.comp) || null, largura_cm: paraNumero(l.larg) || null, altura_cm: paraNumero(l.alt) || null,
     })),
   });
@@ -273,8 +298,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   // o que já dá para ver daqui, antes de enviar (o servidor confere de novo)
   const faltas = [
     !grade.trim() ? "dê um nome ao grupo de opções" : "",
-    linhas.some((l) => !l.opcao.trim()) ? "há opção sem nome" : "",
-    new Set(linhas.map((l) => l.opcao.trim().toLowerCase())).size !== linhas.length ? "há duas opções com o mesmo nome" : "",
+    linhas.some((l) => !l.opcao.trim() || (doisGrupos && !l.opcao2.trim())) ? "há opção sem nome" : "",
+    new Set(linhas.map((l) => `${l.opcao.trim().toLowerCase()}|${doisGrupos ? l.opcao2.trim().toLowerCase() : ""}`)).size !== linhas.length ? "há duas opções com o mesmo nome" : "",
     linhas.some((l) => !(paraNumero(l.preco) > 0)) ? "há variação sem preço" : "",
     linhas.some((l) => { const n = [l.comp, l.larg, l.alt].filter((x) => paraNumero(x) > 0).length; return n > 0 && n < 3; }) ? "medidas da variação: preencha comprimento, largura e altura juntos (ou deixe os três em branco)" : "",
   ].filter(Boolean);
@@ -297,7 +322,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       toast.error("Há pendência para criar as variações", { description: dados.pendencias.join(" · ") || "anúncio não encontrado na Shopee", duration: 20000 });
       return;
     }
-    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${dados.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).\nO anúncio vai ao AR em seguida.`)) return;
+    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${dados.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao}${doisGrupos ? ` · ${l.opcao2}` : ""} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).\nO anúncio vai ao AR em seguida.`)) return;
     await criar(itemId.trim());
   }
   const jaTem = q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.tem_variacao;
@@ -334,14 +359,20 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
             <span className="text-xs text-muted-foreground">{noAr === true ? "O anúncio já está no ar. Confira no Tiny se foi ligado aos produtos pelo SKU." : "Confira no Tiny se o anúncio foi ligado aos produtos pelo SKU e ative no Seller Center."}</span></p>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-[200px_1fr] items-end">
-              <label className="text-xs font-medium">Nome do grupo de opções
+            <div className={`grid gap-3 items-end ${doisGrupos ? "sm:grid-cols-[150px_150px_1fr]" : "sm:grid-cols-[200px_1fr]"}`}>
+              <label className="text-xs font-medium">{doisGrupos ? "1º grupo de opções" : "Nome do grupo de opções"}
                 <Input className="h-8 mt-1" value={grade} maxLength={14} onChange={(e) => setGrade(e.target.value)} />
               </label>
+              {doisGrupos && (
+                <label className="text-xs font-medium">2º grupo de opções
+                  <Input className="h-8 mt-1" value={grade2} maxLength={14} onChange={(e) => setGrade2(e.target.value)} />
+                </label>
+              )}
               <div className="flex flex-wrap gap-x-5 gap-y-1.5">
                 <label className={`flex items-center gap-2 text-xs select-none ${todasComFoto ? "cursor-pointer" : "text-muted-foreground"}`}>
                   <input type="checkbox" className="h-4 w-4 accent-primary" checked={mandarFotos} disabled={!todasComFoto} onChange={(e) => setComFotos(e.target.checked)} />
-                  {todasComFoto ? "Usar a foto de cada variação como foto da opção" : "Sem foto por opção: nem todas as variações têm foto gerada (bloco Fotos das variações)"}
+                  {todasComFoto ? (doisGrupos ? `Usar uma foto por ${grade.trim().toLowerCase() || "opção"} (a da 1ª variação dela)` : "Usar a foto de cada variação como foto da opção")
+                    : doisGrupos ? `Sem foto por opção: falta foto em alguma ${grade.trim().toLowerCase() || "opção"} (bloco Fotos das variações)` : "Sem foto por opção: nem todas as variações têm foto gerada (bloco Fotos das variações)"}
                 </label>
                 <label className="flex items-center gap-2 text-xs select-none cursor-pointer">
                   <input type="checkbox" className="h-4 w-4 accent-primary" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
@@ -353,13 +384,14 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
 
             <div className="overflow-x-auto">
               <div className="space-y-1.5 min-w-[860px]">
-                <div className="grid grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px] gap-2 text-[11px] text-muted-foreground">
-                  <span /><span>Opção (até 20 letras)</span><span>SKU</span><span>Preço (R$)</span><span>Estoque</span><span>Peso (kg)</span><span>Compr.</span><span>Larg.</span><span>Alt. (cm)</span>
+                <div className={`grid ${doisGrupos ? "grid-cols-[56px_1fr_110px_70px_100px_80px_84px_64px_64px_64px]" : "grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px]"} gap-2 text-[11px] text-muted-foreground`}>
+                  <span /><span>{doisGrupos ? grade || "1º grupo" : "Opção (até 20 letras)"}</span>{doisGrupos && <span>{grade2 || "2º grupo"}</span>}<span>SKU</span><span>Preço (R$)</span><span>Estoque</span><span>Peso (kg)</span><span>Compr.</span><span>Larg.</span><span>Alt. (cm)</span>
                 </div>
                 {linhas.map((l, i) => (
-                  <div key={l.sku} className="grid grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px] gap-2 items-center">
+                  <div key={l.sku} className={`grid ${doisGrupos ? "grid-cols-[56px_1fr_110px_70px_100px_80px_84px_64px_64px_64px]" : "grid-cols-[56px_1fr_70px_100px_80px_84px_64px_64px_64px]"} gap-2 items-center`}>
                     <div className="h-14 w-14 rounded border bg-muted/40 overflow-hidden">{l.foto_url && <a href={l.foto_url} target="_blank" rel="noreferrer" title="abrir a foto"><img src={l.foto_url} alt="" className="h-full w-full object-cover" /></a>}</div>
                     <Input className="h-8" value={l.opcao} maxLength={20} onChange={(e) => mudar(i, { opcao: e.target.value })} />
+                    {doisGrupos && <Input className="h-8" value={l.opcao2} maxLength={20} onChange={(e) => mudar(i, { opcao2: e.target.value })} />}
                     <span className="font-mono text-xs">{l.sku}</span>
                     <Input className="h-8 text-right tabular-nums" inputMode="decimal" value={l.preco} onChange={(e) => mudar(i, { preco: e.target.value })} />
                     <Input className="h-8 text-right tabular-nums" inputMode="numeric" value={l.estoque} onChange={(e) => mudar(i, { estoque: e.target.value.replace(/\D/g, "") })} />

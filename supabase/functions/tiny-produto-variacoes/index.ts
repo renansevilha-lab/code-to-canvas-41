@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v5 (13/out/2026)
+// Edge Function: tiny-produto-variacoes v6 (14/out/2026)
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -35,6 +35,13 @@
 //   do Tiny (`externo: false` — o endereço assinado daqui vence, então nunca como endereço externo) e o 1º
 //   anexo do produto passa a ser a foto dele no sistema na hora (`produtos.foto_capa`). Só aceita foto que é
 //   do anúncio daquele SKU. Para aos ~24 s e devolve `faltou` (o que não deu tempo), para a tela continuar.
+// v6 (14/out/2026, pedido do dono: carpete em 5 cores × quantidades num anúncio só): VÁRIAS BASES e DUAS GRADES.
+//   `grades: ["Cor", "Quantidade"]` e cada variação com `base_sku` (o produto daquela cor) e `valores: ["Bege", "2 un"]`
+//   → a variação vira kit de N× o produto DA COR dela (a venda baixa o estoque certo). Sem `grades`/`valores`
+//   vale o formato antigo (`grade` + `rotulo`, uma base). Para caber nos 30 s com muitas variações: o espelho é
+//   gravado logo depois do POST e os kits/fotos param aos ~20 s — o que faltou volta com `pendente: true` (kit)
+//   e em `foto.sem_foto`, e a tela termina pelos módulos `kit` e `foto`. A foto de cada variação é a do produto DA COR dela.
+//   POST ?modulo=grade {sku_pai} → grade(s) e valores de cada variação, lidos ao vivo do Tiny (só leitura).
 // Regras: sessão de usuário com o módulo `ia`; escrita NÃO é repetida (um POST repetido criaria
 // produto em dobro); a v2 tem limite de 60 chamadas/min e no código 6 a função para.
 // ============================================================================
@@ -107,18 +114,29 @@ const erroV2 = (ret: any) => {
   return { codigo: String(reg?.codigo_erro ?? ret?.codigo_erro ?? ""), texto: erros || String(ret?.status ?? "erro") };
 };
 
-type Variacao = { sku: string; rotulo: string; quantidade: number; preco: number };
-type Pedido = { baseSku: string; nome: string; skuPai: string; grade: string; variacoes: Variacao[] };
+/** `valores` = um valor por grade (["Bege", "2 un"]); `rotulo` = os valores juntos ("Bege - 2 un"), que é o fim do nome. */
+type Variacao = { sku: string; rotulo: string; valores: string[]; baseSku: string; quantidade: number; preco: number };
+type Pedido = { baseSku: string; nome: string; skuPai: string; grade: string; grades: string[]; variacoes: Variacao[] };
 function lerPedido(body: Record<string, any>): Pedido {
-  return {
-    baseSku: String(body.base_sku ?? "").trim(), nome: String(body.nome ?? "").trim(), skuPai: String(body.sku_pai ?? "").trim(),
-    grade: String(body.grade ?? "Tamanho").trim() || "Tamanho",
-    variacoes: (Array.isArray(body.variacoes) ? body.variacoes : []).map((v: any) => ({
-      sku: String(v?.sku ?? "").trim(), rotulo: String(v?.rotulo ?? "").trim(),
+  const baseSku = String(body.base_sku ?? "").trim();
+  const grades: string[] = (Array.isArray(body.grades) && body.grades.length ? body.grades : [body.grade ?? "Tamanho"])
+    .map((g: unknown) => String(g ?? "").trim() || "Tamanho").slice(0, 2);
+  const variacoes: Variacao[] = (Array.isArray(body.variacoes) ? body.variacoes : []).map((v: any) => {
+    const valores = (Array.isArray(v?.valores) && v.valores.length ? v.valores : [v?.rotulo ?? ""])
+      .map((x: unknown) => String(x ?? "").trim()).slice(0, grades.length) as string[];
+    return {
+      sku: String(v?.sku ?? "").trim(), valores, rotulo: valores.join(" - "),
+      baseSku: String(v?.base_sku ?? "").trim() || baseSku,
       quantidade: Math.floor(num(v?.quantidade) ?? 0), preco: num(v?.preco) ?? 0,
-    })),
+    };
+  });
+  return {
+    baseSku: baseSku || variacoes[0]?.baseSku || "", nome: String(body.nome ?? "").trim(), skuPai: String(body.sku_pai ?? "").trim(),
+    grade: grades[0], grades, variacoes,
   };
 }
+/** Bases distintas do pedido, na ordem em que aparecem (a 1ª é a principal: dela saem unidade, NCM, marca e categoria). */
+const basesDe = (pd: Pedido) => [...new Set([pd.baseSku, ...pd.variacoes.map((v) => v.baseSku)].filter(Boolean))];
 
 /** Produto base no espelho + o cadastro dele no Tiny (de onde saem unidade, NCM, origem, marca e categoria). */
 async function carregarBase(token: string, sku: string) {
@@ -134,11 +152,15 @@ async function skusOcupados(token: string, skus: string[]): Promise<Map<string, 
   const out = new Map<string, string>();
   const { data } = await db.from("produtos").select("sku, nome").in("sku", skus);
   for (const x of ((data ?? []) as any[])) out.set(String(x.sku), `já está em uso por OUTRO produto do catálogo ("${String(x.nome ?? "").slice(0, 60)}"): troque o número`);
-  for (const s of skus) {
-    if (out.has(s)) continue;
-    const r = await v3(token, "GET", `/produtos?codigo=${encodeURIComponent(s)}&limit=1`);
-    const it = (r.body?.itens ?? [])[0];
-    if (it && String(it.sku) === s) out.set(s, `já está em uso no Tiny por OUTRO produto ("${String(it.descricao ?? "").slice(0, 60)}"): troque o número`);
+  // v6: ao vivo no Tiny de 6 em 6 (com 30+ variações, um por vez estourava o tempo da função)
+  const faltam = skus.filter((s) => !out.has(s));
+  for (let i = 0; i < faltam.length; i += 6) {
+    if (i) await sleep(400);
+    await Promise.all(faltam.slice(i, i + 6).map(async (s) => {
+      const r = await v3(token, "GET", `/produtos?codigo=${encodeURIComponent(s)}&limit=1`);
+      const it = (r.body?.itens ?? [])[0];
+      if (it && String(it.sku) === s) out.set(s, `já está em uso no Tiny por OUTRO produto ("${String(it.descricao ?? "").slice(0, 60)}"): troque o número`);
+    }));
   }
   return out;
 }
@@ -169,48 +191,76 @@ async function skusLivres(token: string, quantos: number): Promise<string[]> {
 
 async function conferir(token: string, pd: Pedido) {
   const pend: string[] = []; const avisos: string[] = [];
-  const base = await carregarBase(token, pd.baseSku);
-  if (base.det.tipo !== "S") pend.push(`o produto base precisa ser SIMPLES no Tiny (este é do tipo ${base.det.tipo})`);
-  if (base.det.tipoVariacao && base.det.tipoVariacao !== "N") pend.push("o produto base já é pai ou variação de outro produto");
+  const skusBase = basesDe(pd);
+  if (skusBase.length > 20) throw new Error("no máximo 20 produtos base");
+  // cada base, lida no espelho e AO VIVO no Tiny (uma por vez: o Tiny limita as chamadas)
+  const bases = new Map<string, Awaited<ReturnType<typeof carregarBase>>>();
+  for (const s of skusBase) bases.set(s, await carregarBase(token, s));
+  const base = bases.get(pd.baseSku)!;
+  const multi = skusBase.length > 1;
+  for (const [s, b] of bases) {
+    const quem = multi ? `o produto base ${s}` : "o produto base";
+    if (b.det.tipo !== "S") pend.push(`${quem} precisa ser SIMPLES no Tiny (é do tipo ${b.det.tipo})`);
+    if (b.det.tipoVariacao && b.det.tipoVariacao !== "N") pend.push(`${quem} já é pai ou variação de outro produto`);
+  }
   if (!pd.nome) pend.push("dê um nome ao produto com variações");
   if (!/^[A-Za-z0-9._-]{1,30}$/.test(pd.skuPai)) pend.push("informe o SKU do produto pai (letras, números, ponto ou hífen)");
+  pd.grades.forEach((g) => { if (g.length > 14) pend.push(`o nome da grade "${g}" tem ${g.length} caracteres (a Shopee aceita até 14)`); });
+  if (pd.grades.length === 2 && pd.grades[0].toLowerCase() === pd.grades[1].toLowerCase()) pend.push("as duas grades têm o mesmo nome");
   if (pd.variacoes.length < 2) pend.push("informe ao menos 2 variações");
-  if (pd.variacoes.length > 12) pend.push("no máximo 12 variações por produto");
+  if (pd.variacoes.length > 50) pend.push("no máximo 50 variações por produto (limite da Shopee)");
   pd.variacoes.forEach((v, i) => {
     const n = `variação ${i + 1}`;
-    if (!v.rotulo) pend.push(`${n}: escreva o nome (ex.: "2 unidades")`);
-    else if (v.rotulo.length > 30) pend.push(`${n}: o nome tem ${v.rotulo.length} caracteres (a Shopee aceita até 30)`);
+    v.valores.forEach((x, j) => {
+      const g = pd.grades.length > 1 ? ` (${pd.grades[j]})` : "";
+      if (!x) pend.push(`${n}: escreva o nome da opção${g} (ex.: "2 unidades")`);
+      else if (x.length > 20) pend.push(`${n}: "${x}" tem ${x.length} caracteres (a Shopee aceita até 20)`);
+    });
+    if (v.valores.length < pd.grades.length) pend.push(`${n}: falta o valor de cada grade`);
     if (!/^[A-Za-z0-9._-]{1,30}$/.test(v.sku)) pend.push(`${n}: informe o SKU`);
     if (!(v.quantidade >= 1)) pend.push(`${n}: a quantidade do produto base no kit precisa ser 1 ou mais`);
     if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
   });
   const todos = [pd.skuPai, ...pd.variacoes.map((v) => v.sku)].filter(Boolean);
   if (new Set(todos).size !== todos.length) pend.push("há SKU repetido entre o pai e as variações");
+  if (todos.some((s) => skusBase.includes(s))) pend.push("um SKU novo é igual ao de um produto base");
   if (new Set(pd.variacoes.map((v) => v.rotulo.toLowerCase())).size !== pd.variacoes.length) pend.push("há duas variações com o mesmo nome");
+  if (pd.grades.length === 2) {
+    // a Shopee exige a grade COMPLETA: toda cor com toda quantidade
+    const a = new Set(pd.variacoes.map((v) => v.valores[0]?.toLowerCase())); const b = new Set(pd.variacoes.map((v) => v.valores[1]?.toLowerCase()));
+    if (a.size * b.size !== pd.variacoes.length) pend.push(`a grade precisa estar completa: ${a.size} × ${b.size} = ${a.size * b.size} combinações, mas há ${pd.variacoes.length}`);
+  }
   if (!pend.length) {
     const ocupados = await skusOcupados(token, todos);
     for (const [s, motivo] of ocupados) pend.push(`SKU ${s} ${motivo}`);
   }
   if (!V2_TOKEN) pend.push("falta a chave da API antiga do Tiny (TINY_V2_TOKEN): sem ela a variação não vira kit");
-  if (base.custo == null) avisos.push("o produto base está sem custo na gestão: o kit vai ficar sem CMV");
-  if (!fotoPrincipal(base.det)) avisos.push("o produto base não tem foto no Tiny: o produto novo vai nascer sem foto");
-  else avisos.push("o pai e cada variação recebem a foto principal do produto base");
+  for (const [s, b] of bases) if (b.custo == null) avisos.push(`${multi ? `o produto ${s}` : "o produto base"} está sem custo na gestão: o kit vai ficar sem CMV`);
+  const semFotoBase = [...bases].filter(([, b]) => !fotoPrincipal(b.det)).map(([s]) => s);
+  if (semFotoBase.length) avisos.push(`sem foto no Tiny: ${semFotoBase.join(", ")} — as variações dele(s) nascem sem foto`);
+  else avisos.push(multi ? "cada variação recebe a foto principal do produto da cor dela; o pai, a do primeiro" : "o pai e cada variação recebem a foto principal do produto base");
   avisos.push("o produto é criado no Tiny e fica ATIVO; excluir pela API não funciona — se criar por engano, apague na tela do Tiny");
-  avisos.push("o estoque de cada variação é o do kit (sai do produto base); o envio para a Shopee é feito depois, pelo Tiny");
+  avisos.push(multi ? "o estoque de cada variação é o do kit: sai do produto da cor dela" : "o estoque de cada variação é o do kit (sai do produto base); o envio para a Shopee é feito depois, pelo Tiny");
+  if (pd.variacoes.length > 12) avisos.push(`com ${pd.variacoes.length} variações, transformar todas em kit leva mais de 30 s: a tela termina sozinha o que faltar`);
   const d = base.det;
   const corpo: Record<string, unknown> = {
-    tipo: "V", sku: pd.skuPai, descricao: pd.nome, unidade: d.unidade || "UN", origem: Number(d.origem ?? 0), grade: [pd.grade],
-    ...(d.ncm ? { ncm: d.ncm } : {}), ...(d.gtin ? { gtin: d.gtin } : {}),
+    tipo: "V", sku: pd.skuPai, descricao: pd.nome, unidade: d.unidade || "UN", origem: Number(d.origem ?? 0), grade: pd.grades,
+    ...(d.ncm ? { ncm: d.ncm } : {}), ...(!multi && d.gtin ? { gtin: d.gtin } : {}),
     ...(d.marca?.id ? { marca: { id: d.marca.id } } : {}), ...(d.categoria?.id ? { categoria: { id: d.categoria.id } } : {}),
     precos: { preco: Math.max(...pd.variacoes.map((v) => v.preco), 0) },
-    variacoes: pd.variacoes.map((v) => ({ sku: v.sku, ...(d.gtin ? { gtin: d.gtin } : {}), precos: { preco: v.preco }, grade: [{ chave: pd.grade, valor: v.rotulo }] })),
+    variacoes: pd.variacoes.map((v) => {
+      const gtin = bases.get(v.baseSku)?.det.gtin;
+      return { sku: v.sku, ...(gtin ? { gtin } : {}), precos: { preco: v.preco }, grade: pd.grades.map((g, j) => ({ chave: g, valor: v.valores[j] ?? "" })) };
+    }),
   };
+  const custoDe = (v: Variacao) => { const c = bases.get(v.baseSku)?.custo; return c != null ? Number((c * v.quantidade).toFixed(2)) : null; };
   return {
-    base, corpo, pendencias: [...new Set(pend)], avisos,
+    base, bases, corpo, pendencias: [...new Set(pend)], avisos,
     previa: {
       base: { sku: pd.baseSku, nome: d.descricao, preco: num(d.precos?.preco), custo: base.custo, marca: d.marca?.nome ?? null, ncm: d.ncm ?? null },
-      pai: { sku: pd.skuPai, nome: pd.nome, grade: pd.grade },
-      variacoes: pd.variacoes.map((v) => ({ ...v, nome: `${pd.nome} - ${v.rotulo}`, custo: base.custo != null ? Number((base.custo * v.quantidade).toFixed(2)) : null })),
+      bases: [...bases].map(([s, b]) => ({ sku: s, nome: b.det.descricao, preco: num(b.det.precos?.preco), custo: b.custo })),
+      pai: { sku: pd.skuPai, nome: pd.nome, grade: pd.grade, grades: pd.grades },
+      variacoes: pd.variacoes.map((v) => ({ ...v, base_sku: v.baseSku, nome: `${pd.nome} - ${v.rotulo}`, custo: custoDe(v) })),
     },
   };
 }
@@ -260,22 +310,40 @@ async function porFoto(token: string, id: number, url: string, externo?: boolean
 /** A família criada pelo app (pai + variações) recebe a foto principal do produto base — só quem ainda não tem foto. */
 async function fotosDaFamilia(token: string, skuPai: string, dry: boolean, externo?: boolean) {
   if (!/^[A-Za-z0-9._-]{1,30}$/.test(skuPai)) return { ok: false, erro: "informe sku_pai" };
-  const { data } = await db.from("produtos").select("sku, id_tiny, nome, sku_base, criado_app_em")
+  const t0 = Date.now();
+  const { data } = await db.from("produtos").select("sku, id_tiny, nome, sku_base, criado_app_em, foto_capa")
     .or(`sku.eq.${skuPai},sku_pai.eq.${skuPai}`).not("criado_app_em", "is", null).not("id_tiny", "is", null).order("sku");
   const linhas = (data ?? []) as any[];
   const pai = linhas.find((x) => x.sku === skuPai);
   if (!pai?.sku_base) return { ok: false, erro: `o produto ${skuPai} não foi criado pelo app (não sei qual é o produto base dele)` };
   const base = await carregarBase(token, String(pai.sku_base));
   const url = fotoPrincipal(base.det);
-  if (!url) return { ok: false, erro: `o produto base ${pai.sku_base} não tem foto no Tiny` };
+  // v6: cada variação recebe a foto do produto DELA (o componente do kit — no carpete, a cor); sem kit, a do base
+  const { data: ks } = await db.from("produto_kits").select("sku_kit, sku_componente").in("sku_kit", linhas.map((x) => x.sku));
+  const compDe = new Map<string, string>();
+  for (const k of ((ks ?? []) as any[])) compDe.set(String(k.sku_kit), compDe.has(String(k.sku_kit)) ? "" : String(k.sku_componente));
+  const fotoDeBase = new Map<string, string | null>([[String(pai.sku_base), url]]);
+  const fotoPara = async (sku: string): Promise<string | null> => {
+    const comp = compDe.get(sku) || String(pai.sku_base);
+    if (!fotoDeBase.has(comp)) {
+      try { fotoDeBase.set(comp, fotoPrincipal((await carregarBase(token, comp)).det)); } catch { fotoDeBase.set(comp, null); }
+    }
+    return fotoDeBase.get(comp) ?? null;
+  };
+  if (!url && !compDe.size) return { ok: false, erro: `o produto base ${pai.sku_base} não tem foto no Tiny` };
   const itens: Record<string, unknown>[] = [];
   for (const p of linhas) {
+    // v6: quem já tem foto no espelho não é relido; e para aos ~22 s (`pendente`: a tela chama de novo)
+    if (p.foto_capa && !dry) { itens.push({ sku: p.sku, ok: true, ja_tinha: true, url: p.foto_capa }); continue; }
+    if (Date.now() - t0 > 22_000) { itens.push({ sku: p.sku, ok: false, pendente: true, erro: "não coube nesta chamada" }); continue; }
     const g = await v3(token, "GET", `/produtos/${p.id_tiny}`);
     if (g.status !== 200) { itens.push({ sku: p.sku, ok: false, erro: erroV3(g.body) || g.status }); continue; }
     const atual = fotoPrincipal(g.body);
     if (atual) { itens.push({ sku: p.sku, ok: true, ja_tinha: true, url: atual }); continue; }
+    const foto = await fotoPara(String(p.sku));
+    if (!foto) { itens.push({ sku: p.sku, ok: false, erro: "o produto base dele não tem foto no Tiny" }); continue; }
     if (dry) { itens.push({ sku: p.sku, ok: true, faria: true }); continue; }
-    const r = await porFoto(token, Number(p.id_tiny), url, externo);
+    const r = await porFoto(token, Number(p.id_tiny), foto, externo);
     if (r.ok) await db.from("produtos").update({ foto_capa: r.url }).eq("sku", p.sku);
     itens.push({ sku: p.sku, ok: r.ok, externo: r.externo, url: r.url, erro: r.erro, resposta: r.resposta });
   }
@@ -284,6 +352,7 @@ async function fotosDaFamilia(token: string, skuPai: string, dry: boolean, exter
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  const inicio = Date.now(); // orçamento de tempo do `criar` (o limite da função é ~30 s)
   // ensaio da foto (12/out, noite): só com o código do ensaio e até o prazo; depois disso este trecho não faz nada.
   //  ?ids=…&base_sku=… → põe a foto do produto base em produto DE TESTE (nome começa com "TESTE APP")
   //  ?sku_pai=…        → a família criada pelo app recebe a foto do produto base dela (&dry=1 só mostra)
@@ -320,7 +389,7 @@ Deno.serve(async (req) => {
     if (modulo === "sugerir") {
       const base = await carregarBase(token, String(body.base_sku ?? "").trim());
       // próximos SKUs livres, conferidos ao vivo no Tiny (sugestão; a pessoa pode trocar)
-      const n = Math.min(Math.max(Math.floor(num(body.n) ?? 4), 1), 13);
+      const n = Math.min(Math.max(Math.floor(num(body.n) ?? 4), 1), 51);
       const livres = await skusLivres(token, n);
       const d = base.det;
       return json({
@@ -328,6 +397,20 @@ Deno.serve(async (req) => {
         base: { sku: base.espelho.sku, nome: d.descricao, tipo: d.tipo, tipo_variacao: d.tipoVariacao ?? "N", preco: num(d.precos?.preco), custo: base.custo, marca: d.marca?.nome ?? null },
         skus: livres,
       });
+    }
+
+    if (modulo === "grade") {
+      // só leitura: a(s) grade(s) do produto pai e o valor de cada variação, como estão no Tiny
+      const skuPai = String(body.sku_pai ?? "").trim();
+      const { data: p } = await db.from("produtos").select("sku, id_tiny").eq("sku", skuPai).maybeSingle();
+      if (!p?.id_tiny) return json({ ok: false, erro: `produto ${skuPai} sem o código do Tiny` }, 400);
+      const g = await v3(token, "GET", `/produtos/${p.id_tiny}`);
+      if (g.status !== 200) return json({ ok: false, erro: `não consegui ler ${skuPai} no Tiny: ${erroV3(g.body) || g.status}` }, 200);
+      const variacoes = ((g.body?.variacoes ?? []) as any[]).map((v) => ({
+        sku: String(v.sku ?? ""), valores: ((v.grade ?? []) as any[]).map((x) => String(x?.valor ?? "")), chaves: ((v.grade ?? []) as any[]).map((x) => String(x?.chave ?? "")),
+      }));
+      const grades = variacoes[0]?.chaves ?? [];
+      return json({ ok: true, sku_pai: skuPai, grades, variacoes: variacoes.map(({ sku, valores }) => ({ sku, valores })) });
     }
 
     if (modulo === "foto") {
@@ -400,7 +483,7 @@ Deno.serve(async (req) => {
     if (!pd.baseSku) return json({ ok: false, erro: "informe base_sku" }, 400);
     const c = await conferir(token, pd);
     if (modulo === "previa") return json({ ok: true, previa: c.previa, pendencias: c.pendencias, avisos: c.avisos });
-    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar, kit ou foto" }, 400);
+    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar, kit, foto, fotos-anuncio ou grade" }, 400);
     if (body.confirmar !== true) return json({ ok: false, erro: "criar exige confirmar: true" }, 400);
     if (c.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: c.pendencias }, 400);
 
@@ -422,56 +505,68 @@ Deno.serve(async (req) => {
     passos.push({ passo: "produto com variações criado no Tiny", ok: true, sku: pd.skuPai, id: idPai });
     const criadas = ((cr.body?.variacoes ?? []) as any[]).map((v) => ({ id: Number(v.id), sku: String(v.codigo) }));
     const agora = new Date().toISOString();
-    const idBase = Number(c.base.espelho.id_tiny);
+    const baseDe = (v: Variacao) => c.bases.get(v.baseSku) ?? c.base;
 
-    // PASSO 2 — cada variação vira kit do produto base
+    // o app já enxerga os produtos novos, sem esperar a sincronização da madrugada. v6: gravado LOGO, antes dos kits
+    // (com muitas variações a chamada pode não chegar ao fim; o pai e as variações já ficam no espelho).
+    // As duas formas de linha têm as MESMAS chaves: o upsert em lote exige isso.
+    const fotoDe = new Map<string, string>(); const okKit = new Set<string>();
+    const linhasEspelho = () => [
+      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, situacao: "A", tipo_variacao: "P", sku_pai: null, id_tiny_pai: null, foto_capa: fotoDe.get(pd.skuPai) ?? null, criado_app_em: agora, sku_base: pd.baseSku, atualizado_em: agora },
+      ...pd.variacoes.filter((v) => criadas.some((x) => x.sku === v.sku)).map((v) => ({
+        sku: v.sku, id_tiny: criadas.find((x) => x.sku === v.sku)!.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: okKit.has(v.sku) ? "K" : "S", preco: v.preco, ativo: true, situacao: "A",
+        tipo_variacao: "V", sku_pai: pd.skuPai, id_tiny_pai: idPai, foto_capa: fotoDe.get(v.sku) ?? null, criado_app_em: agora, sku_base: v.baseSku, atualizado_em: agora,
+      })),
+    ];
+    const up0 = await db.from("produtos").upsert(linhasEspelho(), { onConflict: "sku" });
+
+    // PASSO 2 — cada variação vira kit do produto base DELA (v6: até ~20 s; o que faltar a tela termina pelo `kit`)
     const variacoes: Record<string, unknown>[] = [];
     let parou = false;
     for (const v of pd.variacoes) {
+      const linha = { sku: v.sku, rotulo: v.rotulo, valores: v.valores, base_sku: v.baseSku, quantidade: v.quantidade, preco: v.preco };
       const cv = criadas.find((x) => x.sku === v.sku);
-      if (!cv) { variacoes.push({ ...v, ok: false, erro: "o Tiny não devolveu esta variação" }); continue; }
-      if (parou) { variacoes.push({ ...v, id: cv.id, ok: false, erro: "não tentei: o Tiny pediu para esperar (limite de chamadas) — use \"tentar de novo\" daqui a 1 minuto" }); continue; }
-      const k = await virarKit(token, cv.id, idBase, v.quantidade);
+      if (!cv) { variacoes.push({ ...linha, ok: false, erro: "o Tiny não devolveu esta variação" }); continue; }
+      if (parou) { variacoes.push({ ...linha, id: cv.id, ok: false, pendente: true, erro: "não tentei: o Tiny pediu para esperar (limite de chamadas) — tente de novo daqui a 1 minuto" }); continue; }
+      if (Date.now() - inicio > 20_000) { variacoes.push({ ...linha, id: cv.id, ok: false, pendente: true, erro: "ainda não virou kit (não coube nesta chamada)" }); continue; }
+      const k = await virarKit(token, cv.id, Number(baseDe(v).espelho.id_tiny), v.quantidade);
       if ((k as any).limite) parou = true;
-      variacoes.push({ ...v, id: cv.id, ok: k.ok, erro: k.erro ?? null, tipo: (k as any).tipo ?? "S" });
+      if (k.ok) okKit.add(v.sku);
+      variacoes.push({ ...linha, id: cv.id, ok: k.ok, erro: k.erro ?? null, tipo: (k as any).tipo ?? "S" });
     }
-
-    // PASSO 3 — o pai e cada variação herdam a FOTO PRINCIPAL do produto base (produto recém-criado não tem foto)
-    const fotoBase = fotoPrincipal(c.base.det);
-    const fotoDe = new Map<string, string>(); const semFoto: string[] = [];
-    if (fotoBase) {
-      for (const alvo of [{ sku: pd.skuPai, id: idPai }, ...criadas]) {
-        const f = await porFoto(token, alvo.id, fotoBase);
-        if (f.ok) fotoDe.set(alvo.sku, String(f.url)); else semFoto.push(alvo.sku);
-      }
-      passos.push({ passo: "foto principal do produto base", ok: semFoto.length === 0, com_foto: fotoDe.size, sem_foto: semFoto });
-    }
-
-    // o app já enxerga os produtos novos, sem esperar a sincronização da madrugada
-    const linhas = [
-      // v3: situação e pai gravados na hora (o catálogo agrupa as variações dentro do pai por `sku_pai`).
-      // As duas formas de linha têm as MESMAS chaves: o upsert em lote exige isso.
-      { sku: pd.skuPai, id_tiny: idPai, nome: pd.nome, tipo: "V", preco: (c.corpo.precos as any).preco, ativo: true, situacao: "A", tipo_variacao: "P", sku_pai: null, id_tiny_pai: null, foto_capa: fotoDe.get(pd.skuPai) ?? null, criado_app_em: agora, sku_base: pd.baseSku, atualizado_em: agora },
-      ...variacoes.filter((v: any) => v.id).map((v: any) => ({ sku: v.sku, id_tiny: v.id, nome: `${pd.nome} - ${v.rotulo}`, tipo: v.ok ? "K" : "S", preco: v.preco, ativo: true, situacao: "A", tipo_variacao: "V", sku_pai: pd.skuPai, id_tiny_pai: idPai, foto_capa: fotoDe.get(v.sku) ?? null, criado_app_em: agora, sku_base: pd.baseSku, atualizado_em: agora })),
-    ];
-    const up = await db.from("produtos").upsert(linhas, { onConflict: "sku" });
-    const kits = variacoes.filter((v: any) => v.ok).map((v: any) => ({
-      sku_kit: v.sku, sku_componente: pd.baseSku, quantidade: v.quantidade, nome_kit: `${pd.nome} - ${v.rotulo}`, nome_componente: c.base.det.descricao, atualizado_em: agora,
+    const kits = pd.variacoes.filter((v) => okKit.has(v.sku)).map((v) => ({
+      sku_kit: v.sku, sku_componente: v.baseSku, quantidade: v.quantidade, nome_kit: `${pd.nome} - ${v.rotulo}`, nome_componente: baseDe(v).det.descricao, atualizado_em: agora,
     }));
     if (kits.length) {
       await db.from("produto_kits").delete().in("sku_kit", kits.map((k) => k.sku_kit));
       await db.from("produto_kits").insert(kits);
     }
-    const falhas = variacoes.filter((v: any) => !v.ok).length;
+
+    // PASSO 3 — fotos: o pai recebe a do 1º produto base; cada variação, a do produto base DELA (até ~24 s)
+    const semFoto: string[] = [];
+    const alvos = [{ sku: pd.skuPai, id: idPai, base: c.base }, ...criadas.map((x) => {
+      const v = pd.variacoes.find((y) => y.sku === x.sku); return { ...x, base: v ? baseDe(v) : c.base };
+    })];
+    for (const alvo of alvos) {
+      const foto = fotoPrincipal(alvo.base.det);
+      if (!foto || Date.now() - inicio > 24_000) { semFoto.push(alvo.sku); continue; }
+      const f = await porFoto(token, alvo.id, foto);
+      if (f.ok) fotoDe.set(alvo.sku, String(f.url)); else semFoto.push(alvo.sku);
+    }
+    passos.push({ passo: "foto principal do produto base", ok: semFoto.length === 0, com_foto: fotoDe.size, sem_foto: semFoto });
+    const up = await db.from("produtos").upsert(linhasEspelho(), { onConflict: "sku" });
+
+    const pendentes = variacoes.filter((v: any) => v.pendente).length;
+    const falhas = variacoes.filter((v: any) => !v.ok && !v.pendente).length;
     const avisosFim = [
       falhas ? `${falhas} variação(ões) ficaram como produto simples (sem a composição do kit): use "tentar de novo" ou ajuste no Tiny antes de vender` : null,
-      !fotoBase ? "o produto base não tem foto no Tiny: o produto novo ficou sem foto"
-        : semFoto.length ? `a foto do produto base não entrou em ${semFoto.join(", ")}: use "Copiar a foto do produto base" no menu do produto` : null,
+      pendentes ? `${pendentes} variação(ões) ainda não viraram kit: a tela continua sozinha` : null,
+      semFoto.length ? `${semFoto.length} produto(s) ainda sem foto: a tela continua (ou use "Copiar a foto do produto base" no menu do produto)` : null,
     ].filter(Boolean);
-    await registrar(201, { quem: quem.nome, base: pd.baseSku, pai: { sku: pd.skuPai, id: idPai }, variacoes, espelho: up.error?.message ?? "ok" });
+    await registrar(201, { quem: quem.nome, base: pd.baseSku, bases: [...c.bases.keys()], grades: pd.grades, pai: { sku: pd.skuPai, id: idPai }, variacoes, espelho: up.error?.message ?? up0.error?.message ?? "ok" });
     return json({
-      ok: true, pai: { sku: pd.skuPai, id: idPai, nome: pd.nome }, variacoes, passos, base_sku: pd.baseSku,
-      foto: { url: fotoBase, com_foto: fotoDe.size, sem_foto: semFoto },
+      ok: true, pai: { sku: pd.skuPai, id: idPai, nome: pd.nome }, variacoes, passos, base_sku: pd.baseSku, grades: pd.grades,
+      foto: { url: fotoPrincipal(c.base.det), com_foto: fotoDe.size, sem_foto: semFoto },
       aviso: avisosFim.length ? avisosFim.join(" · ") : null,
     });
   } catch (e) {
