@@ -378,6 +378,36 @@ Deno.serve(async (req) => {
       return json({ ok: true, base: { sku: base.espelho.sku, anexos: base.det.anexos ?? [] }, out });
     } catch (e) { return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500); }
   }
+  // 14/out (pedido do dono): INATIVAR o pai duplicado 16523 e as 4 variações que ficaram simples (o Tiny recusou o kit
+  // por nome repetido do 16506). Só estes 5 SKUs, só até o prazo; o nome ganha " (duplicado, inativo)" no mesmo passo —
+  // sem isso o `alterar` da v2 recusa de novo pelo nome repetido. Uma chamada por produto, sem repetição.
+  if (u0.searchParams.get("modulo") === "inativar-16523") {
+    if (Date.now() > Date.parse("2026-10-15T23:00:00Z") || u0.searchParams.get("chave") !== "d3c9-16523-a71e5b") return json({ erro: "encerrado" }, 410);
+    const PERMITIDOS = ["16524", "16526", "16528", "16530", "16523"]; // variações primeiro, o pai por último
+    try {
+      const tk = await tokenTiny(); const out: Record<string, unknown>[] = [];
+      const { data: esp } = await db.from("produtos").select("sku, id_tiny").in("sku", PERMITIDOS);
+      for (const sku of PERMITIDOS) {
+        const id = Number(((esp ?? []) as any[]).find((x) => x.sku === sku)?.id_tiny);
+        if (!id) { out.push({ sku, pulado: "sem id do Tiny no espelho" }); continue; }
+        const g = await v3(tk, "GET", `/produtos/${id}`);
+        const doPai = sku === "16523" ? g.body?.tipoVariacao === "P" : String(g.body?.produtoPai?.sku ?? "") === "16523";
+        if (g.status !== 200 || String(g.body?.sku) !== sku || !doPai) { out.push({ sku, pulado: "não confere (SKU ou pai diferente)", status: g.status }); continue; }
+        if (g.body?.situacao === "I") { out.push({ sku, ja_estava: "I" }); continue; }
+        const nome = String(g.body.descricao ?? "").includes("(duplicado, inativo)") ? String(g.body.descricao) : `${g.body.descricao} (duplicado, inativo)`;
+        const produto = { sequencia: "1", id, codigo: sku, nome: nome.slice(0, 120), unidade: g.body.unidade || "UN", preco: Number(g.body.precos?.preco ?? 0), origem: String(g.body.origem ?? 0), situacao: "I", tipo: "P" };
+        const ret = await v2("produto.alterar.php", { produto: JSON.stringify({ produtos: [{ produto }] }) });
+        const e = erroV2(ret);
+        const c = await v3(tk, "GET", `/produtos/${id}`);
+        const ok = c.body?.situacao === "I";
+        if (ok) await db.from("produtos").update({ ativo: false, situacao: "I", nome: c.body?.descricao ?? nome, atualizado_em: new Date().toISOString() }).eq("sku", sku);
+        out.push({ sku, ok, situacao: c.body?.situacao, nome: c.body?.descricao, v2: ret?.registros?.[0]?.registro?.status ?? ret?.status, erro: ok ? null : e.texto });
+        if (!ok && e.codigo === "6") break; // limite da v2: para tudo, sem repetir
+      }
+      await db.from("debug_fulfillment").insert({ modulo: "tiny-produto-variacoes", etapa: "16523:inativar", status_http: 200, resultado: { out } });
+      return json({ ok: true, out });
+    } catch (e) { return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500); }
+  }
   if (req.method !== "POST") return json({ erro: "use POST" }, 405);
   const quem = await exigirAcesso(req);
   if (quem instanceof Response) return quem;
