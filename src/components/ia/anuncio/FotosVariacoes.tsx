@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, ImageOff, Images, Loader2, RotateCcw, Sparkles } from "lucide-react";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { chamarIa, ROTULO_ETAPA, urlsAssinadas, type IaBriefing, type IaEtapa, type IaRascunhoImagem } from "@/lib/iaAnuncio";
+import { chamarAproveitar, chamarIa, ROTULO_ETAPA, urlsAssinadas, type IaBriefing, type IaEtapa, type IaRascunhoImagem } from "@/lib/iaAnuncio";
 import { extrairPeso } from "@/lib/prazo";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 
@@ -36,7 +36,10 @@ interface Variacao {
   sku: string; nome: string; quantidade: number; rotulo: string; pesoUnit: string;
   rascunhoId: string | null; temBriefing: boolean;
   imagem: IaRascunhoImagem | null; etapa: IaEtapa | null; url: string | null;
+  /** Foto APROVADA do mesmo kit (mesmo produto base × mesma quantidade) em outro anúncio — entra sem gerar. */
+  gemea: Gemea | null;
 }
+interface Gemea { rascunho_id: string; imagem_id: string; sku: string }
 
 export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAtivos, modelos }: {
   sku: string; nomePai: string; canal: string; empresa: string; briefing: IaBriefing | null;
@@ -57,11 +60,11 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
       if (!vars.length) return [];
       const skus = vars.map((v) => v.sku);
       const [k, r, b] = await Promise.all([
-        supabaseExternal.from("produto_kits").select("sku_kit, quantidade, nome_componente").in("sku_kit", skus),
+        supabaseExternal.from("produto_kits").select("sku_kit, sku_componente, quantidade, nome_componente").in("sku_kit", skus),
         supabaseExternal.from("ia_rascunho").select("id, sku, created_at").in("sku", skus).order("created_at", { ascending: false }),
         supabaseExternal.from("ia_briefing").select("sku").in("sku", skus),
       ]);
-      const kits = (k.data ?? []) as { sku_kit: string; quantidade: number; nome_componente: string | null }[];
+      const kits = (k.data ?? []) as { sku_kit: string; sku_componente: string; quantidade: number; nome_componente: string | null }[];
       const rasc = (r.data ?? []) as { id: string; sku: string }[];
       const comBriefing = new Set(((b.data ?? []) as { sku: string }[]).map((x) => x.sku));
       const ids = rasc.map((x) => x.id);
@@ -73,6 +76,7 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
         ? await supabaseExternal.from("ia_etapa").select("*").in("imagem_id", imagens.map((i) => i.id))
         : { data: [] as IaEtapa[] };
       const etapas = (et.data ?? []) as IaEtapa[];
+      const gemeas = await fotosGemeas(kits, skus).catch(() => new Map<string, Gemea>());
       const urls = await urlsAssinadas(imagens.map((i) => i.storage_path ?? "").filter(Boolean)).catch(() => ({} as Record<string, string>));
 
       return vars.map((v) => {
@@ -95,17 +99,49 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
           rascunhoId: rasc.find((x) => x.sku === v.sku)?.id ?? null, temBriefing: comBriefing.has(v.sku),
           imagem, etapa: imagem ? etapaDe(imagem) : null,
           url: imagem?.storage_path ? urls[imagem.storage_path] ?? null : null,
+          gemea: comp.length === 1 ? gemeas.get(chaveKit(comp[0].sku_componente, comp[0].quantidade)) ?? null : null,
         };
       }).sort((a, z) => a.quantidade - z.quantidade || a.sku.localeCompare(z.sku));
     },
     refetchInterval: (x) => ((x.state.data as Variacao[] | undefined)?.some((v) => ANDANDO.has(v.etapa?.status ?? "")) ? 3000 : false),
   });
   const vars = q.data ?? [];
+
+  // APROVEITAR AUTOMATICAMENTE (14/out/2026, pedido do dono): a variação sem foto que é o MESMO kit de uma
+  // variação de outro anúncio com foto aprovada (ex.: "8kg" = 4× a areia de 2kg nos anúncios "2kg a 10kg" e
+  // "8kg a 20kg") recebe essa foto sozinha, já aprovada — sem gerar e sem custo. Uma vez por abertura do bloco.
+  const aproveitando = useRef(new Set<string>());
+  const [copiando, setCopiando] = useState(false);
+  useEffect(() => {
+    const alvo = (q.data ?? []).filter((v) => v.gemea && !v.imagem?.storage_path && !ANDANDO.has(v.etapa?.status ?? "") && !aproveitando.current.has(v.sku));
+    if (!alvo.length || copiando) return;
+    alvo.forEach((v) => aproveitando.current.add(v.sku));
+    setCopiando(true);
+    void (async () => {
+      const ok: string[] = []; const falhas: string[] = [];
+      for (const v of alvo) {
+        try {
+          const r = await chamarAproveitar("aplicar", {
+            origem_id: v.gemea!.rascunho_id, imagens: [v.gemea!.imagem_id], aprovadas: true,
+            ...(v.rascunhoId ? { destino_id: v.rascunhoId } : { sku: v.sku, canal, empresa }),
+          });
+          if (((r.copiadas ?? []) as unknown[]).length) ok.push(`${v.rotulo} (do ${v.gemea!.sku})`);
+          else falhas.push(`${v.rotulo}: ${((r.puladas ?? []) as { motivo: string }[])[0]?.motivo ?? "não copiou"}`);
+        } catch (e) { falhas.push(`${v.rotulo}: ${(e as Error).message}`); }
+      }
+      setCopiando(false);
+      void qc.invalidateQueries({ queryKey: chave });
+      if (ok.length) toast.success(`${ok.length} foto(s) de variação aproveitada(s), sem gerar`, { description: `Mesmo kit em outro anúncio, já aprovada: ${ok.join(", ")}`, duration: 10000 });
+      if (falhas.length) toast.error("Não consegui aproveitar algumas fotos de variação", { description: falhas.join("\n"), duration: 15000 });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
+
   if (!vars.length) return null;
 
   const tipo = comSelo && tiposAtivos.includes(COM_SELO) ? COM_SELO : LIMPA;
   const estiloAtivo = tiposAtivos.includes(tipo);
-  const faltam = vars.filter((v) => !v.imagem || v.etapa?.status === "erro");
+  const faltam = vars.filter((v) => (!v.imagem || v.etapa?.status === "erro") && !(v.gemea && !v.imagem?.storage_path));
   const custo = (n: number) => (modelo ? `US$ ${(n * Number(modelo.custo_estimado_usd)).toFixed(2).replace(".", ",")}` : "");
   const marca = (s: string, texto?: string) => setRodando((r) => { const n = { ...r }; if (texto) n[s] = texto; else delete n[s]; return n; });
 
@@ -182,7 +218,7 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
     try { await decidirEtapa(v.etapa.id, true); void qc.invalidateQueries({ queryKey: chave }); }
     catch (e) { toast.error("Não consegui aprovar", { description: (e as Error).message }); }
   }
-  const ocupado = Object.keys(rodando).length > 0;
+  const ocupado = Object.keys(rodando).length > 0 || copiando;
 
   return (
     <Card>
@@ -193,6 +229,7 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
             <p className="text-xs text-muted-foreground mt-0.5">
               Uma foto por variação: o produto no ambiente de uso, sem texto de venda, com a quantidade de embalagens de cada opção.
               A foto fica no anúncio da própria variação (abra a variação para ver o texto e as outras fotos dela).
+              Variação que é o mesmo kit de outro anúncio com foto aprovada recebe essa foto sozinha, sem gerar.
             </p>
           </div>
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
@@ -213,7 +250,8 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
           {vars.map((v) => {
             const st = v.etapa?.status;
-            const fazendo = rodando[v.sku] ?? (st && ANDANDO.has(st) ? (st === "gerando" ? "gerando…" : "na fila…") : "");
+            const fazendo = rodando[v.sku] ?? (st && ANDANDO.has(st) ? (st === "gerando" ? "gerando…" : "na fila…")
+              : copiando && v.gemea && !v.imagem?.storage_path ? `usando a foto do ${v.gemea.sku}…` : "");
             return (
               <div key={v.sku} className="rounded-lg border overflow-hidden bg-card">
                 <div className="aspect-square bg-muted/40 flex items-center justify-center relative">
@@ -254,4 +292,41 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
       </CardContent>
     </Card>
   );
+}
+
+const chaveKit = (componente: string, quantidade: number | string) => `${componente}|${Number(quantidade)}`;
+
+/** Fotos aprovadas (capa ambientada) dos OUTROS kits com o mesmo produto base e a mesma quantidade — o mesmo kit
+ *  usado como variação em outro anúncio. Só kit de UM componente; a foto aprovada mais recente vence. */
+async function fotosGemeas(kits: { sku_kit: string; sku_componente: string; quantidade: number }[], meus: string[]): Promise<Map<string, Gemea>> {
+  const saida = new Map<string, Gemea>();
+  const simples = kits.filter((k) => kits.filter((x) => x.sku_kit === k.sku_kit).length === 1);
+  const componentes = [...new Set(simples.map((k) => k.sku_componente))];
+  if (!componentes.length) return saida;
+  const { data: cand } = await supabaseExternal.from("produto_kits").select("sku_kit, sku_componente, quantidade").in("sku_componente", componentes);
+  const outros = ((cand ?? []) as { sku_kit: string; sku_componente: string; quantidade: number }[]).filter((c) => !meus.includes(c.sku_kit));
+  if (!outros.length) return saida;
+  const skusOutros = [...new Set(outros.map((c) => c.sku_kit))];
+  // kit misto (mais de um componente) não serve: a foto mostraria outra coisa
+  const { data: todos } = await supabaseExternal.from("produto_kits").select("sku_kit").in("sku_kit", skusOutros);
+  const nComp = new Map<string, number>();
+  for (const x of (todos ?? []) as { sku_kit: string }[]) nComp.set(x.sku_kit, (nComp.get(x.sku_kit) ?? 0) + 1);
+  const validos = outros.filter((c) => nComp.get(c.sku_kit) === 1);
+  if (!validos.length) return saida;
+  const { data: rs } = await supabaseExternal.from("ia_rascunho").select("id, sku").in("sku", validos.map((c) => c.sku_kit));
+  const rasc = (rs ?? []) as { id: string; sku: string }[];
+  if (!rasc.length) return saida;
+  const { data: im } = await supabaseExternal.from("ia_rascunho_imagem").select("id, rascunho_id, storage_path, gerado_em")
+    .in("rascunho_id", rasc.map((r) => r.id)).in("tipo", TIPOS).not("storage_path", "is", null);
+  const imgs = (im ?? []) as { id: string; rascunho_id: string; gerado_em: string | null }[];
+  if (!imgs.length) return saida;
+  const { data: et } = await supabaseExternal.from("ia_etapa").select("imagem_id, status").in("imagem_id", imgs.map((i) => i.id)).eq("status", "aprovado");
+  const aprovadas = new Set(((et ?? []) as { imagem_id: string }[]).map((e) => e.imagem_id));
+  for (const i of [...imgs].filter((x) => aprovadas.has(x.id)).sort((a, z) => String(z.gerado_em ?? "").localeCompare(String(a.gerado_em ?? "")))) {
+    const r = rasc.find((x) => x.id === i.rascunho_id)!;
+    const k = validos.find((c) => c.sku_kit === r.sku)!;
+    const ch = chaveKit(k.sku_componente, k.quantidade);
+    if (!saida.has(ch)) saida.set(ch, { rascunho_id: r.id, imagem_id: i.id, sku: r.sku });
+  }
+  return saida;
 }

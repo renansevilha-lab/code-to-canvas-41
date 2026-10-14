@@ -2247,6 +2247,13 @@ faltou no anúncio criado direto na Shopee).
   variação no Tiny (nas criadas pelo app = a foto principal do base). Custo: o do modelo
   (US$ 0,21 por foto no padrão), mostrado antes de confirmar. **Não testado de ponta a ponta**
   (precisa de sessão e gasta imagem): só tsc/build e os dados conferidos no banco.
+  **Aproveitamento automático (14/out/2026, pedido do dono):** ao abrir o bloco, a variação SEM foto
+  que é o mesmo kit (um componente, mesmo produto base, mesma quantidade em `produto_kits`) de uma
+  variação de OUTRO anúncio com capa ambientada **aprovada** recebe essa foto sozinha, já aprovada,
+  por `ia-aproveitar?modulo=aplicar` (cópia em `compartilhado/…`, sem IA e sem custo) — ex.: 16521
+  (8kg = 4× 16362, pai 16515) usa a do 16513 (pai 16506); 16522 (10kg) a do 16514. Variação com
+  foto própria, rejeitada ou gerando não é tocada; o "Gerar as N que faltam" não conta as que vão
+  ser aproveitadas. `fotosGemeas()` em `FotosVariacoes.tsx`.
   **Não feito:** mandar essa foto ao Tiny como foto da variação e criar na Shopee o anúncio COM
   variações (`anuncio-publicar` só cria anúncio simples — é o aviso "este produto tem
   variações no Tiny" da tela de envio).
