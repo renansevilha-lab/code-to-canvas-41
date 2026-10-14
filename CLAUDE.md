@@ -2703,6 +2703,37 @@ o motivo só aparecia num aviso de 30 s na tela.
   loja → Conferir → Criar as variações na Shopee. Se repetir, a pendência estará em
   `debug_fulfillment`.
 
+## 5.11.11.10 Várias fotos reais de referência e instruções extras para a IA (14/out/2026)
+
+Pedido do dono: usar mais de uma foto como referência e dar instruções como "este produto tem 3
+opções de cores; a capa deve mostrar as três". Sem DDL.
+- **Fotos reais (até 4):** `ia_produto_extra.fotos_ref` (já existia, só a 1ª era usada) = a
+  principal (`foto_ref_path`) + até 3 extras (outras cores/opções, ângulos, o conteúdo). Tela: coluna
+  da foto no topo do produto (`FotoReferencia` em `ProdutoTopo.tsx`) — "+ Fotos" (várias de uma vez,
+  reduzidas a 2.000 px acima de 3 MB por `prepararImagem`), ★ = principal (clicar noutra troca), ✕
+  tira. "Trocar" substitui a principal (a antiga SAI da lista; antes virava extra) e "usar a do Tiny"
+  idem; as extras ficam. Grava direto em `ia_produto_extra` (RLS `tem_modulo('ia')`).
+- **Quem recebe:** `_shared/ia.ts` `fotosReaisExtras()` + `blocosFotosReais()` → briefing, texto e
+  prompts de imagem (`ia-anuncio` **v4**, deploy 6) recebem todas, a principal primeiro;
+  `ia-imagem-worker` **v3** (deploy 4) manda as extras logo depois da principal no `images/edits`
+  (antes das imagens de contexto, teto `MAX_IMAGENS_EXTRA` 6) e no Gemini. Se a OpenAI recusar o
+  conjunto (400): tenta só com as fotos reais, depois só a principal. `fotoReferencia()` deixou de
+  apagar as extras ao congelar a foto do Tiny.
+- **Instruções extras:** campo "Instruções extras para a IA" no topo do produto (`InstrucoesIa.tsx`).
+  Mora em `ia_contexto` (escopo `sku`, papel `diretriz`, tipo `texto`, nome fixo
+  **`NOME_INSTRUCOES` = "Instruções extras do anúncio"**, `aplica_em` textos + imagem) — aparece
+  também no bloco Referências. **Toda diretriz de escopo SKU** (`ehInstrucaoDoProduto`) vira, nos
+  prompts de imagem e na geração, o bloco "INSTRUCOES EXTRAS DO OPERADOR (OBRIGATORIAS)" com o tipo
+  da foto ("a capa…" vale só para capas; sem foto citada, vale para todas). Diretrizes de
+  categoria/global (36) seguem como contexto comum. O worker passa as instruções SEMPRE (antes, com
+  prompt já escrito, os textos ficavam de fora e instrução salva depois nunca chegava à imagem).
+- **Prompt anterior às instruções:** `EtapaFotos` compara `ia_prompt_imagem.updated_at` com o
+  `updated_at` da instrução; o mais velho (e não editado à mão) mostra "instruções novas: o prompt
+  será reescrito" e é reescrito (forçar) ao clicar em "imagem". Fotos de referência novas NÃO marcam
+  o prompt como velho (a imagem já as recebe; para o texto do prompt considerá-las, "prompt").
+- **Não testado ao vivo** (exige login e gasta IA): nenhuma geração com várias referências nem com
+  instruções ainda. Os 4 arquivos no ar conferidos por sha256 com o repositório.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -2793,8 +2824,8 @@ escrita sem `VALIDATION_PREVIEW`.
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
-| `ia-anuncio` | v3 (deploy 5) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI — ver §5.11.1 e §5.11.4 |
-| `ia-imagem-worker` | v2 (deploy 3) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3 e §5.11.4 |
+| `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
+| `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
 | `anuncio-publicar` | v8 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v4 (peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |

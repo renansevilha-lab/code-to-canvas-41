@@ -1,5 +1,5 @@
 // =============================================================================
-// Edge Function: ia-anuncio v3 — IA · Anúncios, Fase 2 (09/out/2026)
+// Edge Function: ia-anuncio v4 — IA · Anúncios, Fase 2 (09/out/2026; v4 em 14/out)
 // -----------------------------------------------------------------------------
 // Geração de anúncio DENTRO da gestão (porte do gerador pcobdzlpnaoqdbsdzhlq).
 // POST ?modulo=... com body JSON. Exige usuário com módulo `ia` (ou service role).
@@ -15,9 +15,14 @@
 // Diferenças do gerador: foto de referência única (cópia congelada); contextos
 // baixados 1× por chamada; preço pelo CMV da gestão (view_cmv_efetivo); capa com
 // `[CONFIRMAR` no prompt é recusada também no servidor; templates `__bkp_*` ignorados.
+// v4 (14/out/2026, pedido do dono): VÁRIAS fotos reais de referência (ia_produto_extra.fotos_ref —
+// a principal + até 3 extras: outras cores, ângulos, o conteúdo) vão para briefing, texto e prompts;
+// e as INSTRUÇÕES do produto (contexto sku/diretriz, ex.: "tem 3 cores; a capa mostra as três") entram
+// nos prompts de imagem como bloco OBRIGATÓRIO, com o tipo da foto (a instrução diz a qual se aplica).
 // =============================================================================
 import {
-  CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, templatesAtivos, escolherTemplate,
+  CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, fotosReaisExtras, blocosFotosReais, templatesAtivos, escolherTemplate,
+  ehInstrucaoDoProduto, blocoInstrucoesOperador,
   guardrails, blocoInstrucoes, regrasImagem, validar, carregarContextos, blocosContexto, claude, resolverModeloTexto,
   planoFotos, dispararWorker, preencher, type Bloco, type DB, type Produto, type Quem,
 } from "../_shared/ia.ts";
@@ -35,6 +40,7 @@ async function gerarBriefing(db: DB, p: Produto, forcar: boolean) {
   if (!tpl) throw new Error("template de briefing ativo não encontrado (/ia/prompts)");
   const foto = await fotoReferencia(db, p);
   if (!foto) throw new Error(`SKU ${p.sku} sem foto de referência — suba uma foto real na tela do anúncio`);
+  const extras = await fotosReaisExtras(db, p);
 
   const { porAplica, anexos } = await carregarContextos(db, p.sku, ["briefing"]);
   const ctx = blocosContexto(porAplica.briefing ?? [], anexos);
@@ -44,8 +50,7 @@ async function gerarBriefing(db: DB, p: Produto, forcar: boolean) {
   }, false);
   const modelo = await resolverModeloTexto(tpl);
   const bruto = await claude(modelo, [
-    { type: "image", source: { type: "base64", media_type: foto.media_type, data: foto.data } },
-    { type: "text", text: "Acima: a FOTO REAL do produto. Leia o rotulo." },
+    ...blocosFotosReais(foto, extras, "Leia o rotulo."),
     ...ctx.blocos,
     { type: "text", text: ctx.texto ? `CONTEXTO ADICIONAL:\n${ctx.texto}\n\n${prompt}` : prompt },
   ], 2500);
@@ -85,6 +90,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
 
   const foto = await fotoReferencia(db, p);
   if (!foto) throw new Error(`SKU ${p.sku} sem foto de referência — suba uma foto real na tela do anúncio`);
+  const extras = await fotosReaisExtras(db, p);
   const brief = (await gerarBriefing(db, p, false)).briefing as Record<string, any>;
   const resumoBrief = {
     persona: brief.persona, dores: brief.dores, objecoes: brief.objecoes, beneficios: brief.beneficios,
@@ -102,8 +108,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
     });
     const comObs = obs ? `${prompt}\n\nOBSERVACAO DO OPERADOR (prioridade nesta nova versao; nao contrarie as regras obrigatorias): ${obs}` : prompt;
     const blocos: Bloco[] = [
-      { type: "image", source: { type: "base64", media_type: foto!.media_type, data: foto!.data } },
-      { type: "text", text: "Acima: a FOTO REAL do produto. Leia o rotulo." },
+      ...blocosFotosReais(foto!, extras, "Leia o rotulo."),
       ...ctx.blocos,
       { type: "text", text: ctx.texto ? `CONTEXTO ADICIONAL:\n${ctx.texto}\n\n${comObs}` : comObs },
     ];
@@ -214,6 +219,7 @@ async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>)
   const brief = brf.data as Record<string, any>;
   const foto = await fotoReferencia(db, p);
   if (!foto) throw new Error(`SKU ${p.sku} sem foto de referência`);
+  const extras = await fotosReaisExtras(db, p);
 
   const ativos = new Set(tplsImg.map((t) => t.nome));
   const { alvo } = planoFotos(fotos, brief.fotos_recomendadas, (cfgR.data as any)?.regras_extras?.plano_fotos, ativos, p.eh_kit);
@@ -221,7 +227,10 @@ async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>)
 
   const { porAplica, anexos } = await carregarContextos(db, p.sku, ["imagem"]);
   const blocosCtx: Bloco[] = []; const usados: string[] = [];
-  for (const c of porAplica.imagem ?? []) {
+  const ctxImagem = porAplica.imagem ?? [];
+  for (const c of ctxImagem) {
+    // instrução do produto vai à parte, como bloco obrigatório (blocoInstrucoesOperador)
+    if (ehInstrucaoDoProduto(c)) { usados.push(c.nome); continue; }
     if (c.tipo === "texto") { blocosCtx.push({ type: "text", text: `CONTEXTO (${c.papel}) — ${c.nome}:\n${c.conteudo ?? ""}` }); usados.push(c.nome); continue; }
     const a = c.storage_path ? anexos.get(c.storage_path) : undefined;
     if (!a) continue;
@@ -251,11 +260,12 @@ async function gerarPromptsImagem(db: DB, p: Produto, body: Record<string, any>)
         angulo: brief.angulo, tom: brief.tom, esqueleto,
       });
       const operador = tipo.startsWith("imagem_capa_") ? blocoOperador(body.capa ?? null) : "";
+      const instrucoes = blocoInstrucoesOperador(ctxImagem, tipo.replace("imagem_", "")) +
+        (ctxImagem.some(ehInstrucaoDoProduto) ? "\nESCREVA no prompt, de forma concreta e visual, o que as instrucoes pedem para esta foto (ex.: mostrar as 3 cores lado a lado na composicao)." : "");
       const blocos: Bloco[] = [
-        { type: "image", source: { type: "base64", media_type: foto!.media_type, data: foto!.data } },
-        { type: "text", text: "Acima: a FOTO REAL do produto (embalagem). Leia o rotulo e observe o formato fisico." },
+        ...blocosFotosReais(foto!, extras, "Leia o rotulo e observe o formato fisico."),
         ...blocosCtx,
-        { type: "text", text: texto + operador + (regras ? `\n\nREGRAS QUE O PROMPT DEVE CARREGAR:\n${regras}` : "") },
+        { type: "text", text: texto + operador + instrucoes + (regras ? `\n\nREGRAS QUE O PROMPT DEVE CARREGAR:\n${regras}` : "") },
       ];
       try {
         const prompt = semConfirmar(await claude(modelo, blocos, tipo.startsWith("imagem_capa_") ? 1400 : 900));
@@ -354,11 +364,15 @@ async function enfileirarImagens(db: DB, body: Record<string, any>) {
 async function trocarFotoRef(db: DB, p: Produto, body: Record<string, any>) {
   if (typeof body.path === "string" && body.path) {
     if (!body.path.startsWith(`ref/${p.sku}/`)) throw new Error(`a foto deve estar em ref/${p.sku}/`);
-    const { error } = await db.from("ia_produto_extra").upsert({ sku: p.sku, foto_ref_path: body.path, fotos_ref: [body.path, ...p.fotos_ref.filter((x) => x !== body.path)] }, { onConflict: "sku" });
+    // TROCA a principal: a antiga sai da lista (as extras ficam); antes ela virava extra sem ninguém pedir
+    const extras = p.fotos_ref.filter((x) => x && x !== body.path && x !== p.foto_ref_path);
+    const { error } = await db.from("ia_produto_extra").upsert({ sku: p.sku, foto_ref_path: body.path, fotos_ref: [body.path, ...extras] }, { onConflict: "sku" });
     if (error) throw new Error(error.message);
     return { ok: true, foto_ref_path: body.path };
   }
   if (body.refazer) {
+    // a foto do Tiny substitui a principal; as extras ficam (fotoReferencia preserva fotos_ref)
+    p.fotos_ref = p.fotos_ref.filter((x) => x && x !== p.foto_ref_path);
     p.foto_ref_path = null;
     const f = await fotoReferencia(db, p);
     if (!f) throw new Error("não consegui baixar a foto do catálogo (Tiny)");

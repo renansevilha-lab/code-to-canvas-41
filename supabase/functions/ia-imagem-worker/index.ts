@@ -1,5 +1,5 @@
 // =============================================================================
-// Edge Function: ia-imagem-worker v2 — IA · Anúncios, Fase 2 (09/out/2026; v2 em 10/out)
+// Edge Function: ia-imagem-worker v3 — IA · Anúncios, Fase 2 (09/out/2026; v3 em 14/out)
 // -----------------------------------------------------------------------------
 // Gera UMA imagem por chamada, da fila em ia_etapa (etapa='imagem', status 'na_fila').
 // Quem chama: ia-anuncio?modulo=imagens (3 em paralelo ao enfileirar), o próprio
@@ -17,17 +17,24 @@
 //    "(anexo nao suportado)". Se a OpenAI recusar o conjunto (400), refaz só com a
 //    foto real, como na v1. PDF continua fora do modelo de imagem (não aceita).
 //    Corpo {"status": true} = diagnóstico das integrações de IA (sem chaves na resposta).
+// v3 (14/out/2026, pedido do dono): as FOTOS REAIS extras do produto (ia_produto_extra.fotos_ref,
+//    até 3 além da principal — outras cores/opções/ângulos) vão logo depois da principal, antes das
+//    imagens de contexto; e as INSTRUÇÕES do produto (contexto sku/diretriz) entram SEMPRE no prompt
+//    como bloco obrigatório com o tipo da foto (antes, com prompt já escrito, os textos ficavam de fora
+//    e instrução salva depois do prompt nunca chegava à imagem). Se a OpenAI recusar o conjunto (400),
+//    tenta só com as fotos reais e, por fim, só com a principal.
 // =============================================================================
 import {
-  CORS, json, sb, carregarProduto, fotoReferencia, templatesAtivos, guardrails, regrasImagem,
+  CORS, json, sb, carregarProduto, fotoReferencia, fotosReaisExtras, ehInstrucaoDoProduto, blocoInstrucoesOperador, templatesAtivos, guardrails, regrasImagem,
   carregarContextos, preencher, extDoMime, sha256hex, deB64, dispararWorker, statusIa, BUCKET, type DB,
 } from "../_shared/ia.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const OPENAI_EDITS = "https://api.openai.com/v1/images/edits";
 const MAX_TENTATIVAS = 3;
-const MAX_IMAGENS_EXTRA = 4;
+const MAX_IMAGENS_EXTRA = 6; // fotos reais extras (até 3) + imagens de contexto
 type Parte = Record<string, unknown>;
+const FRASE_REAL_EXTRA = "FOTO REAL adicional do MESMO produto (outra cor/opcao, outro angulo ou o conteudo). Reproduza fielmente cores, formato e detalhes que voce ve nela; ela mostra o produto como ele e de verdade.";
 
 function fraseDoPapel(papel: string, nome: string, escopo: string, chave: string | null): string {
   const de = escopo === "global" ? "" : ` (${escopo}${chave ? ": " + chave : ""})`;
@@ -47,9 +54,13 @@ function fraseDoPapel(papel: string, nome: string, escopo: string, chave: string
 async function contextoImagem(db: DB, sku: string, incluirTextos: boolean) {
   const { porAplica, anexos } = await carregarContextos(db, sku, ["imagem"]);
   const partes: Parte[] = []; const textos: string[] = []; const usados: string[] = [];
+  // instruções do produto: sempre (vão no prompt como bloco obrigatório), nunca como contexto comum
+  const lista = porAplica.imagem ?? [];
+  const instrucoes = lista.filter(ehInstrucaoDoProduto);
   // imagens de contexto (para a OpenAI irem como imagem extra) e a nota que as substitui quando não vão
   const imagens: { mime: string; bytes: Uint8Array; frase: string }[] = []; const notasImagem: string[] = [];
-  for (const c of porAplica.imagem ?? []) {
+  for (const c of lista) {
+    if (ehInstrucaoDoProduto(c)) { usados.push(`${c.nome} [instrucao]`); continue; }
     const frase = fraseDoPapel(c.papel, c.nome, c.escopo, c.chave);
     if (c.tipo === "texto") {
       if (!incluirTextos) continue;
@@ -71,7 +82,7 @@ async function contextoImagem(db: DB, sku: string, incluirTextos: boolean) {
     }
     usados.push(`${c.nome} [${c.papel}]`);
   }
-  return { partes, textos, usados, imagens, notasImagem };
+  return { partes, textos, usados, imagens, notasImagem, instrucoes };
 }
 
 async function viaGemini(key: string, model: string, partes: Parte[]) {
@@ -150,6 +161,7 @@ Deno.serve(async (req) => {
     const ref = await fotoReferencia(db, p);
     if (!ref || ref.bytes.length < 1000) throw new Error("Sem foto real de referência: suba a foto real do produto na tela do anúncio.");
     const refSha = await sha256hex(ref.bytes);
+    const reaisExtras = await fotosReaisExtras(db, p);
 
     const brief = brf.data as Record<string, any> | null;
     const feito = feitoR.data as Record<string, any> | null;
@@ -165,6 +177,7 @@ Deno.serve(async (req) => {
     const prompt = base +
       (!feito && brief?.angulo ? `\n\nANGULO DE VENDA: ${brief.angulo}` : "") +
       (regras ? `\n\nREGRAS OBRIGATORIAS:\n${regras}` : "") +
+      blocoInstrucoesOperador(ctx.instrucoes, String(img.tipo ?? "")) +
       (etapa.observacao ? `\n\nOBSERVACAO DO OPERADOR (prioridade nesta versao): ${etapa.observacao}` : "");
 
     let gerada: { bytes: Uint8Array; mime: string };
@@ -172,26 +185,43 @@ Deno.serve(async (req) => {
       gerada = await viaGemini(key, escolhido.id, [
         { inline_data: { mime_type: ref.media_type, data: ref.data } },
         { text: "Acima: a FOTO REAL do produto. Use o produto exatamente como nela: rotulo, logo, cores, tampa e proporcoes identicos." },
+        ...reaisExtras.flatMap((f) => [
+          { inline_data: { mime_type: f.media_type, data: f.data } },
+          { text: `Acima: ${FRASE_REAL_EXTRA}` },
+        ]),
         ...ctx.partes,
         { text: prompt },
       ]);
     } else {
-      const extras = ctx.imagens.slice(0, MAX_IMAGENS_EXTRA);
-      const sobra = ctx.notasImagem.slice(extras.length);
+      // fotos reais extras primeiro (são o produto), depois as imagens de contexto
+      const reais = reaisExtras.map((f) => ({ mime: f.media_type, bytes: f.bytes, frase: FRASE_REAL_EXTRA }));
       const bloco = (ts: string[]) => (ts.length ? `\n\nCONTEXTO:\n${ts.join("\n\n")}` : "");
-      const guia = extras.length
+      const guia = (anexadas: { frase: string }[]) => anexadas.length
         ? `\n\nIMAGENS ANEXADAS, NA ORDEM: (1) FOTO REAL do produto — referencia principal: rotulo, logo, cores e proporcoes identicos. ` +
-          extras.map((e, i) => `(${i + 2}) ${e.frase}`).join(" ")
+          anexadas.map((e, i) => `(${i + 2}) ${e.frase}`).join(" ")
         : "";
       const refImg = { mime: ref.media_type, bytes: ref.bytes };
-      try {
-        gerada = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + guia + bloco([...ctx.textos, ...sobra]), refImg, extras);
-      } catch (e) {
-        // o modelo recusou o conjunto de imagens: refaz só com a foto real (comportamento da v1)
-        if (!extras.length || !/OpenAI 400/.test(String(e instanceof Error ? e.message : e))) throw e;
-        console.log(JSON.stringify({ evento: "ia_imagem_extras_recusadas", etapa: etapa.id, erro: String(e).slice(0, 200) }));
-        gerada = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + bloco([...ctx.textos, ...ctx.notasImagem]), refImg);
+      // tentativas: tudo → só as fotos reais → só a principal (o modelo pode recusar o conjunto com 400)
+      const comCtx = [...reais, ...ctx.imagens].slice(0, MAX_IMAGENS_EXTRA);
+      const ctxAnexados = comCtx.length - reais.length;
+      const tentativas = [
+        { extras: comCtx, notas: [...ctx.textos, ...ctx.notasImagem.slice(Math.max(0, ctxAnexados))] },
+        ...(ctxAnexados > 0 && reais.length ? [{ extras: reais, notas: [...ctx.textos, ...ctx.notasImagem] }] : []),
+        ...(comCtx.length ? [{ extras: [] as typeof comCtx, notas: [...ctx.textos, ...ctx.notasImagem] }] : []),
+      ];
+      let ultimoErro: unknown = null; let feita: { bytes: Uint8Array; mime: string } | null = null;
+      for (const [i, t] of tentativas.entries()) {
+        try {
+          feita = await viaOpenAI(key, escolhido.id, escolhido.quality ?? "medium", prompt + guia(t.extras) + bloco(t.notas), refImg, t.extras);
+          break;
+        } catch (e) {
+          ultimoErro = e;
+          if (i === tentativas.length - 1 || !/OpenAI 400/.test(String(e instanceof Error ? e.message : e))) throw e;
+          console.log(JSON.stringify({ evento: "ia_imagem_extras_recusadas", etapa: etapa.id, anexos: t.extras.length, erro: String(e).slice(0, 200) }));
+        }
       }
+      if (!feita) throw ultimoErro ?? new Error("sem imagem");
+      gerada = feita;
     }
 
     const caminho = `${r.sku}/${r.id}/${img.ordem}-${img.tipo}.${extDoMime(gerada.mime)}`;

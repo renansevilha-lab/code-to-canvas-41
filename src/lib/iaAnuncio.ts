@@ -33,7 +33,14 @@ export interface IaBriefing {
   angulo: string | null; tom: string | null; palavras_chave: string[]; fotos_recomendadas: string[]; updated_at: string;
 }
 export interface IaPromptImagem { id: string; sku: string; tipo: string; prompt: string; editado_mao: boolean; updated_at: string }
-export interface IaProdutoExtra { sku: string; publico_alvo: string | null; frete_adicional: number; custo_embalagem: number; foto_ref_path: string | null }
+export interface IaProdutoExtra {
+  sku: string; publico_alvo: string | null; frete_adicional: number; custo_embalagem: number; foto_ref_path: string | null;
+  /** fotos reais de referência: a principal (= foto_ref_path) + as extras (outras cores, ângulos, o conteúdo) */
+  fotos_ref?: string[] | null;
+}
+/** Nome fixo do contexto que guarda as "Instruções extras para a IA" de um produto (ia_contexto, escopo sku). */
+export const NOME_INSTRUCOES = "Instruções extras do anúncio";
+export const USOS_INSTRUCOES = ["briefing", "titulo", "descricao", "bullet_points", "imagem"];
 
 export const ROTULO_ETAPA: Record<StatusEtapa, { rotulo: string; cor: string }> = {
   pendente: { rotulo: "pendente", cor: "#64748B" },

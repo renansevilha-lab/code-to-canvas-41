@@ -155,10 +155,39 @@ export async function fotoReferencia(db: DB, p: Produto): Promise<Foto | null> {
   const path = `ref/${p.sku}/0.${extDoMime(f.mime)}`;
   const up = await db.storage.from(BUCKET).upload(path, f.bytes, { contentType: f.mime, upsert: true });
   if (!up.error) {
-    await db.from("ia_produto_extra").upsert({ sku: p.sku, foto_ref_path: path, fotos_ref: [path] }, { onConflict: "sku" });
+    // as outras fotos reais já cadastradas continuam (antes a lista era trocada só por esta)
+    await db.from("ia_produto_extra").upsert({ sku: p.sku, foto_ref_path: path, fotos_ref: [path, ...p.fotos_ref.filter((x) => x && x !== path)] }, { onConflict: "sku" });
     p.foto_ref_path = path;
   }
   return { media_type: f.mime, data: b64(f.bytes), bytes: f.bytes, origem: up.error ? p.foto_url : path };
+}
+
+/**
+ * Fotos reais EXTRAS do produto (14/out/2026, pedido do dono): ia_produto_extra.fotos_ref além da
+ * principal — outras cores/opções, outros ângulos, o conteúdo. Vão para a IA de texto, para quem
+ * escreve os prompts e para o modelo de imagem, sempre DEPOIS da principal.
+ */
+export async function fotosReaisExtras(db: DB, p: Produto, max = 3): Promise<Foto[]> {
+  const caminhos = [...new Set(p.fotos_ref ?? [])].filter((x) => x && x !== p.foto_ref_path).slice(0, max);
+  const lidas = await Promise.all(caminhos.map(async (c) => {
+    const dl = await db.storage.from(BUCKET).download(c);
+    if (dl.error || !dl.data) return null;
+    const mime = (dl.data.type || "image/jpeg").split(";")[0];
+    if (!/^image\/(jpeg|png|webp)$/.test(mime)) return null;
+    const bytes = new Uint8Array(await dl.data.arrayBuffer());
+    return { media_type: mime, data: b64(bytes), bytes, origem: c } as Foto;
+  }));
+  return lidas.filter((x): x is Foto => !!x);
+}
+/** Blocos das fotos reais para a IA de texto/prompts: a principal primeiro, depois as extras. */
+export function blocosFotosReais(principal: Foto, extras: Foto[], leitura: string): Bloco[] {
+  const img = (f: Foto): Bloco => ({ type: "image", source: { type: "base64", media_type: f.media_type, data: f.data } });
+  return [img(principal), ...extras.map(img), {
+    type: "text",
+    text: extras.length
+      ? `Acima: ${extras.length + 1} FOTOS REAIS do produto. A 1a e a principal; as outras mostram o MESMO produto em outras cores/opcoes, outros angulos ou o conteudo — tudo isso e verdade sobre o produto. ${leitura}`
+      : `Acima: a FOTO REAL do produto. ${leitura}`,
+  }];
 }
 
 // ---------------------------------------------------------------- prompts / regras
@@ -208,7 +237,23 @@ export function validar(texto: string, gs: Guardrail[]) {
 }
 
 // ---------------------------------------------------------------- contextos
-type Ctx = { nome: string; escopo: string; chave: string | null; tipo: string; conteudo: string | null; storage_path: string | null; media_type: string | null; papel: string };
+export type Ctx = { nome: string; escopo: string; chave: string | null; tipo: string; conteudo: string | null; storage_path: string | null; media_type: string | null; papel: string };
+
+/**
+ * Instruções que o operador escreveu para ESTE produto (contexto de escopo sku, papel diretriz, texto) —
+ * ex.: "tem 3 opções de cores; a capa deve mostrar as três". Nas fotos elas são OBRIGATÓRIAS (14/out/2026);
+ * as diretrizes de categoria/global continuam como contexto comum.
+ */
+export function ehInstrucaoDoProduto(c: Ctx): boolean {
+  return c.escopo === "sku" && c.papel === "diretriz" && c.tipo === "texto" && !!(c.conteudo ?? "").trim();
+}
+export function blocoInstrucoesOperador(lista: Ctx[], tipoFoto: string): string {
+  const ts = lista.filter(ehInstrucaoDoProduto).map((c) => (c.conteudo ?? "").trim());
+  if (!ts.length) return "";
+  return `\n\n═══ INSTRUCOES EXTRAS DO OPERADOR PARA ESTE PRODUTO (OBRIGATORIAS — valem mais que o esqueleto e que o estilo) ═══\n` +
+    ts.map((t) => "- " + t).join("\n") +
+    `\nEsta imagem e do tipo "${tipoFoto}". Siga as instrucoes que se aplicam a ela: quando citam uma foto (ex.: "a capa"), valem so para essa foto; sem foto citada, valem para todas. Nao contrarie as regras obrigatorias.`;
+}
 
 /**
  * Contextos do SKU (RPC ia_contextos_do_sku) — os anexos são baixados UMA vez por

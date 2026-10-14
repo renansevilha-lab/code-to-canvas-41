@@ -30,7 +30,7 @@ const LIMITE_PDF = 10_000_000;
 type Linha = IaContexto & { valendo: boolean };
 
 /** Imagem grande demais para a IA: reduz para 2.000 px (JPEG) no navegador. */
-async function prepararImagem(arquivo: File): Promise<{ blob: Blob; mime: string; ext: string }> {
+export async function prepararImagem(arquivo: File): Promise<{ blob: Blob; mime: string; ext: string }> {
   const ext = arquivo.type.includes("png") ? "png" : arquivo.type.includes("webp") ? "webp" : "jpg";
   if (arquivo.size <= LIMITE_IMAGEM) return { blob: arquivo, mime: arquivo.type, ext };
   const bmp = await createImageBitmap(arquivo);

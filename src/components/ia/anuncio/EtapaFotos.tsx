@@ -13,6 +13,7 @@ import {
   DESCRICAO_FOTO, ROTULO_ETAPA, chamarIa, rotuloFoto, urlsAssinadas, type IaBriefing, type IaEtapa, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
 import { SeloEtapa, decidirEtapa } from "./EtapaTexto";
+import { useInstrucoesProduto } from "./InstrucoesIa";
 
 interface ModeloImg { id: string; label: string; custo_estimado_usd: number; padrao: boolean }
 
@@ -43,6 +44,11 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
   const capas = tiposAtivos.filter((t) => t.startsWith("imagem_capa_"));
   const outros = tiposAtivos.filter((t) => !t.startsWith("imagem_capa_") && (ehKit || t !== "imagem_kit"));
   const promptPor = new Map(prompts.map((p) => [p.tipo, p]));
+  // prompt escrito ANTES das instruções do produto (salvas ou mudadas depois) não as conhece: ao gerar a
+  // imagem ele é reescrito sozinho (menos o editado à mão)
+  const instrQ = useInstrucoesProduto(sku);
+  const marcoInstr = instrQ.data?.updated_at ? Date.parse(instrQ.data.updated_at) : 0;
+  const promptVelho = (t: string) => { const p = promptPor.get(t); return !!p && !p.editado_mao && marcoInstr > Date.parse(p.updated_at); };
   const etapaPorImagem = new Map(etapas.filter((e) => e.etapa === "imagem").map((e) => [e.imagem_id, e]));
 
   const [capa, setCapa] = useState({ quantidade: "", peso: "", barra: "", faixa: "", icones: "", fundo: "", sem_texto: false });
@@ -116,10 +122,13 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
     // foto sem prompt escrito sairia do modelo genérico (cena crua, sem o texto de venda), e capa sem
     // prompt nem é gerada: escreve antes o prompt das que faltam, com os dados da capa do formulário
     const semPrompt = fotos.filter((t) => !promptPor.has(t));
-    if (so) setUmaVez((u) => ({ ...u, [so]: semPrompt.length ? "prompt" : "imagem" })); else setEnfileirando(true);
+    const velhos = fotos.filter(promptVelho);
+    if (so) setUmaVez((u) => ({ ...u, [so]: semPrompt.length || velhos.length ? "prompt" : "imagem" })); else setEnfileirando(true);
     try {
-      if (semPrompt.length) {
-        const rp = await escreverPrompts(semPrompt, false);
+      if (semPrompt.length || velhos.length) {
+        const rp = semPrompt.length ? await escreverPrompts(semPrompt, false) : { prompts_escritos: [], pulados: [] as { tipo: string; motivo: string }[] };
+        // os anteriores às instruções são reescritos (forçar), para a imagem seguir o que foi pedido
+        if (velhos.length) { const rv = await escreverPrompts(velhos, true); rp.pulados.push(...rv.pulados); }
         const falhou = rp.pulados.filter((x) => !/já existe|preservado/.test(x.motivo));
         if (falhou.length) toast.warning("Alguns prompts não foram escritos", { description: falhou.map((x) => `${rotuloFoto(x.tipo)}: ${x.motivo}`).slice(0, 5).join("\n") });
         recarregar();
@@ -149,6 +158,7 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
           <div className="flex flex-wrap items-center gap-x-1.5 text-sm">
             <span className="capitalize font-medium">{rotuloFoto(t)}</span>
             {p && <span className="text-[10px] text-muted-foreground">{p.editado_mao ? "prompt editado" : "prompt pronto"}</span>}
+            {promptVelho(t) && <span className="text-[10px] text-amber-700 dark:text-amber-400" title="O prompt foi escrito antes das instruções do produto; ao gerar a imagem ele é reescrito com elas.">· instruções novas: o prompt será reescrito</span>}
             {p?.prompt.includes("[CONFIRMAR") && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-label="prompt pede confirmação" />}
             {st && <span className="text-[10px] font-semibold" style={{ color: st.cor }}>· imagem {st.rotulo}</span>}
           </div>
