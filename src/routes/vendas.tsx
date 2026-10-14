@@ -165,7 +165,9 @@ Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
   const baseAll = isSku ? allSku : allMarca;
   const totalReceita = baseAll.reduce((s, r) => s + Number(r.valor_atual ?? 0), 0) || 1;
   const totalUnid = baseAll.reduce((s, r) => s + Number(r.qtd_atual ?? 0), 0);
-  const totalCount = baseAll.length;
+  // quem vendeu NO período (a lista também traz quem só vendeu no período de comparação, com atual zero)
+  const totalCount = baseAll.filter((r) => Number(r.qtd_atual ?? 0) > 0).length;
+  const soNoAnterior = baseAll.length - totalCount;
 
   const sortFn = <T extends { valor_atual: number; qtd_atual: number; qtd_anterior: number }>(a: T, b: T) => {
     if (search.sort === "unidades") return b.qtd_atual - a.qtd_atual;
@@ -311,7 +313,8 @@ Deixe VAZIO para voltar a marca do Tiny (no proximo sync).`,
         ) : (
           <>
             <span style={{ fontSize: "12px", color: "#8B93A1" }}>
-              Mostrando {isSku ? skuRows.length : marcaRows.length} de {totalCount} {isSku ? "SKUs" : "marcas"} do período
+              Mostrando {isSku ? skuRows.length : marcaRows.length} {isSku ? "SKUs" : "marcas"} · {totalCount} venderam no período
+              {soNoAnterior > 0 ? ` · ${soNoAnterior} só no período de comparação` : ""}
             </span>
             {isSku
               ? <SkuTable rows={skuRows} totalReceita={totalReceita} maxPartic={maxParticSku} corMarca={corMarca} onEditarMarca={editarMarca} />

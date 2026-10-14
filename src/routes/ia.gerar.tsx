@@ -187,7 +187,8 @@ function GerarAnuncioPage() {
 
         {/* 2) as fotos deste anúncio: gerar com IA e revisar */}
         {rascunho && r !== "novo" && apoioQ.data ? (
-          <EtapaFotos sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
+          <EtapaFotos key={`ef-${sku}`} sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
+            ehPai={dados.produto.tipo === "V"} nomeProduto={dados.produto.nome ?? ""}
             briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
             tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
         ) : (

@@ -2595,6 +2595,34 @@ cada dado.
   geração nova — corrigir os antigos é refazer o texto ou editar à mão e reenviar.
 - **Não testado:** não rodei uma geração nova (precisa de sessão e gasta IA).
 
+## 5.11.11.7 Fotos: tipos retirados, estilo dos prompts e dados da capa (13/out/2026, noite)
+
+- **Tipos de foto retirados (dono):** `imagem_variantes`, `imagem_escala`, `imagem_principal`,
+  `imagem_conteudo`, `imagem_publico` e a capa `imagem_capa_ml_branca` ficaram `ativo = false` em
+  `ia_prompt_template` (nada apagado; a lista da tela vem dos ativos). Junto: `briefing_base`
+  **v2** não recomenda mais esses tipos e o `plano_fotos` de todos os canais perdeu a
+  `imagem_principal`. ⚠ O Mercado Livre pede a 1ª foto em fundo branco — sem "Principal" e sem
+  "Capa ML Branca" o app não gera mais essa foto.
+- **Estilo/fundo (regra de 12/out: cenário de uso em vez de fundo liso + texto de vantagem):**
+  ainda estavam na v1 antiga e ganharam **v2**: `imagem_beneficios` (era "fundo claro sólido"),
+  `imagem_cta` (era estúdio com degradê), `imagem_emocional` e `imagem_uso` (texto passou a ser
+  obrigatório), `imagem_passo_a_passo` (era "fundo claro e neutro"); `imagem_kit` **v3** (era
+  "sobre fundo branco"). Prompt já escrito por SKU (`ia_prompt_imagem`) NÃO muda sozinho: só ao
+  refazer o prompt.
+- **"Capa Ambientada Texto com título errado" — causa:** o selo usa exatamente o campo "Título do
+  selo" dos Dados da capa, e o `EtapaFotos` não tinha `key` por SKU: ao trocar de produto na
+  mesma tela, quantidade, barra e título digitados para o produto ANTERIOR continuavam lá (o 16506
+  saiu com "Areia de Mandioca / e Minenais"). Além disso o título digitado ia também para as
+  capas "Menor Preço da Shopee". Agora: `key={ef-<sku>}` (formulário zera por produto) e
+  `escreverPrompts` manda as capas da Shopee à parte, sem o título (lá é sempre MENOR PREÇO DA
+  SHOPEE). Título vazio = a IA escreve tipo de produto + diferencial pelo NOME.
+- **Produto com variações (pai):** a barra da capa já vem com as variações na ordem da quantidade
+  ("2kg 4kg 6kg 8kg 10kg") e "Qtd. de embalagens" com a MAIOR quantidade de kit (`varsQ` no
+  `EtapaFotos`, por `produtos.sku_pai` + `produto_kits`). Só preenche campo vazio.
+- **Vendas por produto:** "SKUs vendidos" contava quem vendeu em QUALQUER dos dois períodos
+  (231); passou a contar quem vendeu no período atual (171) e a linha de baixo diz quantos só
+  venderam no período de comparação.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só

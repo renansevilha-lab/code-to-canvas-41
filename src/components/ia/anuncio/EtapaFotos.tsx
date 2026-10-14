@@ -20,8 +20,10 @@ interface ModeloImg { id: string; label: string; custo_estimado_usd: number; pad
  * Etapa 2: plano de fotos → prompts (editáveis) → imagens geradas na fila → revisão.
  * Dá para fazer tudo de uma vez (botões de baixo) ou UMA foto por vez (botões de cada linha).
  */
-export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, imagens, etapas, tiposAtivos, planoCanal, modelos }: {
+export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, briefing, prompts, imagens, etapas, tiposAtivos, planoCanal, modelos }: {
   sku: string; canal: string; ehKit: boolean; rascunho: IaRascunho; briefing: IaBriefing | null;
+  /** produto com variações (pai): a capa já vem com as variações na barra e a maior quantidade de embalagens */
+  ehPai?: boolean; nomeProduto?: string;
   prompts: IaPromptImagem[]; imagens: IaRascunhoImagem[]; etapas: IaEtapa[];
   tiposAtivos: string[]; planoCanal: string[]; modelos: ModeloImg[];
 }) {
@@ -44,6 +46,44 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
   const etapaPorImagem = new Map(etapas.filter((e) => e.etapa === "imagem").map((e) => [e.imagem_id, e]));
 
   const [capa, setCapa] = useState({ quantidade: "", peso: "", barra: "", faixa: "", icones: "", fundo: "", sem_texto: false });
+  // PRODUTO COM VARIAÇÕES (13/out, pedido do dono): a barra da capa já nasce com as variações (na ordem da
+  // quantidade) e a composição mostra a MAIOR quantidade de embalagens. Só preenche o que está vazio.
+  const varsQ = useQuery({
+    queryKey: ["ia-anuncio", "capa-variacoes", sku],
+    enabled: ehPai === true,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<{ barra: string; quantidade: string } | null> => {
+      const { data: vs } = await supabaseExternal.from("produtos").select("sku, nome").eq("sku_pai", sku).eq("ativo", true);
+      const vars = (vs ?? []) as { sku: string; nome: string | null }[];
+      if (vars.length < 2) return null;
+      const { data: ks } = await supabaseExternal.from("produto_kits").select("sku_kit, quantidade").in("sku_kit", vars.map((v) => v.sku));
+      const qtd = new Map(((ks ?? []) as { sku_kit: string; quantidade: number }[]).map((k) => [k.sku_kit, Number(k.quantidade) || 1]));
+      const base = nomeProduto ?? "";
+      const lista = vars.map((v) => {
+        const n = v.nome ?? v.sku;
+        return { rotulo: (base && n.startsWith(`${base} - `) ? n.slice(base.length + 3) : n.includes(" - ") ? n.slice(n.lastIndexOf(" - ") + 3) : n).trim(), q: qtd.get(v.sku) ?? 1 };
+      }).sort((a, z) => a.q - z.q);
+      return { barra: lista.map((l) => l.rotulo).join(lista.some((l) => l.rotulo.includes(" ")) ? ", " : " "), quantidade: String(Math.max(...lista.map((l) => l.q))) };
+    },
+  });
+  useEffect(() => {
+    const v = varsQ.data;
+    if (v) setCapa((c) => ({ ...c, barra: c.barra || v.barra, quantidade: c.quantidade || v.quantidade }));
+  }, [varsQ.data]);
+  /** Capa com o selo "Menor Preço da Shopee": o título digitado NÃO vale para ela (só para a Ambientada Texto). */
+  const seloShopee = (x: string) => x.startsWith("imagem_capa_") && x.includes("shopee");
+  /** Escreve os prompts; se há título digitado e capas dos dois tipos, manda as da Shopee à parte, sem o título. */
+  async function escreverPrompts(fotos: string[], forcarAgora: boolean) {
+    const grupos = fotos.some(seloShopee) && fotos.some((x) => !seloShopee(x)) ? [fotos.filter((x) => !seloShopee(x)), fotos.filter(seloShopee)] : [fotos];
+    const out = { prompts_escritos: [] as { tipo: string; confirmar: boolean }[], pulados: [] as { tipo: string; motivo: string }[] };
+    for (const g of grupos) {
+      const dados = !g.some((x) => x.startsWith("imagem_capa_")) ? null : g.every(seloShopee) ? { ...capa, faixa: "" } : capa;
+      const r = await chamarIa("prompts-imagem", { sku, canal, fotos: g, forcar: forcarAgora, capa: dados });
+      out.prompts_escritos.push(...((r.prompts_escritos ?? []) as { tipo: string; confirmar: boolean }[]));
+      out.pulados.push(...((r.pulados ?? []) as { tipo: string; motivo: string }[]));
+    }
+    return out;
+  }
   const [forcar, setForcar] = useState(false);
   const [preparando, setPreparando] = useState(false);
   const [modelo, setModelo] = useState(modelos.find((m) => m.padrao)?.id ?? modelos[0]?.id ?? "");
@@ -60,11 +100,10 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
     if (!fotos.length) { toast.error("Escolha ao menos uma foto"); return; }
     if (so) setUmaVez((u) => ({ ...u, [so]: "prompt" })); else setPreparando(true);
     try {
-      const temCapa = fotos.some((t) => t.startsWith("imagem_capa_"));
       // pela linha, refazer é o esperado quando o prompt já existe (o editado à mão só é trocado com a caixa marcada)
-      const r = await chamarIa("prompts-imagem", { sku, canal, fotos, forcar: so ? (forcar || !promptPor.get(so)?.editado_mao) : forcar, capa: temCapa ? capa : null });
-      const feitos = (r.prompts_escritos ?? []) as { tipo: string; confirmar: boolean }[];
-      const pulados = (r.pulados ?? []) as { tipo: string; motivo: string }[];
+      const r = await escreverPrompts(fotos, so ? (forcar || !promptPor.get(so)?.editado_mao) : forcar);
+      const feitos = r.prompts_escritos;
+      const pulados = r.pulados;
       toast.success(`${feitos.length} prompt(s) preparado(s)`, {
         description: [...feitos.filter((f) => f.confirmar).map((f) => `${rotuloFoto(f.tipo)}: tem [CONFIRMAR] — revise`),
           ...pulados.map((p) => `${rotuloFoto(p.tipo)}: ${p.motivo}`)].slice(0, 6).join("\n") || undefined,
@@ -80,10 +119,8 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
     if (so) setUmaVez((u) => ({ ...u, [so]: semPrompt.length ? "prompt" : "imagem" })); else setEnfileirando(true);
     try {
       if (semPrompt.length) {
-        const rp = await chamarIa("prompts-imagem", {
-          sku, canal, fotos: semPrompt, forcar: false, capa: semPrompt.some((t) => t.startsWith("imagem_capa_")) ? capa : null,
-        });
-        const falhou = ((rp.pulados ?? []) as { tipo: string; motivo: string }[]).filter((x) => !/já existe|preservado/.test(x.motivo));
+        const rp = await escreverPrompts(semPrompt, false);
+        const falhou = rp.pulados.filter((x) => !/já existe|preservado/.test(x.motivo));
         if (falhou.length) toast.warning("Alguns prompts não foram escritos", { description: falhou.map((x) => `${rotuloFoto(x.tipo)}: ${x.motivo}`).slice(0, 5).join("\n") });
         recarregar();
         if (so) setUmaVez((u) => ({ ...u, [so]: "imagem" }));
@@ -156,7 +193,7 @@ export function EtapaFotos({ sku, canal, ehKit, rascunho, briefing, prompts, ima
                 <Input className="h-7 text-xs" placeholder="Qtd. de embalagens" value={capa.quantidade} onChange={(e) => setCapa({ ...capa, quantidade: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Peso na embalagem (ex. 4kg)" value={capa.peso} onChange={(e) => setCapa({ ...capa, peso: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Barra de variações (ex. 4kg 8kg 12kg)" value={capa.barra} onChange={(e) => setCapa({ ...capa, barra: e.target.value })} disabled={capa.sem_texto} />
-                <Input className="h-7 text-xs" placeholder="Título do selo (use | para a 2ª linha)" value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
+                <Input className="h-7 text-xs" placeholder="Título do selo (vazio = pelo nome do produto)" title="Só vale na Capa Ambientada Texto (as da Shopee levam sempre MENOR PREÇO DA SHOPEE). Vazio: a IA escreve o tipo de produto e o diferencial, tirados do nome. Use | para separar a 2ª linha." value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
                 <Input className="h-7 text-xs" placeholder="Ícones de benefício (vazio = nenhum)" value={capa.icones} onChange={(e) => setCapa({ ...capa, icones: e.target.value })} disabled={capa.sem_texto} />
                 <Input className="h-7 text-xs" placeholder="Fundo / composição" value={capa.fundo} onChange={(e) => setCapa({ ...capa, fundo: e.target.value })} />
               </div>
