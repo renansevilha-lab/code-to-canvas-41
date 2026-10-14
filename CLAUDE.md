@@ -2662,6 +2662,13 @@ o motivo só aparecia num aviso de 30 s na tela.
   confirmação e cria. O que é digitado (opção, estoque, peso, medidas, nome do grupo) fica em
   `localStorage` (`ia.variacoes.<sku do pai>`): volta ao recarregar e vale para a outra loja mesmo
   quando a 1ª criação falhou (antes só era gravado no sucesso).
+- **Medidas e estoque por variação preenchidos sozinhos (o que o dono queria dizer):** comprimento,
+  largura e altura vinham em branco e o estoque em 0. Agora `VariacoesShopee` preenche — medidas:
+  as conferidas da própria variação (`ia_produto_extra`) → as do produto pai → as do produto base
+  do kit → **embalagem padrão 40 × 30 × 15** (a mesma `MEDIDAS_PADRAO` da `anuncio-publicar`; se
+  mudar lá, mudar aqui); estoque: `floor(produtos.estoque do componente ÷ quantidade do kit)`
+  (kit de um componente só; senão 0). O `localStorage` guarda SÓ o que o operador mudou em relação
+  a esse preenchimento, para o automático continuar acompanhando o cadastro.
 - **Os dois anúncios seguem sem variações e fora do ar.** Conserto pela tela: abrir o 16506 em cada
   loja → Conferir → Criar as variações na Shopee. Se repetir, a pendência estará em
   `debug_fulfillment`.

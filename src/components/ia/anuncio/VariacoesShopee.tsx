@@ -25,6 +25,8 @@ import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPro
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const TIPOS_FOTO = ["capa_ambientada_limpa", "capa_ambientada_texto"];
+/** Embalagem padrão quando ninguém informou medidas — a mesma da conferência do envio (`anuncio-publicar`). */
+const MEDIDAS_PADRAO = { comprimento_cm: 40, largura_cm: 30, altura_cm: 15 };
 export const EVENTO_ANUNCIO_CRIADO = EV_CRIADO;
 interface Linha {
   sku: string; opcao: string; preco: string; estoque: string; foto_path: string | null; foto_url: string | null;
@@ -56,14 +58,34 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const pelaMargem = new Map(skus.map((s, i) => [s, Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));
       const margemPadrao = Number((calc.map((c) => (c.data as { memoria_calculo?: { margem_padrao_pct?: number } } | null)?.memoria_calculo?.margem_padrao_pct).find((x) => x != null)) ?? 0) || null;
       const [k, pub, esp, rasc, med] = await Promise.all([
-        skus.length ? supabaseExternal.from("produto_kits").select("sku_kit, quantidade").in("sku_kit", skus) : Promise.resolve({ data: [] }),
+        skus.length ? supabaseExternal.from("produto_kits").select("sku_kit, sku_componente, quantidade").in("sku_kit", skus) : Promise.resolve({ data: [] }),
         supabaseExternal.from("ia_publicacao").select("item_id, operacao, criado_em").eq("sku", sku).eq("canal", "shopee").eq("empresa", empresa).eq("estado", "publicado").order("criado_em", { ascending: false }).limit(5),
         supabaseExternal.from("shopee_anuncios").select("item_id, nome, tem_variacao, status").eq("shop_id", shopId).eq("sku_pai", sku).in("status", ["NORMAL", "UNLIST"]),
         skus.length ? supabaseExternal.from("ia_rascunho").select("id, sku").in("sku", skus) : Promise.resolve({ data: [] }),
         // peso e medidas já conferidos de cada variação (gravados no 1º envio): valem para a outra loja e para depois
         skus.length ? supabaseExternal.from("ia_produto_extra").select("sku, peso_kg, comprimento_cm, largura_cm, altura_cm").in("sku", skus) : Promise.resolve({ data: [] }),
       ]);
-      const conferidas = new Map(((med.data ?? []) as { sku: string; peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null }[]).map((m) => [m.sku, m]));
+      type Medida = { sku: string; peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null };
+      const conferidas = new Map(((med.data ?? []) as Medida[]).map((m) => [m.sku, m]));
+      // PREENCHIMENTO AUTOMÁTICO (13/out, pedido do dono): medidas e estoque de cada variação já vêm prontos.
+      //  medidas: as da própria variação → as do produto pai → as do produto base do kit → embalagem padrão;
+      //  estoque: o que o estoque do produto base cobre daquele kit (estoque ÷ quantidade do kit).
+      const kits = (k.data ?? []) as { sku_kit: string; sku_componente: string; quantidade: number }[];
+      const componentes = [...new Set(kits.map((x) => x.sku_componente))];
+      const [est, medPai] = await Promise.all([
+        componentes.length ? supabaseExternal.from("produtos").select("sku, estoque").in("sku", componentes) : Promise.resolve({ data: [] }),
+        supabaseExternal.from("ia_produto_extra").select("sku, peso_kg, comprimento_cm, largura_cm, altura_cm").in("sku", [sku, ...componentes]),
+      ]);
+      const estoqueDe = new Map(((est.data ?? []) as { sku: string; estoque: number | null }[]).map((x) => [x.sku, Number(x.estoque) || 0]));
+      const herdadas = new Map(((medPai.data ?? []) as Medida[]).map((m) => [m.sku, m]));
+      const completa = (m?: Medida) => (m && Number(m.comprimento_cm) > 0 && Number(m.largura_cm) > 0 && Number(m.altura_cm) > 0 ? m : null);
+      const padraoDe = (skuVar: string) => {
+        const meus = kits.filter((x) => x.sku_kit === skuVar);
+        const base = meus.length === 1 ? meus[0] : null;
+        const m = completa(conferidas.get(skuVar)) ?? completa(herdadas.get(sku)) ?? (base ? completa(herdadas.get(base.sku_componente)) : null) ?? MEDIDAS_PADRAO;
+        const estoque = base && (Number(base.quantidade) || 0) > 0 ? Math.floor((estoqueDe.get(base.sku_componente) ?? 0) / Number(base.quantidade)) : 0;
+        return { comp: String(Number(m.comprimento_cm)).replace(".", ","), larg: String(Number(m.largura_cm)).replace(".", ","), alt: String(Number(m.altura_cm)).replace(".", ","), estoque: String(Math.max(0, estoque)) };
+      };
       const emTexto = (x: number | null | undefined) => (x != null && Number(x) > 0 ? String(Number(x)).replace(".", ",") : "");
       const rascunhos = (rasc.data ?? []) as { id: string; sku: string }[];
       const im = rascunhos.length
@@ -72,16 +94,17 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const imagens = ((im.data ?? []) as { rascunho_id: string; storage_path: string; gerado_em: string | null; status: string }[])
         .sort((a, z) => Number(z.status === "aprovada") - Number(a.status === "aprovada") || String(z.gerado_em ?? "").localeCompare(String(a.gerado_em ?? "")));
       const urls = await urlsAssinadas(imagens.map((i) => i.storage_path)).catch(() => ({} as Record<string, string>));
-      const qtd = new Map(((k.data ?? []) as { sku_kit: string; quantidade: number }[]).map((x) => [x.sku_kit, Number(x.quantidade) || 1]));
+      const qtd = new Map(kits.map((x) => [x.sku_kit, Number(x.quantidade) || 1]));
       const linhas: Linha[] = vars.map((v) => {
         const nome = v.nome ?? v.sku;
         const meus = new Set(rascunhos.filter((r) => r.sku === v.sku).map((r) => r.id));
         const foto = imagens.find((i) => meus.has(i.rascunho_id)) ?? null;
         const opcao = (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome).trim().slice(0, 20);
+        const auto = padraoDe(v.sku);
         return {
           sku: v.sku, opcao, peso: emTexto(conferidas.get(v.sku)?.peso_kg) || pesoDaOpcao(opcao),
-          comp: emTexto(conferidas.get(v.sku)?.comprimento_cm), larg: emTexto(conferidas.get(v.sku)?.largura_cm), alt: emTexto(conferidas.get(v.sku)?.altura_cm),
-          preco: pelaMargem.get(v.sku) ? dinheiro(pelaMargem.get(v.sku)!) : v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: "0",
+          comp: auto.comp, larg: auto.larg, alt: auto.alt,
+          preco: pelaMargem.get(v.sku) ? dinheiro(pelaMargem.get(v.sku)!) : v.preco != null ? dinheiro(Number(v.preco)) : "", estoque: auto.estoque,
           foto_path: foto?.storage_path ?? null, foto_url: foto ? urls[foto.storage_path] ?? null : null,
         };
       }).sort((a, z) => (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1) || a.sku.localeCompare(z.sku));
@@ -122,7 +145,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const d = salvo.linhas?.[n.sku];
         if (!d) return n;
         const ou = (v: string | undefined, padrao: string) => (v != null && String(v).trim() !== "" ? String(v) : padrao);
-        return { ...n, opcao: ou(d.opcao, n.opcao).slice(0, 20), estoque: ou(d.estoque, n.estoque), peso: ou(d.peso, n.peso), comp: ou(d.comp, n.comp), larg: ou(d.larg, n.larg), alt: ou(d.alt, n.alt) };
+        return { ...n, opcao: ou(d.opcao, n.opcao).slice(0, 20), estoque: ou(d.estoque === "0" ? "" : d.estoque, n.estoque), peso: ou(d.peso, n.peso), comp: ou(d.comp, n.comp), larg: ou(d.larg, n.larg), alt: ou(d.alt, n.alt) };
       }));
       setComFotos(nova.length > 0 && nova.every((l) => l.foto_path));
     }
@@ -139,7 +162,13 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   useEffect(() => {
     if (iniciado.current === null || !linhas.length) return;
     try {
-      localStorage.setItem(guarda, JSON.stringify({ grade, linhas: Object.fromEntries(linhas.map((l) => [l.sku, { opcao: l.opcao, estoque: l.estoque, peso: l.peso, comp: l.comp, larg: l.larg, alt: l.alt }])) }));
+      const padrao = new Map((q.data?.linhas ?? []).map((l) => [l.sku, l]));
+      const campos = ["opcao", "estoque", "peso", "comp", "larg", "alt"] as const;
+      const mudou = Object.fromEntries(linhas.map((l) => {
+        const p = padrao.get(l.sku);
+        return [l.sku, Object.fromEntries(campos.filter((c) => !p || l[c] !== p[c]).map((c) => [c, l[c]]))];
+      }).filter(([, v]) => Object.keys(v as object).length > 0));
+      localStorage.setItem(guarda, JSON.stringify({ grade, linhas: mudou }));
     } catch { /* sem armazenamento: só não lembra */ }
   }, [linhas, grade, guarda]);
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida
@@ -339,7 +368,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
             </div>
             <p className="text-[11px] text-muted-foreground">
               Preço: já vem pela margem de contribuição padrão da Shopee{q.data.margemPadrao ? ` (${(q.data.margemPadrao * 100).toFixed(0)}%)` : ""}, variação a variação{q.data.semMargem.length ? ` — sem custo na gestão, ${q.data.semMargem.join(", ")} ficou com o preço do Tiny` : ""}.
-              Peso e medidas por variação: é o que a Shopee usa para o frete de cada opção; em branco, valem os do anúncio.
+              Peso, medidas e estoque já vêm preenchidos: peso pelo nome da opção; medidas as já conferidas (da variação, do produto pai ou do produto base) ou, sem nenhuma, a embalagem padrão {MEDIDAS_PADRAO.comprimento_cm} × {MEDIDAS_PADRAO.largura_cm} × {MEDIDAS_PADRAO.altura_cm} cm; estoque o que o estoque do produto base cobre de cada kit. Ajuste o que for diferente — fica guardado.
             </p>
             {faltas.length > 0 && <p className="text-xs text-destructive">Antes de enviar: {faltas.join(" · ")}.</p>}
             {semEstoque > 0 && <p className="text-[11px] text-amber-600">{semEstoque} variação(ões) com estoque 0: nascem esgotadas até o Tiny mandar o estoque (depois do vínculo pelo SKU).</p>}
