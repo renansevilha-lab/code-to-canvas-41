@@ -111,6 +111,7 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   const precosQ = useQuery({
     queryKey: ["ia-anuncio", "envio-promo-precos", empresa, faixa, skus.map((s) => s.sku).join(",")],
     enabled: skus.length > 0 && desconto != null,
+    placeholderData: undefined,
     queryFn: async (): Promise<Record<string, { preco: number | null; erro: string | null }>> => {
       const rs = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s.sku, p_canal: "shopee", p_empresa: empresa, p_margem: faixa })));
       return Object.fromEntries(skus.map((s, i) => {

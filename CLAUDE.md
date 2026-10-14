@@ -2669,6 +2669,22 @@ o motivo só aparecia num aviso de 30 s na tela.
   mudar lá, mudar aqui); estoque: `floor(produtos.estoque do componente ÷ quantidade do kit)`
   (kit de um componente só; senão 0). O `localStorage` guarda SÓ o que o operador mudou em relação
   a esse preenchimento, para o automático continuar acompanhando o cadastro.
+- **CAUSA ACHADA de "não achei o anúncio 45619213619 nesta loja" (print do dono, 23h40): o bloco
+  estava com o anúncio da OUTRA loja.** O `QueryClient` do app (`__root.tsx`) tem
+  **`placeholderData: (anterior) => anterior`**, `refetchOnMount: false` e `gcTime` de 30 min: ao
+  mudar a chave de uma consulta, `data` continua sendo o resultado ANTERIOR até o novo chegar, e
+  consulta guardada não é relida. Enquanto o `VariacoesShopee` remontava a cada loja (chave com
+  a empresa) isso não aparecia; quando passou a ficar montado para aproveitar peso/medidas
+  (§5.11.11.4), o efeito "preenche uma vez por loja" rodava com os dados da loja anterior — ID do
+  anúncio e preços trocados — e marcava a loja como pronta, ignorando os dados certos que chegavam
+  depois. Corrigido: a consulta do bloco tem `placeholderData: undefined, gcTime: 0, staleTime: 0`,
+  devolve a `empresa` de que é, e o efeito e a tela só usam resultado da loja atual. O mesmo
+  cuidado foi para o preço promocional do `PromocaoNoEnvio` (não mostrar o da margem anterior).
+  **Regra: componente que NÃO remonta quando um parâmetro muda e usa o resultado para preencher
+  estado ou para ESCREVER precisa desligar o `placeholderData` global (ou conferir de que
+  parâmetro o resultado é).** As duas recusas das 22h30 foram ANTES de qualquer troca nesse
+  sentido e seguem sem causa provada (provável a mesma mensagem, por atraso da Shopee em devolver
+  o anúncio recém-criado — coberto pelas 3 leituras da v5).
 - **Os dois anúncios seguem sem variações e fora do ar.** Conserto pela tela: abrir o 16506 em cada
   loja → Conferir → Criar as variações na Shopee. Se repetir, a pendência estará em
   `debug_fulfillment`.

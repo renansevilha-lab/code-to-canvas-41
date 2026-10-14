@@ -49,6 +49,11 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const shopId = LOJA[empresa] ?? LOJA.ottz;
   const q = useQuery({
     queryKey: ["ia-anuncio", "variacoes-shopee", sku, empresa],
+    // DADOS SEMPRE DA LOJA CERTA: o app inteiro mostra o resultado anterior enquanto o novo carrega
+    // (`placeholderData` global) e não relê ao voltar a uma consulta guardada. Aqui isso misturava as lojas:
+    // ao trocar Ottz ↔ Bumi o bloco ficava com o ANÚNCIO e os PREÇOS da outra loja ("não achei o anúncio …
+    // nesta loja"). Então: sem resultado emprestado, sem guardar, e cada resultado diz de que loja é.
+    placeholderData: undefined, gcTime: 0, staleTime: 0,
     queryFn: async () => {
       const { data: vs } = await supabaseExternal.from("produtos").select("sku, nome, preco").eq("sku_pai", sku).eq("ativo", true).order("sku");
       const vars = (vs ?? []) as { sku: string; nome: string | null; preco: number | null }[];
@@ -110,7 +115,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       }).sort((a, z) => (qtd.get(a.sku) ?? 1) - (qtd.get(z.sku) ?? 1) || a.sku.localeCompare(z.sku));
       const criado = ((pub.data ?? []) as { item_id: string | null; operacao: string | null }[]).find((p) => p.item_id)?.item_id ?? null;
       const espelho = (esp.data ?? []) as { item_id: number; nome: string | null; tem_variacao: boolean | null; status: string | null }[];
-      return { linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
+      return { empresa, linhas, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
 
@@ -135,7 +140,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const guarda = `ia.variacoes.${sku}`;
   type Digitado = Pick<Linha, "opcao" | "estoque" | "peso" | "comp" | "larg" | "alt">;
   useEffect(() => {
-    if (!q.data || iniciado.current === empresa) return;
+    if (!q.data || q.isPlaceholderData || q.data.empresa !== empresa || iniciado.current === empresa) return;
     const nova = q.data.linhas;
     if (iniciado.current === null) {
       let salvo: { grade?: string; linhas?: Record<string, Partial<Digitado>> } = {};
@@ -258,7 +263,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     finally { setOcupado(""); }
   }
 
-  if (q.isLoading || !q.data || q.data.linhas.length < 2) return null;
+  if (q.isLoading || !q.data || q.isPlaceholderData || q.data.empresa !== empresa || iniciado.current !== empresa || q.data.linhas.length < 2) return null;
   // fora do ar: a ativação desta tela falhou agora, ou o cadastro do app mostra o anúncio como não listado
   const foraDoAr = !!itemId.trim() && (noAr === false || (noAr === null && q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.status === "UNLIST"));
   const chave = JSON.stringify(corpo());
