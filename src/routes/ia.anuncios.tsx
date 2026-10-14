@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
+import { AnunciosAchados } from "@/components/ia/anuncio/AnunciosAchados";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
 import {
   CANAIS, CANAIS_COM_HISTORICO, ROTULO_ETAPA, nomeCanal, nomeEmpresa,
@@ -180,7 +181,7 @@ function AnunciosPage() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-8 h-9" value={digitado} onChange={(e) => setDigitado(e.target.value)} placeholder="SKU ou nome do produto" />
+          <Input className="pl-8 h-9" value={digitado} onChange={(e) => setDigitado(e.target.value)} placeholder="SKU, nome do produto, ou nome/ID do anúncio (Shopee, MLB…)" />
         </div>
         <Select value={marca ?? TODAS} onValueChange={(v) => set({ marca: v === TODAS ? undefined : v })}>
           <SelectTrigger className="h-9 w-[190px]"><SelectValue /></SelectTrigger>
@@ -204,6 +205,8 @@ function AnunciosPage() {
         </Select>
         {catQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </div>
+
+      {q && <AnunciosAchados busca={q} onSku={(sku) => setDigitado(sku)} />}
 
       {selecionados.length > 0 && (
         <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-background/95 px-3 py-2 text-sm shadow-sm backdrop-blur">
