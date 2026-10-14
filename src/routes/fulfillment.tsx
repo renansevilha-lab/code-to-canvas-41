@@ -524,6 +524,8 @@ function ReposicaoTab({
                 </th>
                 <th className="text-left font-semibold px-3 py-3">Produto</th>
                 <th className="text-left font-semibold px-3 py-3">Canal</th>
+                <th className="text-right font-semibold px-3 py-3"
+                  title="Unidades vendidas nos últimos 30 dias NESTE canal e conta, só as que saíram do CD (Full/FBA) — a mesma base da cobertura e da sugestão. Embaixo, a média por dia.">Vendas 30d</th>
                 <th className="text-right font-semibold px-3 py-3">Estoque CD</th>
                 <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
                 <th className="text-right font-semibold px-3 py-3"
@@ -544,14 +546,14 @@ function ReposicaoTab({
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    <td colSpan={11} className="px-3 py-3">
+                    <td colSpan={12} className="px-3 py-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))
               ) : filtradas.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={12} className="px-3 py-12 text-center text-sm text-muted-foreground">
                     Nenhum item para reposição com os filtros atuais
                   </td>
                 </tr>
@@ -593,6 +595,10 @@ function ReposicaoTab({
                           {MKT_LABEL[r.marketplace] ?? r.marketplace}
                         </span>
                         <div className="text-[10.5px] text-muted-foreground mt-0.5">{EMPRESA_CURTA(r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0])}</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px]">
+                        <div className={num(r.unidades_30d) > 0 ? "font-semibold" : "text-muted-foreground"}>{formatNumber(num(r.unidades_30d))}</div>
+                        <div className="text-[10.5px] text-muted-foreground">{num(r.und_dia).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}/dia</div>
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.estoque_full))}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
