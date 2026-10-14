@@ -2025,6 +2025,13 @@ O dono não conseguiu entrar na Anthropic e pediu para começar só com o GPT.
     de catálogo: só preço. Anúncio com `variations` (modelo antigo): sem fotos/preço.
   - `ia_publicacao`: `canal 'mercado_livre'`, `shop_id` = user_id da conta, `item_id` = MLB,
     resposta enxuta (o corpo inteiro do ML tem ~15 kB e o banco está no teto).
+  - **Limite de unidades por compra NÃO se altera pela API (testado 14/out/2026, com o OK do
+    dono):** é o termo de venda `PURCHASE_MAX_QUANTITY` ("Quantidade máxima de compra"; 8 dos 20
+    anúncios mais vistos da Ottz têm 1, 2 ou 15). A categoria o marca `read_only`/`hidden`; o
+    validador recusa na criação e o `PUT /items` recusa a troca (1 → 2 no MLB7659304960:
+    `sale_term.not_allowed`, nada mudou). Regravar o MESMO valor volta 200 — não prova nada. Dá
+    para LER (multiget com `attributes=sale_terms`); mudar só no painel do ML. Sonda:
+    `ml-anuncio-sonda` v5 `?teste=limite&mlb=[&valor=]` (expira em 15/out).
   - **Não testado ao vivo:** nenhum `enviar` (criar ou atualizar), o upload de foto, a troca de
     título e se anúncios da mesma família compartilham fotos.
 - **Próximos:** TikTok, Amazon; anúncio com variações na Shopee.
@@ -2785,7 +2792,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `anuncio-shopee-variacoes` | v4 (peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v5 (deploy 7; `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
-| `ml-anuncio-sonda` | v3 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`) — ver §5.11.5 |
+| `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |\|svl&sku=`) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

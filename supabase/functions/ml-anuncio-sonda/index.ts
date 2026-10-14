@@ -1,4 +1,4 @@
-// ml-anuncio-sonda v4 (14/out/2026) - DIAGNOSTICO. So o modo ?teste=limite escreve (regrava os termos de venda com os mesmos valores).
+// ml-anuncio-sonda v5 (14/out/2026) - DIAGNOSTICO. So o modo ?teste=limite escreve (v4: regrava o mesmo valor; v5: &valor=N troca e volta).
 // v3 (12/out/2026): nao publica nem altera nada.
 // Ensaia, so com LEITURA e com o VALIDADOR do Mercado Livre (/items/validate confere o corpo e
 // nao cria anuncio), as chamadas que a `anuncio-publicar` v4 faz para o Mercado Livre:
@@ -40,6 +40,29 @@ Deno.serve(async (req) => {
     if (antes.status !== 200 || Number(antes.body?.seller_id) !== userId) return json({ erro: "anuncio nao e desta conta", status: antes.status }, 400);
     const termos = ((antes.body?.sale_terms ?? []) as any[]).map((t) => ({ id: String(t.id), value_name: t.value_name }));
     if (!termos.some((t) => t.id === "PURCHASE_MAX_QUANTITY")) return json({ erro: "anuncio sem limite de unidades", termos }, 400);
+    // v5 (14/out, autorizado pelo dono: "1 -> 2 -> 1"): com &valor=N troca o limite para N e VOLTA na
+    // hora ao valor de antes. A volta tem 1 nova tentativa (so repoe estado; nao cria nada).
+    const valor = u.searchParams.get("valor");
+    if (valor != null) {
+      if (!/^\d{1,3}$/.test(valor) || Number(valor) < 1) return json({ erro: "valor invalido" }, 400);
+      const original = String(termos.find((t) => t.id === "PURCHASE_MAX_QUANTITY")!.value_name);
+      if (original === valor) return json({ erro: "valor igual ao atual", original }, 400);
+      const com = (v: string) => termos.map((t) => (t.id === "PURCHASE_MAX_QUANTITY" ? { ...t, value_name: v } : t));
+      const resumo = (r: { status: number; body: any }) => r.status === 200
+        ? { status: 200, limite: (r.body?.sale_terms ?? []).find((t: any) => t.id === "PURCHASE_MAX_QUANTITY")?.value_name ?? null }
+        : { status: r.status, mensagem: r.body?.message ?? null, causas: (r.body?.cause ?? []).map((c: any) => `${c.type}:${c.code}:${String(c.message).slice(0, 220)}`) };
+      const troca = await ml(token, `/items/${mlb}`, "PUT", { sale_terms: com(valor) });
+      const lidoTroca = await ml(token, `/items/${mlb}?attributes=id,sale_terms`);
+      let volta: { status: number; body: any } | null = null;
+      if (troca.status === 200 || (lidoTroca.status === 200 && (resumo(lidoTroca) as any).limite !== original)) {
+        volta = await ml(token, `/items/${mlb}`, "PUT", { sale_terms: com(original) });
+        if (volta.status !== 200) { await new Promise((r) => setTimeout(r, 2000)); volta = await ml(token, `/items/${mlb}`, "PUT", { sale_terms: com(original) }); }
+      }
+      const fim = await ml(token, `/items/${mlb}?attributes=id,sale_terms`);
+      return json({
+        mlb, original, pedido: valor, troca: resumo(troca), lido_apos_troca: resumo(lidoTroca), volta: volta ? resumo(volta) : null, final: resumo(fim),
+      });
+    }
     const put = await ml(token, `/items/${mlb}`, "PUT", { sale_terms: termos });
     const depois = await ml(token, `/items/${mlb}?attributes=id,status,sale_terms`);
     return json({
