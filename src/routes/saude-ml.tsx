@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { AdsAbas } from "@/components/ads/AdsAbas";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 
@@ -161,7 +160,6 @@ function SaudeMlPage() {
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-6">
-      <AdsAbas className="self-start" />
       {/* Header */}
       <header className="flex items-start justify-between gap-3 flex-wrap">
         <div>

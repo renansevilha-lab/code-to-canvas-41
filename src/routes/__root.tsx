@@ -5,7 +5,7 @@ import { Component, useEffect, useState, type ReactNode } from "react";
 
 import { LogOut, PanelLeft } from "lucide-react";
 import appCss from "../styles.css?url";
-import { AppSidebar, crumbDaRota } from "@/components/AppSidebar";
+import { AbasDaTela, AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthGate } from "@/components/AuthGate";
 import { AvisoSiteAntigo } from "@/components/AvisoSiteAntigo";
@@ -208,6 +208,7 @@ function AppShell() {
         </header>
         <main className="flex-1 min-w-0">
           <PerfilGate>
+            <AbasDaTela />
             <RouteErrorBoundary key={pathname}>
               <Outlet />
             </RouteErrorBoundary>

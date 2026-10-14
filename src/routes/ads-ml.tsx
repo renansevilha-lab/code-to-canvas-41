@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { AdsAbas } from "@/components/ads/AdsAbas";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
@@ -81,7 +80,6 @@ function AdsMlPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
-      <AdsAbas className="self-start" />
       <header>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
