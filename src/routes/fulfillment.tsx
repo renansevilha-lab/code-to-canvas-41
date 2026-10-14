@@ -71,6 +71,12 @@ import { aplicarApelidos } from "@/lib/impressoras";
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
 
+interface TinyDisp {
+  disponivel: number;
+  sincronizado: boolean;
+  em: string | null;
+}
+
 interface InventarioRow {
   marketplace: string;
   shop_id: number | null;
@@ -266,6 +272,25 @@ function FulfillmentPage() {
     enabled: tab === "inventario",
   });
 
+  // Disponível no Tiny (depósito Geral; kit = quantos dá para montar) por SKU: o MESMO número da
+  // coluna da Reposição (view_reposicao_full.estoque_empresa), para o Inventário. Só leitura.
+  const tinyQuery = useQuery({
+    queryKey: ["fulfillment", "tiny-disponivel"],
+    queryFn: async (): Promise<Map<string, TinyDisp>> => {
+      const { data, error } = await supabaseExternal
+        .from("view_reposicao_full")
+        .select("sku,estoque_empresa,estoque_sincronizado,estoque_atualizado_em");
+      if (error) throw error;
+      const m = new Map<string, TinyDisp>();
+      for (const r of (data ?? []) as Array<{ sku: string | null; estoque_empresa: number | string | null; estoque_sincronizado: boolean | null; estoque_atualizado_em: string | null }>) {
+        if (!r.sku || m.has(r.sku)) continue;
+        m.set(r.sku, { disponivel: num(r.estoque_empresa), sincronizado: r.estoque_sincronizado !== false, em: r.estoque_atualizado_em });
+      }
+      return m;
+    },
+    enabled: tab === "inventario",
+  });
+
   const repQuery = useQuery({
     queryKey: ["fulfillment", "reposicao", mkt],
     queryFn: async (): Promise<ReposicaoRow[]> => {
@@ -300,6 +325,7 @@ function FulfillmentPage() {
               onClick={() => {
                 invQuery.refetch();
                 repQuery.refetch();
+                tinyQuery.refetch();
               }}
               disabled={invQuery.isFetching || repQuery.isFetching}
             >
@@ -376,6 +402,7 @@ function FulfillmentPage() {
               loading={invQuery.isLoading}
               error={(invQuery.error as Error | null)?.message ?? null}
               busca={q}
+              tiny={tinyQuery.data}
             />
           </TabsContent>
 
@@ -505,7 +532,12 @@ function ReposicaoTab({
                 <th className="text-right font-semibold px-3 py-3">Necessidade</th>
                 <th className="text-right font-semibold px-3 py-3">Sugestão</th>
                 <th className="text-right font-semibold px-3 py-3">A enviar</th>
-                <th className="text-right font-semibold px-3 py-3">Estoque empresa</th>
+                <th
+                  className="text-right font-semibold px-3 py-3"
+                  title="Disponível no depósito Geral do Tiny (saldo − reservado). Kit = quantos dá para montar com os componentes."
+                >
+                  Disponível Tiny
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -599,7 +631,7 @@ function ReposicaoTab({
                               </span>
                             </TooltipTrigger>
                             <TooltipContent>
-                              Estoque na empresa ({formatNumber(estoqueEmpresa)}) menor que a quantidade a enviar
+                              Disponível no Tiny ({formatNumber(estoqueEmpresa)}) menor que a quantidade a enviar
                               ({formatNumber(enviar)})
                             </TooltipContent>
                           </Tooltip>
@@ -738,12 +770,20 @@ function InventarioTab({
   loading,
   error,
   busca,
+  tiny,
 }: {
   rows: InventarioRow[];
   loading: boolean;
   error: string | null;
   busca: string;
+  tiny?: Map<string, TinyDisp>;
 }) {
+  // quando o Tiny foi lido por último (a leitura roda de manhã, 05h–08h)
+  const tinyLidoEm = useMemo(() => {
+    let max: string | null = null;
+    for (const t of tiny?.values() ?? []) if (t.em && (!max || t.em > max)) max = t.em;
+    return max;
+  }, [tiny]);
   const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -824,6 +864,11 @@ function InventarioTab({
             Estoque nos CDs{" "}
             <span className="text-muted-foreground font-normal">({formatNumber(filtradas.length)})</span>
           </h3>
+          {tinyLidoEm && (
+            <span className="text-[12px] text-muted-foreground">
+              Disponível no Tiny lido em {format(parseISO(tinyLidoEm), "dd/MM HH:mm")}
+            </span>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -836,6 +881,12 @@ function InventarioTab({
                 <th className="text-right font-semibold px-3 py-3">Reservado</th>
                 <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
                 <th className="text-right font-semibold px-3 py-3">Inutilizável</th>
+                <th
+                  className="text-right font-semibold px-3 py-3"
+                  title="Disponível no depósito Geral do Tiny (saldo − reservado). Kit = quantos dá para montar com os componentes. É o estoque da empresa para mandar ao CD."
+                >
+                  Disponível Tiny
+                </th>
                 <th className="text-left font-semibold px-3 py-3">Atualizado</th>
               </tr>
             </thead>
@@ -843,14 +894,14 @@ function InventarioTab({
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    <td colSpan={8} className="px-3 py-3">
+                    <td colSpan={9} className="px-3 py-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))
               ) : filtradas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={9} className="px-3 py-12 text-center text-sm text-muted-foreground">
                     Nenhum item de estoque encontrado
                   </td>
                 </tr>
@@ -909,6 +960,22 @@ function InventarioTab({
                       </td>
                       <td className={cn("px-3 py-2.5 text-right tabular-nums font-mono text-[13px]", num(r.unsellable) > 0 ? "text-destructive" : "text-muted-foreground")}>
                         {formatNumber(num(r.unsellable))}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px]">
+                        {(() => {
+                          const t = r.sku ? tiny?.get(r.sku) : undefined;
+                          if (!tiny) return <span className="text-muted-foreground">…</span>;
+                          if (!t || !t.sincronizado) {
+                            return (
+                              <span className="text-muted-foreground" title="Este SKU não está na leitura de estoque do Tiny (SKUs da reposição)">—</span>
+                            );
+                          }
+                          return (
+                            <span className={cn("font-semibold", t.disponivel <= 0 ? "text-destructive" : "text-foreground")}>
+                              {formatNumber(t.disponivel)}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                         {r.atualizado_em ? format(parseISO(r.atualizado_em), "dd/MM HH:mm") : "—"}
