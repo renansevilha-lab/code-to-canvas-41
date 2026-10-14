@@ -3352,6 +3352,17 @@ Integrados** (cards "vs 01–09/set"). Tendências fica com janelas móveis 7/30
 propósito). Exemplo do erro antigo: 15984 em 01–09/out aparecia 17 → 708 (+4.064%) contra 22–30/set;
 mês a mês é 2.605 → 709.
 
+**Menu lateral enxuto (14/out/2026, pedido do dono):** telas parecidas viraram ABAS de um item só
+(`NavItem.abas` em `src/components/AppSidebar.tsx`): Separação (Fila · Monitoramento · Histórico),
+Pedidos Shopee a enviar (A enviar · Risco de cancelamento), Equipe (Manual de Operação · Registro de
+horas), Produtos (Catálogo · Margem · Mapeamento SKUs), ADS (Shopee · Mercado Livre · Saúde ML),
+Carteira (Carteira · Saldos MKT) e Configuração da IA (Prompts · Contextos). Cada aba continua sendo
+a rota de antes (filtros na URL, links antigos valem); a barra de abas é desenhada UMA vez no shell
+(`AbasDaTela` no `__root`), não nas telas. `localizarRota()` acha item/aba pela url mais longa que
+casa. Grupos nascem fechados (abre o da tela atual) e **Favoritos** (estrela no item) ficam numa
+seção fixa no topo — os dois em `localStorage` (`menu.gruposAbertos`, `menu.favoritos`), por
+navegador. Tela nova que for aba de outra: só acrescentar em `abas`.
+
 **Padrões a manter:**
 - `QueryClient` no nível de módulo, com `refetchOnWindowFocus: false`,
   `refetchOnMount: false`, `staleTime` 5 min.
