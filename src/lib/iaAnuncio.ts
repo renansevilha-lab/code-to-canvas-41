@@ -88,6 +88,31 @@ export interface IaHistSku {
 export interface IaPreco {
   erro?: string; preco_sugerido?: number; lucro_reais?: number; margem_estimada_pct?: number;
   memoria_calculo?: Record<string, any>; historico?: Record<string, any> | null;
+  /** produto PAI (com variações): o preço é o desta variação, a MAIS CARA na margem pedida */
+  da_variacao?: string; n_variacoes?: number;
+}
+
+/**
+ * Preço pela margem (`ia_calcular_preco`; margem nula = a padrão do canal). O produto PAI, que tem variações,
+ * não tem custo próprio na gestão: para ele vale o preço da variação MAIS CARA na mesma margem (13/out/2026,
+ * pedido do dono) — é o preço padrão do anúncio antes de as variações entrarem com o preço de cada uma.
+ */
+export async function calcularPreco(sku: string, canal: string, empresa: string, margem: number | null): Promise<IaPreco> {
+  const chamar = (s: string) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: canal, p_empresa: empresa, p_margem: margem });
+  const { data, error } = await chamar(sku);
+  if (error) throw error;
+  const p = (data ?? {}) as IaPreco;
+  if (!p.erro) return p;
+  const { data: vs } = await supabaseExternal.from("produtos").select("sku").eq("sku_pai", sku).eq("ativo", true);
+  const skus = ((vs ?? []) as { sku: string }[]).map((v) => v.sku);
+  if (!skus.length) return p;
+  const rs = await Promise.all(skus.map((s) => chamar(s)));
+  let melhor: IaPreco | null = null; let de = "";
+  rs.forEach((r, i) => {
+    const x = (r.data ?? {}) as IaPreco;
+    if (x.preco_sugerido != null && (!melhor || Number(x.preco_sugerido) > Number(melhor.preco_sugerido))) { melhor = x; de = skus[i]; }
+  });
+  return melhor ? { ...(melhor as IaPreco), da_variacao: de, n_variacoes: skus.length } : p;
 }
 /** Rótulo legível do tipo de foto (template imagem_*). */
 export const rotuloFoto = (t: string) => t.replace(/^imagem_/, "").replace(/_/g, " ");

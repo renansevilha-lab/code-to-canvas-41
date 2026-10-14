@@ -12,7 +12,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
-import { chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { calcularPreco, chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -234,11 +234,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const padraoQ = useQuery({
     queryKey: ["ia-anuncio", "produto", rascunho.sku, "preco", canal, empresa, null],
     enabled: canal === "shopee" && aprovadoD == null,
-    queryFn: async (): Promise<IaPreco> => {
-      const { data, error } = await supabaseExternal.rpc("ia_calcular_preco", { p_sku: rascunho.sku, p_canal: canal, p_empresa: empresa, p_margem: null });
-      if (error) throw error;
-      return (data ?? {}) as IaPreco;
-    },
+    // produto pai (com variações): vale o preço da variação mais cara na margem padrão
+    queryFn: (): Promise<IaPreco> => calcularPreco(rascunho.sku, canal, empresa, null),
   });
   const precoPadrao = canal === "shopee" && aprovadoD == null ? padraoQ.data?.preco_sugerido ?? null : null;
   const margemPadrao = padraoQ.data?.memoria_calculo?.margem_padrao_pct as number | undefined;
@@ -560,7 +557,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
               </div>
             </label>
             <label className="block">
-              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · padrão: margem de ${(margemPadrao * 100).toFixed(0)}%` : ""}</span>
+              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · padrão: margem de ${(margemPadrao * 100).toFixed(0)}%${padraoQ.data?.da_variacao ? " da variação mais cara" : ""}` : ""}</span>
               <Input className="h-8 mt-1 w-[150px] text-sm tabular-nums" inputMode="decimal" placeholder="defina o preço"
                 value={campo("preco", p.preco)} onChange={(e) => setOp({ ...op, preco: e.target.value })} />
             </label>

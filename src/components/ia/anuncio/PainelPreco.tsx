@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
-import { nomeCanal, nomeEmpresa, type IaHistSku, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { calcularPreco, nomeCanal, nomeEmpresa, type IaHistSku, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 
 // ============================================================================
 // Preço do anúncio (10/out/2026, pedido do dono): usa o que a gestão já sabe.
@@ -56,11 +56,7 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
   const precoQ = useQuery({
     queryKey: ["ia-anuncio", "produto", sku, "preco", canal, empresa, margem],
     placeholderData: (anterior) => anterior,
-    queryFn: async (): Promise<IaPreco> => {
-      const { data, error } = await supabaseExternal.rpc("ia_calcular_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa, p_margem: margem });
-      if (error) throw error;
-      return (data ?? {}) as IaPreco;
-    },
+    queryFn: (): Promise<IaPreco> => calcularPreco(sku, canal, empresa, margem),
   });
   const histQ = useQuery({
     queryKey: ["ia-anuncio", "historico", sku],
@@ -89,6 +85,10 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
     },
   });
   const p = precoQ.data;
+  // produto pai: sem preço salvo, o "preço que vai praticar" já vem com o da variação mais cara na margem pedida
+  useEffect(() => {
+    if (precoSalvo == null && p?.da_variacao && p.preco_sugerido != null) setPreco(Number(p.preco_sugerido).toFixed(2).replace(".", ","));
+  }, [p?.da_variacao, p?.preco_sugerido, precoSalvo]);
   const mem = p?.memoria_calculo ?? {};
   const padrao = Number(mem.margem_padrao_pct ?? (p as any)?.margem_padrao_pct ?? canalQ.data ?? 0.175);
   const alvo = Number(mem.margem_alvo_pct ?? margem ?? padrao);
@@ -101,7 +101,7 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
     const v = valor ?? numero();
     if (!(v > 0)) { toast.error("Informe um preço"); return; }
     setOcupado(true);
-    const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: sku, p_canal: canal, p_empresa: empresa, p_preco: v, p_margem: margem });
+    const { data, error } = await supabaseExternal.rpc("ia_analisar_preco", { p_sku: p?.da_variacao ?? sku, p_canal: canal, p_empresa: empresa, p_preco: v, p_margem: margem });
     setOcupado(false);
     if (error) { toast.error("Falha na análise", { description: error.message }); return; }
     setAnalise(data as Record<string, any>);
@@ -156,7 +156,7 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
       ) : (
         <div className="grid md:grid-cols-[auto_1fr] gap-x-8 gap-y-3">
           <div>
-            <div className="text-[11px] text-muted-foreground">Sugerido para {pct(alvo)} de margem</div>
+            <div className="text-[11px] text-muted-foreground">Sugerido para {pct(alvo)} de margem{p?.da_variacao ? ` · pela variação mais cara (${p.da_variacao}${p.n_variacoes ? `, de ${p.n_variacoes}` : ""})` : ""}</div>
             <div className="text-3xl font-bold font-mono tracking-tight">{formatBRL(Number(p?.preco_sugerido))}</div>
             <div className="text-xs text-muted-foreground">sobram {formatBRL(Number(p?.lucro_reais))} por unidade</div>
             {aqui?.preco_unit_ult != null && (

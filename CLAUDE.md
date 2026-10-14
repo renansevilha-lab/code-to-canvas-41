@@ -2623,6 +2623,22 @@ cada dado.
   (231); passou a contar quem vendeu no período atual (171) e a linha de baixo diz quantos só
   venderam no período de comparação.
 
+## 5.11.11.8 Preço padrão do produto PAI = variação mais cara (13/out/2026)
+
+Produto com variações (tipo V) não tem custo na gestão — o bloco Preço dizia "Sem preço sugerido:
+produto sem custo (SKU 16506)" e a conferência pedia para digitar. Pedido do dono: o padrão é o
+preço a 30% de margem da variação MAIS CARA.
+- `calcularPreco(sku, canal, empresa, margem)` em `src/lib/iaAnuncio.ts`: chama
+  `ia_calcular_preco`; se voltar erro e o SKU tiver variações ativas (`produtos.sku_pai`), calcula
+  cada variação na mesma margem e devolve a de maior preço, com `da_variacao`/`n_variacoes`. Só
+  front, sem mexer na função do banco. Ex.: 16506 → R$ 222,39 (variação 10 kg, 16514).
+- **Bloco Preço** (`PainelPreco`): mostra o sugerido "pela variação mais cara (SKU…)", já preenche
+  "Preço que vai praticar" quando não há preço salvo e analisa o preço digitado pela conta dessa
+  variação. Mudar a margem recalcula.
+- **Conferência do envio** (`Publicar`, Shopee): sem preço aprovado, abre com esse preço. Não é
+  gravado como aprovado de propósito — continua acompanhando custo e margem; "Salvar preço" fixa.
+  No anúncio com variações ele só vale por instantes: cada variação entra com o próprio preço.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
