@@ -52,6 +52,7 @@ import {
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { AdsAbas } from "@/components/ads/AdsAbas";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -589,6 +590,7 @@ function AdsShopeePage() {
   return (
     <TooltipProvider>
       <div className="w-full px-6 md:px-8 py-6 space-y-[18px]">
+        <AdsAbas />
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
           <Info className="h-3.5 w-3.5" />
           Últimos 30 dias por anúncio · classificação, ROAS e ACOS vêm do banco.

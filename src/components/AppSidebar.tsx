@@ -1,7 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  Activity,
   BarChart3,
   Calculator,
   Megaphone,
@@ -47,6 +46,8 @@ interface NavItem {
   icon: LucideIcon;
   modulo: string;
   badgeKey?: "anomalias";
+  // outras rotas que também acendem este item (telas que viraram abas dele)
+  tambem?: string[];
 }
 interface NavGroup {
   label: string;
@@ -99,9 +100,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Mídia & Canais",
     cor: "#F472B6",
     items: [
-      { title: "ADS Shopee", url: "/ads-shopee", icon: Megaphone, modulo: "ads" },
-      { title: "ADS Mercado Livre", url: "/ads-ml", icon: Megaphone, modulo: "ads" },
-      { title: "Saúde ML", url: "/saude-ml", icon: Activity, modulo: "ads" },
+      { title: "ADS", url: "/ads-shopee", icon: Megaphone, modulo: "ads", tambem: ["/ads-ml", "/saude-ml"] },
       { title: "Promoções", url: "/promocoes", icon: Zap, modulo: "ads" },
       { title: "Amazon", url: "/amazon", icon: ShoppingCart, modulo: "produtos" },
     ],
@@ -136,12 +135,14 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const CHAVE_GRUPOS = "menu.gruposAbertos";
+
 // Título + grupo da rota atual (usado no header do shell).
 export function crumbDaRota(pathname: string): { grupo: string; titulo: string } {
   let melhor: { grupo: string; titulo: string; len: number } | null = null;
   for (const g of NAV_GROUPS) {
     for (const it of g.items) {
-      const match = it.url === "/" ? pathname === "/" : pathname.startsWith(it.url);
+      const match = it.url === "/" ? pathname === "/" : [it.url, ...(it.tambem ?? [])].some((u) => pathname.startsWith(u));
       if (match && (!melhor || it.url.length > melhor.len)) {
         melhor = { grupo: g.label, titulo: it.title, len: it.url.length };
       }
@@ -155,9 +156,27 @@ export function AppSidebar() {
   const { temAcesso } = usePerfil();
   const { user } = useAuth();
 
-  const [abertos, setAbertos] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(NAV_GROUPS.map((g) => [g.label, true])),
-  );
+  // Grupos fechados por padrão (pedido do dono, 14/out/2026): abre só o grupo da tela atual
+  // e o que a pessoa abrir à mão (lembrado neste navegador).
+  const [abertos, setAbertos] = useState<Record<string, boolean>>(() => {
+    try {
+      const salvo = JSON.parse(localStorage.getItem(CHAVE_GRUPOS) ?? "{}");
+      return salvo && typeof salvo === "object" ? (salvo as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const grupoAtual = crumbDaRota(currentPath).grupo;
+  useEffect(() => {
+    setAbertos((a) => (a[grupoAtual] ? a : { ...a, [grupoAtual]: true }));
+  }, [grupoAtual]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAVE_GRUPOS, JSON.stringify(abertos));
+    } catch {
+      /* sem armazenamento: só não lembra */
+    }
+  }, [abertos]);
   const [anomaliasCount, setAnomaliasCount] = useState(0);
 
   useEffect(() => {
@@ -181,7 +200,8 @@ export function AppSidebar() {
     };
   }, []);
 
-  const isActive = (path: string) => (path === "/" ? currentPath === "/" : currentPath.startsWith(path));
+  const isActive = (it: NavItem) =>
+    it.url === "/" ? currentPath === "/" : [it.url, ...(it.tambem ?? [])].some((u) => currentPath.startsWith(u));
 
   const email = user?.email ?? "";
   const iniciais = (email.split("@")[0] || "?").slice(0, 2).toUpperCase();
@@ -219,7 +239,7 @@ export function AppSidebar() {
               {aberto && (
                 <div className="flex flex-col gap-px">
                   {itens.map((it) => {
-                    const ativo = isActive(it.url);
+                    const ativo = isActive(it);
                     const badge = it.badgeKey === "anomalias" ? anomaliasCount || null : null;
                     return (
                       <Link
