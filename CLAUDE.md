@@ -2639,6 +2639,25 @@ preço a 30% de margem da variação MAIS CARA.
   gravado como aprovado de propósito — continua acompanhando custo e margem; "Salvar preço" fixa.
   No anúncio com variações ele só vale por instantes: cada variação entra com o próprio preço.
 
+## 5.11.11.9 Dois envios do 16506 sem variações (13/out/2026, 22h30) — causa NÃO identificada
+
+Shopee Ottz (item 28996051694, 22:28) e Bumi (45619213619, 22:40): o anúncio simples foi criado
+(fora do ar, como previsto para variações) e as fotos foram ao Tiny, mas
+`anuncio-shopee-variacoes?modulo=criar` devolveu **HTTP 400 "há pendências"** em 2–4 s, sem chegar
+à Shopee — e sem registro: a função só gravava em `debug_fulfillment` DEPOIS de chamar a Shopee, e
+o motivo só aparecia num aviso de 30 s na tela.
+- **O que se sabe:** os dados que a tela manda passam na conferência (5 opções "2kg…10kg", preços
+  50,00 a 222,39, sem medidas pela metade); então a pendência veio da LEITURA do anúncio recém-
+  criado (`get_item_base_info`): não achou, ou situação diferente de NORMAL/UNLIST. Não deu para
+  ler o estado dos dois anúncios por fora (o catálogo noturno só lista os ativos).
+- **v5 (deploy 5):** a leitura tenta até 3× com 2,5 s; toda recusa por pendência é gravada
+  (`etapa = '<item>:pendencias'`, com as pendências e o que foi enviado). Tela: o motivo fica num
+  quadro vermelho no bloco das variações; "Criar as variações na Shopee" (caminho manual) agora
+  também põe o anúncio no ar no fim.
+- **Os dois anúncios seguem sem variações e fora do ar.** Conserto pela tela: abrir o 16506 em cada
+  loja → Conferir → Criar as variações na Shopee. Se repetir, a pendência estará em
+  `debug_fulfillment`.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só

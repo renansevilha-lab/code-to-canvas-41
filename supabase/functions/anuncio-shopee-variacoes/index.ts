@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v4 (13/out/2026)
+// Edge Function: anuncio-shopee-variacoes v5 (13/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -20,6 +20,11 @@
 //   e o anúncio ficou fora do ar. `unlist_item` só define o estado (repetir não duplica nada), então
 //   agora há UMA nova tentativa depois de 6 s; e `POST ?modulo=ativar {empresa, item_id, confirmar}`
 //   põe no ar um anúncio que ficou de fora (botão "Pôr no ar agora" da tela).
+// v5: os dois últimos envios (16506, Ottz e Bumi) pararam na conferência (HTTP 400 "há pendências") logo
+//   depois de o anúncio nascer, e o motivo se perdeu — a função só registrava depois de chamar a Shopee.
+//   Agora (1) a LEITURA do anúncio recém-criado tenta até 3× com 2,5 s (a Shopee às vezes ainda não o
+//   devolve no segundo seguinte; ler de novo não muda nada) e (2) toda recusa por pendência fica em
+//   `debug_fulfillment` (`etapa = <item>:pendencias`).
 // Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
 // variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
@@ -182,10 +187,15 @@ Deno.serve(async (req) => {
     let anuncio: Record<string, unknown> | null = null; let c: Ctx | null = null;
     if (shopId && itemId) {
       c = await ctxShopee(shopId);
-      const url = await urlLoja(c, "/api/v2/product/get_item_base_info");
-      url.searchParams.set("item_id_list", String(itemId));
-      const bi = await lerJson(await fetch(url.toString()));
-      const it = bi?.response?.item_list?.[0];
+      // anúncio recém-criado: a Shopee pode ainda não devolvê-lo no segundo seguinte (só leitura: repetir não muda nada)
+      let bi: any = null; let it: any = null;
+      for (let tentativa = 1; tentativa <= 3 && !it; tentativa++) {
+        if (tentativa > 1) await new Promise((r) => setTimeout(r, 2500));
+        const url = await urlLoja(c, "/api/v2/product/get_item_base_info");
+        url.searchParams.set("item_id_list", String(itemId));
+        bi = await lerJson(await fetch(url.toString()));
+        it = bi?.response?.item_list?.[0];
+      }
       if (bi?.error || !it) pend.push(`não achei o anúncio ${itemId} nesta loja${bi?.error ? ` (${bi.error} ${bi.message ?? ""})` : ""}`);
       else {
         anuncio = { item_id: itemId, nome: it.item_name, sku: it.item_sku ?? null, situacao: it.item_status, tem_variacao: !!it.has_model, url: `https://shopee.com.br/product/${shopId}/${itemId}` };
@@ -208,7 +218,13 @@ Deno.serve(async (req) => {
     if (modulo === "previa") return json({ ok: true, anuncio, pendencias, avisos, com_foto: comFoto === variacoes.length && comFoto > 0, payload: montar(new Map()) });
 
     if (body.confirmar !== true) return json({ ok: false, erro: "criar exige confirmar: true" }, 400);
-    if (pendencias.length || !c) return json({ ok: false, erro: "há pendências", pendencias }, 400);
+    if (pendencias.length || !c) {
+      await db.from("debug_fulfillment").insert({
+        modulo: "anuncio-shopee-variacoes", etapa: `${itemId}:pendencias`, status_http: 400,
+        resultado: { quem: quem.nome, shop_id: shopId, pendencias, anuncio, grade, variacoes: variacoes.map((v) => ({ sku: v.sku, opcao: v.opcao, preco: v.preco, foto: !!v.foto_path })) },
+      });
+      return json({ ok: false, erro: "há pendências", pendencias }, 400);
+    }
 
     // fotos das opções (só mídia: se falhar aqui, nada foi mudado no anúncio)
     const ids = new Map<string, string>();

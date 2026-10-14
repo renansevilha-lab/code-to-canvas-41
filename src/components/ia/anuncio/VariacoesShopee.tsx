@@ -101,6 +101,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   const [feito, setFeito] = useState<string | null>(null);
   const [recemCriado, setRecemCriado] = useState<{ item: string; ativar: boolean } | null>(null);
   const [noAr, setNoAr] = useState<boolean | null>(null);
+  // o motivo de as variações não terem sido criadas fica NA TELA (o aviso flutuante some em segundos)
+  const [falha, setFalha] = useState<string | null>(null);
   // preenche uma vez por LOJA: recarregar a consulta não pode apagar o que o operador já ajustou.
   // Ao trocar de loja (Ottz ↔ Bumi) o preço, o anúncio e a foto são os da loja nova; o nome da opção, o
   // estoque, o PESO e as MEDIDAS que já estavam na tela ficam (13/out, pedido do dono).
@@ -149,13 +151,15 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
 
   /** `doEnvio`: veio do envio do anúncio (ativa se pedido e avisa a promoção); o caminho manual só cria. */
   async function criar(item: string, doEnvio?: { ativar: boolean }) {
-    setOcupado("criando");
+    setOcupado("criando"); setFalha(null);
+    // Shopee sempre no ar: pelo botão desta tela o anúncio também é ativado depois de criadas as variações
+    const ativarAgora = doEnvio ? doEnvio.ativar : true;
     try {
-      const r = (await chamarVariacoesShopee("criar", { ...corpo(item), confirmar: true, ativar: doEnvio?.ativar === true })) as {
+      const r = (await chamarVariacoesShopee("criar", { ...corpo(item), confirmar: true, ativar: ativarAgora })) as {
         anuncio?: { url: string }; modelos?: { model_id: number; sku: string }[]; ativado?: boolean | null; aviso_ativar?: string | null;
       };
       setFeito(r.anuncio?.url ?? `https://shopee.com.br/product/${shopId}/${item}`);
-      setNoAr(doEnvio?.ativar ? r.ativado === true : null);
+      setNoAr(ativarAgora ? r.ativado === true : null);
       toast.success(`${linhas.length} variações criadas no anúncio ${item}${r.ativado ? " · anúncio no ar" : ""}`);
       if (r.aviso_ativar) toast.warning(r.aviso_ativar, { duration: 30000 });
       // peso e medidas conferidos ficam guardados por SKU: servem à outra loja e aos outros marketplaces
@@ -166,7 +170,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         if (Object.keys(m).length) await supabaseExternal.from("ia_produto_extra").upsert({ sku: l.sku, ...m }, { onConflict: "sku" });
       })).catch(() => undefined);
       // o espelho do app passa a enxergar as variações sem esperar a sincronização da madrugada
-      const espelhar = atualizarCatalogoShopee(shopId, [Number(item)]).catch(() => undefined);
+      const espelhar = atualizarCatalogoShopee(shopId, [Number(item)]).then(() => { void q.refetch(); }).catch(() => undefined);
       if (doEnvio) {
         // a promoção (se escolhida no envio) precisa do código de cada variação: o da resposta ou, sem ele, o do espelho
         let modelos = (r.modelos ?? []).filter((m) => m.model_id && m.sku).map((m) => ({ model_id: Number(m.model_id), sku: String(m.sku) }));
@@ -179,7 +183,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         window.dispatchEvent(new CustomEvent(EV_PRONTO, { detail: pronto }));
       }
     } catch (e) {
-      toast.error("O anúncio existe, mas as variações NÃO foram criadas", { description: `${(e as Error).message} — ajuste aqui e use "Criar as variações na Shopee".`, duration: 30000 });
+      setFalha((e as Error).message);
+      toast.error("O anúncio existe, mas as variações NÃO foram criadas", { description: `${(e as Error).message} — o motivo ficou no bloco das variações.`, duration: 30000 });
     } finally { setOcupado(""); }
   }
   useEffect(() => {
@@ -228,7 +233,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
   }
   async function criarComConfirmacao() {
     if (!conferido?.anuncio) return;
-    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${conferido.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).`)) return;
+    if (!window.confirm(`Criar na Shopee as ${linhas.length} variações no anúncio "${conferido.anuncio.nome}"?\n\n${linhas.map((l) => `${l.opcao} · SKU ${l.sku} · ${formatBRL(paraNumero(l.preco))} · estoque ${l.estoque}`).join("\n")}\n\nDepois de criadas, as opções não devem ser trocadas (o anúncio perderia o histórico delas).\nO anúncio vai ao AR em seguida.`)) return;
     await criar(itemId.trim());
   }
   const jaTem = q.data.espelho.find((e) => String(e.item_id) === itemId.trim())?.tem_variacao;
@@ -245,6 +250,13 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
           </p>
         </div>
         {ocupado === "criando" && <p className="text-sm flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Enviando para a Shopee…</p>}
+        {falha && !feito && (
+          <div className="rounded-md border border-destructive/50 bg-destructive/5 p-2.5 text-sm text-destructive">
+            <div className="font-medium flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />As variações NÃO foram criadas no anúncio {itemId.trim()}</div>
+            <div className="text-xs mt-1">{falha}</div>
+            <div className="text-xs mt-1 text-foreground">O anúncio existe, sem variações e fora do ar. Ajuste o que for preciso abaixo, clique em <b>Conferir</b> e depois em <b>Criar as variações na Shopee</b>.</div>
+          </div>
+        )}
         {foraDoAr && (
           <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-2.5 text-sm flex flex-wrap items-center gap-3">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
