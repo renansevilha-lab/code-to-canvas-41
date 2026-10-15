@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v2 (14/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v3 (14/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: o envio montado na aba Fulfillment › Envios vira o plano de envio na Amazon, com as
 // caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -15,6 +15,7 @@
 // Regras: cada escrita na Amazon é feita UMA vez (o passo e o operationId são gravados logo depois da
 // resposta; nada é repetido sozinho). O andamento fica em amazon_envio_plano (log por passo).
 // v1 (teste com chave temporária) saiu: a fase de teste terminou com o plano criado e cancelado.
+// v3: envio com número FBA… (veio do PDF do Seller Central) não cria outro plano — seria em dobro.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -149,6 +150,10 @@ async function montar(envioId: string) {
   ];
   const avisos = linhas.filter((l) => l.msku && !l.validade).map((l) => `${l.sku}: sem validade no modelo — se o produto exigir (areia exige), a Amazon recusa o plano`);
   const { data: plano } = await db.from("amazon_envio_plano").select("*").eq("envio_id", envioId).maybeSingle();
+  // envio que veio do PDF do Seller Central já existe na Amazon: criar de novo daria um plano em dobro
+  if (!plano && /^FBA/i.test(String(envio.numero ?? ""))) {
+    pendencias.unshift(`este envio já existe na Amazon (${envio.numero}, criado no Seller Central): o botão é para envio montado no app`);
+  }
   return { envio, conta, linhas, pendencias, avisos, plano: plano as Record<string, any> | null };
 }
 
