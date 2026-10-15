@@ -1,21 +1,23 @@
 // ============================================================================
-// Edge Function: amazon-inbound v3 (14/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v4 (14/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
-// Pedido do dono: o envio montado na aba Fulfillment › Envios vira o plano de envio na Amazon, com as
-// caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
-// destino. Transportadora, nota fiscal de remessa e etiquetas seguem no Seller Central (ainda não testados
-// pela API). Só funciona na conta cujo app tem a permissão de envios (hoje a SVL; a ACZ responde 403).
+// Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
+// com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
+// destino. NÃO cria envio no app: confirmado o destino, a pessoa segue no Seller Central (transportadora,
+// nota fiscal, etiquetas), baixa o PDF e lança em Envios como sempre. Só a conta cujo app tem a permissão
+// de envios (hoje a SVL; a ACZ responde 403).
 //
-// POST body {modulo, envio_id, ...} — exige sessão de usuário com o módulo `galpao` (ou service role):
-//   previa             → itens do envio × anúncio da Amazon (msku) × modelo de caixa; pendências. Só leitura.
-//   avancar            → executa os próximos passos (até ~22 s) e devolve o estado; a tela chama de novo
-//                        até parar em "escolher_destino". O 1º passo (criar o plano) exige confirmar: true.
-//   confirmar-destino  → {opcao_id, confirmar: true}: confirma o centro de destino (pode ter taxa).
-//   cancelar           → {confirmar: true}: cancela o plano na Amazon.
+// POST body {modulo, ...} — exige sessão de usuário com o módulo `galpao` (ou service role):
+//   lista              → planos dos últimos 30 dias (andamento, resumo). Só leitura.
+//   previa             → {empresa, itens:[{sku, quantidade, msku?, titulo?}]} ou {plano}: itens × anúncio da
+//                        Amazon (msku) × modelo de caixa; pendências. Só leitura.
+//   avancar            → {empresa, itens, confirmar: true} cria o plano; {plano} continua de onde parou.
+//                        Até ~22 s por chamada; a tela repete até "escolher_destino".
+//   confirmar-destino  → {plano, opcao_id, confirmar: true}: confirma o centro de destino (pode ter taxa).
+//   cancelar           → {plano, confirmar: true}: cancela o plano na Amazon.
 // Regras: cada escrita na Amazon é feita UMA vez (o passo e o operationId são gravados logo depois da
-// resposta; nada é repetido sozinho). O andamento fica em amazon_envio_plano (log por passo).
-// v1 (teste com chave temporária) saiu: a fase de teste terminou com o plano criado e cancelado.
-// v3: envio com número FBA… (veio do PDF do Seller Central) não cria outro plano — seria em dobro.
+// resposta; nada é repetido sozinho). O andamento fica em amazon_envio_plano (id próprio, log por passo).
+// v4: o plano nasce na Reposição (antes: dependia de um envio do app — lógica errada, apontada pelo dono).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -104,29 +106,28 @@ type Linha = {
   modelo: Record<string, any> | null; caixas: number | null; validade: string | null; problema: string | null;
   anuncios: string[]; // anúncios (msku) deste SKU no FBA da conta — a tela deixa escolher quando há mais de um
 };
-async function montar(envioId: string) {
-  const { data: envio } = await db.from("fulfillment_envios").select("id, marketplace, empresa, numero, centro, status").eq("id", envioId).maybeSingle();
-  if (!envio) throw new Error("envio não encontrado");
-  if (envio.marketplace !== "amazon") throw new Error("este envio não é da Amazon");
-  const conta = CONTA[String(envio.empresa ?? "")] ?? CONTA["ACZ Pet"];
-  const { data: itensD } = await db.from("fulfillment_envio_itens").select("sku, sku_origem, titulo, qtd_planejada").eq("envio_id", envioId).order("ordem");
-  const itens = ((itensD ?? []) as any[]).filter((i) => Number(i.qtd_planejada) > 0);
+type Entrada = { sku: string; quantidade: number; msku?: string | null; titulo?: string | null };
+async function montar(empresa: string | null, entrada: Entrada[]) {
+  const conta = CONTA[String(empresa ?? "")] ?? CONTA["ACZ Pet"];
+  const itens = entrada.filter((i) => i && i.sku && Number(i.quantidade) > 0);
   const skus = [...new Set(itens.map((i) => String(i.sku)))];
-  const [estq, mods] = await Promise.all([
+  const [estq, mods, prods] = await Promise.all([
     db.from("estoque_fulfillment").select("sku, sku_marketplace").eq("marketplace", "amazon").eq("shop_id", conta.shop_id).in("sku", skus.length ? skus : ["-"]),
     db.from("amazon_modelo_caixa").select("*").eq("shop_id", conta.shop_id),
+    db.from("produtos").select("sku, nome").in("sku", skus.length ? skus : ["-"]),
   ]);
   const modelos = new Map(((mods.data ?? []) as any[]).map((m) => [String(m.msku), m]));
+  const nomes = new Map(((prods.data ?? []) as any[]).map((p) => [String(p.sku), String(p.nome ?? "")]));
   const anuncios = new Map<string, string[]>();
   for (const e of (estq.data ?? []) as any[]) anuncios.set(String(e.sku), [...(anuncios.get(String(e.sku)) ?? []), String(e.sku_marketplace)]);
 
   const linhas: Linha[] = itens.map((i) => {
     const sku = String(i.sku);
-    const qtd = Number(i.qtd_planejada);
-    let msku: string | null = i.sku_origem ? String(i.sku_origem) : null;
+    const qtd = Math.floor(Number(i.quantidade));
+    const ops = [...new Set(anuncios.get(sku) ?? [])];
+    let msku: string | null = i.msku ? String(i.msku) : null;
     let problema: string | null = null;
     if (!msku) {
-      const ops = [...new Set(anuncios.get(sku) ?? [])];
       const comModelo = ops.filter((o) => modelos.has(o));
       msku = ops.length === 1 ? ops[0] : comModelo.length === 1 ? comModelo[0] : null;
       if (!msku) problema = ops.length ? `o SKU tem ${ops.length} anúncios nesta conta (${ops.join(", ")}): escolha qual na lista` : "não achei o anúncio deste SKU no FBA desta conta";
@@ -139,43 +140,43 @@ async function montar(envioId: string) {
       if (qtd % un !== 0) problema = `${qtd} unidades não fecham caixas de ${un} (o modelo "${modelo.nome ?? ""}" leva ${un})`;
       else caixas = qtd / un;
     }
-    return { sku, msku, titulo: i.titulo ?? null, quantidade: qtd, modelo, caixas, validade: modelo?.validade ?? null, problema, anuncios: [...new Set(anuncios.get(sku) ?? [])] };
+    return { sku, msku, titulo: i.titulo ?? nomes.get(sku) ?? null, quantidade: qtd, modelo, caixas, validade: modelo?.validade ?? null, problema, anuncios: ops };
   });
   const repetidos = linhas.filter((l, k) => l.msku && linhas.findIndex((x) => x.msku === l.msku) !== k).map((l) => l.msku);
   const pendencias = [
     ...linhas.filter((l) => l.problema).map((l) => `${l.sku}: ${l.problema}`),
-    ...(linhas.length === 0 ? ["o envio não tem itens com quantidade"] : []),
+    ...(linhas.length === 0 ? ["nenhum produto com quantidade"] : []),
     ...(conta.shop_id === 900001 ? ["a conta ACZ ainda não tem a permissão de envios no aplicativo da Amazon (\"Ottz Analytics\"): por enquanto só a SVL"] : []),
-    ...(repetidos.length ? [`anúncio repetido no envio: ${[...new Set(repetidos)].join(", ")} — junte as quantidades num item só`] : []),
+    ...(repetidos.length ? [`anúncio repetido: ${[...new Set(repetidos)].join(", ")} — junte as quantidades num item só`] : []),
   ];
   const avisos = linhas.filter((l) => l.msku && !l.validade).map((l) => `${l.sku}: sem validade no modelo — se o produto exigir (areia exige), a Amazon recusa o plano`);
-  const { data: plano } = await db.from("amazon_envio_plano").select("*").eq("envio_id", envioId).maybeSingle();
-  // envio que veio do PDF do Seller Central já existe na Amazon: criar de novo daria um plano em dobro
-  if (!plano && /^FBA/i.test(String(envio.numero ?? ""))) {
-    pendencias.unshift(`este envio já existe na Amazon (${envio.numero}, criado no Seller Central): o botão é para envio montado no app`);
-  }
-  return { envio, conta, linhas, pendencias, avisos, plano: plano as Record<string, any> | null };
+  return { conta, linhas, pendencias, avisos };
+}
+async function lerPlano(id: string) {
+  const { data } = await db.from("amazon_envio_plano").select("*").eq("id", id).maybeSingle();
+  if (!data) throw new Error("plano não encontrado");
+  return data as Record<string, any>;
 }
 
 // ---------------------------------------------------------------- estado
-async function salvar(envioId: string, patch: Record<string, unknown>, registro?: Record<string, unknown>) {
+async function salvar(planoRef: string, patch: Record<string, unknown>, registro?: Record<string, unknown>) {
   const set: Record<string, unknown> = { ...patch, atualizado_em: new Date().toISOString() };
   if (registro) {
-    const { data } = await db.from("amazon_envio_plano").select("log").eq("envio_id", envioId).maybeSingle();
+    const { data } = await db.from("amazon_envio_plano").select("log").eq("id", planoRef).maybeSingle();
     const log = Array.isArray(data?.log) ? data!.log as unknown[] : [];
     set.log = [...log, { em: new Date().toISOString(), ...registro }].slice(-60);
   }
-  const { data: linha } = await db.from("amazon_envio_plano").update(set).eq("envio_id", envioId).select("*").single();
+  const { data: linha } = await db.from("amazon_envio_plano").update(set).eq("id", planoRef).select("*").single();
   return linha as Record<string, any>;
 }
 /** Dispara UMA escrita assíncrona: grava o passo de espera e o operationId logo depois da resposta. */
-async function disparar(envioId: string, token: string, metodo: string, caminho: string, corpo: unknown, passoEspera: string, acao: string) {
+async function disparar(planoRef: string, token: string, metodo: string, caminho: string, corpo: unknown, passoEspera: string, acao: string) {
   const r = await sp(token, metodo, caminho, corpo);
   if (!ok(r) || !r.body?.operationId) {
-    return await salvar(envioId, { passo: "erro", erro: `${acao}: a Amazon recusou — ${motivo(r)}`, operacao_id: null }, { acao, http: r.status, erro: motivo(r) });
+    return await salvar(planoRef, { passo: "erro", erro: `${acao}: a Amazon recusou — ${motivo(r)}`, operacao_id: null }, { acao, http: r.status, erro: motivo(r) });
   }
   const extra: Record<string, unknown> = r.body?.inboundPlanId ? { plano_id: String(r.body.inboundPlanId) } : {};
-  return await salvar(envioId, { passo: passoEspera, operacao_id: String(r.body.operationId), erro: null, ...extra }, { acao, http: r.status, operacao: r.body.operationId });
+  return await salvar(planoRef, { passo: passoEspera, operacao_id: String(r.body.operationId), erro: null, ...extra }, { acao, http: r.status, operacao: r.body.operationId });
 }
 
 // ---------------------------------------------------------------- passos
@@ -191,7 +192,7 @@ async function prepConstraints(token: string, mskus: string[]) {
   return m;
 }
 
-async function passo(plano: Record<string, any>, token: string, envioId: string, ate: number): Promise<Record<string, any>> {
+async function passo(plano: Record<string, any>, token: string, planoRef: string, ate: number): Promise<Record<string, any>> {
   const id = String(plano.plano_id ?? "");
   const itens = (plano.itens ?? []) as Linha[];
   // esperando uma operação
@@ -199,10 +200,10 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
     while (Date.now() < ate) {
       const o = await sp(token, "GET", `${API}/operations/${plano.operacao_id}`);
       const st = String(o.body?.operationStatus ?? "");
-      if (st === "SUCCESS") return await salvar(envioId, { passo: DEPOIS[plano.passo], operacao_id: null }, { acao: `${plano.passo}: concluído` });
+      if (st === "SUCCESS") return await salvar(planoRef, { passo: DEPOIS[plano.passo], operacao_id: null }, { acao: `${plano.passo}: concluído` });
       if (st === "FAILED") {
         const probs = ((o.body?.operationProblems ?? []) as any[]).map((p) => `${p.code ?? ""}: ${p.message ?? ""}${p.details ? ` (${p.details})` : ""}`).join(" · ");
-        return await salvar(envioId, { passo: "erro", operacao_id: null, erro: `${plano.passo}: ${probs || "operação falhou"}` }, { acao: `${plano.passo}: falhou`, erro: probs });
+        return await salvar(planoRef, { passo: "erro", operacao_id: null, erro: `${plano.passo}: ${probs || "operação falhou"}` }, { acao: `${plano.passo}: falhou`, erro: probs });
       }
       await sleep(1500);
     }
@@ -210,15 +211,15 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
   }
   switch (plano.passo) {
     case "gerar_embalagem":
-      return await disparar(envioId, token, "POST", `${API}/inboundPlans/${id}/packingOptions`, {}, "gerando_embalagem", "gerar opções de embalagem");
+      return await disparar(planoRef, token, "POST", `${API}/inboundPlans/${id}/packingOptions`, {}, "gerando_embalagem", "gerar opções de embalagem");
     case "escolher_embalagem": {
       const r = await sp(token, "GET", `${API}/inboundPlans/${id}/packingOptions`);
       const ops = ((r.body?.packingOptions ?? []) as any[]).filter((p) => p.status === "OFFERED");
-      if (!ops.length) return await salvar(envioId, { passo: "erro", erro: `a Amazon não ofereceu embalagem (${motivo(r)})` });
+      if (!ops.length) return await salvar(planoRef, { passo: "erro", erro: `a Amazon não ofereceu embalagem (${motivo(r)})` });
       const taxa = (p: any) => ((p.fees ?? []) as any[]).reduce((s, f) => s + Number(f?.value?.amount ?? 0), 0);
       const esc = [...ops].sort((a, b) => taxa(a) - taxa(b) || (a.packingGroups?.length ?? 0) - (b.packingGroups?.length ?? 0))[0];
-      await salvar(envioId, { caixas: { packing_option: esc.packingOptionId, grupos: esc.packingGroups ?? [], taxa: taxa(esc) } }, { acao: "embalagem escolhida", opcoes: ops.length, taxa: taxa(esc) });
-      return await disparar(envioId, token, "POST", `${API}/inboundPlans/${id}/packingOptions/${esc.packingOptionId}/confirmation`, {}, "confirmando_embalagem", "confirmar embalagem");
+      await salvar(planoRef, { caixas: { packing_option: esc.packingOptionId, grupos: esc.packingGroups ?? [], taxa: taxa(esc) } }, { acao: "embalagem escolhida", opcoes: ops.length, taxa: taxa(esc) });
+      return await disparar(planoRef, token, "POST", `${API}/inboundPlans/${id}/packingOptions/${esc.packingOptionId}/confirmation`, {}, "confirmando_embalagem", "confirmar embalagem");
     }
     case "caixas": {
       const grupos = ((plano.caixas?.grupos ?? []) as string[]);
@@ -227,15 +228,15 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
       const packageGroupings: any[] = [];
       for (const g of grupos) {
         const r = await sp(token, "GET", `${API}/inboundPlans/${id}/packingGroups/${g}/items`);
-        if (!ok(r)) return await salvar(envioId, { passo: "erro", erro: `ler os itens do grupo de embalagem: ${motivo(r)}` });
+        if (!ok(r)) return await salvar(planoRef, { passo: "erro", erro: `ler os itens do grupo de embalagem: ${motivo(r)}` });
         const boxes: any[] = [];
         for (const it of ((r.body?.items ?? []) as any[])) {
           const l = porMsku.get(String(it.msku));
           const m = l?.modelo;
-          if (!l || !m) return await salvar(envioId, { passo: "erro", erro: `a Amazon pôs no grupo o anúncio ${it.msku}, que não está no envio` });
+          if (!l || !m) return await salvar(planoRef, { passo: "erro", erro: `a Amazon pôs no grupo o anúncio ${it.msku}, que não está no envio` });
           const un = Number(m.un_por_caixa);
           const qtd = Number(it.quantity);
-          if (qtd % un !== 0) return await salvar(envioId, { passo: "erro", erro: `${it.msku}: ${qtd} unidades no grupo não fecham caixas de ${un}` });
+          if (qtd % un !== 0) return await salvar(planoRef, { passo: "erro", erro: `${it.msku}: ${qtd} unidades no grupo não fecham caixas de ${un}` });
           const p = prep.get(String(it.msku)) ?? { labelOwner: "SELLER", prepOwner: "NONE" };
           boxes.push({
             contentInformationSource: "BOX_CONTENT_PROVIDED",
@@ -247,15 +248,15 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
         }
         packageGroupings.push({ packingGroupId: g, boxes });
       }
-      await salvar(envioId, { caixas: { ...(plano.caixas ?? {}), enviadas: packageGroupings } });
-      return await disparar(envioId, token, "POST", `${API}/inboundPlans/${id}/packingInformation`, { packageGroupings }, "enviando_caixas", "informar caixas");
+      await salvar(planoRef, { caixas: { ...(plano.caixas ?? {}), enviadas: packageGroupings } });
+      return await disparar(planoRef, token, "POST", `${API}/inboundPlans/${id}/packingInformation`, { packageGroupings }, "enviando_caixas", "informar caixas");
     }
     case "gerar_destinos":
-      return await disparar(envioId, token, "POST", `${API}/inboundPlans/${id}/placementOptions`, {}, "gerando_destinos", "gerar opções de destino");
+      return await disparar(planoRef, token, "POST", `${API}/inboundPlans/${id}/placementOptions`, {}, "gerando_destinos", "gerar opções de destino");
     case "ler_destinos": {
       const r = await sp(token, "GET", `${API}/inboundPlans/${id}/placementOptions`);
       const ops = ((r.body?.placementOptions ?? []) as any[]).filter((p) => p.status === "OFFERED");
-      if (!ops.length) return await salvar(envioId, { passo: "erro", erro: `a Amazon não ofereceu destino (${motivo(r)})` });
+      if (!ops.length) return await salvar(planoRef, { passo: "erro", erro: `a Amazon não ofereceu destino (${motivo(r)})` });
       const cds = new Map<string, any>();
       for (const sid of [...new Set(ops.flatMap((p) => (p.shipmentIds ?? []) as string[]))]) {
         const s = await sp(token, "GET", `${API}/inboundPlans/${id}/shipments/${sid}`);
@@ -269,7 +270,7 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
         desconto: ((p.discounts ?? []) as any[]).reduce((s, f) => s + Number(f?.value?.amount ?? 0), 0),
         envios: ((p.shipmentIds ?? []) as string[]).map((sid) => ({ id: sid, ...(cds.get(sid) ?? {}) })),
       }));
-      return await salvar(envioId, { passo: "escolher_destino", destinos }, { acao: "opções de destino lidas", opcoes: destinos.length });
+      return await salvar(planoRef, { passo: "escolher_destino", destinos }, { acao: "opções de destino lidas", opcoes: destinos.length });
     }
     case "ler_envios": {
       const pl = await sp(token, "GET", `${API}/inboundPlans/${id}`);
@@ -279,15 +280,7 @@ async function passo(plano: Record<string, any>, token: string, envioId: string,
         envios.push({ id: s.shipmentId, fba: d.body?.shipmentConfirmationId ?? null, cd: d.body?.destination?.warehouseId ?? null, status: d.body?.status ?? s.status });
         await sleep(300);
       }
-      const linha = await salvar(envioId, { passo: "destino_confirmado", envios_amazon: envios }, { acao: "destino confirmado", envios: envios.map((e) => e.fba) });
-      // o envio do app passa a mostrar o número e o centro da Amazon (só se ainda estiverem vazios)
-      const { data: env } = await db.from("fulfillment_envios").select("numero, centro").eq("id", envioId).maybeSingle();
-      const patch: Record<string, unknown> = {};
-      const fbas = envios.map((e) => e.fba).filter(Boolean);
-      if (!env?.numero && fbas.length) patch.numero = fbas.join(" + ");
-      if (!env?.centro) patch.centro = [...new Set(envios.map((e) => e.cd).filter(Boolean))].join(" + ") || null;
-      if (Object.keys(patch).length) await db.from("fulfillment_envios").update(patch).eq("id", envioId);
-      return linha;
+      return await salvar(planoRef, { passo: "destino_confirmado", envios_amazon: envios }, { acao: "destino confirmado", envios: envios.map((e) => e.fba) });
     }
   }
   return plano;
@@ -300,26 +293,34 @@ Deno.serve(async (req) => {
   if (quem instanceof Response) return quem;
   const b = (await req.json().catch(() => ({}))) as Record<string, any>;
   const modulo = String(b.modulo ?? "");
-  const envioId = String(b.envio_id ?? "");
-  if (!envioId) return json({ ok: false, erro: "informe envio_id" }, 400);
-  const inicio = Date.now();
-  const ate = inicio + 22000;
+  const ate = Date.now() + 22000;
 
   try {
-    const m = await montar(envioId);
+    if (modulo === "lista") {
+      const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+      const { data } = await db.from("amazon_envio_plano")
+        .select("id, empresa, shop_id, passo, plano_id, itens_origem, envios_amazon, erro, criado_por, criado_em, atualizado_em")
+        .gte("criado_em", desde).order("criado_em", { ascending: false }).limit(30);
+      return json({ ok: true, planos: data ?? [] });
+    }
+
+    // plano existente (continuar / destino / cancelar) ou itens novos vindos da Reposição
+    const planoRow = b.plano ? await lerPlano(String(b.plano)) : null;
+    const empresa = planoRow ? (planoRow.empresa as string | null) : (b.empresa ? String(b.empresa) : null);
+    const entrada = (planoRow ? planoRow.itens_origem : b.itens) as Entrada[] | undefined;
+    if (!Array.isArray(entrada)) return json({ ok: false, erro: "informe os itens (sku e quantidade) ou o plano" }, 400);
+    const m = await montar(empresa, entrada);
     const resumo = (plano: Record<string, any> | null) => ({
-      ok: true, conta: m.conta.nome, linhas: m.linhas, pendencias: m.pendencias, avisos: m.avisos,
+      ok: true, conta: m.conta.nome, empresa, linhas: plano?.itens ?? m.linhas, pendencias: plano ? [] : m.pendencias, avisos: plano ? [] : m.avisos,
       plano: plano ? { ...plano, log: undefined, ultimos: Array.isArray(plano.log) ? plano.log.slice(-8) : [] } : null,
     });
-    if (modulo === "previa") return json(resumo(m.plano));
+    if (modulo === "previa") return json(resumo(planoRow));
 
     const token = await tokenConta(m.conta.shop_id);
 
     if (modulo === "avancar") {
-      let plano = m.plano;
-      // novo plano: nenhum ainda, o anterior foi cancelado, ou a Amazon recusou a criação
-      const recriar = !plano || plano.passo === "cancelado" || (plano.passo === "erro" && (!plano.plano_id || String(plano.erro ?? "").startsWith("criando:") || String(plano.erro ?? "").startsWith("criar plano:")));
-      if (recriar) {
+      let plano = planoRow;
+      if (!plano) {
         if (b.confirmar !== true) return json({ ok: false, erro: "criar o plano na Amazon exige confirmar: true" }, 400);
         if (m.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: m.pendencias }, 400);
         const prep = await prepConstraints(token, m.linhas.map((l) => String(l.msku)));
@@ -327,58 +328,59 @@ Deno.serve(async (req) => {
           const p = prep.get(String(l.msku)) ?? { labelOwner: "SELLER", prepOwner: "NONE" };
           return { msku: String(l.msku), quantity: l.quantidade, labelOwner: p.labelOwner, prepOwner: p.prepOwner, ...(l.validade ? { expiration: l.validade } : {}) };
         });
-        const base = { shop_id: m.conta.shop_id, plano_id: null, passo: "novo", operacao_id: null, itens: m.linhas, caixas: null, destinos: null,
-          destino_escolhido: null, envios_amazon: null, erro: null, log: [], criado_por: quem.nome, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() };
-        await db.from("amazon_envio_plano").upsert({ envio_id: envioId, ...base }, { onConflict: "envio_id" });
-        const nome = `App ${m.envio.numero ? `#${m.envio.numero}` : envioId.slice(0, 8)} · ${new Date().toISOString().slice(0, 10)}`;
-        plano = await disparar(envioId, token, "POST", `${API}/inboundPlans`,
+        const { data: novo, error } = await db.from("amazon_envio_plano").insert({
+          shop_id: m.conta.shop_id, empresa, itens_origem: entrada, itens: m.linhas, passo: "novo", criado_por: quem.nome,
+        }).select("*").single();
+        if (error || !novo) return json({ ok: false, erro: `banco: ${error?.message}` }, 500);
+        const nome = `App Reposição · ${new Date().toISOString().slice(0, 10)} · ${m.linhas.length} SKU`;
+        plano = await disparar(String(novo.id), token, "POST", `${API}/inboundPlans`,
           { name: nome, destinationMarketplaces: [MKT], sourceAddress: ORIGEM, items: itens }, "criando", "criar plano");
       }
-      // avança até parar ou acabar o tempo
       let guarda = 0;
       while (plano && !PARADOS.has(plano.passo) && Date.now() < ate && guarda++ < 12) {
         const antes = `${plano.passo}|${plano.operacao_id ?? ""}`;
-        plano = await passo(plano, token, envioId, ate);
+        plano = await passo(plano, token, String(plano.id), ate);
         if (`${plano.passo}|${plano.operacao_id ?? ""}` === antes) break; // operação ainda andando
       }
       return json(resumo(plano));
     }
 
+    if (!planoRow) return json({ ok: false, erro: "informe o plano" }, 400);
+    const ref = String(planoRow.id);
+
     if (modulo === "confirmar-destino") {
-      const plano = m.plano;
-      if (!plano || plano.passo !== "escolher_destino") return json({ ok: false, erro: "o plano não está esperando a escolha do destino" }, 400);
+      if (planoRow.passo !== "escolher_destino") return json({ ok: false, erro: "o plano não está esperando a escolha do destino" }, 400);
       if (b.confirmar !== true) return json({ ok: false, erro: "confirmar o destino exige confirmar: true" }, 400);
-      const opcao = ((plano.destinos ?? []) as any[]).find((d) => d.id === String(b.opcao_id ?? ""));
+      const opcao = ((planoRow.destinos ?? []) as any[]).find((d) => d.id === String(b.opcao_id ?? ""));
       if (!opcao) return json({ ok: false, erro: "opção de destino não encontrada" }, 400);
-      if (opcao.expira && Date.parse(opcao.expira) < Date.now()) return json({ ok: false, erro: "esta opção de destino venceu — gere as opções de novo" }, 400);
-      await salvar(envioId, { destino_escolhido: opcao.id }, { acao: "destino escolhido", por: quem.nome, taxa: opcao.taxa });
-      let p = await disparar(envioId, token, "POST", `${API}/inboundPlans/${plano.plano_id}/placementOptions/${opcao.id}/confirmation`, {}, "confirmando_destino", "confirmar destino");
+      if (opcao.expira && Date.parse(opcao.expira) < Date.now()) return json({ ok: false, erro: "esta opção de destino venceu — crie o plano de novo" }, 400);
+      await salvar(ref, { destino_escolhido: opcao.id }, { acao: "destino escolhido", por: quem.nome, taxa: opcao.taxa });
+      let p = await disparar(ref, token, "POST", `${API}/inboundPlans/${planoRow.plano_id}/placementOptions/${opcao.id}/confirmation`, {}, "confirmando_destino", "confirmar destino");
       let guarda = 0;
       while (p && !PARADOS.has(p.passo) && Date.now() < ate && guarda++ < 6) {
         const antes = `${p.passo}|${p.operacao_id ?? ""}`;
-        p = await passo(p, token, envioId, ate);
+        p = await passo(p, token, ref, ate);
         if (`${p.passo}|${p.operacao_id ?? ""}` === antes) break;
       }
       return json(resumo(p));
     }
 
     if (modulo === "cancelar") {
-      const plano = m.plano;
-      if (!plano?.plano_id) return json({ ok: false, erro: "não há plano na Amazon para cancelar" }, 400);
-      if (plano.passo === "cancelado") return json(resumo(plano));
+      if (!planoRow.plano_id) return json({ ok: false, erro: "o plano não chegou a ser criado na Amazon" }, 400);
+      if (planoRow.passo === "cancelado") return json(resumo(planoRow));
       if (b.confirmar !== true) return json({ ok: false, erro: "cancelar exige confirmar: true" }, 400);
-      await salvar(envioId, {}, { acao: "cancelamento pedido", por: quem.nome });
-      const r = await sp(token, "PUT", `${API}/inboundPlans/${plano.plano_id}/cancellation`);
+      await salvar(ref, {}, { acao: "cancelamento pedido", por: quem.nome });
+      const r = await sp(token, "PUT", `${API}/inboundPlans/${planoRow.plano_id}/cancellation`);
       if (!ok(r) || !r.body?.operationId) {
-        const p = await salvar(envioId, { erro: `cancelar: a Amazon recusou — ${motivo(r)}` }, { acao: "cancelar", http: r.status, erro: motivo(r) });
+        const p = await salvar(ref, { erro: `cancelar: a Amazon recusou — ${motivo(r)}` }, { acao: "cancelar", http: r.status, erro: motivo(r) });
         return json({ ...resumo(p), ok: false, erro: `a Amazon recusou o cancelamento: ${motivo(r)}` });
       }
-      let p = await salvar(envioId, { passo: "cancelando", operacao_id: String(r.body.operationId), erro: null }, { acao: "cancelar", http: r.status });
-      p = await passo(p, token, envioId, ate);
+      let p = await salvar(ref, { passo: "cancelando", operacao_id: String(r.body.operationId), erro: null }, { acao: "cancelar", http: r.status });
+      p = await passo(p, token, ref, ate);
       return json(resumo(p));
     }
 
-    return json({ ok: false, erro: "use modulo previa, avancar, confirmar-destino ou cancelar" }, 400);
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }

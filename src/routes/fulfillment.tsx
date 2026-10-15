@@ -32,7 +32,7 @@ import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
-import { EnvioAmazonApi } from "@/components/fulfillment/EnvioAmazonApi";
+import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/components/fulfillment/PlanoAmazon";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -442,6 +442,8 @@ function ReposicaoTab({
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [qtd, setQtd] = useState<Record<string, number>>({});
   const [envioAberto, setEnvioAberto] = useState(false);
+  // envio à Amazon pela API (plano criado daqui; não cria envio no app)
+  const [planoAmazon, setPlanoAmazon] = useState<{ chave: number; empresa: string | null; itens?: ItemReposicao[]; planoId?: string } | null>(null);
   const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
 
   const filtradas = useMemo(() => {
@@ -497,6 +499,8 @@ function ReposicaoTab({
         <InvKpi label="SKUs abaixo da cobertura-alvo" value={repKpis.abaixo} loading={loading} color="var(--color-destructive)" />
         <InvKpi label="Unidades sugeridas" value={repKpis.sugeridas} loading={loading} color="var(--color-primary)" />
       </section>
+
+      <PlanosAmazonLista onAbrir={(planoId, empresa) => setPlanoAmazon({ chave: Date.now(), empresa, planoId })} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
@@ -666,9 +670,24 @@ function ReposicaoTab({
         )}
       </Card>
 
+      {planoAmazon && (
+        <PlanoAmazonDialog
+          key={planoAmazon.chave}
+          aberto
+          onFechar={() => setPlanoAmazon(null)}
+          empresa={planoAmazon.empresa}
+          itens={planoAmazon.itens}
+          planoId={planoAmazon.planoId ?? null}
+        />
+      )}
+
       <EnvioSheet
         aberto={envioAberto}
         onFechar={() => setEnvioAberto(false)}
+        onAmazon={(empresa, its) => {
+          setEnvioAberto(false);
+          setPlanoAmazon({ chave: Date.now(), empresa, itens: its.map((i) => ({ sku: i.sku, quantidade: i.quantidade, titulo: i.produto })) });
+        }}
         itens={selecionadas.map((r) => ({
           marketplace: r.marketplace,
           empresa: r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0] ?? null,
@@ -686,10 +705,12 @@ function EnvioSheet({
   aberto,
   onFechar,
   itens,
+  onAmazon,
 }: {
   aberto: boolean;
   onFechar: () => void;
   itens: { marketplace: string; empresa: string | null; sku: string; produto: string | null; foto: string | null; quantidade: number }[];
+  onAmazon?: (empresa: string | null, itens: { sku: string; produto: string | null; quantidade: number }[]) => void;
 }) {
   // Um bloco por canal E empresa: o envio vai para o CD da conta certa.
   const porCanal = useMemo(() => {
@@ -717,8 +738,8 @@ function EnvioSheet({
         </SheetHeader>
 
         <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-          Primeira versão: este envio ainda <strong>não é gravado</strong>. A persistência (tabela de envios
-          + integração com o marketplace) é o próximo passo — por ora serve para conferir e copiar.
+          <strong>Amazon:</strong> "Criar envio na Amazon" monta o plano lá pela API (caixas pelos modelos) até a escolha do
+          destino. Mercado Livre e Shopee: confira e copie a lista para criar o envio no marketplace.
         </div>
 
         <div className="mt-4 space-y-5">
@@ -735,6 +756,11 @@ function EnvioSheet({
                     {itens.length} SKUs · {formatNumber(total)} un.
                   </span>
                 </div>
+                {marketplace === "amazon" && onAmazon && (
+                  <Button size="sm" className="mb-2 w-full gap-2 bg-[#FF9900] text-black hover:bg-[#FF9900]/90" onClick={() => onAmazon(empresa, itens)}>
+                    <Send className="h-4 w-4" /> Criar envio na Amazon{empresa ? ` · ${EMPRESA_CURTA(empresa)}` : ""}
+                  </Button>
+                )}
                 <div className="space-y-1">
                   {itens.map((i) => (
                     <div key={`${marketplace}|${i.sku}`} className="flex items-center justify-between gap-2 text-sm py-0.5">
@@ -2658,7 +2684,6 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         </Card>
       )}
 
-      {envio && envio.marketplace === "amazon" && <EnvioAmazonApi envioId={envio.id} empresa={envio.empresa ?? null} />}
 
       <Card className="p-3 space-y-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
