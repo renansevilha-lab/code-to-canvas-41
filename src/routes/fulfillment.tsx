@@ -32,6 +32,7 @@ import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
+import { EnvioAmazonApi } from "@/components/fulfillment/EnvioAmazonApi";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -2656,6 +2657,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
           </div>
         </Card>
       )}
+
+      {envio && envio.marketplace === "amazon" && <EnvioAmazonApi envioId={envio.id} empresa={envio.empresa ?? null} />}
 
       <Card className="p-3 space-y-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">

@@ -1643,6 +1643,21 @@ concluir.
   …/cancellation` → plano **VOIDED**. Toda escrita devolve `operationId` (assíncrona: acompanhar
   `GET /operations/{id}` até SUCCESS/FAILED). Faltam ensaiar: confirmar destino, transportadora (opções
   USE_YOUR_OWN_CARRIER e AMAZON_PARTNERED_CARRIER aparecem), nota fiscal de remessa e etiquetas das caixas.
+- **Botão "Criar envio na Amazon" (14/out, 22h, pedido do dono) — no detalhe do envio da Amazon na aba Envios**
+  (`src/components/fulfillment/EnvioAmazonApi.tsx`). Tabelas (migração `amazon_envio_api_modelos`):
+  **`amazon_modelo_caixa`** (PK shop_id+msku: sku, nome, un_por_caixa, medidas cm, peso_kg, **validade**, origem
+  historico|manual; app lê e escreve) — 34 modelos da SVL importados das caixas dos 30 últimos planos, 8 com validade;
+  editor em `ModelosCaixaAmazon.tsx` ("Modelos de caixa" no painel). **`amazon_envio_plano`** (PK envio_id: plano_id,
+  passo, operacao_id, itens, caixas, destinos, envios_amazon, erro, log) — só a função escreve (app só lê).
+  **`amazon-inbound` v2** (JWT de usuário + módulo `galpao`): `previa` (item → anúncio: `sku_origem` do item, senão
+  o único msku do SKU no FBA da conta; vários = a tela deixa escolher e grava em `fulfillment_envio_itens.sku_origem`;
+  modelo; caixas = unidades ÷ un_por_caixa, tem de fechar; ACZ = pendência), `avancar` (máquina de passos: criar →
+  embalagem (escolhe a de menor taxa) → caixas por grupo de embalagem → opções de destino; ~22 s por chamada, a tela
+  repete até "escolher_destino"; o 1º passo exige `confirmar`), `confirmar-destino` (lê os envios FBA e preenche
+  `numero`/`centro` do envio do app se vazios), `cancelar`. Cada escrita na Amazon é feita uma vez (passo +
+  operationId gravados logo depois da resposta). Labels/prep pelo `items/prepDetails`. Origem fixa: Caieiras.
+  Transportadora, NF e etiquetas seguem no Seller Central (link "Continuar no Seller Central" =
+  `sellercentral.amazon.com.br/fba/sendtoamazon?wf=<plano>`, URL não conferida). **Não testado pela tela** (exige login).
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
@@ -2904,7 +2919,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v1 | Envios ao FBA pela API (Fulfillment Inbound v2024-03-20), só SVL, fase de TESTE com chave temporária — ver §5.9.4 |
+| `amazon-inbound` | v2 | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20): `previa`, `avancar`, `confirmar-destino`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
