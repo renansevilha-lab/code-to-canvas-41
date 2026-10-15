@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v9 (14/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v10 (15/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -55,6 +55,9 @@
 //   o que a gestão sabe (peso do cadastro; kit = soma da composição; produto com variações = a
 //   menor variação; por último o peso escrito no nome, "… 2kg"). Medidas: digitadas → conferidas
 //   → Tiny → EMBALAGEM PADRÃO 40 × 30 × 15 cm. A tela avisa de onde veio cada número.
+// v10 (15/out/2026): CAPA PRINCIPAL POR DESTINO (pedido do dono) — Ottz Shopee = "Menor preço da
+//   Shopee", Bumi Shopee = ambientada com texto, Mercado Livre (Ottz e SVL) = ambientada limpa. A capa
+//   do destino vai na frente e as outras capas não vão; sem ela aprovada, vale a regra antiga + aviso.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -279,9 +282,34 @@ async function carregar(rascunhoId: string) {
     .sort((a, b) => Number(!String(a.tipo ?? "").startsWith("capa_")) - Number(!String(b.tipo ?? "").startsWith("capa_")) || a.ordem - b.ordem);
   const textoAprovado = ((etapas.data ?? []) as any[]).some((e) => e.etapa === "texto" && e.status === "aprovado");
   return { r: r as Record<string, any>, produto: prod.data as Record<string, any> | null, cad: cad.data as Record<string, any> | null,
-    extra: extra.data as Record<string, any> | null, fotos, textoAprovado, publicacoes: (pubs.data ?? []) as Record<string, any>[] };
+    extra: extra.data as Record<string, any> | null, fotos, textoAprovado, publicacoes: (pubs.data ?? []) as Record<string, any>[],
+    capaDestino: null as string | null, avisosCapa: [] as string[] };
 }
 type Dados = Awaited<ReturnType<typeof carregar>>;
+
+// v10: capa PRINCIPAL por destino (dono, 15/out/2026). Ottz Shopee = "Menor preço da Shopee";
+// Bumi Shopee = ambientada com texto; Mercado Livre (as duas contas) = ambientada limpa.
+// Achada a capa do destino, ela vai na frente e as OUTRAS capas não vão; sem ela, vale a regra antiga.
+const CAPA_DO_DESTINO: Record<string, { tipos: string[]; nome: string }> = {
+  "shopee:ottz": { tipos: ["capa_ambientada_shopee", "capa_shopee_basica", "capa_shopee_livre"], nome: "Menor preço da Shopee" },
+  "shopee:svl": { tipos: ["capa_ambientada_texto"], nome: "ambientada com texto" },
+  "mercado_livre:ottz": { tipos: ["capa_ambientada_limpa"], nome: "ambientada limpa" },
+  "mercado_livre:svl": { tipos: ["capa_ambientada_limpa"], nome: "ambientada limpa" },
+};
+function aplicarCapaDoDestino(d: Dados) {
+  const regra = CAPA_DO_DESTINO[`${d.r.canal}:${d.r.empresa}`];
+  if (!regra) return;
+  const capa = regra.tipos.map((tp) => d.fotos.find((f: any) => f.tipo === tp)).find(Boolean);
+  if (!capa) {
+    if (d.fotos.some((f: any) => String(f.tipo ?? "").startsWith("capa_")))
+      d.avisosCapa.push(`a capa principal deste destino é a "${regra.nome}", que não está aprovada neste anúncio: vai a capa que houver`);
+    return;
+  }
+  const saem = d.fotos.filter((f: any) => f !== capa && String(f.tipo ?? "").startsWith("capa_")).length;
+  d.fotos = [capa, ...d.fotos.filter((f: any) => !String(f.tipo ?? "").startsWith("capa_"))];
+  d.capaDestino = String(capa.storage_path);
+  if (saem) d.avisosCapa.push(`capa principal: "${regra.nome}"; ${saem} outra(s) capa(s) aprovada(s) não vão para este destino`);
+}
 
 /** Peso, dimensões, EAN e NCM do cadastro do Tiny (leitura; melhor-esforço). */
 async function medidasTiny(idTiny: number | null): Promise<Record<string, any>> {
@@ -401,7 +429,7 @@ function fotosQueFicam(selF: Record<string, any>, idsAtuais: string[]): string[]
   return idsAtuais;
 }
 /** Sequência final das fotos no modo atualizar: a escolhida na tela ou atuais/novas pela posição. */
-function ordemFinal(op: Opcoes, plano: { manter: string[]; novas: { path: string }[]; posicao: "inicio" | "fim"; atuais: string[] }, novosIds: string[]): string[] {
+function ordemFinal(op: Opcoes, plano: { manter: string[]; novas: { path: string }[]; posicao: "inicio" | "fim"; atuais: string[] }, novosIds: string[], capa: string | null = null): string[] {
   const padrao = plano.posicao === "inicio" ? [...novosIds, ...plano.manter] : [...plano.manter, ...novosIds];
   if (!Array.isArray(op.fotos?.ordem)) return padrao;
   const idDaNova = new Map(plano.novas.map((f, i) => [f.path, novosIds[i]]));
@@ -412,6 +440,10 @@ function ordemFinal(op: Opcoes, plano: { manter: string[]; novas: { path: string
     if (id && !out.includes(id)) out.push(id);
   }
   for (const id of padrao) if (!out.includes(id)) out.push(id);
+  // a ordem arrumada em outro destino não tem a capa deste: ela vai na frente
+  const ordemTela = (op.fotos.ordem as unknown[]).map(String);
+  const idCapa = capa && !ordemTela.includes(capa) ? idDaNova.get(capa) : undefined;
+  if (idCapa) return [idCapa, ...out.filter((x) => x !== idCapa)];
   return out;
 }
 
@@ -425,7 +457,13 @@ function base(d: Dados, op: Opcoes, lim: Limites = LIM_SHOPEE) {
   const preco = num(op.preco) ?? num(d.r.preco_aprovado) ?? num(d.r.preco_sugerido);
   const ordem = Array.isArray(op.fotos?.ordem) ? (op.fotos.ordem as unknown[]).map(String) : null;
   const lugar = (f: any) => { const i = ordem ? ordem.indexOf(String(f.storage_path)) : -1; return i === -1 ? 1e6 : i; };
-  const fotos = (ordem ? [...d.fotos].sort((x: any, y: any) => lugar(x) - lugar(y)) : d.fotos)
+  const ordenadas = ordem ? [...d.fotos].sort((x: any, y: any) => lugar(x) - lugar(y)) : d.fotos;
+  // a ordem arrumada em outro destino não tem a capa deste: ela vai na frente
+  if (ordem && d.capaDestino && !ordem.includes(d.capaDestino)) {
+    const i = ordenadas.findIndex((f: any) => f.storage_path === d.capaDestino);
+    if (i > 0) ordenadas.unshift(...ordenadas.splice(i, 1));
+  }
+  const fotos = ordenadas
     .slice(0, lim.fotos).map((f: any) => ({ path: f.storage_path as string, tipo: f.tipo as string }));
   const problemas = {
     titulo: [
@@ -448,7 +486,7 @@ function base(d: Dados, op: Opcoes, lim: Limites = LIM_SHOPEE) {
 async function montarCriar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: number; nome: string }, existentes: Existente[]) {
   const b = base(d, op);
   const pendencias = [...new Set([...b.problemas.titulo, ...b.problemas.descricao, ...b.problemas.fotos, ...b.problemas.preco])];
-  const avisos: string[] = [];
+  const avisos: string[] = [...d.avisosCapa];
   if (existentes.length) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta loja: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
   if (d.fotos.length > 9) avisos.push(`há ${d.fotos.length} fotos aprovadas; a Shopee aceita 9 — vão as 9 primeiras (capa na frente)`);
   if (d.produto?.tipo === "V") avisos.push("este produto tem variações no Tiny: criar gera um anúncio simples, só deste SKU");
@@ -536,7 +574,7 @@ async function montarAtualizar(d: Dados, op: Opcoes, c: Ctx, loja: { shop_id: nu
     titulo: op.campos?.titulo !== false, descricao: op.campos?.descricao !== false,
     fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true, // preço: só se a pessoa marcar
   };
-  const pendencias: string[] = []; const avisos: string[] = [];
+  const pendencias: string[] = []; const avisos: string[] = [...d.avisosCapa];
   if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
   if (campos.titulo) pendencias.push(...b.problemas.titulo);
   if (campos.descricao) pendencias.push(...b.problemas.descricao);
@@ -747,7 +785,7 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
   const lim: Limites = { quem: "o Mercado Livre", titulo: cat?.titulo_max ?? 60, descMin: 10, descMax: 50000, fotos: cat?.fotos_max ?? 10 };
   const b = base(d, op, lim);
   const pendencias = [...new Set([...b.problemas.titulo, ...b.problemas.descricao, ...b.problemas.fotos, ...b.problemas.preco])];
-  const avisos: string[] = [];
+  const avisos: string[] = [...d.avisosCapa];
   if (existentes.length) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta conta: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
   if (d.fotos.length > lim.fotos) avisos.push(`há ${d.fotos.length} fotos aprovadas; esta categoria aceita ${lim.fotos} — vão as ${lim.fotos} primeiras (capa na frente)`);
   if (!categoriaId) pendencias.push("o Mercado Livre não sugeriu categoria para este título — informe o código da categoria (MLB...)");
@@ -852,7 +890,7 @@ async function montarAtualizarMl(d: Dados, op: Opcoes, token: string, conta: Con
     titulo: op.campos?.titulo === true, // título: só se a pessoa marcar (o ML recusa em anúncio que já vendeu)
     descricao: op.campos?.descricao !== false, fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true,
   };
-  const pendencias: string[] = []; const avisos: string[] = [];
+  const pendencias: string[] = []; const avisos: string[] = [...d.avisosCapa];
   if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
   if (campos.titulo) pendencias.push(...b.problemas.titulo);
   if (campos.descricao) pendencias.push(...b.problemas.descricao);
@@ -975,7 +1013,7 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
     let lista: string[];
     try {
       const novosIds = await subirFotosMl(token, a.plano.novas);
-      lista = ordemFinal(op, a.plano, novosIds);
+      lista = ordemFinal(op, a.plano, novosIds, d.capaDestino);
     } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
     const r = await mlApi(token, `/items/${id}`, "PUT", { pictures: lista.map((x) => ({ id: x })) });
     respostas.fotos = { ...enxuto(r), enviadas: lista };
@@ -1100,7 +1138,7 @@ async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Exist
     titulo: op.campos?.titulo !== false, descricao: op.campos?.descricao !== false,
     fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true,
   };
-  const pendencias: string[] = []; const avisos: string[] = [];
+  const pendencias: string[] = []; const avisos: string[] = [...d.avisosCapa];
   if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
   if (campos.titulo) pendencias.push(...b.problemas.titulo);
   if (campos.descricao) {
@@ -1252,6 +1290,7 @@ Deno.serve(async (req) => {
       }
       d.r = { ...d.r, canal: canalD, empresa: empresaD, preco_aprovado: salvo, preco_sugerido: sugerido };
     }
+    aplicarCapaDoDestino(d);
     if (d.r.canal === "mercado_livre") return await fluxoMl(d, op, modulo, body, quem);
     if (d.r.canal === "amazon") return await fluxoAmazon(d, op, modulo, body, quem);
     if (d.r.canal !== "shopee") {
@@ -1319,7 +1358,7 @@ Deno.serve(async (req) => {
       if (a.campos.fotos) {
         try {
           const novosIds = await subirFotos(c, a.plano.novas);
-          a.corpo.image.image_id_list = ordemFinal(op, a.plano, novosIds);
+          a.corpo.image.image_id_list = ordemFinal(op, a.plano, novosIds, d.capaDestino);
         } catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
       }
       if (a.campos.titulo || a.campos.descricao || a.campos.fotos) {
