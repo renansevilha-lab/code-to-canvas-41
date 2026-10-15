@@ -1631,6 +1631,18 @@ concluir.
   cada um com UM modelo (ex.: 15919 "Fardo com 2" 30×50×40 8 kg, 170 caixas; 15825_FBA "Fardo com 1"
   20 kg; 15040 "Caixa com 6 un" 20×40×30 4 kg). Dá para montar o cadastro de modelos a partir do histórico.
 - **Vendas 30d** na Reposição = `view_reposicao_full.unidades_30d` (canal + conta, só saídas do CD).
+- **1º envio pela API — TESTE na SVL (14/out, 21h30, autorizado pelo dono; plano criado e CANCELADO):** edge fn
+  **`amazon-inbound`** v1 (fonte em `supabase/functions/amazon-inbound/`), só a conta SVL, repasse de UMA chamada
+  da API v2024-03-20 por vez, protegido por chave temporária e prazo (16/out 03:00 UTC); bloqueia confirmar destino,
+  transportadora, janelas de entrega; registra tudo em `debug_fulfillment` (`modulo='amazon-inbound-teste'`).
+  Sequência que funcionou: `POST /inboundPlans` (msku, quantity, labelOwner SELLER, prepOwner NONE, **expiration**
+  — areia exige validade: sem ela a operação falha com FBA_INB_0180 "Expiration date required" e o plano fica
+  ERRORED; os envios anteriores do 15919 usaram 2029-10-01) → `POST …/packingOptions` (gera; 1 opção, sem taxa)
+  → `POST …/packingOptions/{id}/confirmation` → `POST …/packingInformation` (caixa 30×50×40, 8 kg, 2 un) →
+  `POST …/placementOptions` (1 opção, taxa de alocação R$ 0, destino **GRU8 Cajamar**) → parou → `PUT
+  …/cancellation` → plano **VOIDED**. Toda escrita devolve `operationId` (assíncrona: acompanhar
+  `GET /operations/{id}` até SUCCESS/FAILED). Faltam ensaiar: confirmar destino, transportadora (opções
+  USE_YOUR_OWN_CARRIER e AMAZON_PARTNERED_CARRIER aparecem), nota fiscal de remessa e etiquetas das caixas.
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
@@ -2892,6 +2904,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
+| `amazon-inbound` | v1 | Envios ao FBA pela API (Fulfillment Inbound v2024-03-20), só SVL, fase de TESTE com chave temporária — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
