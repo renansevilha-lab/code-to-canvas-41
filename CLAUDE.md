@@ -1611,6 +1611,27 @@ concluir.
   dos STAGES), cartões brancos com faixa da cor da etapa, chips de responsável/prazo
   e **arrastar entre colunas** (soltar em Feito abre a tarefa para concluir).
 
+## 5.9.4 Amazon FBA — em trânsito pelos envios e modelos de caixa (14/out/2026)
+
+- **Problema (relato do dono):** o "Em trânsito" da Reposição somava o `inboundWorking` do inventário FBA
+  (envio CRIADO no Seller Central e nunca despachado — SVL: 4 de 19–24/09, ex. FBA19QWH4CD0 = 20 un do 15919)
+  e envios `IN_TRANSIT` desde mai/jun com 0 recebido (FBA19DVVNKN0, FBA19G75MBRF, FBA19G7DX9T6,
+  FBA19GW2CN5D = 86 un — perdidos ou nunca saíram: cancelar no Seller Central ou abrir caso de reembolso).
+- **`fulfillment-sync` v4:** na conta cujo app tem a permissão de envios (Fulfillment Inbound; hoje só a
+  **SVL** — app "SISTEMINHA I"), em trânsito = soma de (QuantityShipped − QuantityReceived) dos envios v0 em
+  SHIPPED/IN_TRANSIT/DELIVERED/CHECKED_IN/RECEIVING **criados nos últimos 45 dias** (data do nome
+  "FBA STA (MM/DD/AAAA …)"; sem data no nome, última atualização). Sem a permissão (**ACZ dá 403** — app
+  "Ottz Analytics" sem a função de envios) ou sem tempo: shipped + receiving, sem o working. Detalhe de
+  cada rodada (envio contado/ignorado, a caminho por SKU) em `debug_fulfillment` (`modulo='sync-amazon'`,
+  `etapa='transito-<shop_id>'`). Medido na 1ª rodada: SVL 15919 21→3, 15983 58→28, 15825_FBA 10→0; ACZ
+  FBA-15825 98→78.
+- **Modelos de caixa ("packing templates") NÃO têm endpoint** na API (`/inbound/fba/2024-03-20/packingTemplates`
+  = 403/inexistente), mas cada caixa de um plano já despachado traz `templateName`, medidas, peso e unidades
+  por SKU (`GET /inbound/fba/2024-03-20/inboundPlans/{id}/boxes`). Lidos os 30 últimos planos da SVL: 34 SKUs,
+  cada um com UM modelo (ex.: 15919 "Fardo com 2" 30×50×40 8 kg, 170 caixas; 15825_FBA "Fardo com 1"
+  20 kg; 15040 "Caixa com 6 un" 20×40×30 4 kg). Dá para montar o cadastro de modelos a partir do histórico.
+- **Vendas 30d** na Reposição = `view_reposicao_full.unidades_30d` (canal + conta, só saídas do CD).
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
@@ -2852,7 +2873,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ml-sync-ads` | v6 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario` **e** `ml_ads_campanha_diario`; `&so_campanha=1` grava só a por campanha) + `modulo=anuncios` (por MLB/dia → `ml_ads_anuncio_diario`; ~1 s/dia, para em 20 s e devolve `parou_em`) + `sonda-ads`. Só leitura na API |
 | `ml-sync-anuncios` | v4 | Catálogo ML (`ml_anuncios`): v4 grava também `preco` (cheio), `preco_original`, `estoque` — base do snapshot do Agente de ADS. Conta Ottz fixa |
 | `ml-etiqueta` | v16 | Etiqueta ML (ZPL via PrintNode ou fila própria §5.9) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
-| `fulfillment-sync` | v2 | Estoque nos CDs |
+| `fulfillment-sync` | v4 (deploy 19) | Estoque nos CDs. v4: em trânsito da Amazon pelos envios (§5.9.4); fonte em `supabase/functions/fulfillment-sync/` |
 | `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
 | `fulfillment-inbound` | v15 | **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
