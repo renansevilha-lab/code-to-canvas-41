@@ -2853,6 +2853,39 @@ Pedido do dono, quatro regras:
   limpa e só 1 as três — a maioria vai precisar gerar a capa que falta para o destino.
 - **Não testado ao vivo** (prévia/envio exigem login).
 
+## 5.11.11.12 Variações num anúncio que JÁ ESTÁ RODANDO na Shopee (16/out/2026)
+
+Pedido do dono: pegar um anúncio no ar e acrescentar opções (ex.: 15824 = kit 3× 15679, anúncio Ottz
+49705431794 com as opções 3 un / 2 un → pôr 4 e 5), com a mudança indo ao Tiny e à Shopee. Decisões
+dele: **opção B** (no Tiny, as opções ficam ligadas a um PRODUTO PAI com variações) e **os dois casos**
+(anúncio que já tem variações e anúncio simples).
+- **Tela:** bloco "Variações num anúncio que já está no ar" na aba Anúncio de `/ia/gerar` (destino
+  Shopee, qualquer tipo de produto) → `AmpliarVariacoes.tsx`: escolhe o anúncio (`existentes` da loja ou
+  ID digitado) → lê ao vivo → mostra cada opção de hoje com o que ela é no cadastro (kit de N× base, por
+  `produto_kits`; precisa ser UM produto base para todas) → opções novas (qtd, nome — areia vai por peso
+  —, preço = preço por unidade das de hoje × qtd, estoque = estoque do base ÷ qtd) → pai no Tiny →
+  Conferir (Tiny + Shopee) → Aplicar (com confirmação listando tudo).
+- **Pai no Tiny:** se já existe um pai ativo cujas variações são kits de 1 componente do MESMO base em
+  TODAS as quantidades (ex.: **16361** = 1× a 5× 15679 → 16306/16302/16303/16304/16305), o anúncio passa
+  a usar os SKUs dele e nada é criado no Tiny. Senão, cria um pai novo pela `tiny-produto-variacoes
+  criar` (uma variação-kit por quantidade, INCLUSIVE as que já vendem — a API do Tiny não transforma
+  produto existente em variação nem acrescenta variação a pai existente), termina os kits pendentes e as
+  fotos como a criação por cores. Nome repetido no Tiny barra o kit (16523): a tela confere o nome do pai
+  e das variações no espelho antes. Se alguma variação não virar kit, a Shopee NÃO é alterada.
+- **Shopee — `anuncio-shopee-variacoes` v7:** `ler` (o anúncio ao vivo: `get_item_base_info` +
+  `get_model_list`, estoque = soma do `seller_stock`) e `ampliar` (anúncio COM variações, um grupo só):
+  `update_tier_variation` (opções de hoje na mesma ordem, com a foto, + as novas) → `add_model` (as
+  novas) → `update_model` (SKU novo das opções de hoje; model_id, vendas e avaliações ficam) →
+  `update_item` (`item_sku` = pai). Cada passo uma vez, para no 1º recusado, tudo em
+  `debug_fulfillment` (`etapa = <item>:ampliar`). Anúncio SIMPLES: `criar` (init_tier_variation com a
+  opção de hoje — preço e estoque atuais — + as novas) e depois `ampliar` só com o `item_sku`.
+- **Depois de aplicar:** conferir no Tiny se o anúncio ficou ligado ao produto pai (o vínculo de anúncio
+  do Tiny não é feito pela API — sem ele o estoque das opções novas não sobe; foi o que aconteceu com o
+  anúncio criado direto em §5.11.7).
+- **Não testado ao vivo** (exige login e mexe em anúncio no ar). Os formatos de `update_tier_variation`,
+  `add_model` e `update_model` vêm da documentação da Shopee: o 1º uso real confirma — se recusar, a
+  resposta está em `debug_fulfillment` e a mensagem diz o que já foi feito.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -2947,7 +2980,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
 | `anuncio-publicar` | v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
-| `anuncio-shopee-variacoes` | v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
+| `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v1 | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |

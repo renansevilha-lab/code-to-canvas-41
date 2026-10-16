@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v6 (14/out/2026)
+// Edge Function: anuncio-shopee-variacoes v7 (16/out/2026)
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -29,8 +29,19 @@
 //   `opcao2` ("2 un") → `tier_variation` com dois grupos e `tier_index: [cor, quantidade]`. A Shopee exige a grade
 //   completa (toda cor com toda quantidade). Foto da opção só existe no 1º grupo (a cor): vale a foto da 1ª variação
 //   de cada cor, e ou todas as cores têm foto, ou nenhuma. Sem `grade2`, igual à v5.
-// Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; anúncio que já tem
-// variações é recusado (mudar opções de anúncio que já vende derruba o histórico delas).
+// v7 (pedido do dono: pôr variações num anúncio que JÁ ESTÁ RODANDO, ligado a um pai no Tiny):
+//   POST ?modulo=ler {empresa, item_id} → o anúncio ao vivo: situação, SKU, preço/estoque (anúncio simples)
+//        ou grupos de opções + cada variação (model_id, SKU, preço, estoque do vendedor). Só leitura.
+//   POST ?modulo=ampliar {empresa, item_id, novas:[{opcao, sku, preco, estoque, peso_kg?, medidas?}],
+//        trocar_sku:[{model_id, sku}], item_sku?, confirmar?} — anúncio que JÁ TEM variações (um grupo só):
+//        sem confirmar = prévia; com, na ordem e cada passo UMA vez, parando no 1º que a Shopee recusar:
+//        (1) product/update_tier_variation (as opções de hoje, na mesma ordem e com a mesma foto, + as novas);
+//        (2) product/add_model (as novas, com SKU/preço/estoque); (3) product/update_model (SKU novo das
+//        variações que já existem — o model_id, as vendas e as avaliações ficam); (4) product/update_item
+//        (`item_sku` = SKU do pai). Nenhuma variação é apagada nem tem a opção renomeada.
+//   Anúncio SIMPLES continua pelo `criar` (init_tier_variation): a tela manda a opção de hoje + as novas.
+// Regras: sessão de usuário com o módulo `ia`; a escrita NÃO é repetida; o `criar` recusa anúncio que
+// já tem variações (mudar opções de anúncio que já vende derruba o histórico delas) — para ele é o `ampliar`.
 // Separada da `anuncio-publicar` de propósito (função grande e crítica).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -130,6 +141,153 @@ async function porNoAr(c: Ctx, itemId: number, quem: string | null): Promise<str
   return falha;
 }
 
+// ---------------------------------------------------------------- v7: anúncio que já está rodando
+async function shopeeGet(c: Ctx, path: string, params: Record<string, string>) {
+  const url = await urlLoja(c, path);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  return lerJson(await fetch(url.toString()));
+}
+async function shopeePost(c: Ctx, path: string, corpo: unknown) {
+  return lerJson(await fetch((await urlLoja(c, path)).toString(), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo),
+  }));
+}
+/** O anúncio como está agora na Shopee: dados gerais e, se tiver, os grupos de opções e as variações. */
+async function lerAnuncio(c: Ctx, itemId: number) {
+  const bi = await shopeeGet(c, "/api/v2/product/get_item_base_info", { item_id_list: String(itemId) });
+  const it = bi?.response?.item_list?.[0];
+  if (bi?.error || !it) throw new Error(`não achei o anúncio ${itemId} nesta loja${bi?.error ? ` (${bi.error} ${bi.message ?? ""})` : ""}`);
+  const estoqueVendedor = (x: any) => Array.isArray(x?.stock_info_v2?.seller_stock)
+    ? x.stock_info_v2.seller_stock.reduce((t: number, s: any) => t + (Number(s?.stock) || 0), 0) : null;
+  const base = {
+    item_id: itemId, nome: String(it.item_name ?? ""), sku: it.item_sku ? String(it.item_sku) : null, situacao: String(it.item_status ?? ""),
+    tem_variacao: !!it.has_model, url: `https://shopee.com.br/product/${c.shopId}/${itemId}`,
+    preco: num(it.price_info?.[0]?.original_price) || null, estoque: estoqueVendedor(it),
+    foto: it.image?.image_url_list?.[0] ?? null,
+  };
+  if (!it.has_model) return { ...base, grupos: [] as any[], variacoes: [] as any[] };
+  const ml = await shopeeGet(c, "/api/v2/product/get_model_list", { item_id: String(itemId) });
+  if (ml?.error) throw new Error(`não consegui ler as variações do anúncio (${ml.error} ${ml.message ?? ""})`);
+  const grupos = ((ml?.response?.tier_variation ?? []) as any[]).map((g) => ({
+    nome: String(g?.name ?? ""),
+    opcoes: ((g?.option_list ?? []) as any[]).map((o) => ({ opcao: String(o?.option ?? ""), image_id: o?.image?.image_id ?? null, foto: o?.image?.image_url ?? null })),
+  }));
+  const variacoes = ((ml?.response?.model ?? []) as any[]).map((m) => ({
+    model_id: Number(m.model_id), tier_index: (m.tier_index ?? []) as number[], sku: m.model_sku ? String(m.model_sku).trim() : "",
+    opcao: ((m.tier_index ?? []) as number[]).map((ix, g) => grupos[g]?.opcoes?.[ix]?.opcao ?? "?").join(" · "),
+    preco: num(m.price_info?.[0]?.original_price) || null, preco_atual: num(m.price_info?.[0]?.current_price) || null,
+    estoque: estoqueVendedor(m),
+  })).sort((a, b) => (a.tier_index[0] ?? 0) - (b.tier_index[0] ?? 0));
+  return { ...base, grupos, variacoes };
+}
+async function registrar(etapa: string, status: number, resultado: unknown) {
+  await db.from("debug_fulfillment").insert({ modulo: "anuncio-shopee-variacoes", etapa, status_http: status, resultado });
+}
+
+async function lerOuAmpliar(modulo: string, body: Record<string, any>, quem: string | null): Promise<Response> {
+  const shopId = LOJA[String(body.empresa ?? "")];
+  const itemId = Number(String(body.item_id ?? "").replace(/\D/g, ""));
+  if (!shopId || !itemId) return json({ ok: false, erro: "informe empresa (ottz ou svl) e item_id" }, 400);
+  const c = await ctxShopee(shopId);
+  const anuncio = await lerAnuncio(c, itemId);
+  if (modulo === "ler") return json({ ok: true, anuncio });
+
+  // ---- ampliar: só anúncio que JÁ tem variações (o simples vai pelo `criar`)
+  const novas: Variacao[] = (Array.isArray(body.novas) ? body.novas : []).map((v: any) => ({
+    sku: String(v?.sku ?? "").trim(), opcao: String(v?.opcao ?? "").trim(), opcao2: "", preco: num(v?.preco),
+    estoque: Math.max(0, Math.floor(num(v?.estoque))), foto_path: null,
+    peso_kg: positivo(v?.peso_kg), comprimento_cm: positivo(v?.comprimento_cm), largura_cm: positivo(v?.largura_cm), altura_cm: positivo(v?.altura_cm),
+  }));
+  const trocas = (Array.isArray(body.trocar_sku) ? body.trocar_sku : [])
+    .map((x: any) => ({ model_id: Number(x?.model_id), sku: String(x?.sku ?? "").trim() }))
+    .filter((x: { model_id: number; sku: string }) => x.model_id && x.sku);
+  const itemSku = String(body.item_sku ?? "").trim();
+  const pend: string[] = []; const avisos: string[] = [];
+  if (!anuncio.tem_variacao) pend.push("este anúncio é SIMPLES: as variações dele são criadas pelo \"criar\" (a opção de hoje + as novas)");
+  if (anuncio.grupos.length > 1) pend.push("este anúncio tem DOIS grupos de opções: acrescentar opções a ele ainda não é feito por aqui");
+  if (!["NORMAL", "UNLIST"].includes(anuncio.situacao)) pend.push(`o anúncio está com a situação ${anuncio.situacao} na Shopee`);
+  const grupo = anuncio.grupos[0];
+  const opcoesHoje = (grupo?.opcoes ?? []) as { opcao: string; image_id: string | null }[];
+  if (!novas.length && !trocas.length && !itemSku) pend.push("nada a mudar: informe variações novas ou SKUs novos");
+  if (opcoesHoje.length + novas.length > 50) pend.push(`a Shopee aceita até 50 variações (${opcoesHoje.length} hoje + ${novas.length} novas)`);
+  const nomesHoje = new Set(opcoesHoje.map((o) => o.opcao.trim().toLowerCase()));
+  novas.forEach((v, i) => {
+    const n = `variação nova ${i + 1}`;
+    if (!v.opcao) pend.push(`${n}: escreva o nome da opção`);
+    else if (v.opcao.length > 20) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 20)`);
+    else if (nomesHoje.has(v.opcao.toLowerCase())) pend.push(`${n}: o anúncio já tem a opção "${v.opcao}"`);
+    if (!v.sku) pend.push(`${n}: sem SKU`);
+    if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
+    const medidas = [v.comprimento_cm, v.largura_cm, v.altura_cm].filter((x) => x != null).length;
+    if (medidas > 0 && medidas < 3) pend.push(`${n}: preencha comprimento, largura e altura juntos (ou deixe os três em branco)`);
+  });
+  if (new Set(novas.map((v) => v.opcao.toLowerCase())).size !== novas.length) pend.push("há duas opções novas com o mesmo nome");
+  // SKU final de cada variação (as de hoje, com a troca, + as novas) não pode repetir
+  const skuFinal = new Map<number, string>(anuncio.variacoes.map((m: any) => [m.model_id, m.sku]));
+  for (const tr of trocas) {
+    if (!skuFinal.has(tr.model_id)) pend.push(`a variação ${tr.model_id} não é deste anúncio`);
+    else skuFinal.set(tr.model_id, tr.sku);
+  }
+  const todos = [...skuFinal.values(), ...novas.map((v) => v.sku)].filter(Boolean);
+  if (new Set(todos).size !== todos.length) pend.push("há SKU repetido entre as variações (as de hoje com a troca + as novas)");
+  if (trocas.length) avisos.push(`${trocas.length} variação(ões) que já vendem passam a outro SKU: as vendas e avaliações ficam no anúncio; no Tiny, o anúncio precisa ser ligado de novo aos produtos novos`);
+  if (novas.some((v) => v.estoque === 0)) avisos.push("variação nova com estoque 0 nasce esgotada até o Tiny mandar o estoque");
+  const precos = [...anuncio.variacoes.map((m: any) => m.preco ?? 0), ...novas.map((v) => v.preco)].filter((x) => x > 0);
+  if (precos.length > 1 && Math.max(...precos) / Math.min(...precos) > 5) avisos.push("a variação mais cara custa mais de 5× a mais barata: a Shopee costuma recusar essa diferença");
+
+  const corpoTier = novas.length ? {
+    item_id: itemId,
+    tier_variation: [{
+      name: grupo?.nome ?? "",
+      option_list: [
+        ...opcoesHoje.map((o) => ({ option: o.opcao, ...(o.image_id ? { image: { image_id: o.image_id } } : {}) })),
+        ...novas.map((v) => ({ option: v.opcao })),
+      ],
+    }],
+  } : null;
+  const corpoModelos = novas.length ? {
+    item_id: itemId,
+    model_list: novas.map((v, i) => ({
+      tier_index: [opcoesHoje.length + i], original_price: v.preco, model_sku: v.sku, seller_stock: [{ stock: v.estoque }],
+      ...(v.peso_kg != null ? { weight: v.peso_kg } : {}),
+      ...(v.comprimento_cm != null && v.largura_cm != null && v.altura_cm != null
+        ? { dimension: { package_length: Math.round(v.comprimento_cm), package_width: Math.round(v.largura_cm), package_height: Math.round(v.altura_cm) } } : {}),
+    })),
+  } : null;
+  const corpoSku = trocas.length ? { item_id: itemId, model: trocas.map((tr: { model_id: number; sku: string }) => ({ model_id: tr.model_id, model_sku: tr.sku })) } : null;
+  const corpoItem = itemSku && itemSku !== anuncio.sku ? { item_id: itemId, item_sku: itemSku } : null;
+  const pendencias = [...new Set(pend)];
+  const plano = { tier: corpoTier, modelos: corpoModelos, sku: corpoSku, item: corpoItem };
+  if (body.confirmar !== true) return json({ ok: true, anuncio, pendencias, avisos, plano });
+  if (pendencias.length) {
+    await registrar(`${itemId}:ampliar-pendencias`, 400, { quem, shop_id: shopId, pendencias, plano });
+    return json({ ok: false, erro: "há pendências", pendencias }, 400);
+  }
+
+  // cada passo uma vez só, na ordem; para no 1º que a Shopee recusar
+  const passos: [string, string, unknown][] = [];
+  if (corpoTier) passos.push(["opções novas", "/api/v2/product/update_tier_variation", corpoTier]);
+  if (corpoModelos) passos.push(["variações novas", "/api/v2/product/add_model", corpoModelos]);
+  if (corpoSku) passos.push(["SKU das variações de hoje", "/api/v2/product/update_model", corpoSku]);
+  if (corpoItem) passos.push(["SKU do anúncio", "/api/v2/product/update_item", corpoItem]);
+  const feitos: string[] = [];
+  const respostas: Record<string, unknown> = {};
+  for (const [nome, path, corpo] of passos) {
+    const r = await shopeePost(c, path, corpo);
+    respostas[nome] = r;
+    const falhas = ((r?.response?.failure_list ?? []) as any[]);
+    const erro = r?.error ? `${r.error} ${r.message ?? ""}`.trim() : falhas.length ? String(falhas[0]?.failed_reason ?? "recusado") : null;
+    await registrar(`${itemId}:ampliar`, erro ? 400 : 200, { quem, shop_id: shopId, passo: nome, enviado: corpo, resposta: r });
+    if (erro) {
+      const feito = feitos.length ? `já feito: ${feitos.join(", ")}. ` : "nada foi alterado. ";
+      return json({ ok: false, erro: `a Shopee recusou ${nome}: ${erro} — ${feito}`, feitos, respostas }, 200);
+    }
+    feitos.push(nome);
+  }
+  const depois = await lerAnuncio(c, itemId).catch(() => null);
+  return json({ ok: true, feitos, anuncio: depois ?? anuncio, avisos });
+}
+
 interface Variacao {
   sku: string; opcao: string; opcao2: string; preco: number; estoque: number; foto_path: string | null;
   peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null;
@@ -142,9 +300,10 @@ Deno.serve(async (req) => {
   const quem = await exigirAcesso(req);
   if (quem instanceof Response) return quem;
   const modulo = new URL(req.url).searchParams.get("modulo") ?? "";
-  if (modulo !== "previa" && modulo !== "criar" && modulo !== "ativar") return json({ ok: false, erro: "use ?modulo=previa, criar ou ativar" }, 400);
+  if (!["previa", "criar", "ativar", "ler", "ampliar"].includes(modulo)) return json({ ok: false, erro: "use ?modulo=previa, criar, ativar, ler ou ampliar" }, 400);
   const body = await req.json().catch(() => ({})) as Record<string, any>;
   try {
+    if (modulo === "ler" || modulo === "ampliar") return await lerOuAmpliar(modulo, body, quem.nome);
     if (modulo === "ativar") {
       const loja = LOJA[String(body.empresa ?? "")];
       const id = Number(String(body.item_id ?? "").replace(/\D/g, ""));

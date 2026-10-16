@@ -13,6 +13,7 @@ import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
 import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
 import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
+import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
@@ -243,6 +244,8 @@ function GerarAnuncioPage() {
       {dados.produto.tipo === "V" && canal === "shopee" && (
         <VariacoesShopee key={`vs-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
       )}
+      {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
+      {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
 
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}
