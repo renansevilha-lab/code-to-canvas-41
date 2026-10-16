@@ -1605,6 +1605,12 @@ concluir.
   do próprio Storage (`list`) com URL assinada de 1 h. Reduzidas no navegador
   (lado maior 1.600 px, JPEG 82%) — foto de celular tem 4–8 MB. Excluir a tarefa
   apaga as fotos (melhor-esforço).
+- **Só produto simples na contagem (16/out/2026, pedido do dono):** o seletor lê
+  `view_inventario_produtos` com `tipo = 'S'` — o pai de variações (tipo V, 228 na data) não
+  tem estoque próprio e saiu da lista; kit (K) já não entrava. Nome não decide: "Kit Adestrador"
+  (14466) é simples no Tiny e aparece. As contagens dos filtros (`view_inventario_filtros`) ainda
+  somam os pais — diferença pequena, só no número ao lado do nome. O diálogo "Nova tarefa" ficou
+  largo (`max-w-6xl`, lista de produtos até 60% da altura) e sem rolagem lateral.
 - **Visual (09/out/2026, pedido do dono):** o quadro segue o padrão do quadro de
   Envios — resumo no topo (A fazer / Fazendo / Atrasadas / Feitas, borda colorida
   à esquerda), colunas com fundo tingido e cabeçalho na cor da etapa (mesmas cores

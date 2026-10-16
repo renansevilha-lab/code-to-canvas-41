@@ -409,7 +409,8 @@ function SeletorProdutos({ selecionados, onChange, jaNaTarefa }: {
     enabled: algumFiltro,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<ProdutoInv[]> => {
-      let qq = supabaseExternal.from("view_inventario_produtos").select("sku, nome, fornecedor, marca, categoria, foto, saldo_geral");
+      let qq = supabaseExternal.from("view_inventario_produtos").select("sku, nome, fornecedor, marca, categoria, foto, saldo_geral")
+        .eq("tipo", "S"); // contagem só de produto simples (o pai de variações não tem estoque próprio)
       if (forn !== "_todos") qq = qq.eq("fornecedor", forn);
       if (marca !== "_todos") qq = qq.eq("marca", marca);
       if (cat !== "_todos") qq = qq.eq("categoria", cat);
@@ -473,9 +474,9 @@ function SeletorProdutos({ selecionados, onChange, jaNaTarefa }: {
         )}
       </div>
 
-      <div className="rounded-lg border max-h-[340px] overflow-y-auto divide-y bg-card">
+      <div className="rounded-lg border min-h-[240px] max-h-[60vh] overflow-y-auto divide-y bg-card">
         {!algumFiltro ? (
-          <div className="p-4 text-sm text-muted-foreground">Escolha um fornecedor, marca ou categoria, ou busque pelo nome/SKU.</div>
+          <div className="p-4 text-sm text-muted-foreground">Escolha um fornecedor, marca ou categoria, ou busque pelo nome/SKU. Só aparecem produtos simples.</div>
         ) : prodQ.isLoading ? (
           <div className="p-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Buscando…</div>
         ) : prodQ.error ? (
@@ -625,13 +626,13 @@ function NovaTarefa({ onFechar, onCriada, criadoPor }: { onFechar: () => void; o
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }}>
-      <DialogContent className="max-w-3xl w-[calc(100vw-1.5rem)] max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-6xl w-[calc(100vw-1.5rem)] max-h-[94vh] overflow-y-auto overflow-x-hidden grid-cols-[minmax(0,1fr)]">
         <DialogHeader>
           <DialogTitle>Nova tarefa</DialogTitle>
           <DialogDescription>Aparece no quadro de Tarefas e avisa no Discord (canal de fulfillment).</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 min-w-0">
           <div className="grid gap-2 sm:grid-cols-3">
             {TIPOS.map((t) => (
               <button key={t.id} type="button" onClick={() => setTipo(t.id)}
