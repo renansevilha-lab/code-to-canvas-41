@@ -23,6 +23,10 @@
 //    como bloco obrigatório com o tipo da foto (antes, com prompt já escrito, os textos ficavam de fora
 //    e instrução salva depois do prompt nunca chegava à imagem). Se a OpenAI recusar o conjunto (400),
 //    tenta só com as fotos reais e, por fim, só com a principal.
+// v4 (18/out/2026, relato do dono: "ao pedir uma alteração não acontece nada"): a imagem refeita era
+//    gravada no MESMO arquivo e a tela seguia mostrando a antiga (link guardado pelo caminho). Agora cada
+//    versão vai para {ordem}-{tipo}-{hash}.ext e a anterior deste rascunho é apagada. E o "o que mudar?"
+//    abre o prompt (e é repetido no fim), valendo sobre instrução que conflite com ele.
 // =============================================================================
 import {
   CORS, json, sb, carregarProduto, fotoReferencia, fotosReaisExtras, ehInstrucaoDoProduto, blocoInstrucoesOperador, templatesAtivos, guardrails, regrasImagem,
@@ -174,11 +178,16 @@ Deno.serve(async (req) => {
       componentes: p.atributos.componentes ?? null,
       beneficios: ((brief?.beneficios ?? r.bullet_points ?? []) as unknown[]).slice(0, 3),
     }, false);
-    const prompt = base +
+    // v4 (18/out/2026): o pedido de alteração ("o que mudar?") ia só no FIM, depois de instruções que
+    // diziam o contrário (ex.: "Barra inferior: 8kg e 20kg" × "retire o peso de baixo") e o modelo
+    // seguia as de cima. Agora abre o prompt e é repetido no fim, valendo sobre qualquer conflito.
+    const obs = etapa.observacao ? String(etapa.observacao).trim() : "";
+    const prompt = (obs ? `ALTERACAO PEDIDA PELO OPERADOR PARA ESTA VERSAO (vale mais que qualquer instrucao abaixo que conflite com ela; o resto continua valendo): ${obs}\n\n` : "") +
+      base +
       (!feito && brief?.angulo ? `\n\nANGULO DE VENDA: ${brief.angulo}` : "") +
       (regras ? `\n\nREGRAS OBRIGATORIAS:\n${regras}` : "") +
       blocoInstrucoesOperador(ctx.instrucoes, String(img.tipo ?? "")) +
-      (etapa.observacao ? `\n\nOBSERVACAO DO OPERADOR (prioridade nesta versao): ${etapa.observacao}` : "");
+      (obs ? `\n\nLEMBRETE — ALTERACAO PEDIDA PELO OPERADOR (prioridade maxima nesta versao): ${obs}` : "");
 
     let gerada: { bytes: Uint8Array; mime: string };
     if (escolhido.provider === "gemini") {
@@ -224,10 +233,14 @@ Deno.serve(async (req) => {
       gerada = feita;
     }
 
-    const caminho = `${r.sku}/${r.id}/${img.ordem}-${img.tipo}.${extDoMime(gerada.mime)}`;
+    // v4: cada versão num arquivo NOVO (o hash no nome). Regravando o mesmo caminho, a tela e o
+    // navegador seguiam mostrando a imagem anterior (link guardado pelo caminho) e "refazer" parecia
+    // não fazer nada. O arquivo da versão anterior deste rascunho é apagado depois de gravar.
+    const hash = await sha256hex(gerada.bytes);
+    const caminho = `${r.sku}/${r.id}/${img.ordem}-${img.tipo}-${hash.slice(0, 10)}.${extDoMime(gerada.mime)}`;
     const up = await db.storage.from(BUCKET).upload(caminho, gerada.bytes, { contentType: gerada.mime, upsert: true });
     if (up.error) throw new Error(`storage: ${up.error.message}`);
-    const hash = await sha256hex(gerada.bytes);
+    const anterior = typeof img.storage_path === "string" ? img.storage_path : "";
     await db.from("ia_rascunho_imagem").update({
       storage_path: caminho, prompt_usado: prompt, modelo: escolhido.id, status: "gerada", gerado_em: new Date().toISOString(),
       referencia_path: ref.origem, referencia_bytes: ref.bytes.length, referencia_sha256: refSha,
@@ -235,6 +248,12 @@ Deno.serve(async (req) => {
     await db.from("ia_etapa").update({
       status: "gerado", conteudo_hash: hash, erro: null, pegado_em: null, atualizado_em: new Date().toISOString(),
     }).eq("id", etapa.id).eq("status", "gerando");
+    // apaga a versão anterior só se era um arquivo DESTE rascunho e nenhuma outra linha aponta para ele
+    // (cópias para outros produtos vivem em compartilhado/, nunca aqui)
+    if (anterior && anterior !== caminho && anterior.startsWith(`${r.sku}/${r.id}/`)) {
+      const { count } = await db.from("ia_rascunho_imagem").select("id", { count: "exact", head: true }).eq("storage_path", anterior);
+      if (!count) await db.storage.from(BUCKET).remove([anterior]).catch(() => {});
+    }
     const segundos = Math.round((Date.now() - t0) / 1000);
     console.log(JSON.stringify({ evento: "ia_imagem_gerada", etapa: etapa.id, sku: r.sku, tipo: img.tipo, modelo: escolhido.id, contextos: ctx.usados, segundos }));
     dispararWorker();

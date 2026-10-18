@@ -78,12 +78,17 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
   }, [varsQ.data]);
   /** Capa com o selo "Menor Preço da Shopee": o título digitado NÃO vale para ela (só para a Ambientada Texto). */
   const seloShopee = (x: string) => x.startsWith("imagem_capa_") && x.includes("shopee");
-  /** Escreve os prompts; se há título digitado e capas dos dois tipos, manda as da Shopee à parte, sem o título. */
+  /** Capa "ambientada limpa" (estilo 5) não tem texto: nunca recebe barra, selo nem ícones do formulário
+   *  (18/out/2026: a do 15987 saiu com "8kg 20kg" porque a barra preenchida ia para todas as capas). */
+  const capaLimpa = (x: string) => x === "imagem_capa_ambientada_limpa";
+  /** Escreve os prompts em grupos: capas com selo da Shopee sem o título digitado; a capa limpa sem texto nenhum. */
   async function escreverPrompts(fotos: string[], forcarAgora: boolean) {
-    const grupos = fotos.some(seloShopee) && fotos.some((x) => !seloShopee(x)) ? [fotos.filter((x) => !seloShopee(x)), fotos.filter(seloShopee)] : [fotos];
+    const grupos = [fotos.filter((x) => !seloShopee(x) && !capaLimpa(x)), fotos.filter(seloShopee), fotos.filter(capaLimpa)].filter((g) => g.length);
     const out = { prompts_escritos: [] as { tipo: string; confirmar: boolean }[], pulados: [] as { tipo: string; motivo: string }[] };
     for (const g of grupos) {
-      const dados = !g.some((x) => x.startsWith("imagem_capa_")) ? null : g.every(seloShopee) ? { ...capa, faixa: "" } : capa;
+      const dados = !g.some((x) => x.startsWith("imagem_capa_")) ? null
+        : g.every(capaLimpa) ? { ...capa, barra: "", faixa: "", icones: "", sem_texto: true }
+        : g.every(seloShopee) ? { ...capa, faixa: "" } : capa;
       const r = await chamarIa("prompts-imagem", { sku, canal, fotos: g, forcar: forcarAgora, capa: dados });
       out.prompts_escritos.push(...((r.prompts_escritos ?? []) as { tipo: string; confirmar: boolean }[]));
       out.pulados.push(...((r.pulados ?? []) as { tipo: string; motivo: string }[]));

@@ -4,6 +4,7 @@ import { kindDoAgente, str, type Kind, type RelatorioLista } from "./comum";
 import { decisoesFin, miniFin, RelatorioFinanceiro } from "./RelatorioFinanceiro";
 import { decisoesCompras, miniCompras, RelatorioCompras } from "./RelatorioCompras";
 import { adsPendente, adsV0, decisoesAds, miniAds, RelatorioAds } from "./RelatorioAds";
+import { decisoesPesquisa, miniPesquisa, pesquisaPendente, RelatorioPesquisaML } from "./RelatorioPesquisaML";
 import type { Decisao, MiniKpi } from "./tipos";
 
 // Mapa agente → mini-KPIs (card fechado / faixa Hoje), "Pede decisão",
@@ -23,6 +24,8 @@ const AGENTES: Record<string, AgenteDef> = {
   financeiro: { kind: "fin", mini: miniFin, decisoes: decisoesFin, Detalhe: RelatorioFinanceiro },
   compras: { kind: "compras", mini: miniCompras, decisoes: decisoesCompras, Detalhe: RelatorioCompras },
   ads: { kind: "ads", mini: miniAds, decisoes: decisoesAds, pendente: adsPendente, v0: adsV0, Detalhe: RelatorioAds },
+  // Pesquisa de produtos ML (18/out/2026): mesma categoria do ADS (Marketing e ADS)
+  pesquisa_ml: { kind: "ads", mini: miniPesquisa, decisoes: decisoesPesquisa, pendente: pesquisaPendente, Detalhe: RelatorioPesquisaML },
 };
 
 export function agenteDef(agente: string): AgenteDef | null {

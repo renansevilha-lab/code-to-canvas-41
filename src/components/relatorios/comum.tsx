@@ -38,6 +38,7 @@ export const CATEGORIAS: { slug: string; nome: string; agente: string; kind: Kin
   { slug: "financeiro", nome: "Financeiro", agente: "financeiro", kind: "fin" },
   { slug: "compras", nome: "Compras e Recebimentos", agente: "compras", kind: "compras" },
   { slug: "marketing", nome: "Marketing e ADS", agente: "ads", kind: "ads" },
+  { slug: "pesquisa", nome: "Pesquisa de produtos", agente: "pesquisa_ml", kind: "ads" },
 ];
 export const categoriaDoSlug = (slug: string | undefined) =>
   CATEGORIAS.find((c) => c.slug === slug) ?? CATEGORIAS[0];

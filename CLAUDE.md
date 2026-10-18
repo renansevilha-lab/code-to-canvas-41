@@ -1712,6 +1712,18 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   `sem_base` (1ª semana).
 - **Tela `/pesquisa-produtos`** (módulo `ads`, menu Mídia & Canais): abas Defesa · Descoberta · Buscas
   em alta, cada categoria abre o top 20. **Não conferida com login.**
+- **Agente diário (18/out, pedido do dono):** `pesquisa_ml_relatorio_diario(p_data)` → jsonb `versao 'v1'`
+  (`kpis`, `defesa` = por categoria minha posição hoje × coleta anterior × 7 dias + `acima` (até 3 logo
+  acima, com movimento) + `top3` + `novos`/`sairam`; `descoberta` = última varredura (12 categorias em que
+  não atuo); `tendencias` = novos/subindo do Pet Shop níveis 0–2 (na 1ª semana, os de maior crescimento);
+  `decisoes` prontas — saiu do top, caiu, concorrente novo acima, perdendo na semana; `coleta`). Agente
+  `pesquisa_ml` com categoria PRÓPRIA "Pesquisa de produtos" (gatilho `relatorios_agentes_defaults` +
+  `view_relatorios_categorias` ordem 4 + `CATEGORIAS` em `relatorios/comum.tsx`); a faixa Hoje passou a 4
+  cards (`md:grid-cols-2 2xl:grid-cols-4`). Card `src/components/relatorios/RelatorioPesquisaML.tsx`
+  (entrada `pesquisa_ml` em `agentes.ts`). Skill `agentes/agente-pesquisa-ml/SKILL.md` (+ pacote
+  `agente-pesquisa-ml.skill`) e tarefa agendada local **`agente-pesquisa-ml-diario`** (07h40, o app sorteou
+  07h53; só roda com o app do Claude aberto — os outros agentes rodam fora deste PC). 1º relatório
+  gravado à mão em 18/out (id 27).
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
@@ -2963,6 +2975,21 @@ fotos que já estão nos anúncios publicados. Decisão dele: as duas entram **p
 - **Não testado ao vivo** (exige login): nenhum upload nem leitura de anúncio feitos. Conferido: tsc,
   build e a função no ar idêntica ao repositório.
 
+## 5.11.11.14 "Refazer" a imagem parecia não fazer nada (18/out/2026)
+
+Relato do dono (capa ambientada limpa do 15987 com "Mais foco no produto… retire o peso de baixo"): a
+imagem ERA refeita (12h25:59, observação gravada), mas: (1) o worker regravava o MESMO arquivo
+(`{ordem}-{tipo}.png`) e toda tela guarda o link assinado pelo caminho (30 min) — continuava mostrando a
+antiga; (2) a observação ia só no FIM do prompt, depois de "Barra inferior: 8kg e 20kg"; (3) a capa
+**limpa** (estilo 5, sem texto) recebia a barra do formulário de capa.
+- **`ia-imagem-worker` v4 (deploy 5, conferido por sha256 com o repositório):** cada versão em
+  `{ordem}-{tipo}-{hash10}.ext`; a anterior é apagada se era do próprio rascunho e nenhuma linha aponta
+  para ela (cópias de outros produtos vivem em `compartilhado/`). O "o que mudar?" abre o prompt
+  ("vale mais que qualquer instrução abaixo que conflite") e é repetido no fim.
+- **`EtapaFotos.escreverPrompts`:** a capa limpa vai sozinha, com `sem_texto: true` e barra/selo/ícones
+  vazios. O prompt da limpa do 15987 continua com a barra: reescrever pelo botão "prompt" da linha.
+- Arquivos antigos (`{ordem}-{tipo}.png` sem hash) seguem válidos; viram o formato novo na próxima geração.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -3055,7 +3082,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `amazon-inbound` | v4 | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
-| `ia-imagem-worker` | v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
+| `ia-imagem-worker` | v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
 | `anuncio-publicar` | v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |

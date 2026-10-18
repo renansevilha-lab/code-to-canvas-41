@@ -270,7 +270,7 @@ function FaixaHoje({
           {ultimo ? ` · último ${diaSP(ultimo) === hoje ? "às" : `em ${ddmm(diaSP(ultimo))} às`} ${horaSP(ultimo)}` : ""}
         </div>
       </div>
-      <div className={`grid gap-3 items-stretch ${mobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3"}`}>
+      <div className={`grid gap-3 items-stretch ${mobile ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 2xl:grid-cols-4"}`}>
         {faixa.map(({ c, rel }) => {
           if (!rel) {
             return (
@@ -406,7 +406,7 @@ function FaixaEsqueleto({ mobile }: { mobile: boolean }) {
   return (
     <div className="flex flex-col gap-3" aria-busy="true" aria-label="Carregando relatórios">
       <Sk w={120} h={14} />
-      <div className={`grid gap-3 ${mobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3"}`}>
+      <div className={`grid gap-3 ${mobile ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 2xl:grid-cols-4"}`}>
         {[0, 1, 2].map((i) => (
           <div key={i} className="border border-(--rl-border) rounded-[10px] bg-(--rl-surface) p-4 flex flex-col gap-3">
             <div className="flex items-center gap-2.5"><Sk w={28} h={28} r={7} /><Sk w="40%" h={13} /></div>
