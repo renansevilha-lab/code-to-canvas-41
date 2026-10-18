@@ -1668,6 +1668,51 @@ concluir.
   Labels/prep pelo `items/prepDetails`. Origem fixa: Caieiras. Link "Continuar no Seller Central" =
   `sellercentral.amazon.com.br/fba/sendtoamazon?wf=<plano>` (URL não conferida). **Não testado pela tela** (exige login).
 
+## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
+
+Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura
+semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos). Só leitura no ML.
+- **Token:** o mesmo de sempre — `oauth_tokens_ml` por `user_id` (Ottz 1107117809, SVL 1299638625),
+  renovado pelo cron 21 `ml-refresh-token` (`7,37`). A função só lê `access_token`.
+- **O que a API dá com o nosso token (testado 18/out):** `/trends/MLB[/cat]` = 50 termos, só
+  `keyword` + `url` (sem posição/tipo: a ordem é a posição; pela doc do ML 1–10 maior crescimento,
+  11–30 mais desejadas, 31–50 populares). `/highlights/MLB/category/{cat}` = top 20 — funciona até em
+  categoria NÃO folha (o Pet Shop inteiro respondeu); 404 = sem ranking (130 das 253 folhas). O top 20
+  vem quase todo como **PRODUCT** (catálogo) e **USER_PRODUCT**, pouco ITEM. `/products/{id}` (nome) e
+  `/products/{id}/items` (ofertas, preço, vendedor) liberam dados de terceiros. **Não liberam:**
+  `/items` de anúncio de terceiro (403) e `/user-products` de terceiro (403) → para esses fica só id +
+  posição. `/highlights/MLB/item|product/{id}` dos nossos deu 404 nos testados. Sem token tudo é 401/403.
+  Raiz "Animais" = **MLB1071**, que a API chama de **"Pet Shop"**.
+- **"Meu" no ranking** = o id do ranking é o nosso anúncio (ITEM), o `catalog_product_id` de um anúncio
+  nosso (PRODUCT — anunciamos naquele produto de catálogo, o que não garante ganhar a vitrine) ou o nosso
+  `user_product_id`; também se a 1ª oferta do catálogo é de uma das nossas contas.
+- **Tabelas** (`pesquisa_ml_*`, snapshot por `data_coleta` = dia BRT; leitura `authenticated`, sem anon;
+  só a função escreve): `categorias` (árvore: nivel 0 = Pet Shop, `e_folha`, `monitorar_diario`, `atuo`
+  = temos anúncio ativo, `ativa`, `visto_em`), `ranking` (unique data+categoria+ml_id; `e_meu`,
+  `meu_conta`, `meu_mlb`), `tendencias` (`category_id 'MLB'` = geral do site), `coleta` (o que já foi
+  coletado no dia por modo — torna as rodadas retomáveis; guarda o 404), `produtos` (cache do catálogo:
+  20 h no diário, 6 dias no semanal), `meus` (nossos anúncios ativos das duas contas), `execucoes` (log).
+- **Edge fn `pesquisa-ml` v1** (fonte em `supabase/functions/pesquisa-ml/`; aceita chave publicável):
+  `?modo=descobrir_lideranca[&forcar=1]` (atualiza `meus` via `/users/{id}/items/search` scan +
+  multiget e confere o top 20 de cada categoria em que temos anúncio; onde aparecemos →
+  `monitorar_diario = true`, **nunca desliga sozinho**), `?modo=diario` (top 20 das monitoradas),
+  `?modo=semanal` (árvore → top 20 de todas as folhas → tendências geral + níveis 0, 1 e 2). Orçamento
+  de 22 s por chamada; 429/5xx com espera crescente; erro de uma categoria não derruba a rodada.
+  1ª passada completa (18/out): 330 categorias, 253 folhas, 2.271 posições, 956 produtos, 1.522 termos —
+  em 2 chamadas (a API respondeu rápido).
+- **Crons:** 155 `pesquisa-ml-diario` `13,16,19,22 10 * * *` (07h13–07h22 BRT) · 156
+  `pesquisa-ml-lideranca` `27,32 5 * * 0` (dom 02h27) · 157 `pesquisa-ml-semanal` (dom 03h03–05h57, fora
+  dos minutos cheios). Todos com Bearer publicável.
+- **Primeira leitura (18/out), top 20 por catálogo:** Areias Higiênicas 2º (Bento Mix 4kg) e 20º (Kit 2
+  Tofu Great Pets); Perfumes 3º (Perfume Macho Pet Clean); Creme Dental 6º; Repelentes Líquidos 6º (Xô
+  Gatinho) e 8º (Kit Xixi Sim/Não); Casas 18º (Stone House). Ottz 335 anúncios ativos, SVL 5.
+- **Views:** `view_pesquisa_ml_top_monitorado` (hoje × 7 dias antes, com quem saiu),
+  `view_pesquisa_ml_defesa` (1 linha por categoria), `view_pesquisa_ml_tendencias` (semana × anterior),
+  `view_pesquisa_ml_descoberta` e `_resumo` (folhas com `atuo = false`, faixa de preço). Sem base =
+  `sem_base` (1ª semana).
+- **Tela `/pesquisa-produtos`** (módulo `ads`, menu Mídia & Canais): abas Defesa · Descoberta · Buscas
+  em alta, cada categoria abre o top 20. **Não conferida com login.**
+
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
 - **`view_shopee_reembolsos`** — 1 linha por pedido com devolução, extravio,
@@ -3017,6 +3062,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
+| `pesquisa-ml` | v1 | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
