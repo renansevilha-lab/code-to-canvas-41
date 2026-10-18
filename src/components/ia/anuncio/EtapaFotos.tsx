@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
-  DESCRICAO_FOTO, ROTULO_ETAPA, chamarIa, rotuloFoto, urlsAssinadas, type IaBriefing, type IaEtapa, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
+  DESCRICAO_FOTO, ROTULO_ETAPA, chamarIa, fotoSemIa, rotuloFoto, urlsAssinadas, type IaBriefing, type IaEtapa, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
 import { SeloEtapa, decidirEtapa } from "./EtapaTexto";
 import { useInstrucoesProduto } from "./InstrucoesIa";
@@ -317,12 +317,12 @@ function GradeImagens({ imagens, etapaPorImagem, onRefazer }: {
                     {img.storage_path && et.status !== "aprovado" && <Button size="sm" className="h-6 px-2 text-[11px] gap-0.5" onClick={() => void decidir(et, true)}><Check className="h-3 w-3" />Aprovar</Button>}
                     {img.storage_path && et.status !== "rejeitado" && <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-0.5" onClick={() => void decidir(et, false)}><X className="h-3 w-3" />Rejeitar</Button>}
                   </div>
-                  <div className="flex gap-1">
+                  {!fotoSemIa(img.tipo ?? "") && <div className="flex gap-1">
                     <Input className="h-6 text-[11px]" placeholder="o que mudar?" value={obsPor[img.id] ?? ""} onChange={(e) => setObsPor({ ...obsPor, [img.id]: e.target.value })} />
                     <Button size="sm" variant="ghost" className="h-6 px-1.5" title="Refazer esta imagem" onClick={() => onRefazer(img.tipo ?? "", obsPor[img.id] || undefined)}>
                       <RotateCcw className="h-3 w-3" />
                     </Button>
-                  </div>
+                  </div>}
                 </>
               )}
             </div>

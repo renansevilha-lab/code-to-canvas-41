@@ -1,5 +1,9 @@
 // ============================================================================
-// Edge Function: ia-aproveitar v1 (12/out/2026) — IA · Anúncios
+// Edge Function: ia-aproveitar v2 (18/out/2026; v1 em 12/out) — IA · Anúncios
+// v2: POST ?modulo=subir {sku, canal, empresa, destino_id?, caminhos:[manual/<sku>/…]} — fotos subidas à mão;
+//     POST ?modulo=no-ar {mkt: shopee|mercado_livre, item_id, loja?} — fotos de um anúncio publicado (ao vivo);
+//     POST ?modulo=copiar-no-ar {sku, canal, empresa, destino_id?, mkt, item_id, urls:[…]} — traz as escolhidas.
+//     As duas entram PARA REVISAR (decisão do dono) e viram fotos do rascunho como as demais.
 // ----------------------------------------------------------------------------
 // Aproveita o que JÁ foi gerado em outro rascunho, SEM chamar IA nenhuma (pedido do dono):
 //  - o mesmo produto em outro canal: texto e fotos da Shopee → Mercado Livre;
@@ -202,7 +206,8 @@ async function sha12(s: string): Promise<string> {
 /** Cópia que não muda mais: uma por foto de origem, usada por todos os destinos. */
 async function copiaCompartilhada(skuOrigem: string, src: Record<string, any>, hash: string | null, feitas: Map<string, string>): Promise<string> {
   const de = String(src.storage_path);
-  if (de.startsWith("compartilhado/")) return de; // já é uma cópia: reaproveita a mesma
+  // já é uma cópia, ou é foto que nunca é regravada (subida à mão / trazida de anúncio no ar): reaproveita a mesma
+  if (de.startsWith("compartilhado/") || de.startsWith("manual/") || de.startsWith("no-ar/")) return de;
   if (feitas.has(de)) return feitas.get(de)!;
   const ext = (de.split(".").pop() || "png").toLowerCase();
   const h = hash ? hash.slice(0, 12) : await sha12(`${de}|${src.gerado_em ?? ""}`);
@@ -384,6 +389,140 @@ async function aplicarLote(body: Record<string, any>, quem: Quem) {
   return { ok: true, feitos, restantes };
 }
 
+// ---------------------------------------------------------------- fotos novas (v2, 18/out/2026)
+// Pedido do dono: subir fotos à mão para o anúncio e usar as fotos dos anúncios que já estão no ar
+// (Shopee/Mercado Livre). As duas entram "para revisar" (decisão do dono) e, por serem uma foto por
+// tipo (`manual_xxxxxxxx` / `anuncio_xxxxxxxx`), passam a aparecer em "Usar fotos de outro anúncio"
+// como qualquer outra. O arquivo nunca é regravado (o worker de IA não refaz esses tipos).
+
+/** Insere fotos novas no rascunho, depois das que já existem (ordem acima de 100), para revisar. */
+async function inserirNovas(destino: Record<string, any>, novas: { tipo: string; caminho: string; modelo: string }[]) {
+  const copiadas: string[] = []; const puladas: { tipo: string; motivo: string }[] = [];
+  const { data: atuais } = await db.from("ia_rascunho_imagem").select("ordem, tipo").eq("rascunho_id", destino.id);
+  const tipos = new Set(((atuais ?? []) as any[]).map((x) => String(x.tipo)));
+  let maior = Math.max(100, ...((atuais ?? []) as any[]).map((x) => Number(x.ordem) || 0));
+  const agora = new Date().toISOString();
+  for (const n of novas) {
+    if (tipos.has(n.tipo)) { puladas.push({ tipo: n.tipo, motivo: "esta foto já está neste anúncio" }); continue; }
+    const { data: img, error } = await db.from("ia_rascunho_imagem").insert({
+      rascunho_id: destino.id, ordem: ++maior, tipo: n.tipo, storage_path: n.caminho, prompt_usado: null, modelo: n.modelo,
+      status: "gerada", gerado_em: agora,
+    }).select("id").single();
+    if (error || !img) { puladas.push({ tipo: n.tipo, motivo: `banco: ${error?.message ?? "sem retorno"}` }); continue; }
+    const { error: eE } = await db.from("ia_etapa").insert({ rascunho_id: destino.id, etapa: "imagem", imagem_id: img.id, status: "gerado", tentativas: 0, atualizado_em: agora });
+    if (eE) { await db.from("ia_rascunho_imagem").delete().eq("id", img.id); puladas.push({ tipo: n.tipo, motivo: `etapa: ${eE.message}` }); continue; }
+    tipos.add(n.tipo); copiadas.push(n.tipo);
+  }
+  return { copiadas, puladas };
+}
+async function destinoDe(body: Record<string, any>, quem: Quem) {
+  if (body.destino_id) {
+    const { data } = await db.from("ia_rascunho").select("*").eq("id", String(body.destino_id)).maybeSingle();
+    if (!data) throw new Error("rascunho de destino não encontrado");
+    return { r: data as Record<string, any>, criado: false };
+  }
+  const sku = String(body.sku ?? "").trim(); const canal = String(body.canal ?? ""); const empresa = String(body.empresa ?? "ottz");
+  if (!sku || !canal) throw new Error("informe sku e canal");
+  return await acharOuCriar(sku, canal, empresa, quem);
+}
+
+/** Fotos subidas à mão: o app já gravou os arquivos em `manual/{sku}/…`; aqui elas entram no rascunho. */
+async function subir(body: Record<string, any>, quem: Quem) {
+  const sku = String(body.sku ?? "").trim();
+  const caminhos = (Array.isArray(body.caminhos) ? body.caminhos as unknown[] : []).map(String).filter((c) => c.startsWith(`manual/${sku}/`) && !c.includes(".."));
+  if (!sku || !caminhos.length) throw new Error("nenhum arquivo válido (o caminho precisa ser manual/<sku>/…)");
+  const { r, criado } = await destinoDe(body, quem);
+  if (String(r.sku) !== sku) throw new Error("o rascunho não é deste produto");
+  const novas = caminhos.slice(0, 20).map((c) => ({ tipo: `manual_${(c.split("/").pop() ?? "").replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase()}`, caminho: c, modelo: "manual" }));
+  const f = await inserirNovas(r, novas);
+  return { ok: true, rascunho_id: r.id, criado, ...f };
+}
+
+// ---- anúncios no ar: Shopee (assinatura da loja) e Mercado Livre (token da conta)
+const SHOPEE_HOST = Deno.env.get("SHOPEE_HOST") || "https://partner.shopeemobile.com";
+const LOJA_SHOPEE: Record<string, number> = { ottz: 522186766, svl: 759046323 };
+const CONTA_ML: Record<string, number> = { ottz: 1107117809, svl: 1299638625 };
+async function hmacHex(msg: string, key: string) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(msg)))).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function shopeeItem(shopId: number, itemId: string) {
+  const { data: tok } = await db.from("oauth_tokens_shopee").select("shop_id, partner_id, access_token").eq("shop_id", shopId).maybeSingle();
+  if (!tok) return null;
+  const pid = String(tok.partner_id);
+  const key = (pid === "2034179" ? Deno.env.get("SHOPEE_PARTNER_KEY") : pid === "2037384" ? Deno.env.get("SHOPEE_PARTNER_KEY_SVL") : "")?.trim() ?? "";
+  if (!key) return null;
+  const path = "/api/v2/product/get_item_base_info";
+  const ts = Math.floor(Date.now() / 1000);
+  const url = new URL(`${SHOPEE_HOST}${path}`);
+  url.searchParams.set("partner_id", pid); url.searchParams.set("timestamp", String(ts));
+  url.searchParams.set("access_token", String(tok.access_token)); url.searchParams.set("shop_id", String(shopId));
+  url.searchParams.set("sign", await hmacHex(`${pid}${path}${ts}${tok.access_token}${shopId}`, key));
+  url.searchParams.set("item_id_list", itemId);
+  const r = await fetch(url.toString()).then((x) => x.json()).catch(() => null);
+  const it = r?.response?.item_list?.[0];
+  if (!it) return null;
+  return { titulo: String(it.item_name ?? ""), sku: it.item_sku ?? null, status: it.item_status ?? null, fotos: ((it.image?.image_url_list ?? []) as string[]).filter(Boolean) };
+}
+async function mlItem(userId: number, mlb: string) {
+  const { data: tok } = await db.from("oauth_tokens_ml").select("access_token").eq("user_id", userId).maybeSingle();
+  if (!tok) return null;
+  const r = await fetch(`https://api.mercadolibre.com/items/${mlb}?attributes=id,title,status,seller_id,seller_custom_field,pictures`, { headers: { Authorization: `Bearer ${tok.access_token}` } });
+  if (!r.ok) return null;
+  const b = await r.json().catch(() => null);
+  if (!b?.id || Number(b.seller_id) !== userId) return null;
+  return { titulo: String(b.title ?? ""), sku: b.seller_custom_field ?? null, status: b.status ?? null, fotos: ((b.pictures ?? []) as any[]).map((p) => String(p.secure_url || p.url || "")).filter(Boolean) };
+}
+
+/** As fotos que estão hoje num anúncio publicado (lidas ao vivo). */
+async function noAr(body: Record<string, any>) {
+  const mkt = String(body.mkt ?? ""); const id = String(body.item_id ?? "").trim().toUpperCase();
+  const lojas = body.loja ? [String(body.loja)] : ["ottz", "svl"];
+  if (mkt === "shopee") {
+    if (!/^\d{6,15}$/.test(id)) throw new Error("ID do anúncio da Shopee inválido");
+    for (const l of lojas) { const x = LOJA_SHOPEE[l] ? await shopeeItem(LOJA_SHOPEE[l], id) : null; if (x) return { ok: true, mkt, loja: l, item_id: id, ...x }; }
+    throw new Error("não achei este anúncio nas lojas Shopee");
+  }
+  if (mkt === "mercado_livre") {
+    const mlb = /^\d+$/.test(id) ? `MLB${id}` : id;
+    if (!/^MLB\d{6,15}$/.test(mlb)) throw new Error("código do anúncio do Mercado Livre inválido (MLB…)");
+    for (const l of lojas) { const x = CONTA_ML[l] ? await mlItem(CONTA_ML[l], mlb) : null; if (x) return { ok: true, mkt, loja: l, item_id: mlb, ...x }; }
+    throw new Error("não achei este anúncio nas contas do Mercado Livre");
+  }
+  throw new Error("mkt precisa ser shopee ou mercado_livre");
+}
+
+const HOST_FOTO = /(^|\.)(susercontent\.com|shopee\.com\.br|shopee\.com|mlstatic\.com)$/i;
+/** Copia fotos de um anúncio no ar para o rascunho (baixa uma vez para `no-ar/{mkt}/{item}/{hash}`). */
+async function copiarNoAr(body: Record<string, any>, quem: Quem) {
+  const t0 = Date.now();
+  const mkt = String(body.mkt ?? ""); const item = String(body.item_id ?? "").replace(/[^A-Za-z0-9]/g, "");
+  if (!["shopee", "mercado_livre"].includes(mkt) || !item) throw new Error("informe mkt e item_id");
+  const urls = [...new Set((Array.isArray(body.urls) ? body.urls as unknown[] : []).map(String))].slice(0, 12);
+  if (!urls.length) throw new Error("escolha ao menos uma foto");
+  const { r, criado } = await destinoDe(body, quem);
+  const novas: { tipo: string; caminho: string; modelo: string }[] = []; const puladas: { tipo: string; motivo: string }[] = [];
+  for (const u of urls) {
+    let host = ""; try { const x = new URL(u); host = x.protocol === "https:" ? x.hostname : ""; } catch { /* inválida */ }
+    if (!HOST_FOTO.test(host)) { puladas.push({ tipo: u.slice(0, 60), motivo: "endereço que não é do marketplace" }); continue; }
+    if (Date.now() - t0 > ORCAMENTO_MS) { puladas.push({ tipo: u.slice(0, 60), motivo: "sem tempo nesta rodada: tente de novo" }); continue; }
+    const h = await sha12(u);
+    const resp = await fetch(u).catch(() => null);
+    const tipoCont = resp?.headers.get("content-type") ?? "";
+    if (!resp?.ok || !tipoCont.startsWith("image/")) { puladas.push({ tipo: `anuncio_${h.slice(0, 8)}`, motivo: `não consegui baixar a foto (${resp?.status ?? "sem resposta"})` }); continue; }
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    if (bytes.length > 12_000_000) { puladas.push({ tipo: `anuncio_${h.slice(0, 8)}`, motivo: "foto grande demais" }); continue; }
+    const ext = tipoCont.includes("png") ? "png" : tipoCont.includes("webp") ? "webp" : "jpg";
+    const caminho = `no-ar/${mkt}/${item}/${h}.${ext}`;
+    const { error } = await db.storage.from(BUCKET).upload(caminho, bytes, { contentType: tipoCont, upsert: true });
+    if (error) { puladas.push({ tipo: `anuncio_${h.slice(0, 8)}`, motivo: `armazenamento: ${error.message}` }); continue; }
+    novas.push({ tipo: `anuncio_${h.slice(0, 8)}`, caminho, modelo: `no-ar:${mkt}:${item}` });
+  }
+  const f = await inserirNovas(r, novas);
+  return { ok: true, rascunho_id: r.id, criado, copiadas: f.copiadas, puladas: [...puladas, ...f.puladas] };
+}
+
 // ---------------------------------------------------------------- handler
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -397,7 +536,10 @@ Deno.serve(async (req) => {
     if (modulo === "destinos") return json(await destinos(body));
     if (modulo === "aplicar") return json(await aplicar(body, quem));
     if (modulo === "aplicar-lote") return json(await aplicarLote(body, quem));
-    return json({ ok: false, erro: "use ?modulo=fontes, destinos, aplicar ou aplicar-lote" }, 400);
+    if (modulo === "subir") return json(await subir(body, quem));
+    if (modulo === "no-ar") return json(await noAr(body));
+    if (modulo === "copiar-no-ar") return json(await copiarNoAr(body, quem));
+    return json({ ok: false, erro: "use ?modulo=fontes, destinos, aplicar, aplicar-lote, subir, no-ar ou copiar-no-ar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500);
   }

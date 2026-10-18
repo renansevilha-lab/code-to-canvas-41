@@ -122,7 +122,14 @@ export async function calcularPreco(sku: string, canal: string, empresa: string,
   return melhor ? { ...(melhor as IaPreco), da_variacao: de, n_variacoes: skus.length } : p;
 }
 /** Rótulo legível do tipo de foto (template imagem_*). */
-export const rotuloFoto = (t: string) => t.replace(/^imagem_/, "").replace(/_/g, " ");
+/** Foto que não vem da IA: subida à mão (manual_…) ou trazida de um anúncio no ar (anuncio_…). Não tem "refazer". */
+export const fotoSemIa = (t: string) => /^(imagem_)?(manual|anuncio)_/.test(t);
+export const rotuloFoto = (t: string) => {
+  const x = t.replace(/^imagem_/, "");
+  if (x.startsWith("manual_")) return "foto enviada";
+  if (x.startsWith("anuncio_")) return "foto de anúncio no ar";
+  return x.replace(/_/g, " ");
+};
 /** O que é cada foto, em uma linha (resumo do template de mesmo nome em /ia/prompts). */
 export const DESCRICAO_FOTO: Record<string, string> = {
   imagem_principal: "Foto de catálogo: o produto igual ao real, em fundo branco.",
@@ -200,7 +207,7 @@ export function rotuloRelacao(p: { relacao: RelacaoFamilia; quantidade: number |
 }
 /** Fotos que carregam o selo da Shopee: não servem para outro canal. */
 export const temSeloShopee = (tipo: string) => /shopee/.test(tipo);
-export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "aplicar-lote", body: Record<string, unknown>) =>
+export const chamarAproveitar = (modulo: "fontes" | "destinos" | "aplicar" | "aplicar-lote" | "subir" | "no-ar" | "copiar-no-ar", body: Record<string, unknown>) =>
   chamarFuncao("ia-aproveitar", modulo, body);
 
 /** Criar no Tiny um produto com variações (cada variação = kit do produto base) — edge fn `tiny-produto-variacoes`. */

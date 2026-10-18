@@ -16,6 +16,7 @@ import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
+import { FotosNovas } from "@/components/ia/anuncio/FotosNovas";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
@@ -184,6 +185,8 @@ function GerarAnuncioPage() {
             imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
         )}
         <FotosDeOutros key={`fo-${sku}`} sku={sku} nome={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+          rascunho={r === "novo" ? null : rascunho} onDestino={(id) => set({ r: id })} />
+        <FotosNovas key={`fn-${sku}`} sku={sku} canal={canal} empresa={empresa}
           rascunho={r === "novo" ? null : rascunho} onDestino={(id) => set({ r: id })} />
 
         {/* 2) as fotos deste anúncio: gerar com IA e revisar */}
