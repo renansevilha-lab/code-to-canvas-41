@@ -255,6 +255,7 @@ function EditorPrompt({ prompt }: { prompt: IaPromptImagem }) {
   const [aberto, setAberto] = useState(prompt.prompt.includes("[CONFIRMAR"));
   useEffect(() => { setTexto(prompt.prompt); }, [prompt.updated_at]);
   async function salvar() {
+    if (texto === prompt.prompt) return;
     const { error } = await supabaseExternal.from("ia_prompt_imagem").update({ prompt: texto, editado_mao: true }).eq("id", prompt.id);
     if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
     toast.success(`Prompt de ${rotuloFoto(prompt.tipo)} salvo`);
@@ -270,8 +271,12 @@ function EditorPrompt({ prompt }: { prompt: IaPromptImagem }) {
       </button>
       {aberto && (
         <div className="px-3 pb-2 space-y-1.5">
-          <Textarea className="min-h-[160px] text-xs font-mono" value={texto} onChange={(e) => setTexto(e.target.value)} />
-          <Button size="sm" variant="outline" className="h-7" disabled={texto === prompt.prompt} onClick={() => void salvar()}>Salvar prompt</Button>
+          <Textarea className="min-h-[160px] text-xs font-mono" value={texto} onChange={(e) => setTexto(e.target.value)}
+            onBlur={() => void salvar()} />
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" className="h-7" disabled={texto === prompt.prompt} onClick={() => void salvar()}>Salvar prompt</Button>
+            <span className="text-[10.5px] text-muted-foreground">{texto !== prompt.prompt ? "não salvo — salva ao sair do campo" : "salvo"}</span>
+          </div>
         </div>
       )}
     </div>

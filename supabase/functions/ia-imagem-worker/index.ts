@@ -27,6 +27,8 @@
 //    gravada no MESMO arquivo e a tela seguia mostrando a antiga (link guardado pelo caminho). Agora cada
 //    versão vai para {ordem}-{tipo}-{hash}.ext e a anterior deste rascunho é apagada. E o "o que mudar?"
 //    abre o prompt (e é repetido no fim), valendo sobre instrução que conflite com ele.
+// v5 (18/out/2026): capa ambientada LIMPA nunca leva texto — barra/faixa/ícones/selo do prompt salvo
+//    viram "sem" na hora de gerar (prompts antigos mandavam desenhar "8kg 20kg" no rodapé).
 // =============================================================================
 import {
   CORS, json, sb, carregarProduto, fotoReferencia, fotosReaisExtras, ehInstrucaoDoProduto, blocoInstrucoesOperador, templatesAtivos, guardrails, regrasImagem,
@@ -173,11 +175,21 @@ Deno.serve(async (req) => {
     const regras = regrasImagem(gs);
     const tpl = tpls.find((t) => t.nome === `imagem_${img.tipo}`);
     if (!feito && !tpl) throw new Error(`template inativo ou inexistente: imagem_${img.tipo}`);
-    const base = feito ? String(feito.prompt) : preencher(tpl!.conteudo, {
+    const base0 = feito ? String(feito.prompt) : preencher(tpl!.conteudo, {
       nome: p.nome, marca: p.marca, categoria: p.categoria, publico_alvo: p.publico_alvo,
       componentes: p.atributos.componentes ?? null,
       beneficios: ((brief?.beneficios ?? r.bullet_points ?? []) as unknown[]).slice(0, 3),
     }, false);
+    // v5 (18/out/2026): a capa LIMPA (estilo 5) não tem texto nenhum, mas prompts escritos antes da
+    // correção do front traziam "Barra inferior de variacoes: 8kg e 20kg" e a imagem saía com o peso
+    // embaixo. Na hora de gerar, barra/faixa/ícones/selo desse tipo viram "sem".
+    const limpa = String(img.tipo ?? "") === "capa_ambientada_limpa";
+    const base = !limpa ? base0 : base0
+      .replace(/^(\s*[-*]?\s*Barra inferior[^:\n]*:)[^\n]*$/gim, "$1 sem barra (nenhum texto, numero ou pilula no rodape)")
+      .replace(/^(\s*[-*]?\s*Faixa[^:\n]*:)[^\n]*$/gim, "$1 sem faixa")
+      .replace(/^(\s*[-*]?\s*[IÍ]cones[^:\n]*:)[^\n]*$/gim, "$1 sem icones")
+      .replace(/^(\s*[-*]?\s*T[ií]tulo do selo[^:\n]*:)[^\n]*$/gim, "$1 sem selo") +
+      "\n\nESTILO SEM TEXTO: esta imagem NAO leva nenhum texto, numero, peso, selo, pilula, faixa ou icone desenhado. Só o produto no cenario.";
     // v4 (18/out/2026): o pedido de alteração ("o que mudar?") ia só no FIM, depois de instruções que
     // diziam o contrário (ex.: "Barra inferior: 8kg e 20kg" × "retire o peso de baixo") e o modelo
     // seguia as de cima. Agora abre o prompt e é repetido no fim, valendo sobre qualquer conflito.
