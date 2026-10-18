@@ -3068,7 +3068,23 @@ Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repos
   "8kg" bateria com o 16330_FBA "8kg"; usar "2x4kg" ou tirar um); o 15987 tem o aviso 18076 "outras
   limitações de listagem"; a SVL segue sem `merchant_token` (só ACZ). Filho NOVO (SKU sem anúncio) =
   ficha completa do caminho B (§5.11.12) + os campos de filho — não ensaiado junto.
-- **Não feito:** tela no app e escrita real.
+- **Tela + função (18/out, dono escolheu B + C):** edge fn **`amazon-variacoes`** v1 (fonte no repositório; JWT
+  de usuário + módulo `ia`; até 19/out 03:00 UTC `ler`/`previa` também aceitam a chave publicável — rota de
+  ensaio): `ler {empresa, busca}` (ASIN/SKU → anúncio, família com o valor de cada filho e kits do mesmo produto
+  base no Tiny, cada um marcado "pôr na família" se já tem anúncio ou "tamanho novo"), `previa` (validador) e
+  `aplicar {confirmar}` (pai → entrar → novos, cada envio uma vez, para no 1º recusado; `debug_fulfillment`
+  modulo amazon-variacoes). Tamanho novo = SKU `<sku>_FBA` com a ficha copiada de um irmão (título com
+  "(valor)", preço, FBA, peso do kit = soma da composição — no Tiny o peso dos kits vem errado: 8kg com 4,01).
+  Família nova: cria o pai copiando a ficha do anúncio pesquisado. Tela: bloco "Variações na Amazon" na aba
+  Anúncio de `/ia/gerar` quando o destino é Amazon (`VariacoesAmazon.tsx`); Aplicar só depois de conferir o
+  MESMO pedido sem pendência, com confirmação. Barra: valor repetido na família, EAN inválido, SKU já
+  anunciado, tipo de produto diferente, pai de outra família.
+- **Código de barras do tamanho novo (pergunta do dono — "marca genérica não precisa"): PRECISA.** Ensaio de
+  18/out com o 15988 (12kg): sem código = erro **8560** com Bumi Pet Care, "Genérico" e "Generic"; com um EAN de
+  formato válido = **VALID**. Sem código só passa se a marca tiver **isenção de GTIN aprovada** no Seller
+  Central. A tela pede o EAN por linha; o do Tiny só vale se for do próprio produto (kit herda o da unidade).
+- **Não testado ao vivo:** nenhum `aplicar` (escrita real) nem a tela com login. Ensaios VALID: 15987 → pai
+  16358 como "2x4kg"; 15988_FBA (12kg) como tamanho novo com EAN.
 
 ## 6. Edge Functions
 
@@ -3121,6 +3137,7 @@ Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repos
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `amazon-lwa-debug` | v18 (= `amazon-anuncio-sonda` v3) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar e, v3, pesquisa pelo ASIN + ensaio de variação — ver §5.11.12 e §5.11.12.1 |
+| `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `pesquisa-ml` | v1 | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |

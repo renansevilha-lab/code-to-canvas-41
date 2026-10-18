@@ -14,6 +14,7 @@ import { AnaliseProduto } from "@/components/ia/anuncio/AnaliseProduto";
 import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
+import { VariacoesAmazon } from "@/components/ia/anuncio/VariacoesAmazon";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
 import { FotosNovas } from "@/components/ia/anuncio/FotosNovas";
@@ -249,6 +250,8 @@ function GerarAnuncioPage() {
       )}
       {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
       {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+      {/* Amazon: pesquisa pelo ASIN e família de tamanhos — pôr anúncio solto na família ou criar tamanho novo (18/out) */}
+      {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
 
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}

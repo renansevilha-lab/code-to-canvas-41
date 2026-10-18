@@ -176,6 +176,23 @@ async function chamarFuncao(funcao: string, modulo: string, body: Record<string,
 }
 /** Geração: briefing, texto, prompts de imagem, imagens, foto de referência. */
 export const chamarIa = (modulo: string, body: Record<string, unknown>) => chamarFuncao("ia-anuncio", modulo, body);
+/**
+ * Variações na Amazon (edge fn `amazon-variacoes`, 18/out/2026): `ler` e `previa` só leem/validam; `aplicar`
+ * escreve. Devolve a resposta mesmo com `ok: false` (o `aplicar` diz o que já foi feito antes de parar).
+ */
+export async function chamarAmazonVariacoes(modulo: "ler" | "previa" | "aplicar", body: Record<string, unknown>): Promise<any> {
+  const { data } = await supabaseExternal.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Faça login de novo.");
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/amazon-variacoes?modulo=${modulo}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok && !j.envios && !j.feitos) throw new Error((j.erro ?? `HTTP ${r.status}`) + (Array.isArray(j.pendencias) && j.pendencias.length ? `: ${j.pendencias.join("; ")}` : ""));
+  return j;
+}
 /** Envio do anúncio ao marketplace: `existentes` e `previa` só leem; `enviar` cria ou atualiza o anúncio. */
 export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
 
