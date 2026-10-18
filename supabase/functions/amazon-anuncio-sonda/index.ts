@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-anuncio-sonda v2 (13/out/2026) — IA · Anúncios
+// Edge Function: amazon-anuncio-sonda v3 (18/out/2026) — IA · Anúncios
 // (publicada no slot `amazon-lwa-debug`: criar função nova no projeto falha — ver CLAUDE.md §5.11)
 // ----------------------------------------------------------------------------
 // DIAGNÓSTICO do envio de anúncio para a Amazon (SP-API, Listings Items). NÃO altera nada:
@@ -12,6 +12,11 @@
 //       v2: ENSAIO DE CRIAR. Procura o EAN no catálogo; se o produto existe, ensaia entrar na
 //       oferta (LISTING_OFFER_ONLY); se não existe (ou forcar=novo), lê o que o tipo de produto
 //       exige e ensaia criar a ficha (LISTING) com o que temos no cadastro. Nada é criado.
+// GET ?conta=ottz&asin=B0…[&sku_filho=][&pai=<sku pai que já existe>][&tema=][&valor=][&tipo=]
+//       v3 (18/out/2026): PELO ASIN. Ficha do catálogo (marca, tipo, relações de variação: pai/filhos e
+//       tema), quais SKUs NOSSOS estão nesse ASIN (searchListingsItems por ASIN), os temas de variação
+//       que o tipo de produto aceita e um ENSAIO de pôr o anúncio como variação (pai novo + este
+//       anúncio como filho), só com VALIDATION_PREVIEW. Nada é criado.
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -51,7 +56,9 @@ Deno.serve(async (req) => {
   const u = new URL(req.url);
   const conta = u.searchParams.get("conta") === "svl" ? "svl" : "ottz";
   const sku = (u.searchParams.get("sku") || "").trim();
-  if (!sku) return json({ erro: "informe ?sku=" }, 400);
+  const asinQ = (u.searchParams.get("asin") || "").trim().toUpperCase();
+  const ensaioCriar = u.searchParams.get("ensaio") === "criar";
+  if (!sku && !asinQ) return json({ erro: "informe ?sku= ou ?asin=" }, 400);
   try {
     const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token, expires_at, merchant_token, marketplace_id").eq("shop_id", SHOP[conta]).maybeSingle();
     if (!tk) return json({ erro: `conta ${conta} da Amazon não conectada` }, 400);
@@ -60,8 +67,87 @@ Deno.serve(async (req) => {
     const mkt = tk.marketplace_id || MKT_BR; const seller = String(tk.merchant_token); const token = String(tk.access_token);
     const item = (s: string) => `/listings/2021-08-01/items/${encodeURIComponent(seller)}/${encodeURIComponent(s)}`;
 
+    // ------------------------------------------------------------ v3: PELO ASIN (leitura + ensaio de variação)
+    if (asinQ && !ensaioCriar) {
+      out.asin = asinQ;
+      const cat = await sp(token, "GET", `/catalog/2022-04-01/items/${encodeURIComponent(asinQ)}`, { marketplaceIds: mkt, includedData: "summaries,relationships,identifiers,productTypes,images" });
+      const it = cat.body ?? {};
+      const resumo = it.summaries?.[0] ?? {};
+      const rels = ((it.relationships?.[0]?.relationships ?? []) as any[]);
+      const tipoCat = it.productTypes?.[0]?.productType ?? null;
+      out.catalogo = {
+        http: cat.status, erro: pend(cat.body).slice(0, 2),
+        titulo: resumo.itemName ?? null, marca: resumo.brand ?? null, tipo_de_produto: tipoCat,
+        classificacao: resumo.browseClassification?.displayName ?? null,
+        ean: ((it.identifiers?.[0]?.identifiers ?? []) as any[]).map((x) => `${x.identifierType}:${x.identifier}`).slice(0, 4),
+        n_fotos: ((it.images?.[0]?.images ?? []) as any[]).filter((x) => Number(x.height) >= 500).length,
+        variacao: rels.length ? rels.map((r) => ({ tipo: r.type, pais: r.parentAsins ?? [], filhos: (r.childAsins ?? []).length, filhos_lista: (r.childAsins ?? []).slice(0, 20), tema: r.variationTheme ?? null })) : "sem relação de variação (anúncio simples)",
+      };
+      // SKUs nossos nesse ASIN
+      const nossos = await sp(token, "GET", `/listings/2021-08-01/items/${encodeURIComponent(seller)}`, { marketplaceIds: mkt, identifiers: asinQ, identifiersType: "ASIN", includedData: "summaries,relationships", pageSize: "20" });
+      const meus = ((nossos.body?.items ?? []) as any[]).map((x) => ({ sku_amazon: x.sku, situacao: x.summaries?.[0]?.status ?? null, tipo: x.summaries?.[0]?.productType ?? null, relacoes: x.relationships?.[0]?.relationships ?? [] }));
+      out.nossos_skus = { http: nossos.status, erro: pend(nossos.body).slice(0, 2), itens: meus };
+      const rest = await sp(token, "GET", "/listings/2021-08-01/restrictions", { asin: asinQ, sellerId: seller, marketplaceIds: mkt, conditionType: "new_new" });
+      out.restricoes = ((rest.body?.restrictions ?? []) as any[]).flatMap((x) => (x.reasons ?? []).map((m: any) => `${m.reasonCode ?? ""}: ${String(m.message ?? "").slice(0, 200)}`));
+      // temas de variação que o tipo aceita
+      const tipo = (u.searchParams.get("tipo") || meus[0]?.tipo || tipoCat || "").trim();
+      let temas: string[] = [];
+      if (tipo) {
+        const def = await sp(token, "GET", `/definitions/2020-09-01/productTypes/${encodeURIComponent(tipo)}`, { marketplaceIds: mkt, sellerId: seller, requirements: "LISTING", locale: "pt_BR" });
+        const link = def.body?.schema?.link?.resource;
+        if (link) {
+          try {
+            const sc = await (await fetch(String(link))).json();
+            temas = (sc?.properties?.variation_theme?.items?.properties?.name?.enum ?? []) as string[];
+            out.tipo_de_produto = tipo;
+            out.variacao_no_tipo = {
+              temas, tem_parentage_level: Boolean(sc?.properties?.parentage_level), tem_child_parent: Boolean(sc?.properties?.child_parent_sku_relationship),
+              parentage_level: sc?.properties?.parentage_level?.items?.properties?.value?.enum ?? null,
+            };
+          } catch (e) { out.variacao_no_tipo = `não li o esquema: ${String(e).slice(0, 120)}`; }
+        } else out.variacao_no_tipo = { http: def.status, erro: pend(def.body).slice(0, 3) };
+      }
+      // ENSAIO (VALIDATION_PREVIEW): pai novo + este anúncio como filho
+      const filho = (u.searchParams.get("sku_filho") || meus[0]?.sku_amazon || "").trim();
+      const tema = (u.searchParams.get("tema") || temas.find((t) => /^SIZE$/i.test(t)) || temas.find((t) => /NUMBER_OF_ITEMS|ITEM_PACKAGE_QUANTITY|SIZE/i.test(t)) || temas[0] || "").trim();
+      if (tipo && tema) {
+        const valor = (u.searchParams.get("valor") || "4kg").trim();
+        const paiExistente = (u.searchParams.get("pai") || "").trim();
+        const pai = paiExistente || `${filho || asinQ}-PAI-ENSAIO`;
+        const txt = (v: string) => [{ value: v, language_tag: "pt_BR", marketplace_id: mkt }];
+        const so = (v: unknown) => [{ value: v, marketplace_id: mkt }];
+        const corpoPai = {
+          productType: tipo, requirements: "LISTING",
+          attributes: {
+            item_name: txt(String(resumo.itemName ?? "Produto").slice(0, 200)), brand: txt(String(resumo.brand ?? "Generico")),
+            parentage_level: so("parent"), variation_theme: [{ name: tema, marketplace_id: mkt }],
+            country_of_origin: so("BR"), supplier_declared_dg_hz_regulation: so("not_applicable"),
+          },
+        };
+        const pvPai = paiExistente ? null : await sp(token, "PUT", item(pai), { marketplaceIds: mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, corpoPai);
+        const ensaio: Record<string, unknown> = { tema, pai_sku: pai, pai: pvPai ? { http: pvPai.status, situacao: pvPai.body?.status ?? null, pendencias: pend(pvPai.body, 30) } : "pai já existe (não ensaiado)" };
+        if (filho) {
+          const tl = tema.toLowerCase();
+          const attrDoTema = tl.includes("number_of_items") ? "number_of_items" : tl.includes("item_package_quantity") ? "item_package_quantity" : tl.includes("size") ? "size" : tl.split("/")[0];
+          const valorAttr = attrDoTema === "size" ? txt(valor) : so(Number(valor.replace(/\D/g, "")) || 1);
+          const patches = [
+            { op: "replace", path: "/attributes/parentage_level", value: so("child") },
+            { op: "replace", path: "/attributes/child_parent_sku_relationship", value: [{ child_relationship_type: "variation", parent_sku: pai, marketplace_id: mkt }] },
+            { op: "replace", path: "/attributes/variation_theme", value: [{ name: tema, marketplace_id: mkt }] },
+            { op: "replace", path: `/attributes/${attrDoTema}`, value: valorAttr },
+            // o filho de variação passa a exigir este campo na validação (visto em 18/out), mesmo já preenchido no anúncio
+            { op: "replace", path: "/attributes/external_testing_certification", value: so("Não Aplicável") },
+          ];
+          const pvF = await sp(token, "PATCH", item(filho), { marketplaceIds: mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, { productType: meus.find((m) => m.sku_amazon === filho)?.tipo || tipo, patches });
+          ensaio.filho_sku = filho; ensaio.filho = { http: pvF.status, situacao: pvF.body?.status ?? null, pendencias: pend(pvF.body, 30), enviado: patches };
+        } else ensaio.filho = "nenhum SKU nosso neste ASIN: o ensaio do filho fica de fora";
+        out.ensaio_variacao = ensaio;
+      }
+      return json(out);
+    }
+
     // ------------------------------------------------------------ v2: ENSAIO DE CRIAR (só validação)
-    if (u.searchParams.get("ensaio") === "criar") {
+    if (ensaioCriar) {
       const { data: p } = await sb.from("produtos").select("sku, nome, gtin, marca, marca_manual, peso_bruto, preco, foto_capa, tipo").eq("sku", sku).maybeSingle();
       if (!p) return json({ ...out, erro: "SKU não está no cadastro" }, 404);
       const { data: rs } = await sb.from("ia_rascunho").select("canal, titulo, descricao, bullet_points").eq("sku", sku).order("updated_at", { ascending: false }).limit(5);

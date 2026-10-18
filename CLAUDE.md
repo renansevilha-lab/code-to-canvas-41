@@ -3044,6 +3044,32 @@ escrita sem `VALIDATION_PREVIEW`.
   (`parentage_level`/`child_parent_sku_relationship`/`variation_theme`), e a criação REAL
   (o validador não pega tudo — ex.: conflito de EAN, revisão da ficha).
 
+## 5.11.12.1 Amazon — pesquisa pelo ASIN e variação em anúncio já criado (18/out/2026, só ensaio)
+
+Pergunta do dono (com o ASIN B0GZLQVHQM): dá para pesquisar pelo ASIN e incluir variações num anúncio já criado?
+Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repositório):
+`?conta=ottz&asin=B0…[&pai=<sku pai existente>][&sku_filho=][&tema=SIZE][&valor=8kg]`. Só leitura +
+`VALIDATION_PREVIEW`; nada foi alterado na Amazon.
+- **Pesquisa pelo ASIN: SIM.** `GET /catalog/2022-04-01/items/{asin}` (título, marca, tipo, EAN, fotos e
+  `relationships` = pai/filhos/tema) + **`searchListingsItems`** `GET /listings/2021-08-01/items/{merchant}?
+  identifiers=<asin>&identifiersType=ASIN` = quais SKUs NOSSOS estão naquele ASIN (com pai/filhos). A busca
+  por palavra (`keywords=<asin>`) também acha.
+- **O que o ASIN mostrou:** B0GZLQVHQM (Areia Bumi 4kg, EAN do 15984) **já é filho** do pai **B0HLWGDZFN**
+  (SKU pai **16358**, ACZ, tema **SIZE**), com os filhos 15984_FBA (4kg), 16330_FBA (8kg, ASIN B0HLWH7C47)
+  e 16332_FBA. O Kit 2×4kg **15987** é ASIN SOLTO (B0HHFM5WXG, EAN 7892806719087, que o Tiny não tem).
+- **Incluir variação em anúncio já criado: SIM, pela API.** PATCH no SKU que vai entrar:
+  `parentage_level = child`, `child_parent_sku_relationship = {variation, parent_sku}`,
+  `variation_theme = SIZE`, `size = "8kg"` **e** `external_testing_certification = "Não Aplicável"` (sem
+  ele a validação recusa — mesmo já preenchido no anúncio). Ensaio do 15987 → pai 16358 = **VALID**; do
+  15984_FBA = VALID. Pai novo (família do zero) = PUT com `parentage_level = parent` + tema + bullets,
+  descrição e `batteries_required`. ANIMAL_LITTER aceita 55 temas (SIZE, NUMBER_OF_ITEMS,
+  ITEM_PACKAGE_QUANTITY, ITEM_WEIGHT…).
+- **Cuidados:** o validador olha um anúncio por vez — **não acusa tamanho repetido** na família (o 15987
+  "8kg" bateria com o 16330_FBA "8kg"; usar "2x4kg" ou tirar um); o 15987 tem o aviso 18076 "outras
+  limitações de listagem"; a SVL segue sem `merchant_token` (só ACZ). Filho NOVO (SKU sem anúncio) =
+  ficha completa do caminho B (§5.11.12) + os campos de filho — não ensaiado junto.
+- **Não feito:** tela no app e escrita real.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -3094,6 +3120,7 @@ escrita sem `VALIDATION_PREVIEW`.
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
+| `amazon-lwa-debug` | v18 (= `amazon-anuncio-sonda` v3) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar e, v3, pesquisa pelo ASIN + ensaio de variação — ver §5.11.12 e §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `pesquisa-ml` | v1 | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
