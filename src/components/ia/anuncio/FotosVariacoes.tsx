@@ -162,11 +162,21 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
     if (e1) return `referência: ${e1.message}`;
     const ref = (x: string) => ((ex ?? []) as { sku: string; foto_ref_path: string | null }[]).find((l) => l.sku === x)?.foto_ref_path ?? null;
     if (ref(skuVar)) return null;
-    // variação de um produto DIFERENTE do produto base do pai (outra cor): vale a foto dela, nunca a do pai.
-    // Com foto no catálogo, a função de imagem já usa essa foto; sem, a referência do produto da cor.
+    // variação de um produto DIFERENTE do produto base do pai (outra cor/tipo): vale a foto dela, nunca a do pai.
+    // Com foto no catálogo, a função de imagem já usa essa foto; sem, a referência do produto da cor — e, se ele
+    // ainda não tem referência, a foto dele no Tiny é copiada agora (19/out: 16600/16604, kits de 15962/15963,
+    // falhavam com "sem foto de referência" embora os dois produtos tenham foto no Tiny).
     if (comp && base && comp !== base) {
       if (prod?.foto_capa) return null;
-      const daCor = ref(comp);
+      let daCor = ref(comp);
+      if (!daCor) {
+        try {
+          const r = await chamarIa("foto-ref", { sku: comp, refazer: true });
+          daCor = r.foto_ref_path ? String(r.foto_ref_path) : null;
+        } catch (e) {
+          return `o produto ${comp} (base desta variação) não tem foto no Tiny nem foto real cadastrada — abra o ${comp} e suba a foto dele (${(e as Error).message})`;
+        }
+      }
       if (!daCor) return null;
       const { error } = await supabaseExternal.from("ia_produto_extra").upsert({ sku: skuVar, foto_ref_path: daCor, fotos_ref: [daCor] }, { onConflict: "sku" });
       return error ? `referência: ${error.message}` : null;
