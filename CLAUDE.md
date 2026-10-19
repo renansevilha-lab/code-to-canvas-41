@@ -3251,6 +3251,9 @@ escrita sem `VALIDATION_PREVIEW`.
   Vender do galpão exigiria estoque e pedidos Amazon pelo Tiny, que hoje só tem "Amazon FBA
   Classic".
 - **SVL segue sem `merchant_token`** → nada de Listings nessa conta.
+- **19/out/2026: SVL ganhou o `merchant_token` = `A1SV0PAWMH4T1F`** (informado pelo dono). Listings liberada: leitura do 15919/15922
+  ok e ensaio de título VALID; a SVL tem 117 anúncios (26 compráveis), 49 sem NCM/origem e 9 com origem 1. Criar/atualizar
+  anúncio, variações e varredura fiscal passam a valer para a SVL também.
 - **Não ensaiado:** fotos por endereço assinado na criação (só no atualizar), variações
   (`parentage_level`/`child_parent_sku_relationship`/`variation_theme`), e a criação REAL
   (o validador não pega tudo — ex.: conflito de EAN, revisão da ficha).
