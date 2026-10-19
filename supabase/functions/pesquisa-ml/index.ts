@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: pesquisa-ml v1 (18/out/2026) — Pesquisa de produtos / monitoramento de categorias ML
+// Edge Function: pesquisa-ml v2 (18/out/2026) — Pesquisa de produtos / monitoramento de categorias ML
 // ----------------------------------------------------------------------------
 // Só LÊ o Mercado Livre (token de cada conta em oauth_tokens_ml, renovado pelo cron 21
 // ml-refresh-token) e grava só as tabelas pesquisa_ml_*. Snapshot por data (dia em Brasília).
@@ -18,6 +18,8 @@
 // Limites do ML com o nosso token (testados em 18/out): /items de anúncio de TERCEIRO = 403 e
 // /user-products de terceiro = 403 → para ITEM/USER_PRODUCT de outros vendedores fica só id + posição.
 // PRODUCT (catálogo) sai com nome (/products/{id}) e a 1ª oferta (/products/{id}/items).
+// v2 (19/out): e_meu separado em anuncio_proprio (o ITEM/USER_PRODUCT do ranking é nosso) e participo_catalogo
+//   (PRODUCT em que anunciamos ou cuja 1ª oferta é nossa); a defesa olha anuncio_proprio.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -192,10 +194,15 @@ async function coletarRanking(cat: string, modo: string, data: string, meus: Map
   const linhas = content.map((c) => {
     const id = String(c.id); const meu = meus.get(id); const p = prods.get(id);
     const vend = p?.vendedor_id != null ? Number(p.vendedor_id) : null;
+    // anúncio próprio = o ITEM / USER_PRODUCT do ranking é nosso; catálogo = o PRODUCT é um catálogo em que
+    // anunciamos (ou cuja 1ª oferta é nossa) — participar do catálogo não é ter o anúncio no top 20
+    const proprio = !!meu && c.type !== "PRODUCT";
+    const catalogo = c.type === "PRODUCT" && (!!meu || (vend != null && nossosVendedores.has(vend)));
     return {
       data_coleta: data, category_id: cat, posicao: Number(c.position), tipo: c.type ?? null, ml_id: id,
       titulo: p?.titulo ?? meu?.titulo ?? null, preco: p?.preco ?? null, vendedor_id: vend,
-      e_meu: !!meu || (vend != null && nossosVendedores.has(vend)), meu_conta: meu?.conta ?? null, meu_mlb: meu?.mlb ?? null,
+      e_meu: proprio || catalogo, anuncio_proprio: proprio, participo_catalogo: catalogo,
+      meu_conta: meu?.conta ?? null, meu_mlb: meu?.mlb ?? null,
     };
   });
   if (linhas.length) {
@@ -204,7 +211,7 @@ async function coletarRanking(cat: string, modo: string, data: string, meus: Map
     if (error) throw new Error(`${cat}: banco ${error.message}`);
   }
   await db.from("pesquisa_ml_coleta").upsert({ data_coleta: data, modo, category_id: cat, http_status: 200, n_itens: linhas.length, erro: null, coletado_em: new Date().toISOString() }, { onConflict: "data_coleta,modo,category_id" });
-  return { cat, n: linhas.length, meus: linhas.filter((l) => l.e_meu).map((l) => ({ posicao: l.posicao, tipo: l.tipo, ml_id: l.ml_id, mlb: l.meu_mlb, conta: l.meu_conta, titulo: l.titulo })) };
+  return { cat, n: linhas.length, meus: linhas.filter((l) => l.e_meu).map((l) => ({ posicao: l.posicao, tipo: l.tipo, ml_id: l.ml_id, mlb: l.meu_mlb, conta: l.meu_conta, titulo: l.titulo, anuncio_proprio: l.anuncio_proprio })) };
 }
 /** Categorias que ainda faltam no dia para o modo (sem linha, ou com erro que não é 404). */
 async function pendentesDoDia(cats: string[], modo: string, data: string) {

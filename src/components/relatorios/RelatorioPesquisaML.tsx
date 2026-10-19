@@ -15,9 +15,10 @@ const pos = (x: unknown) => (numOuNull(x) == null ? "—" : `${num(x)}º`);
 export function miniPesquisa(rel: RelatorioLista): MiniKpi[] {
   const k = obj(rel.resumo?.kpis);
   const cairam = num(k.cairam);
+  // 19/out: "no top" = NOSSO anúncio no ranking; catálogo em que só participamos conta à parte
   return [
-    { label: "No top 20", valor: `${num(k.no_top)} de ${num(k.categorias_monitoradas)}` },
-    { label: "Melhor posição", valor: pos(k.melhor_posicao) },
+    { label: "Anúncio nosso no top 20", valor: `${num(k.no_top)} de ${num(k.categorias_monitoradas)}` },
+    { label: "Catálogo no top 20", valor: `${num(k.catalogo_no_top)} de ${num(k.categorias_monitoradas)}` },
     { label: "Caíram", valor: String(cairam), risco: cairam > 0 },
   ];
 }
@@ -54,6 +55,7 @@ export function RelatorioPesquisaML({ rel, mobile }: { rel: RelatorioLista; mobi
   if (num(coleta.erros_hoje) > 0) notas.push(`${num(coleta.erros_hoje)} categoria(s) com erro na coleta de hoje (tentam de novo na próxima rodada).`);
   if (defesa.length && defesa.every((c) => c.data_ontem == null)) notas.push("Primeira coleta: a comparação com o dia anterior e com 7 dias começa nas próximas.");
   notas.push("Top 20 do Mercado Livre por categoria (quase todo de produtos de catálogo). Para anúncios de outros vendedores o ML não libera nome nem preço — aparece o código.");
+  notas.push("Posição grande = o NOSSO anúncio no ranking. \"Catálogo\" = o produto de catálogo em que anunciamos está no ranking — participar não quer dizer que a venda é nossa.");
 
   return (
     <div className="flex flex-col gap-7">
@@ -72,7 +74,9 @@ export function RelatorioPesquisaML({ rel, mobile }: { rel: RelatorioLista; mobi
                   </div>
                   <div className="text-right whitespace-nowrap">
                     {c.saiu_do_top ? <Pill cor="red-solid">fora do top 20</Pill>
-                      : <span className="text-[22px] font-semibold">{pos(c.minha_posicao)}</span>}
+                      : numOuNull(c.minha_posicao) == null && numOuNull(c.melhor_catalogo) != null
+                        ? <span className="text-[13px] text-(--rl-text-2)">catálogo <b className="text-[18px]">{pos(c.melhor_catalogo)}</b></span>
+                        : <span className="text-[22px] font-semibold">{pos(c.minha_posicao)}</span>}
                     <Delta v={c.delta_ontem} />
                     <div className="text-[11px] text-(--rl-text-3)">
                       {c.posicao_ontem != null ? `antes ${pos(c.posicao_ontem)}` : ""}{c.posicao_7d != null ? ` · 7 dias ${pos(c.posicao_7d)}` : ""}
@@ -82,6 +86,11 @@ export function RelatorioPesquisaML({ rel, mobile }: { rel: RelatorioLista; mobi
                 {arr(c.meus).map((m, i) => (
                   <div key={i} className="text-[12.5px] truncate" title={str(m.titulo)}>
                     <b>{pos(m.posicao)}</b> {str(m.titulo)} <span className="text-(--rl-text-3)">· {str(m.conta) === "svl" ? "SVL" : "Ottz"}</span>
+                  </div>
+                ))}
+                {arr(c.catalogo).map((m, i) => (
+                  <div key={`c${i}`} className="text-[12.5px] truncate" title={str(m.titulo)}>
+                    <b>{pos(m.posicao)}</b> {str(m.titulo)} <span className="text-(--rl-text-3)">· catálogo em que participamos · {str(m.conta) === "svl" ? "SVL" : "Ottz"}</span>
                   </div>
                 ))}
                 {acima.length > 0 && (

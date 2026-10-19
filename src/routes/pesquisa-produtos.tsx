@@ -8,11 +8,13 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { ABAS_AMZ, PesquisaAmazon, type AbaAmz } from "@/components/pesquisa/PesquisaAmazon";
 
 // ============================================================================
-// Pesquisa de produtos — Mercado Livre (18/out/2026). Lê só as views do banco (edge fn pesquisa-ml
-// coleta: diário 07h13 BRT nas categorias em que estamos no top 20; semanal domingo de madrugada
-// na árvore inteira do Pet Shop + tendências). Comparação sempre entre snapshots:
+// Pesquisa de produtos — Mercado Livre (18/out/2026) e Amazon (19/out/2026, ?mkt=amazon). Lê só as
+// views do banco (edge fn pesquisa-ml: diário 07h13 BRT nas categorias em que estamos no top 20;
+// semanal domingo de madrugada na árvore inteira do Pet Shop + tendências; pesquisa-amz: ver
+// src/components/pesquisa/PesquisaAmazon.tsx). Comparação sempre entre snapshots:
 // defesa = hoje × 7 dias antes; descoberta/tendências = coleta da semana × a anterior.
 // ============================================================================
 
@@ -22,11 +24,16 @@ const ABAS: { id: Aba; rotulo: string; icone: typeof Shield }[] = [
   { id: "descoberta", rotulo: "Descoberta (categorias novas)", icone: Telescope },
   { id: "tendencias", rotulo: "Buscas em alta", icone: TrendingUp },
 ];
+type Mkt = "ml" | "amazon";
 
 export const Route = createFileRoute("/pesquisa-produtos")({
-  validateSearch: (s: Record<string, unknown>): { aba?: Aba } => ({
-    aba: s.aba === "descoberta" || s.aba === "tendencias" ? s.aba : undefined,
-  }),
+  validateSearch: (s: Record<string, unknown>): { mkt?: "amazon"; aba?: Aba | AbaAmz } => {
+    const amz = s.mkt === "amazon";
+    const aba = amz
+      ? (ABAS_AMZ.some((a) => a.id === s.aba && a.id !== "meus") ? (s.aba as AbaAmz) : undefined)
+      : (s.aba === "descoberta" || s.aba === "tendencias" ? s.aba : undefined);
+    return { mkt: amz ? "amazon" : undefined, aba };
+  },
   component: PesquisaProdutos,
 });
 
@@ -44,12 +51,14 @@ function Movimento({ m, v }: { m: string; v?: number | null }) {
 }
 
 function PesquisaProdutos() {
-  const { aba = "defesa" } = Route.useSearch();
+  const { mkt: mktUrl, aba: abaUrl } = Route.useSearch();
+  const mkt: Mkt = mktUrl === "amazon" ? "amazon" : "ml";
   const nav = useNavigate({ from: Route.fullPath });
+  const tabela = mkt === "amazon" ? "pesquisa_amz_execucoes" : "pesquisa_ml_execucoes";
   const execQ = useQuery({
-    queryKey: ["pesquisa-ml", "execucoes"],
+    queryKey: ["pesquisa", mkt, "execucoes"],
     queryFn: async () => {
-      const { data } = await supabaseExternal.from("pesquisa_ml_execucoes").select("modo, fim, erros").not("fim", "is", null).order("id", { ascending: false }).limit(30);
+      const { data } = await supabaseExternal.from(tabela).select("modo, fim, erros").not("fim", "is", null).order("id", { ascending: false }).limit(40);
       const ult: Record<string, { fim: string; erros: unknown }> = {};
       for (const e of (data ?? []) as { modo: string; fim: string; erros: unknown }[]) if (!ult[e.modo]) ult[e.modo] = e;
       return ult;
@@ -59,40 +68,65 @@ function PesquisaProdutos() {
     const e = execQ.data?.[m];
     return e ? new Date(e.fim).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
   };
+  const abaMl: Aba = mkt === "ml" && (abaUrl === "descoberta" || abaUrl === "tendencias") ? abaUrl : "defesa";
+  const abaAmz: AbaAmz = mkt === "amazon" && ABAS_AMZ.some((a) => a.id === abaUrl) ? (abaUrl as AbaAmz) : "meus";
+  const botao = (ativo: boolean) => cn("flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px", ativo ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground");
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-xl font-semibold">Pesquisa de produtos · Mercado Livre</h1>
-        <p className="text-xs text-muted-foreground">
-          Top 20 mais vendidos e buscas em alta, da API do Mercado Livre. Diário: {quando("diario")} · semanal (Pet Shop inteiro): {quando("semanal")} · liderança: {quando("descobrir_lideranca")}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Pesquisa de produtos · {mkt === "amazon" ? "Amazon" : "Mercado Livre"}</h1>
+          <p className="text-xs text-muted-foreground">
+            {mkt === "amazon"
+              ? <>BSR (ranking de vendas) das subcategorias, vendas estimadas e buscas da Amazon. BSR diário: {quando("diario")} · nossos ASINs: {quando("meus")} · busca dos termos: {quando("descobrir")} · Brand Analytics: {quando("brand_analytics")}</>
+              : <>Top 20 mais vendidos e buscas em alta, da API do Mercado Livre. Diário: {quando("diario")} · semanal (Pet Shop inteiro): {quando("semanal")} · liderança: {quando("descobrir_lideranca")}</>}
+          </p>
+        </div>
+        <div className="inline-flex rounded-md border p-0.5 text-sm">
+          {(["ml", "amazon"] as Mkt[]).map((m) => (
+            <button key={m} type="button" onClick={() => void nav({ search: { mkt: m === "amazon" ? "amazon" : undefined }, resetScroll: false })}
+              className={cn("rounded px-3 py-1 font-medium", mkt === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+              {m === "amazon" ? "Amazon" : "Mercado Livre"}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1 border-b">
-        {ABAS.map((a) => (
-          <button key={a.id} type="button" onClick={() => void nav({ search: { aba: a.id === "defesa" ? undefined : a.id }, resetScroll: false })}
-            className={cn("flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px", aba === a.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
-            <a.icone className="h-4 w-4" />{a.rotulo}
-          </button>
-        ))}
+        {mkt === "ml"
+          ? ABAS.map((a) => (
+            <button key={a.id} type="button" onClick={() => void nav({ search: { aba: a.id === "defesa" ? undefined : a.id }, resetScroll: false })} className={botao(abaMl === a.id)}>
+              <a.icone className="h-4 w-4" />{a.rotulo}
+            </button>
+          ))
+          : ABAS_AMZ.map((a) => (
+            <button key={a.id} type="button" onClick={() => void nav({ search: { mkt: "amazon", aba: a.id === "meus" ? undefined : a.id }, resetScroll: false })} className={botao(abaAmz === a.id)}>
+              {a.rotulo}
+            </button>
+          ))}
       </div>
-      {aba === "defesa" && <Defesa />}
-      {aba === "descoberta" && <Descoberta />}
-      {aba === "tendencias" && <Tendencias />}
+      {mkt === "amazon" ? <PesquisaAmazon aba={abaAmz} /> : (
+        <>
+          {abaMl === "defesa" && <Defesa />}
+          {abaMl === "descoberta" && <Descoberta />}
+          {abaMl === "tendencias" && <Tendencias />}
+        </>
+      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------- defesa
-interface DefesaRow { category_id: string; categoria: string | null; caminho: string | null; data_coleta: string; data_base: string | null; minha_posicao: number | null; minha_posicao_base: number | null; meus_no_top: number; novos: number; sairam: number }
-interface TopRow { category_id: string; posicao: number | null; posicao_base: number | null; tipo: string | null; ml_id: string; titulo: string | null; preco: number | null; e_meu: boolean; meu_conta: string | null; meu_mlb: string | null; movimento: string; variacao: number | null }
+interface DefesaRow { category_id: string; categoria: string | null; caminho: string | null; data_coleta: string; data_base: string | null; minha_posicao: number | null; minha_posicao_base: number | null; meus_no_top: number; novos: number; sairam: number; catalogos_que_participo: number | null; melhor_catalogo: number | null }
+interface TopRow { category_id: string; posicao: number | null; posicao_base: number | null; tipo: string | null; ml_id: string; titulo: string | null; preco: number | null; e_meu: boolean; meu_conta: string | null; meu_mlb: string | null; movimento: string; variacao: number | null; anuncio_proprio?: boolean; participo_catalogo?: boolean }
 
 function Defesa() {
   const q = useQuery({
     queryKey: ["pesquisa-ml", "defesa"],
     queryFn: async () => {
-      const { data, error } = await supabaseExternal.from("view_pesquisa_ml_defesa").select("*").order("minha_posicao", { ascending: true, nullsFirst: false });
+      const { data, error } = await supabaseExternal.from("view_pesquisa_ml_defesa").select("*");
       if (error) throw error;
-      return (data ?? []) as DefesaRow[];
+      // nosso anúncio no top primeiro; depois quem só participa de catálogo
+      return ((data ?? []) as DefesaRow[]).sort((a, b) => (a.minha_posicao ?? 99) - (b.minha_posicao ?? 99) || (a.melhor_catalogo ?? 99) - (b.melhor_catalogo ?? 99));
     },
   });
   const [aberta, setAberta] = useState<string | null>(null);
@@ -102,13 +136,13 @@ function Defesa() {
   return (
     <Card><CardContent className="p-0">
       <div className="px-4 py-3 text-xs text-muted-foreground border-b">
-        Categorias em que algum anúncio nosso (Ottz ou SVL) aparece no top 20 — pelo próprio anúncio ou pelo produto de catálogo em que anunciamos. Hoje × 7 dias antes; clique para ver o top 20.
+        Categorias em que aparecemos no top 20 (Ottz ou SVL). <b>Minha posição</b> = o NOSSO anúncio está no ranking; <b>Catálogo</b> = o produto de catálogo em que anunciamos está no ranking — participar do catálogo não quer dizer que a venda é nossa. Hoje × 7 dias antes; clique para ver o top 20.
       </div>
       {linhas.length === 0 ? <p className="p-4 text-sm text-muted-foreground">Nenhuma categoria monitorada ainda.</p> : (
         <table className="w-full text-sm">
           <thead className="text-[11px] uppercase text-muted-foreground"><tr className="border-b">
             <th className="w-6" /><th className="px-2 py-2 text-left">Categoria</th><th className="px-2 text-center">Minha posição</th>
-            <th className="px-2 text-center">7 dias antes</th><th className="px-2 text-center">Meus no top</th><th className="px-2 text-center">Novos</th><th className="px-2 text-center">Saíram</th><th className="px-2 text-right">Coleta</th>
+            <th className="px-2 text-center">7 dias antes</th><th className="px-2 text-center">Catálogo</th><th className="px-2 text-center">Meus no top</th><th className="px-2 text-center">Novos</th><th className="px-2 text-center">Saíram</th><th className="px-2 text-right">Coleta</th>
           </tr></thead>
           <tbody>
             {linhas.map((l) => {
@@ -124,12 +158,13 @@ function Defesa() {
                       {delta != null && delta !== 0 && <span className={cn("ml-1 text-xs font-semibold", delta > 0 ? "text-emerald-600" : "text-rose-600")}>{delta > 0 ? `+${delta}` : delta}</span>}
                     </td>
                     <td className="px-2 text-center text-muted-foreground">{l.data_base ? (l.minha_posicao_base != null ? `${l.minha_posicao_base}º` : "fora") : "sem base"}</td>
+                    <td className="px-2 text-center">{l.melhor_catalogo != null ? <span title={`${l.catalogos_que_participo} catálogo(s) em que anunciamos no top 20`}>{l.melhor_catalogo}º{Number(l.catalogos_que_participo) > 1 ? <span className="text-[11px] text-muted-foreground"> +{Number(l.catalogos_que_participo) - 1}</span> : null}</span> : <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-2 text-center">{l.meus_no_top}</td>
                     <td className="px-2 text-center">{l.data_base ? l.novos : "—"}</td>
                     <td className="px-2 text-center">{l.data_base ? l.sairam : "—"}</td>
                     <td className="px-2 text-right text-xs text-muted-foreground pr-4">{fmtData(l.data_coleta)}{l.data_base ? ` × ${fmtData(l.data_base)}` : ""}</td>
                   </tr>
-                  {abre && <tr><td colSpan={8} className="bg-muted/20 px-4 py-3"><TopCategoria categoria={l.category_id} /></td></tr>}
+                  {abre && <tr><td colSpan={9} className="bg-muted/20 px-4 py-3"><TopCategoria categoria={l.category_id} /></td></tr>}
                 </Fragment>
               );
             })}
@@ -162,14 +197,18 @@ function TabelaRanking({ linhas, comMovimento = true }: { linhas: (TopRow | Desc
       <tbody>
         {linhas.map((r) => {
           const meu = "e_meu" in r && r.e_meu;
+          // linha gravada antes de 19/out não tem as colunas: tipo PRODUCT = catálogo
+          const soCatalogo = meu && ("participo_catalogo" in r && r.participo_catalogo != null ? r.participo_catalogo && !r.anuncio_proprio : r.tipo === "PRODUCT");
           const url = urlMl(r.tipo, r.ml_id);
           return (
-            <tr key={`${r.ml_id}-${r.posicao ?? "x"}`} className={cn("border-t", meu && "bg-primary/5 font-medium")}>
+            <tr key={`${r.ml_id}-${r.posicao ?? "x"}`} className={cn("border-t", meu && !soCatalogo && "bg-primary/5 font-medium", soCatalogo && "bg-amber-500/5")}>
               <td className="py-1">{r.posicao != null ? `${r.posicao}º` : <span className="text-muted-foreground">({r.posicao_base}º)</span>}</td>
               {comMovimento && <td><Movimento m={r.movimento} v={"variacao" in r ? r.variacao : null} /></td>}
               <td className="pr-2">
                 {url ? <a href={url} target="_blank" rel="noreferrer" className="hover:underline">{r.titulo ?? r.ml_id}</a> : <span>{r.titulo ?? <span className="text-muted-foreground">{r.ml_id} (o ML não libera os dados deste vendedor)</span>}</span>}
-                {meu && <span className="ml-1.5 rounded bg-primary/15 px-1 text-[10px] text-primary">nosso{"meu_conta" in r && r.meu_conta ? ` · ${r.meu_conta === "svl" ? "SVL" : "Ottz"}` : ""}</span>}
+                {meu && (soCatalogo
+                  ? <span className="ml-1.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400" title="Anunciamos neste produto de catálogo; a posição é do catálogo, não do nosso anúncio">participamos do catálogo{"meu_conta" in r && r.meu_conta ? ` · ${r.meu_conta === "svl" ? "SVL" : "Ottz"}` : ""}</span>
+                  : <span className="ml-1.5 rounded bg-primary/15 px-1 text-[10px] text-primary">nosso anúncio{"meu_conta" in r && r.meu_conta ? ` · ${r.meu_conta === "svl" ? "SVL" : "Ottz"}` : ""}</span>)}
               </td>
               <td className="text-right tabular-nums">{r.preco != null ? formatBRL(Number(r.preco)) : "—"}</td>
               <td className="pl-3 text-muted-foreground">{r.tipo === "PRODUCT" ? "catálogo" : r.tipo === "USER_PRODUCT" ? "user product" : r.tipo === "ITEM" ? "anúncio" : r.tipo}</td>

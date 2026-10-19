@@ -36,7 +36,7 @@ Monte o relatório nesta ordem, a partir do JSON (não consulte outras fontes pa
 5. **Buscas em alta** (`tendencias`) — termos `novo`/`subiu` do Pet Shop, agrupados por categoria. Ligue a um produto nosso quando for óbvio.
 6. **Qualidade** (`coleta`) — `aviso` (coleta de hoje ainda não rodou), `erros_hoje`. Na 1ª semana não há base de comparação: diga uma vez.
 
-Avisos fixos: o top 20 é quase todo de **produtos de catálogo** — "estamos no top" significa que anunciamos naquele produto de catálogo (não garante ganhar a vitrine). Para anúncios de outros vendedores o ML não libera nome nem preço: aparece só o código (`MLB…`/`MLBU…`).
+Avisos fixos: o top 20 é quase todo de **produtos de catálogo**. Desde 19/out o relatório separa: `minha_posicao` / `kpis.no_top` = o NOSSO anúncio (ITEM/USER_PRODUCT) está no ranking; `melhor_catalogo` / `catalogo` / `kpis.catalogo_no_top` = o produto de catálogo em que anunciamos está no ranking (participar do catálogo não quer dizer que a venda é nossa). Nunca chame posição de catálogo de "minha posição". Para anúncios de outros vendedores o ML não libera nome nem preço: aparece só o código (`MLB…`/`MLBU…`).
 
 ### Gravação no app (única entrega)
 

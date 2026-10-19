@@ -1739,6 +1739,66 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   `agente-pesquisa-ml.skill`) e tarefa agendada local **`agente-pesquisa-ml-diario`** (07h40, o app sorteou
   07h53; só roda com o app do Claude aberto — os outros agentes rodam fora deste PC). 1º relatório
   gravado à mão em 18/out (id 27).
+- **Catálogo × anúncio próprio (19/out, pedido do dono):** `pesquisa_ml_ranking` ganhou
+  **`anuncio_proprio`** (o ITEM/USER_PRODUCT do ranking é nosso) e **`participo_catalogo`** (PRODUCT em
+  que anunciamos, ou cuja 1ª oferta é nossa); `e_meu` = um OU outro. `pesquisa-ml` **v2** grava as duas.
+  A defesa (`view_pesquisa_ml_defesa`, `pesquisa_ml_relatorio_diario`) olha **só `anuncio_proprio`**
+  para "minha posição"; o catálogo vem à parte (`catalogos_que_participo`, `melhor_catalogo`; no
+  relatório `catalogo[]`, `melhor_catalogo`, `kpis.catalogo_no_top`, e "Logo acima" conta a partir do
+  catálogo quando não há anúncio próprio). **Achado:** nas 8 posições em que "aparecíamos" (18/out),
+  TODAS eram catálogo em que participamos — nenhum anúncio próprio no top 20. Tela e card mostram
+  "nosso anúncio" × "participamos do catálogo".
+
+## 5.9.6 Pesquisa de produtos — Amazon (19/out/2026)
+
+Fase 2 da pesquisa (pedido do dono). Só LÊ a Amazon (SP-API, token de `oauth_tokens_amazon`, as duas
+contas) e grava só `pesquisa_amz_*`. Tela: `/pesquisa-produtos?mkt=amazon` (seletor Mercado Livre |
+Amazon; componente `src/components/pesquisa/PesquisaAmazon.tsx`), abas Meus produtos · Concorrentes ·
+Oportunidades · Buscas (Brand Analytics). **Não conferida com login.**
+- **Tabelas:** `asins` (ASIN acompanhado: nome, marca, `e_meu`, `origem` meu | `termo:<termo>` |
+  `brand_analytics`, `ativo`), `bsr` (data × ASIN × categoria; `tipo` subcategoria = classificationRanks,
+  grupo = displayGroupRanks, ex. "Pet Shop"), `termos_monitorados` (10 iniciais, o app escreve),
+  `brand_analytics` (semana × termo: `rank_busca` + top 3 ASINs com click/conversion share),
+  **`meus_skus`** (conta × SKU da Amazon → ASIN → nosso SKU: sem `_FBA`/`FBA-` ou pelo `sku_mapeamento`),
+  `coleta` (o que já foi feito no dia — retomável), `relatorios` (estado do Brand Analytics por
+  conta/semana), `execucoes`, **`marcas_calibracao`** (Bumi Pet Care, Genérico, Ottz Pet).
+- **Edge fn `pesquisa-amz` v3** (fonte no repositório; aceita chave publicável): `meus` (inventário FBA
+  das duas contas + Listings da ACZ — a SVL não tem `merchant_token`), `descobrir` (2 páginas da busca do
+  catálogo por termo), `diario` (BSR de todos os ASINs ativos, 20 por chamada, 600 ms entre chamadas,
+  espera crescente no 429), `brand_analytics[&semana=]` (pede → acompanha → baixa o gzip lendo em fluxo,
+  ~100 MB / 300 mil linhas em ~7 s). Semana que a Amazon ainda não liberou volta FATAL "not available
+  yet" → `aguardando_dados`, pedida de novo a cada 6 h. Uma conta gravada basta (o relatório é do site).
+- **Vínculo ASIN ↔ venda:** `meus_skus.sku_amazon` = `pedido_itens.sku_filho` (SKU cru do vendedor) dos
+  `pedidos_validos` da conta (`shop_id` 900001/900002) → `view_pesquisa_amz_vendas30`.
+- **Curva BSR → vendas/mês (`view_pesquisa_amz_curva`):** `ln(unidades 30 d) = a + b·ln(BSR médio)`, só
+  com **marcas próprias** (de revenda vendemos só uma fatia do ASIN — essa curva saía achatada, b ≈ 0).
+  Variações da mesma família dividem o BSR do pai: mesmo BSR = UM ponto, unidades somadas. 3+ pontos e
+  −4 < b < 0 = regressão própria (`ok`); 1–2 pontos = inclinação comum medida dentro das categorias com
+  2+ pontos, ancorada nos pontos dali (`baixa`); sem ponto nenhum = curva do **grupo "Pet Shop"** pelo BSR
+  geral do produto (`*`, `baixa`) — é o único ranking comparável entre subcategorias. A 1ª tentativa de
+  `*` (regressão de tudo junto, b −0,32) e a 2ª (constante mediana: 1º de qualquer nicho = 5.800/mês)
+  foram descartadas. **Extrapolação limitada:** no máximo 5× melhor que o melhor ponto medido; acima
+  disso a estimativa é o valor desse limite com `estimativa_minima` ("≥"). Sem isso o 1º da Areia saía
+  com 91 mil/mês. **Areia para Gatos (19/out):** `ln(u) = 11,42 − 1,47·ln(BSR)`, 29 pontos, r² 0,47,
+  medida entre BSR 62 e 851 (BSR 100 ≈ 103/mês, 200 ≈ 37); Pet Shop: 39 pontos, b −1,21, r² 0,53.
+  Só 1 dia de BSR ainda: a "média de 30 dias" é o BSR de hoje — a curva melhora com o tempo.
+- **Views:** `view_pesquisa_amz_meus` (BSR hoje × 7 × 30 dias), `_concorrentes` (top 30 por subcategoria
+  ENTRE OS ASINs ACOMPANHADOS — não é o ranking inteiro da Amazon; `melhora_7d`), `_estimativa`,
+  `_brand` (última semana, `meu_1..3` = temos anúncio naquele ASIN, inclusive revenda),
+  `pesquisa_amz_oportunidades(p_min)` (subcategorias sem ASIN nosso no top 30 com concorrente acima de
+  `p_min`/mês; 19/out, X = 100: 37 — ração seca gato/cão, petiscos importados, sachês lideram).
+- **Brand Analytics:** ACZ tem acesso (semana 04–10/out gravada: 1.666 termos de pet, em 119 um dos 3 mais
+  clicados é ASIN nosso); **SVL recusa** ("A client error occurred…" — provável falta do Registro de
+  Marca nessa conta). Filtro de "termo de pet": palavra forte (gato, cão, cachorro, ração como PALAVRA,
+  coleira…) ou ambígua com contexto (areia + higiênica/sílica/mandioca, tapete + higiênico…) ou um dos
+  ASINs clicados já conhecido (marca: Seresto, Pipicat, Viva Verde). A 1ª versão aceitava "banho",
+  "dental", "areia" sozinhas e "ração" dentro de "geração" (Kindle, "coração partido") e trazia 2.850
+  termos com lixo. Só os ASINs dos **300 termos mais buscados** entram no `diario` (eram 3.736).
+- **Crons (Bearer publicável):** 159 `pesquisa-amz-meus` `22 4 * * 0` (dom 01h22 BRT) · 160
+  `pesquisa-amz-descobrir` `26,34,38 4 * * 0` · 161 `pesquisa-amz-diario` `31,34,38,42 9 * * *`
+  (06h31–06h42) · 162 `pesquisa-amz-brand` `17,47 11-12 * * *` (todo dia: a Amazon libera a semana com
+  2–3 dias de atraso; semana já gravada = a chamada não faz nada).
+- 19/out: 1.224 ASINs acompanhados (482 nossos, 325 da busca, 417 do Brand Analytics).
 
 ## 5.10 Reembolsos/devoluções Shopee — classificação (24/set/2026)
 
@@ -3225,7 +3285,8 @@ novo" de `Publicar.tsx` (antes travado para a Amazon). Só a conta **ACZ** (a SV
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
-| `pesquisa-ml` | v1 | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
+| `pesquisa-ml` | v2 (19/out: grava `anuncio_proprio` × `participo_catalogo`) | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
+| `pesquisa-amz` | v3 | Pesquisa de produtos Amazon: `meus`, `descobrir`, `diario` (BSR), `brand_analytics`; só leitura na SP-API — ver §5.9.6. Crons 159–162 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
