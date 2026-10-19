@@ -19,7 +19,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
-import { AlertTriangle, Clock, Loader2, Package as PackageIcon, RefreshCw, ShieldAlert, Undo2 } from "lucide-react";
+import { AlertTriangle, Clock, Loader2, Package as PackageIcon, RefreshCw, Search, ShieldAlert, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -61,6 +61,8 @@ interface DevAberta {
   recebido_por: string | null;
   recebida_obs: string | null;
   itens_problema: { sku: string | null; estado: string | null; obs: string | null; qtd_esperada: number | null; qtd_recebida: number | null }[] | null;
+  /** achada pela busca fora da lista de abertas (já encerrada ou fora do prazo) */
+  fora?: boolean;
 }
 
 const MOTIVO_PT: Record<string, string> = {
@@ -196,18 +198,42 @@ export function DevolucoesShopeeAbertas() {
   // ---- filtros do quadro ----
   const [filtroLoja, setFiltroLoja] = useState<"todas" | "ottz" | "bumi">("todas");
   const [filtroStatus, setFiltroStatus] = useState<"todos" | "validar" | "disputa">("todos");
-  const listaFiltrada = useMemo(() => lista.filter((d) => {
+  // busca por pedido, solicitação, rastreio ou SKU/produto (18/out/2026, pedido do dono)
+  const [busca, setBusca] = useState("");
+  const termo = busca.trim().toLowerCase();
+  const casa = (d: DevAberta) => !termo || [d.order_sn, d.return_sn, d.tracking_number, ...(d.itens ?? []).flatMap((i) => [i.sku, i.nome])]
+    .some((x) => String(x ?? "").toLowerCase().includes(termo));
+  // pedido/solicitação que não está entre as abertas (já encerrada, prazo vencido): procura no espelho todo
+  const termoCodigo = busca.trim().replace(/[^0-9A-Za-z]/g, "");
+  const nasAbertas = lista.some(casa);
+  const foraQ = useQuery({
+    queryKey: ["devolucoes", "shopee_busca", termoCodigo],
+    enabled: termoCodigo.length >= 6 && !nasAbertas,
+    staleTime: 60_000,
+    queryFn: async (): Promise<DevAberta[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_devolucoes_shopee_abertas")
+        .select("*")
+        .or(`order_sn.ilike.%${termoCodigo}%,return_sn.ilike.%${termoCodigo}%,tracking_number.ilike.%${termoCodigo}%`)
+        .order("create_time", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return ((data ?? []) as DevAberta[]).map((d) => ({ ...d, fora: true }));
+    },
+  });
+  const listaFiltrada = useMemo(() => [...lista, ...(nasAbertas ? [] : foraQ.data ?? [])].filter((d) => {
+    if (!casa(d) && !d.fora) return false;
     if (filtroLoja === "ottz" && d.shop_id !== 522186766) return false;
     if (filtroLoja === "bumi" && d.shop_id !== 759046323) return false;
-    if (filtroStatus === "validar" && d.status !== "ACCEPTED") return false;
-    if (filtroStatus === "disputa" && d.status !== "JUDGING") return false;
+    if (!termo && filtroStatus === "validar" && d.status !== "ACCEPTED") return false;
+    if (!termo && filtroStatus === "disputa" && d.status !== "JUDGING") return false;
     return true;
   }).sort((a, b) => {
     // Acionaveis no topo (da pra aprovar/disputar), depois prazo mais apertado.
     const peso = (d: DevAberta) => (RESPONDIVEIS.includes(d.status ?? "") ? 0 : 1);
     if (peso(a) !== peso(b)) return peso(a) - peso(b);
     return (a.prazo_disputa ?? a.due_date ?? "9999") < (b.prazo_disputa ?? b.due_date ?? "9999") ? -1 : 1;
-  }), [lista, filtroLoja, filtroStatus]);
+  }), [lista, filtroLoja, filtroStatus, termo, nasAbertas, foraQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resumo = useMemo(() => {
     const validar = lista.filter((d) => d.status === "ACCEPTED");
@@ -345,7 +371,17 @@ export function DevolucoesShopeeAbertas() {
           <div className="text-[11px] text-muted-foreground">{lista.length} solicitação(ões)</div>
         </div>
 
-        <div className="flex items-end gap-2 ml-auto pb-0.5">
+        <div className="flex flex-wrap items-end gap-2 ml-auto pb-0.5">
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pedido, solicitação, rastreio ou SKU"
+              className="h-8 w-64 pl-8 pr-7 text-xs" />
+            {busca && (
+              <button type="button" onClick={() => setBusca("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Limpar">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <div className="inline-flex rounded-lg border bg-card p-0.5">
             {([["todas", "Todas"], ["ottz", "Ottz"], ["bumi", "Bumi"]] as const).map(([id, rot]) => (
               <button key={id} onClick={() => setFiltroLoja(id)}
@@ -363,11 +399,19 @@ export function DevolucoesShopeeAbertas() {
         </div>
       </div>
 
+      {termo && !nasAbertas && (
+        <div className="text-xs text-muted-foreground">
+          {foraQ.isFetching ? "Não está entre as abertas — procurando nas encerradas…"
+            : termoCodigo.length < 6 ? "Nenhuma aberta com esse termo. Para procurar nas encerradas, digite ao menos 6 caracteres do pedido, da solicitação ou do rastreio."
+            : (foraQ.data?.length ?? 0) > 0 ? `Não está entre as abertas — ${foraQ.data!.length} encontrada(s) nas encerradas ou fora do prazo.`
+            : "Não achei esse pedido/solicitação nas devoluções da Shopee."}
+        </div>
+      )}
       {abertasQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : listaFiltrada.length === 0 ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">
-          {lista.length === 0 ? "Nenhuma solicitação aberta. 🎉" : "Nada com esses filtros."}
+          {lista.length === 0 && !termo ? "Nenhuma solicitação aberta. 🎉" : termo ? "Nada encontrado." : "Nada com esses filtros."}
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
@@ -419,6 +463,7 @@ export function DevolucoesShopeeAbertas() {
                       <span className="text-[11px] text-muted-foreground font-mono">pedido {d.order_sn ?? "—"}</span>
                       <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{lojaDe(d.shop_id)}</span>
                       <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${st.cor}1F`, color: st.cor }}>{st.rotulo}</span>
+                      {d.fora && <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground" title="Achada pela busca: não está entre as abertas">fora das abertas</span>}
                     </div>
                     <div className="text-[13px]">
                       <span className="font-bold px-2 py-0.5 rounded" style={{ background: "#B7791F1A", color: "#B7791F" }}>

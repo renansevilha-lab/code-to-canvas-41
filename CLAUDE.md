@@ -1805,6 +1805,10 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   `coalesce(prazo_disputa, due_date)`, mesma regra em `view_shopee_devolucoes_a_rastrear`, na aba de abertas e em
   `statusSolicitacao` (`src/lib/shopeeDevolucao.ts`). A Shopee só informa o prazo em parte das aceitas (19 de 82
   em 15 dias); sem ele vale o `due_date`. Na hora da correção: abertas dentro do prazo 4 → 8.
+- **Busca na aba "Shopee (abertas)" (18/out, pedido do dono):** campo ao lado dos filtros de loja — pedido,
+  solicitação, rastreio ou SKU/produto filtram as abertas; pedido/solicitação/rastreio (6+ caracteres) que NÃO está
+  entre as abertas é procurado na `view_devolucoes_shopee_abertas` sem filtro de status e aparece com o selo "fora
+  das abertas". Com busca, os cartões de status (validar/disputa) não filtram.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
