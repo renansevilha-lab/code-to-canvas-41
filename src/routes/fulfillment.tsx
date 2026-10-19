@@ -35,6 +35,7 @@ import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMa
 import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/components/fulfillment/PlanoAmazon";
 import { MargemFullCell, chaveMargem, useMargemFull } from "@/components/fulfillment/MargemFull";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
+import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1582,6 +1583,7 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
             <Archive className="h-3.5 w-3.5" />
             {mostrarArquivados ? "Voltar ao quadro" : `Arquivados${arquivados.length ? ` (${arquivados.length})` : ""}`}
           </Button>
+          {!mostrarArquivados && <ImportarEnviosAmazon onImportado={recarregar} />}
           {!mostrarArquivados && (
             <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
               <Plus className="h-4 w-4" /> Novo envio
@@ -2692,7 +2694,14 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       )}
 
 
+      {envio?.marketplace === "amazon" && /^FBA[0-9A-Z]{6,}$/.test(envio.numero ?? "") && envio.status === "enviado" && (
+        <RecebimentoAmazon numero={envio.numero!} empresa={envio.empresa} />
+      )}
+
       <Card className="p-3 space-y-2">
+        {envio?.marketplace === "mercadolivre" && envio.numero && (
+          <NotaRemessaML envioId={envioId} onAnexado={() => void docsQ.refetch()} />
+        )}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-sm font-semibold flex items-center gap-1.5">
             <FileText className="h-4 w-4" /> Documentos
