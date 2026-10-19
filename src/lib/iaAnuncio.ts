@@ -79,6 +79,16 @@ export interface IaCatalogoLinha {
   sem_capa?: boolean;
   /** produto criado pelo app em "Criar produto com variações" (RPC versao 5). */
   criado_app?: boolean;
+  /** estoque parado (RPC versao 6): os produtos FÍSICOS sem giro / em excesso — ele mesmo, o componente do kit ou as variações. */
+  giro?: IaGiroFis[] | null;
+  /** soma do valor em estoque desses produtos físicos (custo × estoque total) */
+  giro_valor?: number | null;
+}
+/** Um produto físico parado, na regra do agente de compras (view_cobertura_fornecedor, retrato do dia). */
+export interface IaGiroFis {
+  sku: string; nome: string | null; status: "sem_giro" | "excesso";
+  /** cobertura em dias (estoque total + OC aguardando ÷ venda por dia); nulo quando não vendeu */
+  dias: number | null; estoque: number | null; venda_30d: number | null; valor: number | null;
 }
 export interface IaCatalogo {
   total: number; contagem: Record<string, number>; marcas: string[]; historico_em: string | null; linhas: IaCatalogoLinha[];
@@ -86,6 +96,10 @@ export interface IaCatalogo {
   versao?: number;
   /** quantos produtos de cada tipo (S simples, K kit, V com variações) dentro da situação escolhida. */
   tipos?: Record<string, number>;
+  /** versao 6: quantos produtos estão parados (parado = sem giro OU excesso), dentro da situação e do tipo escolhidos */
+  giro?: Record<string, number>;
+  /** quando o retrato de estoque/cobertura foi tirado (ads_cobertura_sku) */
+  giro_em?: string | null;
 }
 export interface IaHistSku {
   sku: string; canal: string; empresa: string; unidades_30d: number; unidades_120d: number; pedidos_mono: number;

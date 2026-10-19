@@ -30,7 +30,7 @@ import {
 // são feitos no banco (RPC ia_catalogo) — são ~2,3 mil produtos.
 // ============================================================================
 
-type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; ordem?: string; p?: number };
+type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number };
 
 const SITUACOES = [
   { id: "todos", rotulo: "Todos" },
@@ -46,6 +46,17 @@ const ORDENS = [
   { id: "nome", rotulo: "Nome" },
   { id: "novos", rotulo: "SKU mais novo" },
   { id: "recentes", rotulo: "Anúncio mexido por último" },
+  // valor em estoque parado (custo × estoque) — só a RPC versao 6 entende
+  { id: "parado", rotulo: "Mais dinheiro parado em estoque" },
+];
+// estoque parado, na regra do agente de compras (19/out/2026, pedido do dono): sem giro = tem estoque e não
+// vendeu em 30 dias; excesso = estoque (+ OC aguardando) para mais de 120 dias. Kit pelo componente; produto
+// com variações pelas variações.
+const GIROS = [
+  { id: "todos", rotulo: "Qualquer estoque" },
+  { id: "parado", rotulo: "Estoque parado" },
+  { id: "sem_giro", rotulo: "Sem giro (30 dias)" },
+  { id: "excesso", rotulo: "Excesso (+120 dias)" },
 ];
 // tipo do produto, como as abas do Tiny (o "com variações" é o produto pai)
 const TIPOS = [
@@ -68,6 +79,7 @@ export const Route = createFileRoute("/ia/anuncios")({
     sit: SITUACOES.some((x) => x.id === s.sit) && s.sit !== "todos" ? String(s.sit) : undefined,
     tipo: ["S", "K", "V", "APP"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
     sem: CANAIS_COM_HISTORICO.includes(String(s.sem)) ? String(s.sem) : undefined,
+    giro: ["parado", "sem_giro", "excesso"].includes(String(s.giro)) ? String(s.giro) : undefined,
     ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== "vendas" ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
   }),
@@ -75,7 +87,7 @@ export const Route = createFileRoute("/ia/anuncios")({
 });
 
 function AnunciosPage() {
-  const { q, marca, sit, tipo, sem, ordem, p } = Route.useSearch();
+  const { q, marca, sit, tipo, sem, giro, ordem, p } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/anuncios" });
   const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true });
   const pagina = p ?? 1;
@@ -88,12 +100,14 @@ function AnunciosPage() {
   }, [digitado]);
 
   const catQ = useQuery({
-    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", ordem ?? "vendas", pagina],
+    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? "vendas", pagina],
     placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<IaCatalogo> => {
       const { data, error } = await supabaseExternal.rpc("ia_catalogo", {
         p_busca: q ?? null, p_marca: marca ?? null, p_situacao: sit ?? "todos", p_sem_canal: sem ?? null,
         p_ordem: ordem ?? "vendas", p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA, p_tipo: tipo ?? null,
+        // só manda quando há filtro de estoque parado (p_giro tem default na função)
+        ...(giro ? { p_giro: giro } : {}),
       });
       if (error) throw error;
       return data as IaCatalogo;
@@ -126,7 +140,12 @@ function AnunciosPage() {
   const [coresAberto, setCoresAberto] = useState(false);
   // "Importar do Tiny": produto cadastrado hoje no Tiny entra no sistema na hora (sem esperar a madrugada)
   const [importarAberto, setImportarAberto] = useState<string | null>(null);
-  const verSku = (sku: string) => { setDigitado(sku); set({ q: sku, sit: undefined, tipo: undefined, sem: undefined, marca: undefined }); };
+  const verSku = (sku: string) => { setDigitado(sku); set({ q: sku, sit: undefined, tipo: undefined, sem: undefined, marca: undefined, giro: undefined }); };
+  // ligar o filtro de estoque parado já ordena pelo dinheiro parado (se a ordem estiver no padrão); desligar volta
+  const escolherGiro = (id: string) => {
+    const novo = id === "todos" ? undefined : id;
+    set({ giro: novo, ordem: novo ? (ordem ?? "parado") : (ordem === "parado" ? undefined : ordem) });
+  };
   const alternar = (sku: string) => setSelecionados((s) => (s.includes(sku) ? s.filter((x) => x !== sku) : [...s, sku]));
 
   // kits como no Tiny: a composicao (quantidade x componente) aparece na linha. So os kits da pagina.
@@ -182,6 +201,27 @@ function AnunciosPage() {
         </div>
       )}
 
+      {cat?.giro && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {GIROS.map((x) => {
+            const ativo = (giro ?? "todos") === x.id;
+            const n = x.id === "todos" ? undefined : cat.giro?.[x.id];
+            return (
+              <Button key={x.id} size="sm" variant={ativo ? "secondary" : "ghost"}
+                className={`h-7 gap-1.5 text-xs ${ativo ? (x.id === "todos" ? "ring-1 ring-primary/40" : "ring-1 ring-amber-500/60") : ""}`}
+                onClick={() => escolherGiro(x.id)}>
+                {x.rotulo}
+                {n !== undefined && <span className="text-muted-foreground">{n.toLocaleString("pt-BR")}</span>}
+              </Button>
+            );
+          })}
+          <span className="text-[11px] text-muted-foreground"
+            title="Regra do agente de compras: sem giro = tem estoque (Geral + Full) e não vendeu nada em 30 dias; excesso = o estoque, somado às ordens de compra aguardando, dura mais de 120 dias no ritmo de venda dos últimos 30. Kit conta pelo componente; produto com variações, pelas variações. Produto com estoque não sincronizado do Tiny fica de fora.">
+            regra do agente de compras{cat.giro_em && <> · estoque de {new Date(cat.giro_em).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</>}
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -205,7 +245,7 @@ function AnunciosPage() {
         </Select>
         <Select value={ordem ?? "vendas"} onValueChange={(v) => set({ ordem: v === "vendas" ? undefined : v })}>
           <SelectTrigger className="h-9 w-[220px]"><SelectValue /></SelectTrigger>
-          <SelectContent>{ORDENS.filter((o) => o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120").map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
+          <SelectContent>{ORDENS.filter((o) => (o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120") && (o.id !== "parado" || (cat?.versao ?? 1) >= 6 || ordem === "parado")).map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
         </Select>
         <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={() => setImportarAberto(digitado.trim())}
           title="Produto cadastrado hoje no Tiny ainda não aparece? Traga agora (ou atualize um que já está aqui).">
@@ -350,6 +390,7 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
           {variacao && <Badge variant="outline" className="text-[9.5px] py-0 px-1">variação</Badge>}
           {x.criado_app && <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-primary/50 text-primary">criado no app</Badge>}
           {x.sem_capa && <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-amber-500/60 text-amber-700 dark:text-amber-400">fotos da família · falta a capa</Badge>}
+          {x.giro && x.giro.length > 0 && <SeloGiro x={x} />}
           {filhas.length > 0 && (
             <button type="button" onClick={() => setAberto((v) => !v)}
               className="inline-flex items-center gap-0.5 rounded bg-secondary px-1 text-[10px] font-medium text-secondary-foreground hover:bg-secondary/70">
@@ -418,6 +459,56 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
     </div>
     {aberto && filhas.map((v) => <Linha key={v.sku} x={v} canalPadrao={canalPadrao} variacao onVariacoes={onVariacoes} />)}
     </>
+  );
+}
+
+/**
+ * Estoque parado (regra do agente de compras): "sem giro" (vermelho) ou "excesso · 240 dias" (âmbar) + o dinheiro
+ * parado. Kit e produto com variações mostram o produto FÍSICO que está parado (componente / variação).
+ */
+function SeloGiro({ x }: { x: IaCatalogoLinha }) {
+  const fis = x.giro ?? [];
+  const semGiro = fis.some((f) => f.status === "sem_giro");
+  const excesso = fis.filter((f) => f.status === "excesso");
+  const maxDias = excesso.reduce((m, f) => Math.max(m, Number(f.dias) || 0), 0);
+  const valor = x.giro_valor != null ? Number(x.giro_valor) : fis.reduce((s, f) => s + (Number(f.valor) || 0), 0);
+  const deOutro = fis.length > 0 && fis.every((f) => f.sku !== x.sku);
+  const rotulo = [semGiro ? "sem giro" : null, excesso.length ? `excesso · ${Math.round(maxDias).toLocaleString("pt-BR")} dias` : null].filter(Boolean).join(" + ");
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" title="Estoque parado — clique para ver"
+          className={`inline-flex items-center gap-1 rounded border px-1 text-[9.5px] font-medium leading-4 ${semGiro
+            ? "border-red-500/60 text-red-700 dark:text-red-400" : "border-amber-500/60 text-amber-700 dark:text-amber-400"}`}>
+          {rotulo}{deOutro && (x.tipo === "K" ? " no componente" : x.tipo === "V" ? " nas variações" : "")}
+          {valor > 0 && <span className="opacity-80">· {formatBRL(valor)} parado</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 p-3 space-y-2 text-sm">
+        <div className="font-medium">Estoque parado</div>
+        <div className="text-[11px] text-muted-foreground">
+          Regra do agente de compras: <b>sem giro</b> = tem estoque e não vendeu em 30 dias; <b>excesso</b> = o estoque (com as
+          ordens de compra aguardando) dura mais de 120 dias no ritmo dos últimos 30. Venda de todos os canais, kits abertos nos componentes.
+        </div>
+        <div className="divide-y">
+          {fis.map((f) => (
+            <div key={f.sku} className="py-1.5">
+              <div className="text-[12px] leading-snug line-clamp-2" title={f.nome ?? ""}>
+                <span className="font-mono text-muted-foreground">{f.sku}</span> {f.nome ?? ""}
+              </div>
+              <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
+                <span className={f.status === "sem_giro" ? "text-red-600 font-medium" : "text-amber-600 font-medium"}>
+                  {f.status === "sem_giro" ? "sem giro" : `excesso · ${Math.round(Number(f.dias) || 0).toLocaleString("pt-BR")} dias`}
+                </span>
+                {f.estoque != null && <span>{Number(f.estoque).toLocaleString("pt-BR")} un. em estoque</span>}
+                <span>{Number(f.venda_30d ?? 0).toLocaleString("pt-BR")} vendidas em 30 dias</span>
+                {f.valor != null && <span>{formatBRL(Number(f.valor))} parado</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

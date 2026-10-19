@@ -2526,8 +2526,8 @@ faltou no anúncio criado direto na Shopee).
   `authenticated` e `service_role`). A resposta traz `versao: 3` e `tipos {todos, S, K, V}`.
   As contagens se cruzam: `contagem` (situações) dentro do tipo escolhido e `tipos` dentro da
   situação escolhida. Na tela, segunda fileira de botões em `/ia/anuncios` (`?tipo=`).
-  **Quem mexer na `ia_catalogo` precisa manter os 8 parâmetros** — o pacote de variações
-  (`docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql`) já foi ajustado (`versao: 4`).
+  **Quem mexer na `ia_catalogo` precisa manter os parâmetros** — desde 19/out são **9** (`p_giro` no fim,
+  §5.11.11.15); a fonte única é `docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql` (`versao: 6`).
 
 ## 5.11.9 Catálogo = espelho do Tiny (aplicado em 12/out/2026, 19h50–20h10)
 
@@ -3104,6 +3104,29 @@ antiga; (2) a observação ia só no FIM do prompt, depois de "Barra inferior: 8
   `ia-imagem-worker` **v5 (deploy 6, conferido)**: na capa limpa, as linhas Barra/Faixa/Ícones/Título do
   selo do prompt viram "sem" na hora de gerar + aviso "ESTILO SEM TEXTO" — vale para prompt antigo e
   editado à mão; (3) `EditorPrompt` salva ao sair do campo e mostra "não salvo / salvo".
+
+## 5.11.11.15 Filtro "estoque parado" em /ia/anuncios (19/out/2026)
+
+Pedido do dono: filtrar produtos de baixo giro ou com excesso de estoque, na mesma lógica dos agentes de relatório.
+- **Regra = a do agente de compras** (`view_cobertura_fornecedor.status`): **sem giro** = tem estoque (Geral + Fulls) e
+  vendeu 0 em 30 dias (todos os canais, pelo `pedidos_tiny`, kits abertos nos componentes); **excesso** = (estoque total +
+  OC aguardando) ÷ venda/dia > **120 dias**. A lista lê o retrato do dia **`ads_cobertura_sku`** (refeito pelo
+  `ads_metricas_atualizar()`, cron 147, 06h20 BRT) — a view ao vivo custa ~1,8 s. A MV ganhou `venda_30d`,
+  `estoque_total`, `oc_aguardando`, `cobertura_com_oc_dias`, `valor_estoque`, `custo` (migração `ia_catalogo_giro`;
+  SQL + rollback em `docs/ia-catalogo-giro.sql`; `ads_diagnosticar` lê por nome de coluna, não mudou).
+- **Produto do catálogo → produto físico:** simples = ele mesmo; kit = os componentes (`produto_kits`); produto com
+  variações = as variações (e os componentes delas). Produto com estoque NÃO sincronizado (`estoque_nao_sincronizado`,
+  463 SKUs em 19/out — o `estoque_tiny` só cobre os SKUs-alvo) não entra: o agente também não classifica.
+- **`ia_catalogo` v2.2 (`versao: 6`, 9 parâmetros — `p_giro` = `parado` | `sem_giro` | `excesso`):** cada linha (e
+  variação) traz `giro` (lista dos físicos parados: status, dias, estoque, venda 30 d, valor) e `giro_valor`; a resposta
+  traz `giro` (contagem dentro da situação/tipo) e `giro_em`; ordem nova `parado` (dinheiro parado). A de 8 parâmetros foi
+  removida. Conferido: com o filtro desligado, total, contagens e SKUs de 4 cenários idênticos à versão anterior; ~0,9 s.
+  Na data: 345 produtos de topo parados (243 excesso, 113 sem giro; ex.: família Creme Dental + Dedeiras Bumi
+  R$ 26 mil parados, Xô Gatinho 11538 R$ 25,8 mil em excesso de 242 dias e todos os kits dele).
+- **Tela:** fileira "Qualquer estoque · Estoque parado · Sem giro (30 dias) · Excesso (+120 dias)" com contagem e a hora
+  do retrato (`?giro=` na URL); ligar o filtro já ordena por "Mais dinheiro parado em estoque". Selo na linha ("sem giro"
+  vermelho / "excesso · N dias" âmbar + R$ parado; "no componente"/"nas variações" quando vem do físico) abre a lista dos
+  produtos físicos. **Não conferida com login.**
 
 ## 5.11.11.12 Importar/atualizar produto do Tiny na hora (19/out/2026)
 
