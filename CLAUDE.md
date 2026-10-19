@@ -1738,6 +1738,19 @@ lote; quem vendeu pelo Full depois da última leitura vai primeiro. `limite` (cr
 limita. 1ª rodada: 270/270 em 38 s, sem erro. Amazon e Shopee já liam tudo a cada rodada. Shopee SBS quase vazio na data
 (Ottz 5 un, Bumi 0) é real — as vendas pelo Full da Shopee caíram a ~0 desde 15/out.
 
+## 5.9.4.3 Reposição: margem de contribuição pelo Full × fora dele (19/out/2026)
+
+Pedido do dono: saber se vale mandar mais ao Full. Coluna **"MC 30d Full"** na Reposição
+(`src/components/fulfillment/MargemFull.tsx`): MC% das vendas que saíram do Full/FBA nos últimos 30 dias
+naquela conta, R$/un e, embaixo, a MC das vendas FORA do Full (coleta, agência, Flex) para comparar; a
+tooltip diz se o Full rende ≥ 3 pp a mais ou a menos. Fonte: **`mv_reposicao_margem_30d`** (shop_id × sku
+= mesma chave `pi.sku_pai` da `view_reposicao_full`): margem da `view_margem_pedido_v2` (recebido − CMV −
+imposto) rateada pelos itens do pedido pelo `subtotal_produto`, só `cobertura_cmv = 'completo'`, Full =
+`modo_envio 'Full'` ou `logistica_tipo` fulfillment/FBA. **Sem ADS e sem armazenagem do Full.** Calcular ao
+vivo custa 3,3 s → matview com índice único, cron `reposicao-margem-30d` (`41 9,15 * * *`, refresh
+concurrently), grant só `authenticated`. Medido na criação: 15984 ML Ottz 7,6% pelo Full × 13,1% fora;
+15704 e 16080 (SVL) negativos no Full.
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura
