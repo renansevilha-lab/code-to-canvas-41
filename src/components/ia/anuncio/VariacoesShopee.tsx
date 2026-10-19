@@ -10,6 +10,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes, chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnuncio";
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
+import { rotulosDasCores } from "@/lib/rotulosVariacao";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -81,10 +82,12 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const kits = (k.data ?? []) as { sku_kit: string; sku_componente: string; quantidade: number }[];
       const componentes = [...new Set(kits.map((x) => x.sku_componente))];
       const [est, medPai] = await Promise.all([
-        componentes.length ? supabaseExternal.from("produtos").select("sku, estoque").in("sku", componentes) : Promise.resolve({ data: [] }),
+        componentes.length ? supabaseExternal.from("produtos").select("sku, estoque, nome, marca, marca_manual").in("sku", componentes) : Promise.resolve({ data: [] }),
         supabaseExternal.from("ia_produto_extra").select("sku, peso_kg, comprimento_cm, largura_cm, altura_cm").in("sku", [sku, ...componentes]),
       ]);
-      const estoqueDe = new Map(((est.data ?? []) as { sku: string; estoque: number | null }[]).map((x) => [x.sku, Number(x.estoque) || 0]));
+      type Comp = { sku: string; estoque: number | null; nome: string | null; marca: string | null; marca_manual: string | null };
+      const comps = (est.data ?? []) as Comp[];
+      const estoqueDe = new Map(comps.map((x) => [x.sku, Number(x.estoque) || 0]));
       // DUAS GRADES: variações de produtos base diferentes (ex.: uma cor por produto) → a grade vem do Tiny
       let grades: string[] = []; const valoresDe = new Map<string, string[]>();
       if (componentes.length > 1) {
@@ -93,6 +96,18 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
           if ((g.grades ?? []).length === 2) { grades = g.grades!; for (const v of g.variacoes ?? []) valoresDe.set(v.sku, v.valores); }
         } catch { /* sem a grade do Tiny: segue com um grupo, pelo nome */ }
       }
+      // NOME DA OPÇÃO pelo produto base de cada variação, com a MESMA regra do diálogo que cria o produto no Tiny
+      // (src/lib/rotulosVariacao.ts). 19/out: o 16594 foi criado antes da correção e o Tiny guarda "Higiene Face
+      // Olhos F" / "Limpa Popô Pet Clean" — copiar a grade do Tiny levava o nome cortado (e a marca) para a Shopee.
+      // O vínculo com o Tiny é pelo SKU, então o nome da opção na Shopee não precisa ser igual ao da grade.
+      const rotuloDoBase = new Map<string, string>();
+      if (grades.length === 2 && comps.length > 1) {
+        const r = rotulosDasCores(comps.map((c) => ({ sku: c.sku, nome: c.nome ?? c.sku, marca: c.marca_manual ?? c.marca })));
+        for (const c of r.cores) rotuloDoBase.set(c.sku, c.rotulo);
+        // sem "[Cor]" no nome os produtos não são cores (ex.: toalhas Higiene Face × Limpa Patas): o grupo vira "Tipo"
+        if (!r.temCor && grades[0] === "Cor") grades = ["Tipo", grades[1]];
+      }
+      const baseDe = (skuVar: string) => { const m = kits.filter((x) => x.sku_kit === skuVar); return m.length === 1 ? m[0].sku_componente : null; };
       const herdadas = new Map(((medPai.data ?? []) as Medida[]).map((m) => [m.sku, m]));
       const completa = (m?: Medida) => (m && Number(m.comprimento_cm) > 0 && Number(m.largura_cm) > 0 && Number(m.altura_cm) > 0 ? m : null);
       const padraoDe = (skuVar: string) => {
@@ -116,7 +131,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const meus = new Set(rascunhos.filter((r) => r.sku === v.sku).map((r) => r.id));
         const foto = imagens.find((i) => meus.has(i.rascunho_id)) ?? null;
         const vals = valoresDe.get(v.sku);
-        const opcao = (vals?.[0] ?? (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome)).trim().slice(0, 20);
+        const doBase = rotuloDoBase.get(baseDe(v.sku) ?? "");
+        const opcao = (doBase ?? vals?.[0] ?? (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome)).trim().slice(0, 20);
         const opcao2 = (vals?.[1] ?? "").trim().slice(0, 20);
         const auto = padraoDe(v.sku);
         return {

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
+import { rotulosDasCores } from "@/lib/rotulosVariacao";
 
 // ============================================================================
 // "Criar produto com variações de cor × quantidade" (14/out/2026, pedido do dono — ex.: Carpete Autocolante
@@ -21,7 +22,6 @@ import { chamarVariacoes } from "@/lib/iaAnuncio";
 // ============================================================================
 
 interface Base { sku: string; nome: string; preco: number | null; custo: number | null; tipo: string | null; marca: string | null }
-interface Cor { sku: string; rotulo: string }
 interface Linha { chave: string; base: string; cor: string; qtd: number; sku: string; preco: string }
 interface Previa {
   previa: { variacoes: { sku: string; rotulo: string; preco: number; nome: string; custo: number | null; base_sku: string }[] };
@@ -34,43 +34,6 @@ const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
 const rotuloQtd = (n: number) => `${n} un`;
 
-/** Até 20 letras (limite da opção na Shopee) sem cortar palavra no meio: "Higiene Face Olhos Focinho" → "Higiene Face Olhos". */
-function caber20(t: string): string {
-  const s = t.replace(/\s+/g, " ").trim();
-  if (s.length <= 20) return s;
-  const palavras = s.split(" "); let out = "";
-  for (const p of palavras) { if ((out ? out.length + 1 : 0) + p.length > 20) break; out = out ? `${out} ${p}` : p; }
-  return out || s.slice(0, 20);
-}
-const semAcento = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-
-/**
- * "Carpete Autocolante 31X48cm [Bege]" → "Bege"; sem colchete, o que sobra do nome tirando o começo comum (palavras
- * inteiras), a quantidade do fim ("50 Un", "500ml") e a marca ("Pet Clean"), em até 20 letras sem cortar palavra.
- * 19/out: "Toalhas Umedecidas Cães Higiene Face Olhos Focinho 50un" saía "Higiene Face Olhos F" (o resto inteiro
- * cortado na 20ª letra) e "Limpa Popô Pet Clean 50 Un" levava a marca.
- */
-function rotulosDasCores(bases: Base[]): { cores: Cor[]; comum: string; temCor: boolean } {
-  const nomes = bases.map((b) => b.nome.replace(/\s+/g, " ").trim());
-  let comum = nomes[0] ?? "";
-  for (const n of nomes.slice(1)) { let i = 0; while (i < comum.length && i < n.length && comum[i] === n[i]) i++; comum = comum.slice(0, i); }
-  // o começo comum só vale até a última palavra inteira ("Limpa Popô" × "Limpa Patas" não come o "P")
-  if (nomes.some((n) => n.length > comum.length && n[comum.length] !== " ")) comum = comum.slice(0, comum.lastIndexOf(" ") + 1);
-  const marcas = [...new Set(bases.map((b) => (b.marca ?? "").trim()).filter(Boolean))];
-  let temCor = false;
-  const cores = bases.map((b, i) => {
-    const col = b.nome.match(/\[([^\]]+)\]\s*$/);
-    if (col) { temCor = true; return { sku: b.sku, rotulo: caber20(col[1]) }; }
-    let resto = nomes[i].slice(comum.length).replace(/^[\s\-–[(]+|[\s\])]+$/g, "");
-    resto = resto.replace(/\s*[-–]?\s*\d+([.,]\d+)?\s*(un|und|unid|unidades?|pcs|p[çc]s|ml|l|g|gr|grs|kg)\.?$/i, "").trim();
-    for (const m of marcas) {
-      const i0 = semAcento(resto).indexOf(semAcento(m));
-      if (i0 >= 0 && resto.length > m.length) resto = `${resto.slice(0, i0)} ${resto.slice(i0 + m.length)}`.replace(/\s+/g, " ").trim();
-    }
-    return { sku: b.sku, rotulo: caber20(resto || b.sku) };
-  });
-  return { cores, comum: comum.replace(/[\s\-–[(]+$/, "").trim(), temCor };
-}
 
 export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFechar: () => void }) {
   const qc = useQueryClient();
@@ -102,7 +65,7 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
   const [nome, setNome] = useState("");
   const [skuPai, setSkuPai] = useState("");
   const [grades, setGrades] = useState<[string, string]>(["Cor", "Quantidade"]);
-  const [cores, setCores] = useState<Cor[]>([]);
+  const [cores, setCores] = useState<{ sku: string; rotulo: string }[]>([]);
   const [qtdsTexto, setQtdsTexto] = useState("1, 2, 3");
   const [edit, setEdit] = useState<Record<string, { sku?: string; preco?: string }>>({});
   const [previa, setPrevia] = useState<{ chave: string; dados: Previa } | null>(null);
