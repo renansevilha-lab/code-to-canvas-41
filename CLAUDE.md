@@ -3134,6 +3134,42 @@ Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repos
 - **Não testado ao vivo:** nenhum `aplicar` (escrita real) nem a tela com login. Ensaios VALID: 15987 → pai
   16358 como "2x4kg"; 15988_FBA (12kg) como tamanho novo com EAN.
 
+## 5.11.12.2 Amazon — CRIAR anúncio pela tela de envio (19/out/2026)
+
+Pedido do dono ("criar o módulo de criação de anúncios na Amazon"). Mesma tela e mesma função do envio da
+Shopee e do ML: `anuncio-publicar` **v11/v12** (`montarCriarAmz` / `enviarCriarAmz`) + bloco "Criar anúncio
+novo" de `Publicar.tsx` (antes travado para a Amazon). Só a conta **ACZ** (a SVL segue sem Merchant Token).
+- **Caminho pelo código de barras** (`GET /catalog/2022-04-01/items?identifiers=<EAN>`; ASIN pai de variação
+  fica fora): achou → **OFERTA** no ASIN que já existe (`requirements LISTING_OFFER_ONLY`: ASIN, condição,
+  preço, FBA + produto perigoso/bateria; título, fotos e textos são os da ficha da Amazon); não achou →
+  **FICHA NOVA** (`LISTING`). A pessoa pode trocar o caminho e escolher o ASIN. Restrições do ASIN
+  (`/listings/2021-08-01/restrictions`) viram pendência.
+- **EAN só se for DESTE produto:** digitado → `ia_produto_extra.gtin` → Tiny → cadastro; se outro produto ativo
+  tem o mesmo (kit herda o da unidade — 15824 = o de 15679, 16303, 16304), não é usado (senão o kit cairia
+  na ficha/oferta da unidade). EAN com dígito errado = pendência.
+- **Ficha nova:** título, bullets (até 5), descrição (≤ 2.000), fotos aprovadas por endereço assinado (7 dias;
+  a Amazon baixa), preço (`purchasable_offer` + `list_price`), FBA (`AMAZON_NA`), SKU **`<sku>_FBA`**,
+  `model_number` = SKU, `unit_count`/`number_of_items` = soma do kit, peso e medidas pela mesma cadeia da
+  Shopee/ML (`medidasDoAnuncio`), sem EAN = `supplier_declared_has_product_identifier_exemption`. Tipo de produto:
+  areia/granulado/sílica = `ANIMAL_LITTER`, senão o 1º que a Amazon sugerir pelo nome (escolhível na tela).
+- **Formulário montado pelo ESQUEMA do tipo** (`/definitions/2020-09-01/productTypes/{tipo}`, guardado por
+  isolate): campos com sugestão (marca, fabricante, modelo, modo de uso, uso, garantia "Garantia legal de 30
+  dias", componentes, líquido sim/não pelo nome, validade "não", origem BR, bateria não, produto perigoso "não
+  aplicável", **cor em branco**) + os obrigatórios do esquema + **os que o validador apontar** (`attributeNames`
+  dos erros que são campo do tipo; o próprio SKU às vezes vem ali e é ignorado). Valor digitado é convertido
+  pelo formato do campo (lista → id da opção, booleano, número, `language_tag`). Campo que o tipo não conhece
+  é tirado do corpo. A prévia passa tudo no validador (`PUT … mode=VALIDATION_PREVIEW`).
+- **Erros traduzidos** (`traduzAmz`): 5665 marca não aprovada · 8560 falta EAN · 8541/8542 EAN de outro produto ·
+  **8572** EAN não bate com a marca na GS1 · 8566 (vem junto do 8572).
+- **Ensaios de 19/out (validador, nada criado):** 10933 Pet Clean → oferta no **B07YGQHYFL**, **sem pendência**
+  (o produto já tem o anúncio `10933` — a tela avisa duplicado); 16457 Bento 10 kg → ficha nova pedindo só a
+  **Cor**, e com cor dá **8572** (o EAN 7898778130264 não bate com "Bento" na GS1); 15824 kit Bumi → 8560 (sem
+  EAN próprio). Envio real: NÃO feito (exige login; cria de verdade).
+- **Rota de ensaio:** até 20/out 03:00 UTC a PRÉVIA da Amazon aceita a chave publicável (Shopee/ML e o envio
+  seguem exigindo login — 401 conferido). `existentesAmz` passou a procurar também `<sku>_FBA`.
+- **Depois de criar:** a Amazon processa em minutos (ficha nova pode levar horas para ganhar ASIN); só vende
+  quando o estoque chega ao CD (envio pelo Seller Central; na SVL, pela Reposição).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -3181,7 +3217,7 @@ Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repos
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
-| `anuncio-publicar` | v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
+| `anuncio-publicar` | v11 (deploy 12; 19/out: a Amazon também CRIA — oferta em ASIN existente ou ficha nova, §5.11.12.2); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |

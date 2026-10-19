@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v10 (15/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v11 (19/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -58,6 +58,12 @@
 // v10 (15/out/2026): CAPA PRINCIPAL POR DESTINO (pedido do dono) — Ottz Shopee = "Menor preço da
 //   Shopee", Bumi Shopee = ambientada com texto, Mercado Livre (Ottz e SVL) = ambientada limpa. A capa
 //   do destino vai na frente e as outras capas não vão; sem ela aprovada, vale a regra antiga + aviso.
+// v11 (19/out/2026): AMAZON também CRIA (pedido do dono). Pelo código de barras: produto que já existe no catálogo
+//   → OFERTA no ASIN dele (LISTING_OFFER_ONLY); senão → FICHA NOVA (LISTING) com texto, fotos, marca, medidas e o
+//   que o tipo de produto exige (formulário montado pelo esquema do tipo + os campos que o validador apontar).
+//   Sempre FBA; SKU na Amazon = `<sku>_FBA`. opcoes extras: caminho (oferta|ficha), asin, tipo_produto, gtin,
+//   sku_amazon, atributos {campo: valor}. Só a conta que tem o Merchant Token (hoje a ACZ).
+//   Até 20/out 03:00 UTC a PRÉVIA da Amazon aceita a chave publicável (rota de ensaio: só leitura + validador).
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -98,13 +104,16 @@ const num = (v: unknown): number | null => {
 
 // ---------------------------------------------------------------- acesso
 // deno-lint-ignore no-explicit-any
-type Quem = { id: string | null; nome: string | null; doUsuario?: any };
+type Quem = { id: string | null; nome: string | null; doUsuario?: any; ensaio?: boolean };
+// v11: rota de ensaio da criação na Amazon — só a PRÉVIA (leitura + validador), morre sozinha
+const ENSAIO_AMZ_ATE = Date.parse("2026-10-20T03:00:00Z");
 async function exigirAcesso(req: Request): Promise<Quem | Response> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearer && bearer === SRK) return { id: null, nome: "sistema" };
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { id: null, nome: "sistema" };
+  if (pl.role === "anon" && Date.now() < ENSAIO_AMZ_ATE && new URL(req.url).searchParams.get("modulo") === "previa") return { id: null, nome: "ensaio", ensaio: true };
   if (pl.role !== "authenticated") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "ia" });
@@ -1103,8 +1112,8 @@ async function existentesAmz(c: ContaAmz, sku: string): Promise<Existente[]> {
     db.from("sku_mapeamento").select("sku_origem").ilike("marketplace", "amazon%").eq("sku_correto", sku),
     db.from("estoque_fulfillment").select("sku_marketplace").ilike("marketplace", "amazon%").eq("shop_id", c.shop_id).eq("sku", sku),
   ]);
-  const candidatos = [...new Set([sku, `FBA-${sku}`, ...((map.data ?? []) as any[]).map((x) => String(x.sku_origem)),
-    ...((fulf.data ?? []) as any[]).map((x) => String(x.sku_marketplace))])].slice(0, 6);
+  const candidatos = [...new Set([sku, `${sku}_FBA`, `FBA-${sku}`, ...((map.data ?? []) as any[]).map((x) => String(x.sku_origem)),
+    ...((fulf.data ?? []) as any[]).map((x) => String(x.sku_marketplace))])].slice(0, 7);
   const out: Existente[] = [];
   for (const s of candidatos) {
     const r = await amzItem(c, s, "GET", { includedData: "summaries" });
@@ -1215,16 +1224,371 @@ async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Exist
   };
 }
 
+// ---------------------------------------------------------------- Amazon · CRIAR (v11, 19/out/2026)
+// Dois caminhos, decididos pelo código de barras no catálogo da Amazon (ensaios de 13 e 18/out, CLAUDE.md §5.11.12):
+//  - OFERTA: o produto já existe (um ASIN com o mesmo EAN) → só a nossa oferta nele (LISTING_OFFER_ONLY). Título,
+//    fotos e textos são os da ficha da Amazon; os nossos não vão.
+//  - FICHA NOVA: ASIN novo (requirements LISTING) com texto, bullets, fotos, marca, medidas e o que o tipo de
+//    produto exige. O validador cobra mais do que o esquema diz: os campos que ele apontar entram no formulário.
+// Sempre FBA (tudo o que vendemos na Amazon sai do CD). SKU na Amazon = `<sku>_FBA` (o fulfillment-sync casa).
+const API_AMZ = (c: ContaAmz, metodo: string, path: string, params: Record<string, string> = {}, corpo?: unknown) =>
+  (async (): Promise<RespMl> => {
+    const url = new URL(`${SPAPI}${path}`);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    const r = await fetch(url.toString(), {
+      method: metodo,
+      headers: { "x-amz-access-token": c.token, Accept: "application/json", ...(corpo !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+    });
+    const txt = await r.text();
+    let body: any = null;
+    try { body = txt ? JSON.parse(txt) : null; } catch { body = { message: txt.slice(0, 300) }; }
+    return { status: r.status, body };
+  })();
+// tipos de produto em que temos anúncio (aparecem sempre na lista, além dos que a Amazon sugerir)
+const TIPOS_AMZ_BASE = ["PET_SUPPLIES", "ANIMAL_LITTER"];
+// campos que a função preenche sozinha (não entram no formulário)
+const AUTO_AMZ = new Set(["item_name", "bullet_point", "product_description", "externally_assigned_product_identifier",
+  "supplier_declared_has_product_identifier_exemption", "merchant_suggested_asin", "condition_type", "purchasable_offer", "list_price",
+  "fulfillment_availability", "item_package_weight", "item_package_dimensions", "unit_count", "number_of_items", "model_number",
+  "external_testing_certification", "number_of_boxes", "parentage_level", "child_parent_sku_relationship", "variation_theme", ...FOTOS_AMZ]);
+const esquemasAmz = new Map<string, { props: Record<string, any>; obrig: string[] } | null>();
+/** Esquema do tipo de produto (o que cada campo aceita). Guardado por isolate: o arquivo é grande. */
+async function esquemaAmz(c: ContaAmz, tipo: string, requisitos: string) {
+  const chave = `${tipo}:${requisitos}`;
+  if (esquemasAmz.has(chave)) return esquemasAmz.get(chave)!;
+  let out: { props: Record<string, any>; obrig: string[] } | null = null;
+  try {
+    const def = await API_AMZ(c, "GET", `/definitions/2020-09-01/productTypes/${encodeURIComponent(tipo)}`,
+      { marketplaceIds: c.mkt, sellerId: c.seller, requirements: requisitos, requirementsEnforced: "ENFORCED", locale: "pt_BR" });
+    const link = def.body?.schema?.link?.resource;
+    if (link) {
+      const sc = await (await fetch(String(link))).json();
+      out = { props: sc?.properties ?? {}, obrig: (sc?.required ?? []) as string[] };
+    }
+  } catch { out = null; }
+  esquemasAmz.set(chave, out);
+  return out;
+}
+/** Opções de um campo de lista (enum / enumNames, também dentro de anyOf/oneOf). */
+function opcoesAmz(pv: any): { ids: string[]; nomes: string[] } {
+  const ids: string[] = []; const nomes: string[] = [];
+  const add = (en: unknown[], nm?: unknown[]) => en.forEach((e, i) => { if (!ids.includes(String(e))) { ids.push(String(e)); nomes.push(String(nm?.[i] ?? e)); } });
+  if (Array.isArray(pv?.enum)) add(pv.enum, pv.enumNames);
+  for (const x of [...((pv?.anyOf ?? []) as any[]), ...((pv?.oneOf ?? []) as any[])]) if (Array.isArray(x?.enum)) add(x.enum, x.enumNames);
+  return { ids, nomes };
+}
+function tipoValorAmz(pv: any): string {
+  const t = pv?.type ?? ((pv?.anyOf ?? []) as any[]).find((x) => x?.type)?.type;
+  return String(Array.isArray(t) ? t[0] : t ?? "string");
+}
+/** Um campo simples (com `value`) montado a partir do texto do formulário; null = campo de formato que não montamos. */
+function campoAmz(c: ContaAmz, prop: any, texto: string): unknown[] | null {
+  const ps = prop?.items?.properties ?? {};
+  if (!ps.value) return null;
+  const tp = tipoValorAmz(ps.value);
+  const op = opcoesAmz(ps.value);
+  const t = texto.trim();
+  let valor: unknown = t;
+  if (tp === "boolean") valor = /^(sim|s|true|yes|1)$/i.test(t);
+  else if (tp === "number" || tp === "integer") valor = Number(t.replace(",", "."));
+  else if (op.ids.length) {
+    const i = op.ids.findIndex((x) => x.toLowerCase() === t.toLowerCase());
+    const j = op.nomes.findIndex((x) => x.toLowerCase() === t.toLowerCase());
+    valor = i >= 0 ? op.ids[i] : j >= 0 ? op.ids[j] : t;
+  }
+  const v: Record<string, unknown> = { value: valor, marketplace_id: c.mkt };
+  if (ps.language_tag) v.language_tag = "pt_BR";
+  return [v];
+}
+/** Como o campo aparece no formulário: nome, opções, dica. */
+function rotuloAmz(id: string, prop: any) {
+  const pv = prop?.items?.properties?.value;
+  const tp = tipoValorAmz(pv);
+  const op = opcoesAmz(pv);
+  return {
+    nome: String(prop?.title ?? id), tipo: tp,
+    opcoes: tp === "boolean" ? ["Sim", "Não"] : op.nomes.slice(0, 80), ids: tp === "boolean" ? ["true", "false"] : op.ids.slice(0, 80),
+    dica: prop?.description ? String(prop.description).replace(/\s+/g, " ").slice(0, 90) : null,
+  };
+}
+/** Mostra o valor pelo nome da opção (o banco/código guarda o id). */
+function mostrarAmz(r: { opcoes: string[]; ids: string[]; tipo: string }, v: string): string {
+  if (r.tipo === "boolean") return /^(sim|s|true|yes|1)$/i.test(v) ? "Sim" : /^(não|nao|n|false|no|0)$/i.test(v) ? "Não" : v;
+  const i = r.ids.findIndex((x) => x.toLowerCase() === v.toLowerCase());
+  return i >= 0 ? r.opcoes[i] : v;
+}
+/** GTIN (8, 12, 13 ou 14 dígitos) com o dígito verificador certo. */
+function gtinValido(g: string): boolean {
+  if (![8, 12, 13, 14].includes(g.length) || !/^\d+$/.test(g)) return false;
+  const ds = g.split("").map(Number); const dv = ds.pop()!;
+  const soma = ds.reverse().reduce((s, x, i) => s + x * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (soma % 10)) % 10 === dv;
+}
+/** O que a Amazon diz no erro, em português de gente. */
+function traduzAmz(t: string): string {
+  if (/^5665\b/.test(t)) return `${t} → a marca não está aprovada na Amazon (Registro de Marca): use a marca registrada no Seller Central ou peça a aprovação`;
+  if (/^8560\b/.test(t)) return `${t} → a Amazon exige o código de barras (EAN) deste produto; sem ele só passa se a marca tiver isenção de GTIN aprovada`;
+  if (/^8541\b|^8542\b/.test(t)) return `${t} → o código de barras já pertence a outro produto do catálogo da Amazon`;
+  if (/^8572\b/.test(t)) return `${t} → a Amazon confere o código de barras na GS1: o dono do código não bate com a marca informada. Escreva a marca como o fabricante registrou, use o código certo ou peça isenção de GTIN`;
+  if (/^8566\b/.test(t)) return `${t} → vem junto com o problema do código de barras: costuma sumir quando ele é resolvido`;
+  return t;
+}
+
+async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Existente[]) {
+  const sku = String(d.r.sku);
+  const skuAmz = String(op.sku_amazon ?? `${sku}_FBA`).trim();
+  const b = base(d, op, { quem: "a Amazon", titulo: LIM_AMZ.titulo, descMin: 10, descMax: 50000, fotos: LIM_AMZ.fotos });
+  const pendencias: string[] = [...b.problemas.preco];
+  const avisos: string[] = [...d.avisosCapa];
+  if (existentes.length) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta conta: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
+  if (d.produto?.tipo === "V") pendencias.push("este é um produto PAI (com variações): na Amazon, crie o anúncio de cada variação e junte em família no bloco \"Variações na Amazon\"");
+
+  // código de barras: o digitado → o já conferido → o do Tiny → o do cadastro. Só vale se for DESTE produto
+  // (kit costuma herdar o da unidade; na Amazon um EAN é um produto e o kit cairia na ficha da unidade).
+  const [tiny, cadR, kitR] = await Promise.all([
+    medidasTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null),
+    db.from("produtos").select("gtin, nome").eq("sku", sku).maybeSingle(),
+    db.from("produto_kits").select("sku_componente, quantidade").eq("sku_kit", sku),
+  ]);
+  const digitado = String(op.gtin ?? "").replace(/\D/g, "");
+  let ean: string | null = digitado || String(d.extra?.gtin ?? tiny.gtin ?? cadR.data?.gtin ?? "").replace(/\D/g, "") || null;
+  if (ean && !gtinValido(ean)) {
+    pendencias.push(`o código de barras ${ean} não é válido (o EAN tem 13 dígitos e o último confere os outros)`);
+    ean = null;
+  } else if (ean && !digitado) {
+    const { data: outros } = await db.from("produtos").select("sku").eq("gtin", ean).neq("sku", sku).eq("ativo", true).limit(3);
+    if ((outros ?? []).length) {
+      avisos.push(`o código de barras ${ean} do cadastro é o mesmo de ${((outros ?? []) as any[]).map((x) => x.sku).join(", ")} (kit herda o da unidade): não usei — informe o código próprio deste produto`);
+      ean = null;
+    }
+  }
+  const kit = (kitR.data ?? []) as any[];
+  const unidades = kit.length ? kit.reduce((s, k) => s + (Number(k.quantidade) || 1), 0) : 1;
+
+  // o produto já existe no catálogo? (pelo EAN; ASIN pai de variação não vende)
+  let asins: { asin: string; titulo: string | null; marca: string | null; tipo: string | null; foto: string | null; url: string }[] = [];
+  if (ean) {
+    const cat = await API_AMZ(c, "GET", "/catalog/2022-04-01/items", { marketplaceIds: c.mkt, identifiers: ean, identifiersType: "EAN", includedData: "summaries,images,relationships,productTypes", pageSize: "5" });
+    asins = ((cat.body?.items ?? []) as any[])
+      .filter((i) => !((i.relationships?.[0]?.relationships ?? []) as any[]).some((r: any) => (r.childAsins ?? []).length))
+      .map((i) => ({
+        asin: String(i.asin), titulo: i.summaries?.[0]?.itemName ?? null, marca: i.summaries?.[0]?.brand ?? null,
+        tipo: i.productTypes?.[0]?.productType ?? i.summaries?.[0]?.productType ?? null,
+        foto: (((i.images?.[0]?.images ?? []) as any[]).find((x) => x.variant === "MAIN")?.link as string) ?? null,
+        url: `https://www.amazon.com.br/dp/${i.asin}`,
+      }));
+  }
+  const caminho: "oferta" | "ficha" = op.caminho === "ficha" || op.caminho === "oferta" ? op.caminho : (asins.length ? "oferta" : "ficha");
+  if (caminho === "oferta" && !asins.length) pendencias.push("não há produto no catálogo da Amazon com este código de barras para entrar na oferta: use \"ficha nova\"");
+  const alvoAsin = caminho === "oferta" ? (asins.find((a) => a.asin === String(op.asin ?? "")) ?? asins[0] ?? null) : null;
+
+  // SKU já usado na conta?
+  const ja = await amzItem(c, skuAmz, "GET", { includedData: "summaries" });
+  if (mlOk(ja) && ja.body?.summaries?.[0]?.asin) pendencias.push(`já existe o anúncio ${skuAmz} nesta conta (ASIN ${ja.body.summaries[0].asin}): use "Atualizar anúncio existente"`);
+
+  // tipo de produto: o do ASIN (oferta) ou o escolhido / sugerido pela Amazon (ficha nova)
+  let tipos: string[] = [...TIPOS_AMZ_BASE];
+  let tipo = String(op.tipo_produto ?? "").trim();
+  if (caminho === "oferta") tipo = alvoAsin?.tipo || tipo || "PRODUCT";
+  else {
+    const nome = String(cadR.data?.nome ?? b.titulo);
+    const tp = await API_AMZ(c, "GET", "/definitions/2020-09-01/productTypes", { marketplaceIds: c.mkt, keywords: nome.split(/\s+/).slice(0, 4).join(" "), locale: "pt_BR" });
+    const sug = ((tp.body?.productTypes ?? []) as any[]).map((x) => String(x.name));
+    tipos = [...new Set([...sug.slice(0, 6), ...TIPOS_AMZ_BASE])];
+    if (!tipo) tipo = /areia|granulado|s[ií]lica/i.test(nome) ? "ANIMAL_LITTER" : sug[0] || "PET_SUPPLIES";
+    if (!tipos.includes(tipo)) tipos.unshift(tipo);
+  }
+  const requisitos = caminho === "oferta" ? "LISTING_OFFER_ONLY" : "LISTING";
+  const esq = await esquemaAmz(c, tipo, requisitos);
+  if (!esq) avisos.push(`não consegui ler o que o tipo ${tipo} exige: a conferência fica só com o validador`);
+  const props = esq?.props ?? {};
+  const temCampo = (k: string) => !esq || k in props;
+
+  // restrições para vender (marca/categoria que pedem aprovação)
+  if (alvoAsin) {
+    const rest = await API_AMZ(c, "GET", "/listings/2021-08-01/restrictions", { asin: alvoAsin.asin, sellerId: c.seller, marketplaceIds: c.mkt, conditionType: "new_new" });
+    for (const x of ((rest.body?.restrictions ?? []) as any[])) for (const m of ((x.reasons ?? []) as any[])) {
+      pendencias.push(`a Amazon exige aprovação para vender o ASIN ${alvoAsin.asin}: ${String(m.message ?? m.reasonCode ?? "").slice(0, 220)}`);
+    }
+  }
+
+  // medidas e peso (mesma cadeia da Shopee e do Mercado Livre)
+  const med = await medidasDoAnuncio(d, op, tiny);
+  if (caminho === "ficha") {
+    avisos.push(...med.avisos);
+    if (med.faltaPeso) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
+  }
+
+  // ---------------- formulário: campos que a pessoa confere (com sugestão) + os que a Amazon exigir
+  const nomeProd = String(cadR.data?.nome ?? b.titulo);
+  const marca = String(d.produto?.marca ?? "").trim();
+  const liquido = /\b\d+\s*ml\b|spray|l[ií]quid|shampoo|lo[cç][aã]o|perfume|col[oô]nia/i.test(nomeProd);
+  const uso = /gat/i.test(nomeProd) && /c[aã]es|cachorr/i.test(nomeProd) ? "Cães e gatos" : /gat/i.test(nomeProd) ? "Gatos" : /c[aã]es|cachorr/i.test(nomeProd) ? "Cães" : "Animais de estimação";
+  const sugestoes: Record<string, string> = caminho === "ficha" ? {
+    brand: marca, manufacturer: marca, model_name: nomeProd.slice(0, 60), color: "",
+    directions: "Siga as instruções da embalagem.", specific_uses_for_product: uso,
+    warranty_description: "Garantia legal de 30 dias", included_components: unidades > 1 ? `${unidades} unidades` : "1 unidade",
+    contains_liquid_contents: liquido ? "true" : "false", is_expiration_dated_product: "false",
+    country_of_origin: "BR", batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable",
+  } : { batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable" };
+  const digitados = (op.atributos ?? {}) as Record<string, unknown>;
+  const noForm = new Set<string>([
+    ...Object.keys(sugestoes).filter(temCampo),
+    ...(esq?.obrig ?? []).filter((k) => !AUTO_AMZ.has(k) && (caminho === "ficha" || !["item_name", "brand"].includes(k))),
+    ...Object.keys(digitados),
+  ]);
+  const valorForm = (k: string) => (typeof digitados[k] === "string" ? String(digitados[k]).trim() : (sugestoes[k] ?? ""));
+
+  /** O corpo completo para a Amazon (fotos como endereços assinados). */
+  const montar = (urls: string[]) => {
+    const t = (v: string) => [{ value: v, language_tag: "pt_BR", marketplace_id: c.mkt }];
+    const so = (v: unknown) => [{ value: v, marketplace_id: c.mkt }];
+    const a: Record<string, unknown> = {
+      condition_type: so("new_new"),
+      purchasable_offer: [{ currency: "BRL", audience: "ALL", our_price: [{ schedule: [{ value_with_tax: b.preco }] }], marketplace_id: c.mkt }],
+      fulfillment_availability: [{ fulfillment_channel_code: "AMAZON_NA", marketplace_id: c.mkt }],
+    };
+    if (caminho === "oferta") a.merchant_suggested_asin = so(alvoAsin?.asin ?? "");
+    else {
+      const bullets = (Array.isArray(d.r.bullet_points) ? (d.r.bullet_points as unknown[]) : []).map((x) => String(x).trim()).filter(Boolean).slice(0, LIM_AMZ.bullets);
+      Object.assign(a, {
+        item_name: t(b.titulo),
+        ...(bullets.length ? { bullet_point: bullets.map((x) => ({ value: x.slice(0, LIM_AMZ.bullet), language_tag: "pt_BR", marketplace_id: c.mkt })) } : {}),
+        product_description: t(String(d.r.descricao ?? "").trim().slice(0, LIM_AMZ.descricao)),
+        list_price: [{ currency: "BRL", value_with_tax: b.preco, marketplace_id: c.mkt }],
+        model_number: so(sku), external_testing_certification: so("Não Aplicável"), number_of_boxes: so(1),
+        unit_count: [{ value: unidades, type: { value: "Unidade", language_tag: "pt_BR" }, marketplace_id: c.mkt }],
+        number_of_items: so(unidades),
+      });
+      if (med.medidas.peso_kg) a.item_package_weight = [{ unit: "kilograms", value: Math.round(med.medidas.peso_kg * 100) / 100, marketplace_id: c.mkt }];
+      const cm = (v: number | null) => ({ unit: "centimeters", value: Math.max(1, Math.round(Number(v) || 1)) });
+      a.item_package_dimensions = [{ length: cm(med.medidas.comprimento_cm), width: cm(med.medidas.largura_cm), height: cm(med.medidas.altura_cm), marketplace_id: c.mkt }];
+      if (ean) a.externally_assigned_product_identifier = [{ type: "ean", value: ean, marketplace_id: c.mkt }];
+      else a.supplier_declared_has_product_identifier_exemption = so(true);
+      urls.slice(0, LIM_AMZ.fotos).forEach((u, i) => { a[FOTOS_AMZ[i]] = [{ media_location: u, marketplace_id: c.mkt }]; });
+    }
+    for (const k of noForm) {
+      const v = valorForm(k);
+      if (!v) continue;
+      const campo = props[k] ? campoAmz(c, props[k], v) : (k in sugestoes ? so(/^(true|false)$/.test(v) ? v === "true" : v) : null);
+      if (campo) a[k] = campo;
+    }
+    // só vai o que o tipo de produto conhece (campo a mais é recusado)
+    if (esq) for (const k of Object.keys(a)) if (!(k in props)) delete a[k];
+    return { productType: tipo, requirements: requisitos, attributes: a };
+  };
+  const assinar = async (segundos: number): Promise<string[]> => {
+    if (caminho !== "ficha" || !b.fotos.length) return [];
+    const { data } = await db.storage.from(BUCKET).createSignedUrls(b.fotos.map((f) => f.path), segundos);
+    const urls = b.fotos.map((f) => String(((data ?? []) as any[]).find((x) => x?.path === f.path)?.signedUrl ?? ""));
+    if (urls.some((u) => !u)) throw new Error("não consegui gerar o endereço de uma das fotos");
+    return urls;
+  };
+
+  if (caminho === "ficha") {
+    pendencias.push(...b.problemas.titulo, ...b.problemas.fotos);
+    if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
+    if (!ean) avisos.push("sem código de barras: a Amazon só aceita a ficha nova se a marca tiver isenção de GTIN aprovada no Seller Central");
+    if (!marca && !valorForm("brand")) pendencias.push("informe a marca (o cadastro está sem marca)");
+  } else {
+    avisos.push(`entra como OFERTA no produto ${alvoAsin?.asin ?? ""} que já existe na Amazon: título, fotos e descrição são os da ficha dela — os deste anúncio não vão`);
+  }
+  avisos.push("vendas pelo FBA: o anúncio só vende depois que o estoque chegar ao CD da Amazon (envio pelo Seller Central ou, na SVL, pela Reposição)");
+
+  // VALIDADOR da Amazon: confere o corpo sem criar nada
+  const errosCampo = new Set<string>();
+  if (!pendencias.length && b.preco) {
+    const v = await amzItem(c, skuAmz, "PUT", { mode: "VALIDATION_PREVIEW" }, montar(await assinar(900)));
+    const pv = problemasAmz(v.body);
+    for (const i of ((v.body?.issues ?? []) as any[])) {
+      if (String(i?.severity) !== "ERROR") continue;
+      // attributeNames às vezes traz o próprio SKU (erro do anúncio inteiro): só campo do tipo de produto vira formulário
+      for (const k of ((i?.attributeNames ?? []) as string[])) if (!AUTO_AMZ.has(k) && esq && k in props) errosCampo.add(k);
+    }
+    pendencias.push(...pv.erros.map((e) => `Amazon: ${traduzAmz(e)}`));
+    avisos.push(...pv.avisos.map((e) => `Amazon: ${e}`));
+    if (!pv.erros.length && String(v.body?.status ?? "") !== "VALID") pendencias.push(`Amazon: a validação respondeu ${v.body?.status ?? v.status}`);
+  }
+  for (const k of errosCampo) noForm.add(k);
+
+  const atributos = [...noForm].map((k) => {
+    const r = rotuloAmz(k, props[k]);
+    const v = valorForm(k);
+    return {
+      id: k, nome: r.nome, obrigatorio: (esq?.obrig ?? []).includes(k) || errosCampo.has(k), valor: v ? mostrarAmz(r, v) : "",
+      opcoes: r.opcoes, dica: r.dica,
+    };
+  }).sort((x, y) => Number(y.obrigatorio) - Number(x.obrigatorio) || x.nome.localeCompare(y.nome));
+  for (const a of atributos) if (a.obrigatorio && !a.valor) pendencias.push(`preencha "${a.nome}" (a Amazon exige)`);
+
+  const junto = [String(d.r.descricao ?? "").trim(), ((Array.isArray(d.r.bullet_points) ? d.r.bullet_points : []) as unknown[]).map((x) => `• ${String(x).trim()}`).join("\n")].filter(Boolean).join("\n\n");
+  return {
+    pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], montar, assinar, skuAmz, caminho, alvoAsin, ean, med, tiny,
+    previa: {
+      loja: c.nome, sku, titulo: caminho === "oferta" ? (alvoAsin?.titulo ?? b.titulo) : b.titulo, descricao: junto, preco: b.preco,
+      fotos: caminho === "oferta" ? [] : b.fotos, ean, medidas: med.medidas, estoque: 0, fora_do_ar: false,
+      atributos, limites: { titulo: LIM_AMZ.titulo, fotos: LIM_AMZ.fotos },
+      amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA" },
+    },
+  };
+}
+
+async function enviarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, m: Awaited<ReturnType<typeof montarCriarAmz>>, quem: Quem): Promise<Response> {
+  const jaFoi = d.publicacoes.find((p) => p.canal === "amazon" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar");
+  if (jaFoi && op.de_novo !== true) return json({ ok: false, erro: `este rascunho já criou o anúncio ${jaFoi.item_id}. Para criar outro, marque "criar outro anúncio mesmo assim".` }, 409);
+  const { data: pub, error: ePub } = await db.from("ia_publicacao").insert({
+    rascunho_id: d.r.id, sku: d.r.sku, canal: "amazon", empresa: d.r.empresa, shop_id: c.shop_id, estado: "enviando", operacao: "criar",
+    item_id: m.skuAmz, fora_do_ar: false, criado_por: quem.id, criado_por_nome: quem.nome,
+  }).select("id").single();
+  if (ePub || !pub) return json({ ok: false, erro: `banco: ${ePub?.message}` }, 500);
+  let corpo: Record<string, unknown> = {};
+  let resposta: Record<string, unknown> = {};
+  const falhar = async (erro: string) => {
+    await db.from("ia_publicacao").update({ estado: "erro", erro: erro.slice(0, 500), enviado: corpo, resposta }).eq("id", pub.id);
+    return json({ ok: false, erro, resposta }, 200);
+  };
+  if (m.caminho === "ficha") {
+    await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...m.med.salvar, gtin: m.ean ?? d.extra?.gtin ?? null, ncm: d.extra?.ncm ?? m.tiny.ncm ?? null }, { onConflict: "sku" });
+  }
+  // o endereço das fotos vale 7 dias: a Amazon baixa as imagens depois de aceitar o pedido
+  try { corpo = m.montar(await m.assinar(7 * 24 * 3600)); }
+  catch (e) { return await falhar(String(e instanceof Error ? e.message : e)); }
+  // sem repetição automática
+  const r = await amzItem(c, m.skuAmz, "PUT", {}, corpo);
+  const pr = problemasAmz(r.body);
+  resposta = { status: r.status, situacao: r.body?.status ?? null, submissionId: r.body?.submissionId ?? null, issues: r.body?.issues ?? null, errors: r.body?.errors ?? null };
+  if (!mlOk(r) || String(r.body?.status ?? "") !== "ACCEPTED") return await falhar(`a Amazon recusou o anúncio: ${pr.erros.map(traduzAmz).join(" · ") || r.body?.status || r.status}`);
+  const url = m.alvoAsin ? m.alvoAsin.url : null;
+  await db.from("ia_publicacao").update({ estado: "publicado", url, enviado: corpo, resposta }).eq("id", pub.id);
+  await db.from("ia_rascunho").update({ status: "publicado" }).eq("id", d.r.id);
+  return json({
+    ok: true, modo: "criar", item_id: m.skuAmz, url, fora_do_ar: false,
+    avisos: [...pr.avisos.map((e) => `Amazon: ${e}`),
+      m.caminho === "ficha" ? "a Amazon processa a ficha nova em alguns minutos (às vezes horas) e só então dá o ASIN; o anúncio aparece em \"já anunciado\" depois disso" : "a oferta aparece no produto em alguns minutos",
+      "vendas pelo FBA: o anúncio só vende depois que o estoque chegar ao CD da Amazon"],
+  });
+}
+
 async function fluxoAmazon(d: Dados, op: Opcoes, modulo: string, body: Record<string, any>, quem: Quem): Promise<Response> {
   const c = await contaAmz(String(d.r.empresa));
   const existentes = await existentesAmz(c, String(d.r.sku));
-  const alvo = existentes.find((e) => e.item_id === String(op.item_id ?? "")) ?? existentes[0];
-  if (!alvo) {
-    const motivo = `este produto não tem anúncio na ${c.nome} (procurei pelos SKUs ${d.r.sku} e FBA-${d.r.sku}). Criar anúncio novo na Amazon ainda não está pronto por aqui.`;
-    if (modulo === "previa") return json({ ok: true, disponivel: false, canal: "amazon", existentes, motivo, publicacoes: d.publicacoes });
-    return json({ ok: false, erro: motivo }, 400);
+  // v11: padrão = atualizar quando o produto já tem anúncio na conta; senão, criar
+  const modo: "criar" | "atualizar" = op.modo === "criar" || op.modo === "atualizar" ? op.modo : (existentes.length ? "atualizar" : "criar");
+  if (modo === "criar") {
+    const m = await montarCriarAmz(d, op, c, existentes);
+    if (modulo === "previa") {
+      return json({ ok: true, disponivel: true, canal: "amazon", modo, existentes, previa: m.previa, pendencias: m.pendencias, avisos: m.avisos, publicacoes: d.publicacoes });
+    }
+    if (modulo !== "enviar") return json({ ok: false, erro: "use ?modulo=existentes, previa ou enviar" }, 400);
+    if (body.confirmar !== true) return json({ ok: false, erro: "envio exige confirmar: true" }, 400);
+    if (m.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: m.pendencias }, 400);
+    const emCurso = d.publicacoes.find((p) => p.estado === "enviando" && Date.now() - new Date(p.criado_em).getTime() < 3 * 60_000);
+    if (emCurso) return json({ ok: false, erro: "já há um envio em andamento para este rascunho — aguarde" }, 409);
+    return await enviarCriarAmz(d, op, c, m, quem);
   }
-  // na Amazon só existe o modo atualizar (criar anúncio novo fica para depois)
+  const alvo = existentes.find((e) => e.item_id === String(op.item_id ?? "")) ?? existentes[0];
+  if (!alvo) return json({ ok: false, erro: "este produto não tem anúncio nesta conta para atualizar — use Criar anúncio novo" }, 400);
   const a = await montarAtualizarAmz(d, op, c, { ...alvo });
   if (modulo === "previa") {
     return json({ ok: true, disponivel: true, canal: "amazon", modo: "atualizar", existentes, previa: a.previa, pendencias: a.pendencias, avisos: a.avisos, publicacoes: d.publicacoes });
@@ -1291,11 +1655,12 @@ Deno.serve(async (req) => {
       d.r = { ...d.r, canal: canalD, empresa: empresaD, preco_aprovado: salvo, preco_sugerido: sugerido };
     }
     aplicarCapaDoDestino(d);
+    if (quem.ensaio && d.r.canal !== "amazon") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
     if (d.r.canal === "mercado_livre") return await fluxoMl(d, op, modulo, body, quem);
     if (d.r.canal === "amazon") return await fluxoAmazon(d, op, modulo, body, quem);
     if (d.r.canal !== "shopee") {
       return json({ ok: true, disponivel: false, canal: d.r.canal, publicacoes: d.publicacoes,
-        motivo: "o envio direto está pronto para a Shopee, o Mercado Livre e a Amazon (só atualizar); os outros canais entram nas próximas versões" });
+        motivo: "o envio direto está pronto para a Shopee, o Mercado Livre e a Amazon; os outros canais entram nas próximas versões" });
     }
     const loja = LOJA_SHOPEE[d.r.empresa] ?? LOJA_SHOPEE.ottz;
     const c = await ctxShopee(loja.shop_id);

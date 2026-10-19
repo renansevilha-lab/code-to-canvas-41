@@ -39,7 +39,7 @@ const DESTINOS: { canal: string; pronto: boolean; nota: string }[] = [
   { canal: "shopee", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo, com o texto, o preço e as fotos aprovadas." },
   { canal: "mercado_livre", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo; a conferência passa pelo validador do Mercado Livre." },
   { canal: "tiktok", pronto: false, nota: "Em preparação. Precisa enviar as fotos pela API e informar as medidas do pacote." },
-  { canal: "amazon", pronto: true, nota: "Atualiza um anúncio que já existe (título, descrição, bullets e fotos), conferido pelo validador da Amazon. Criar anúncio novo e preço ainda não." },
+  { canal: "amazon", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo (oferta num produto que já está no catálogo ou ficha nova), conferido pelo validador da Amazon. Só a conta ACZ; vendas pelo FBA." },
 ];
 
 interface Existente { item_id: string; nome: string | null; status?: string | null; url?: string | null; variacao?: boolean; model_id?: string | null; nome_variacao?: string | null; preco: number | null; variacoes?: number; vendas?: number; catalogo?: boolean }
@@ -61,6 +61,11 @@ interface Previa {
   marca?: { id: number; nome: string }; logistica?: { id: number; nome: string }[];
   // criar · Mercado Livre
   tipo_anuncio?: string; tipos_anuncio?: { id: string; nome: string }[]; atributos?: Atributo[];
+  // criar · Amazon (19/out/2026): oferta num ASIN que já existe ou ficha nova
+  amazon?: {
+    caminho: "oferta" | "ficha"; asin: string | null; tipo: string; tipos: string[]; sku_amazon: string; unidades: number; canal_envio: string;
+    asins: { asin: string; titulo: string | null; marca: string | null; tipo: string | null; foto: string | null; url: string }[];
+  };
   /** limites do marketplace/categoria (sem isso valem os da Shopee: 120 e 9) */
   limites?: { titulo: number; fotos: number };
   // atualizar
@@ -379,8 +384,10 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
       `Criar o anúncio ${NO} ${p.loja}?`, "",
-      `${p.titulo}`, `Preço: ${p.preco != null ? formatBRL(p.preco) : "—"} · Estoque inicial: ${p.estoque} · ${p.fotos.length} foto(s)`,
-      p.fora_do_ar
+      `${p.titulo}`,
+      amz ? `Preço: ${p.preco != null ? formatBRL(p.preco) : "—"} · SKU na Amazon ${p.amazon?.sku_amazon ?? ""} · ${p.amazon?.caminho === "oferta" ? `OFERTA no produto ${p.amazon?.asin} que já existe` : `ficha nova com ${p.fotos.length} foto(s)`}`
+        : `Preço: ${p.preco != null ? formatBRL(p.preco) : "—"} · Estoque inicial: ${p.estoque} · ${p.fotos.length} foto(s)`,
+      amz ? "Vendas pelo FBA: só vende depois que o estoque chegar ao CD da Amazon. A Amazon processa em alguns minutos." : p.fora_do_ar
         ? (ml ? "Vai ser PAUSADO logo depois de criado. Você reativa depois no Mercado Livre." : "Vai nascer FORA DO AR (não listado). Você ativa depois no Seller Center.")
         : ativarDepois
           ? "Nasce fora do ar e vai ao AR logo depois que as variações forem criadas (segundos)."
@@ -469,7 +476,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant={modo === "atualizar" ? "default" : "outline"} disabled={existentes.length === 0 || previaQ.isFetching}
             onClick={() => trocar({ modo: "atualizar" })}>Atualizar anúncio existente</Button>
-          <Button size="sm" variant={modo === "criar" ? "default" : "outline"} disabled={previaQ.isFetching || amz} title={amz ? "Criar anúncio novo na Amazon ainda não está pronto" : undefined}
+          <Button size="sm" variant={modo === "criar" ? "default" : "outline"} disabled={previaQ.isFetching}
             onClick={() => trocar({ modo: "criar" })}>Criar anúncio novo</Button>
           {previaQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground self-center" />}
         </div>
@@ -542,6 +549,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
         <div className="rounded-md border p-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-sm"><b>{p.loja}</b><span className="text-muted-foreground">SKU {p.sku} · anúncio novo</span></div>
           <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            {amz && p.amazon?.caminho === "oferta" ? (
+              <div className="md:col-span-2"><Linha rotulo="Título (da ficha da Amazon — o deste anúncio não vai)" valor={p.titulo} /></div>
+            ) : (
             <label className="block md:col-span-2">
               <span className={`text-[11px] ${(tituloTxt ?? p.titulo).length > limTitulo ? "text-destructive" : "text-muted-foreground"}`}>
                 Título ({(tituloTxt ?? p.titulo).length}/{limTitulo}) · o mesmo para todos os destinos
@@ -556,23 +566,29 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
                 )}
               </div>
             </label>
+            )}
             <label className="block">
               <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · padrão: margem de ${(margemPadrao * 100).toFixed(0)}%${padraoQ.data?.da_variacao ? " da variação mais cara" : ""}` : ""}</span>
               <Input className="h-8 mt-1 w-[150px] text-sm tabular-nums" inputMode="decimal" placeholder="defina o preço"
                 value={campo("preco", p.preco)} onChange={(e) => setOp({ ...op, preco: e.target.value })} />
             </label>
             {p.marca && <Linha rotulo="Marca" valor={p.marca.nome} />}
-            <Linha rotulo="Código de barras" valor={p.ean ?? (ml ? "sem código — vai como \"produto sem código cadastrado\"" : "sem código no Tiny")} />
+            {!amz && <Linha rotulo="Código de barras" valor={p.ean ?? (ml ? "sem código — vai como \"produto sem código cadastrado\"" : "sem código no Tiny")} />}
             {p.logistica && <Linha rotulo="Canais de envio" valor={p.logistica.map((l) => l.nome).join(", ") || "—"} />}
             {ml && <Linha rotulo="Envio" valor="Mercado Envios, sem retirada em mãos" />}
-            <Linha rotulo="Descrição" valor={`${p.descricao.length.toLocaleString("pt-BR")} caracteres (texto + bullets)`} />
+            {!(amz && p.amazon?.caminho === "oferta") && <Linha rotulo="Descrição" valor={`${p.descricao.length.toLocaleString("pt-BR")} caracteres (texto + bullets)`} />}
           </div>
+          {amz && p.amazon && <BlocoAmazon a={p.amazon} ean={p.ean ?? null} parado={previaQ.isFetching} tipoEscolhido={typeof op.tipo_produto === "string" ? op.tipo_produto : null} onTrocar={trocar} />}
+          {amz && p.amazon?.caminho === "oferta" ? (
+            <p className="text-xs text-muted-foreground">Na oferta as fotos, o título e a descrição são os da ficha que já existe na Amazon: as fotos aprovadas aqui não vão.</p>
+          ) : (
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Fotos, na ordem em que vão · clique para ampliar · arraste ou use as setas para mudar · o X tira a foto</div>
             <Ordenavel itens={itensOrdem} max={limFotos} onOrdem={setOrdem} onTirar={mexendo ? undefined : (id) => void tirarFoto(id)} />
           </div>
+          )}
           <div className="flex flex-wrap items-end gap-3 text-sm border-t pt-3">
-            <label className="block min-w-[260px] flex-1">
+            {!amz && <label className="block min-w-[260px] flex-1">
               <span className="text-[11px] text-muted-foreground">Categoria {NO} {MK}</span>
               {/* no Mercado Livre a categoria muda as características pedidas: a conferência é refeita na hora */}
               <select className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs"
@@ -581,12 +597,14 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
                 {(p.categorias_sugeridas ?? []).map((c) => <option key={c.id} value={c.id}>{c.caminho}</option>)}
                 {p.categoria && !(p.categorias_sugeridas ?? []).some((c) => c.id === p.categoria!.id) && <option value={p.categoria.id}>{p.categoria.caminho || p.categoria.id}</option>}
               </select>
-            </label>
-            <Medida rotulo="Peso (kg)" valor={campo("peso_kg", p.medidas?.peso_kg)} onChange={(v) => setOp({ ...op, peso_kg: v })} />
-            <Medida rotulo="Compr. (cm)" valor={campo("comprimento_cm", p.medidas?.comprimento_cm)} onChange={(v) => setOp({ ...op, comprimento_cm: v })} />
-            <Medida rotulo="Largura (cm)" valor={campo("largura_cm", p.medidas?.largura_cm)} onChange={(v) => setOp({ ...op, largura_cm: v })} />
-            <Medida rotulo="Altura (cm)" valor={campo("altura_cm", p.medidas?.altura_cm)} onChange={(v) => setOp({ ...op, altura_cm: v })} />
-            <Medida rotulo="Estoque inicial" valor={campo("estoque", p.estoque)} onChange={(v) => setOp({ ...op, estoque: v })} />
+            </label>}
+            {!(amz && p.amazon?.caminho === "oferta") && <>
+              <Medida rotulo="Peso (kg)" valor={campo("peso_kg", p.medidas?.peso_kg)} onChange={(v) => setOp({ ...op, peso_kg: v })} />
+              <Medida rotulo="Compr. (cm)" valor={campo("comprimento_cm", p.medidas?.comprimento_cm)} onChange={(v) => setOp({ ...op, comprimento_cm: v })} />
+              <Medida rotulo="Largura (cm)" valor={campo("largura_cm", p.medidas?.largura_cm)} onChange={(v) => setOp({ ...op, largura_cm: v })} />
+              <Medida rotulo="Altura (cm)" valor={campo("altura_cm", p.medidas?.altura_cm)} onChange={(v) => setOp({ ...op, altura_cm: v })} />
+            </>}
+            {!amz && <Medida rotulo="Estoque inicial" valor={campo("estoque", p.estoque)} onChange={(v) => setOp({ ...op, estoque: v })} />}
             {ml && (
               <label className="block">
                 <span className="text-[11px] text-muted-foreground">Tipo de anúncio</span>
@@ -596,11 +614,13 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
                 </select>
               </label>
             )}
-            {ml && <Medida rotulo="Código de barras" largo valor={typeof op.gtin === "string" ? op.gtin : (p.ean ?? "")} onChange={(v) => setOp({ ...op, gtin: v })} />}
+            {(ml || amz) && <Medida rotulo={amz ? "Código de barras (EAN)" : "Código de barras"} largo valor={typeof op.gtin === "string" ? op.gtin : (p.ean ?? "")} onChange={(v) => setOp({ ...op, gtin: v })} />}
           </div>
-          {ml && (p.atributos ?? []).length > 0 && (
+          {(ml || amz) && (p.atributos ?? []).length > 0 && (
             <div className="border-t pt-3 space-y-2">
-              <div className="text-[11px] text-muted-foreground">Características que o Mercado Livre pede nesta categoria (as com * são obrigatórias; as outras melhoram a ficha)</div>
+              <div className="text-[11px] text-muted-foreground">{amz
+                ? "Dados que a Amazon pede para este tipo de produto (os com * são obrigatórios; os preenchidos são sugestões — confira)"
+                : "Características que o Mercado Livre pede nesta categoria (as com * são obrigatórias; as outras melhoram a ficha)"}</div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {(p.atributos ?? []).map((a) => (
                   <label key={a.id} className="block min-w-0">
@@ -618,6 +638,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           {/* Shopee: sempre NO AR (13/out, decisão do dono) — a opção de criar sem listar saiu */}
           {canal === "shopee" ? (
             <p className="text-xs text-muted-foreground">O anúncio nasce <b>no ar</b> na Shopee{p.fora_do_ar ? "" : ", visível para os compradores"}.</p>
+          ) : amz ? (
+            <p className="text-xs text-muted-foreground">Vendas pelo <b>FBA</b>: o anúncio fica ativo, mas só vende depois que o estoque chegar ao CD da Amazon.</p>
           ) : (
             <label className="flex items-start gap-2 text-sm cursor-pointer">
               <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
@@ -683,14 +705,14 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           <div className="flex flex-wrap gap-2">
             {(demais ?? []).map((x) => {
               const n = x.lista?.length ?? 0;
-              const soAtualiza = x.canal === "amazon";
-              const parado = soAtualiza && x.lista !== undefined && n === 0;
+              // Amazon: só a conta com o código de vendedor (hoje a ACZ); sem ele a lista vem null
+              const parado = x.canal === "amazon" && x.lista === null;
               return (
                 <Button key={`${x.canal}:${x.empresa}`} size="sm" variant={n > 0 ? "outline" : "default"} className="h-8 gap-1.5" disabled={enviando || parado}
-                  title={parado ? "criar anúncio novo na Amazon ainda não está pronto por aqui" : undefined} onClick={() => onIr(x.canal, x.empresa)}>
+                  title={parado ? "esta conta da Amazon ainda não tem o código de vendedor (Merchant Token) cadastrado" : undefined} onClick={() => onIr(x.canal, x.empresa)}>
                   <ArrowRight className="h-3.5 w-3.5" />{x.rotulo}
                   <span className="text-[10.5px] font-normal opacity-80">
-                    {x.lista === undefined ? "verificando…" : x.lista === null ? "não consegui verificar" : n > 0 ? `já anunciado${n > 1 ? ` (${n})` : ""} · atualizar` : parado ? "ainda não cria por aqui" : "ainda não anunciado"}
+                    {x.lista === undefined ? "verificando…" : x.lista === null ? "não consegui verificar" : n > 0 ? `já anunciado${n > 1 ? ` (${n})` : ""} · atualizar` : "ainda não anunciado"}
                   </span>
                 </Button>
               );
@@ -715,6 +737,54 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Amazon · criar: oferta num produto que já existe no catálogo (mesmo código de barras) ou ficha nova. */
+function BlocoAmazon({ a, ean, parado, tipoEscolhido, onTrocar }: {
+  a: NonNullable<Previa["amazon"]>; ean: string | null; parado: boolean; tipoEscolhido: string | null; onTrocar: (x: Op) => void;
+}) {
+  return (
+    <div className="border-t pt-3 space-y-2 text-sm">
+      <div className="text-[11px] text-muted-foreground">Como o anúncio entra na Amazon</div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant={a.caminho === "oferta" ? "default" : "outline"} disabled={parado || a.asins.length === 0}
+          title={a.asins.length ? undefined : "nenhum produto do catálogo da Amazon tem este código de barras"} onClick={() => onTrocar({ caminho: "oferta" })}>
+          Oferta num produto que já existe
+        </Button>
+        <Button size="sm" variant={a.caminho === "ficha" ? "default" : "outline"} disabled={parado} onClick={() => onTrocar({ caminho: "ficha" })}>Ficha nova (ASIN novo)</Button>
+      </div>
+      {a.asins.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{ean ? <>Nenhum produto do catálogo da Amazon tem o código <b className="font-mono">{ean}</b>: vai como ficha nova.</> : "Sem código de barras: vai como ficha nova (só passa se a marca tiver isenção de GTIN)."}</p>
+      ) : (
+        <div className="space-y-1">
+          <div className="text-[11px] text-muted-foreground">Produtos do catálogo da Amazon com o código {ean}:</div>
+          {a.asins.map((x) => (
+            <label key={x.asin} className={`flex items-center gap-2 rounded border px-2 py-1.5 cursor-pointer text-xs ${a.caminho === "oferta" && a.asin === x.asin ? "border-primary/60 bg-primary/5" : ""}`}>
+              <input type="radio" checked={a.caminho === "oferta" && a.asin === x.asin} disabled={parado} onChange={() => onTrocar({ caminho: "oferta", asin: x.asin })} />
+              {x.foto ? <img src={x.foto} alt="" className="h-10 w-10 rounded object-contain bg-white border" /> : <span className="h-10 w-10 rounded bg-muted" />}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm">{x.titulo ?? x.asin}</span>
+                <span className="text-muted-foreground">ASIN {x.asin}{x.marca ? ` · marca ${x.marca}` : ""}{x.tipo ? ` · ${x.tipo}` : ""}</span>
+              </span>
+              <a href={x.url} target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-0.5 shrink-0">abrir<ExternalLink className="h-3 w-3" /></a>
+            </label>
+          ))}
+        </div>
+      )}
+      {a.caminho === "ficha" && (
+        <label className="block max-w-sm">
+          <span className="text-[11px] text-muted-foreground">Tipo de produto na Amazon (muda os dados pedidos abaixo)</span>
+          <select className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs" disabled={parado}
+            value={tipoEscolhido ?? a.tipo} onChange={(e) => onTrocar({ tipo_produto: e.target.value })}>
+            {a.tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        SKU na Amazon: <b className="font-mono">{a.sku_amazon}</b> · envio pelo {a.canal_envio} (estoque no CD da Amazon){a.unidades > 1 ? ` · ${a.unidades} unidades no kit` : ""}
+      </p>
     </div>
   );
 }
