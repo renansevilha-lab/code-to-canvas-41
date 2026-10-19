@@ -283,7 +283,11 @@ export function DevolucoesShopeeAbertas() {
       toast.success(`Reembolso confirmado — ${d.return_sn}`);
       void qc.invalidateQueries({ queryKey: ["devolucoes", "shopee_abertas"] });
     } catch (e) {
-      toast.error("Falha ao reembolsar", { description: (e as Error).message });
+      const msg = (e as Error).message;
+      toast.error("Falha ao reembolsar", {
+        description: /RETURN_ACCEPTED/.test(msg) ? "A Shopee já concluiu o reembolso desta solicitação — não há o que aprovar." : msg,
+      });
+      if (/RETURN_ACCEPTED/.test(msg)) void qc.invalidateQueries({ queryKey: ["devolucoes"] });
     } finally {
       setAgindo(null);
     }
@@ -416,15 +420,20 @@ export function DevolucoesShopeeAbertas() {
       ) : (
         <div className="flex flex-col gap-3">
           {listaFiltrada.map((d) => {
-            const st = STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
             const prazoIso = d.prazo_disputa ?? d.due_date;
-            const prazo = prazoTexto(prazoIso);
+            // reembolso aceito com o prazo de DISPUTA vencido = a Shopee já finalizou e reembolsou: nada a
+            // aprovar nem disputar (18/out: "Aprovar" numa achada pela busca voltou "Invalid return status:
+            // RETURN_ACCEPTED"). O prazo de disputa real (prazo_disputa) é confiável; o due_date antigo não era.
+            const encerrada = d.status === "ACCEPTED" && !!prazoIso && new Date(prazoIso).getTime() <= Date.now();
+            const st = encerrada ? { rotulo: "Reembolso concluído", cor: "#5C6470" }
+              : STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
+            const prazo = encerrada ? { txt: "disputa encerrada", urgente: false } : prazoTexto(prazoIso);
             // Quem decide se ainda da pra responder e a SHOPEE, nao o nosso
             // relogio: o due_date do espelho vence e a solicitacao segue aberta
             // (visto ao vivo 31/ago — TODOS os cards com "prazo venceu" e sem
             // botao nenhum). Mostramos as acoes sempre que o status permite; se
             // a Shopee nao aceitar mais, o backend devolve o erro dela.
-            const podeResponder = RESPONDIVEIS.includes(d.status ?? "");
+            const podeResponder = RESPONDIVEIS.includes(d.status ?? "") && !encerrada;
             const busy = agindo === d.return_sn;
             const fotoProduto = d.itens?.[0]?.sku ? fotosQ.data?.[d.itens[0].sku!] : undefined;
             return (
