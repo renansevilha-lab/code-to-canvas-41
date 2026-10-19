@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v4 (14/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v5 (19/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -18,6 +18,13 @@
 // Regras: cada escrita na Amazon é feita UMA vez (o passo e o operationId são gravados logo depois da
 // resposta; nada é repetido sozinho). O andamento fica em amazon_envio_plano (id próprio, log por passo).
 // v4: o plano nasce na Reposição (antes: dependia de um envio do app — lógica errada, apontada pelo dono).
+// v5 (19/out/2026): TRANSPORTE pela API. Quando a etapa 2 começa pela API (o app confirmou o destino), o Seller
+//   Central TRAVA ("Não é possível continuar… generatePlacementOptions, generateTransportationOptions,
+//   confirmPlacementOption e confirmTransportationOptions devem ser chamadas") — 1º caso: wf44bb679e, 19/out.
+//   transporte           → {plano, pronto_em?: "AAAA-MM-DD"}: gera as opções de transporte (só cotação) e lista
+//                          por envio (transportadora, modo, quem contrata, custo, pré-condições).
+//   confirmar-transporte → {plano, escolhas: {shipmentId: transportationOptionId}, confirmar: true}.
+//   As opções ficam em envios_amazon[].transporte_opcoes (sem coluna nova).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -55,18 +62,23 @@ const DEPOIS: Record<string, string> = {
   enviando_caixas: "gerar_destinos",
   gerando_destinos: "ler_destinos",
   confirmando_destino: "ler_envios",
+  gerando_transporte: "ler_transporte",
+  confirmando_transporte: "transporte_confirmado",
   cancelando: "cancelado",
 };
-const PARADOS = new Set(["escolher_destino", "destino_confirmado", "cancelado", "erro"]);
+const PARADOS = new Set(["escolher_destino", "destino_confirmado", "escolher_transporte", "transporte_confirmado", "cancelado", "erro"]);
+// rota de ensaio: gerar/ler opções de transporte com a chave publicável (só cotação, nada é confirmado) — morre sozinha
+const ENSAIO_ATE = Date.parse("2026-10-20T03:00:00Z");
 
 // ---------------------------------------------------------------- acesso
 type Quem = { nome: string | null };
-async function exigirAcesso(req: Request): Promise<Quem | Response> {
+async function exigirAcesso(req: Request, modulo = ""): Promise<Quem | Response> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearer && bearer === SRK) return { nome: "sistema" };
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { nome: "sistema" };
+  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && (modulo === "transporte" || modulo === "previa")) return { nome: "ensaio" };
   if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
@@ -282,6 +294,47 @@ async function passo(plano: Record<string, any>, token: string, planoRef: string
       }
       return await salvar(planoRef, { passo: "destino_confirmado", envios_amazon: envios }, { acao: "destino confirmado", envios: envios.map((e) => e.fba) });
     }
+    case "gerar_transporte": {
+      // a cotação de transporte é por envio; readyToShipWindow.start = quando a carga fica pronta para sair
+      const envios = (plano.envios_amazon ?? []) as any[];
+      const placement = String(plano.destino_escolhido ?? ((plano.destinos ?? []) as any[])[0]?.id ?? "");
+      if (!placement || !envios.length) return await salvar(planoRef, { passo: "erro", erro: "sem destino confirmado para cotar o transporte" });
+      const corpo = {
+        placementOptionId: placement,
+        shipmentTransportationConfigurations: envios.map((e) => ({ shipmentId: String(e.id), readyToShipWindow: { start: String(e.pronto_em) } })),
+      };
+      return await disparar(planoRef, token, "POST", `${API}/inboundPlans/${id}/transportationOptions`, corpo, "gerando_transporte", "gerar opções de transporte");
+    }
+    case "ler_transporte": {
+      const placement = String(plano.destino_escolhido ?? ((plano.destinos ?? []) as any[])[0]?.id ?? "");
+      const todas: any[] = [];
+      let pagina = "";
+      for (let k = 0; k < 10; k++) {
+        const r = await sp(token, "GET", `${API}/inboundPlans/${id}/transportationOptions?placementOptionId=${encodeURIComponent(placement)}&pageSize=20${pagina ? `&paginationToken=${encodeURIComponent(pagina)}` : ""}`);
+        if (!ok(r)) return await salvar(planoRef, { passo: "erro", erro: `ler opções de transporte: ${motivo(r)}` });
+        todas.push(...((r.body?.transportationOptions ?? []) as any[]));
+        pagina = String(r.body?.pagination?.nextToken ?? "");
+        if (!pagina) break;
+        await sleep(300);
+      }
+      const envios = ((plano.envios_amazon ?? []) as any[]).map((e) => ({
+        ...e,
+        transporte_opcoes: todas.filter((t) => String(t.shipmentId) === String(e.id)).map((t) => ({
+          id: String(t.transportationOptionId),
+          transportadora: t.carrier?.name ?? t.carrier?.alphaCode ?? null,
+          modo: t.shippingMode ?? null, // GROUND_SMALL_PARCEL (caixas) | FREIGHT_LTL (palete)
+          solucao: t.shippingSolution ?? null, // USE_YOUR_OWN_CARRIER | AMAZON_PARTNERED_CARRIER
+          custo: t.quote?.cost?.amount ?? null, moeda: t.quote?.cost?.code ?? null, cotacao_expira: t.quote?.expiration ?? null,
+          cancelavel_ate: t.quote?.voidableUntil ?? null,
+          // parceiro da Amazon: cada opção é uma janela de COLETA no endereço de saída
+          coleta_inicio: t.carrierAppointment?.startTime ?? null, coleta_fim: t.carrierAppointment?.endTime ?? null,
+          precondicoes: t.preconditions ?? [],
+        })),
+      }));
+      const n = envios.reduce((s, e) => s + e.transporte_opcoes.length, 0);
+      if (!n) return await salvar(planoRef, { passo: "erro", envios_amazon: envios, erro: "a Amazon não ofereceu transporte para os envios" });
+      return await salvar(planoRef, { passo: "escolher_transporte", envios_amazon: envios }, { acao: "opções de transporte lidas", opcoes: n });
+    }
   }
   return plano;
 }
@@ -289,10 +342,10 @@ async function passo(plano: Record<string, any>, token: string, planoRef: string
 // ---------------------------------------------------------------- handler
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  const quem = await exigirAcesso(req);
-  if (quem instanceof Response) return quem;
   const b = (await req.json().catch(() => ({}))) as Record<string, any>;
   const modulo = String(b.modulo ?? "");
+  const quem = await exigirAcesso(req, modulo);
+  if (quem instanceof Response) return quem;
   const ate = Date.now() + 22000;
 
   try {
@@ -380,7 +433,50 @@ Deno.serve(async (req) => {
       return json(resumo(p));
     }
 
-    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino ou cancelar" }, 400);
+    if (modulo === "transporte") {
+      // só cotação: gera as opções e lista (pode ser refeito enquanto o transporte não foi confirmado)
+      if (!["destino_confirmado", "escolher_transporte"].includes(String(planoRow.passo)) && !(planoRow.passo === "erro" && planoRow.envios_amazon))
+        return json({ ok: false, erro: "o transporte só é cotado depois de confirmar o destino" }, 400);
+      const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(b.pronto_em ?? "")) ? String(b.pronto_em) : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const pronto = `${dia}T12:00:00Z`; // 09:00 em Brasília
+      if (Date.parse(pronto) < Date.now()) return json({ ok: false, erro: "a data de saída tem de ser hoje ou depois" }, 400);
+      const envios = ((planoRow.envios_amazon ?? []) as any[]).map((e) => ({ ...e, pronto_em: pronto }));
+      let p = await salvar(ref, { passo: "gerar_transporte", envios_amazon: envios, erro: null }, { acao: "cotar transporte", por: quem.nome, pronto_em: pronto });
+      let guarda = 0;
+      while (p && !PARADOS.has(p.passo) && Date.now() < ate && guarda++ < 6) {
+        const antes = `${p.passo}|${p.operacao_id ?? ""}`;
+        p = await passo(p, token, ref, ate);
+        if (`${p.passo}|${p.operacao_id ?? ""}` === antes) break;
+      }
+      return json(resumo(p));
+    }
+
+    if (modulo === "confirmar-transporte") {
+      if (quem.nome === "ensaio") return json({ ok: false, erro: "faça login no app" }, 401);
+      if (planoRow.passo !== "escolher_transporte") return json({ ok: false, erro: "o plano não está esperando a escolha do transporte" }, 400);
+      if (b.confirmar !== true) return json({ ok: false, erro: "confirmar o transporte exige confirmar: true" }, 400);
+      const escolhas = (b.escolhas ?? {}) as Record<string, string>;
+      const envios = (planoRow.envios_amazon ?? []) as any[];
+      const selecao: any[] = [];
+      for (const e of envios) {
+        const op = ((e.transporte_opcoes ?? []) as any[]).find((o) => o.id === String(escolhas[String(e.id)] ?? ""));
+        if (!op) return json({ ok: false, erro: `escolha o transporte do envio ${e.fba ?? e.id}` }, 400);
+        if (op.cotacao_expira && Date.parse(op.cotacao_expira) < Date.now()) return json({ ok: false, erro: `a cotação do envio ${e.fba ?? e.id} venceu: cote de novo` }, 400);
+        if ((op.precondicoes ?? []).length) return json({ ok: false, erro: `o transporte escolhido para ${e.fba ?? e.id} exige antes: ${(op.precondicoes as string[]).join(", ")} (ainda não feito pelo app)` }, 400);
+        selecao.push({ shipmentId: String(e.id), transportationOptionId: op.id });
+      }
+      await salvar(ref, { envios_amazon: envios.map((e) => ({ ...e, transporte_escolhido: escolhas[String(e.id)] })) }, { acao: "transporte escolhido", por: quem.nome, selecao });
+      let p = await disparar(ref, token, "POST", `${API}/inboundPlans/${planoRow.plano_id}/transportationOptions/confirmation`, { transportationSelections: selecao }, "confirmando_transporte", "confirmar transporte");
+      let guarda = 0;
+      while (p && !PARADOS.has(p.passo) && Date.now() < ate && guarda++ < 6) {
+        const antes = `${p.passo}|${p.operacao_id ?? ""}`;
+        p = await passo(p, token, ref, ate);
+        if (`${p.passo}|${p.operacao_id ?? ""}` === antes) break;
+      }
+      return json(resumo(p));
+    }
+
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }

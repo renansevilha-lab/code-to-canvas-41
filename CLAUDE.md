@@ -1682,6 +1682,21 @@ concluir.
   `cancelar`. Cada escrita na Amazon uma vez só (passo + operationId gravados logo depois da resposta).
   Labels/prep pelo `items/prepDetails`. Origem fixa: Caieiras. Link "Continuar no Seller Central" =
   `sellercentral.amazon.com.br/fba/sendtoamazon?wf=<plano>` (URL não conferida). **Não testado pela tela** (exige login).
+- **1º plano real (19/out, SVL, wf44bb679e, 93 un / 6 SKU, por Renan) TRAVOU no Seller Central:** "Não é possível continuar
+  em Enviar para a Amazon… generatePlacementOptions, generateTransportationOptions, confirmPlacementOption e
+  confirmTransportationOptions devem ser chamadas". **Regra da Amazon: etapa 2 começada pela API termina pela API** — confirmado
+  o destino pelo app, o TRANSPORTE também tem de ser escolhido pela API (a etapa 3, NF e etiquetas, volta a ser no Seller
+  Central). A Amazon dividiu em FBA19TPSZTVN (GRU8) + FBA19TPQXVN9 (XCV9), os dois em Cajamar. `amazon-inbound` **v5**
+  (deploy 6): `transporte {plano, pronto_em}` = `POST …/transportationOptions` (readyToShipWindow.start = dia às 09:00 BRT)
+  + lista por envio em `envios_amazon[].transporte_opcoes` (sem coluna nova; `carrierAppointment` = janela de coleta,
+  `quote.cost`); `confirmar-transporte {plano, escolhas: {shipmentId: transportationOptionId}, confirmar}` (só com login; recusa
+  opção com `preconditions`). Passos novos `gerar_transporte → gerando_transporte → ler_transporte → escolher_transporte →
+  confirmando_transporte → transporte_confirmado`. Opções vistas (pronto em 20/10): por envio, **13 coletas da Total Express
+  parceira da Amazon a R$ 0,00** (dias úteis de 21/10 a 09/11, 09h–18h em Caieiras) + 5 por nossa conta (Self caixas/palete,
+  Other caixas/palete, "Total Express – Tex Courier" contratada). Tela: no plano (Reposição › envios criados pelo app),
+  "Cotar transporte" com a data → opções agrupadas (coleta parceira / por nossa conta), "em todos" repete a escolha nos
+  envios, "Confirmar transporte" com confirmação. `transporte`/`previa` aceitam a chave publicável até 20/out 03:00 UTC
+  (rota de ensaio). **Daqui em diante todo plano criado pelo app precisa passar pelo transporte no app.**
 
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
@@ -3382,7 +3397,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v4 | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v5 (deploy 6; 19/out: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
