@@ -3292,6 +3292,11 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 - **1º anúncio Amazon criado pela tela:** 16457_FBA (ASIN B0HNKZD9BN), 19/out 12h09, pelo dono, com a v12 —
   **sem nenhum dado fiscal** (NCM, origem e papel vazios). O PATCH com NCM 25059000 / origem 0 / distributor dá VALID
   no validador; aplicar é escrita real (aguarda OK, junto com o 15984_FBA).
+- **Correções APLICADAS (19/out, OK do dono):** 15984_FBA origem 1 → **0** (submission b3962f34…) e 16457_FBA
+  NCM 25059000 + origem 0 + distributor (submission 4612b8b3…), ambas ACCEPTED e já relidas no anúncio. Feitas pela
+  sonda v5 (`amazon-lwa-debug` v21) `?teste=fiscal-aplicar` — lê antes, valida, aplica UMA vez, relê; registro em
+  `debug_fulfillment` (`modulo='amazon-fiscal-aplicar'`). A rota só aceita esses dois SKUs e morre em 20/out 03:00 UTC.
+  `?teste=fiscal-varredura[&pagina=]` (só leitura) lista os anúncios com os campos fiscais: ACZ = 499 anúncios.
 - **Regra do dono (19/out, `anuncio-publicar` v12, deploy 13): na Amazon, só produto Bumi vai com a marca própria;
   todo o resto vai como "Genérico"** (marca e fabricante; `/bumi/i` na marca do cadastro). Na FICHA NOVA de um
   Genérico o EAN do cadastro NÃO vai — é do fabricante na GS1 e dá **8572**; só vai se for digitado. `opcoes.sem_gtin`

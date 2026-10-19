@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-anuncio-sonda v4 (19/out/2026) — IA · Anúncios
+// Edge Function: amazon-anuncio-sonda v5 (19/out/2026) — IA · Anúncios
 // (publicada no slot `amazon-lwa-debug`: criar função nova no projeto falha — ver CLAUDE.md §5.11)
 // ----------------------------------------------------------------------------
 // DIAGNÓSTICO do envio de anúncio para a Amazon (SP-API, Listings Items). NÃO altera nada:
@@ -21,6 +21,11 @@
 //       v4 (19/out/2026): DADOS FISCAIS. Invoices API (notas do FBA + nota de remessa), Shipment Invoicing
 //       (papel) e os campos fiscais que o esquema do anúncio aceita (com as opções). &sku_amazon=X&ncm=&origem=
 //       &papel=&csosn=&cest= ensaia gravar esses campos num anúncio (VALIDATION_PREVIEW, nada é aplicado).
+// GET ?conta=ottz&teste=fiscal-varredura[&pagina=<token>]
+//       v5 (19/out/2026): todos os anúncios da conta com os campos fiscais (só leitura; ~20 s por chamada).
+// GET ?conta=ottz&teste=fiscal-aplicar&sku_amazon=X&ncm=&origem=&papel=[&confirmar=1]
+//       v5: ÚNICA ESCRITA REAL desta sonda — autorizada pelo dono em 19/out para 15984_FBA e 16457_FBA, só os
+//       campos fiscais, até 20/out 03:00 UTC. Lê antes, valida, aplica UMA vez, relê e grava em debug_fulfillment.
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -112,6 +117,74 @@ Deno.serve(async (req) => {
         out.ensaio_fiscal = { sku_amazon: skuAmz, tipo, hoje: atual, enviado: patches, http: pv?.status ?? null, situacao: pv?.body?.status ?? null, pendencias: pv ? pend(pv.body, 20) : [] };
       }
       return json(out);
+    } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
+  }
+  // ------------------------------------------------------------ v5: VARREDURA FISCAL (só leitura) e CORREÇÃO autorizada
+  const teste = u.searchParams.get("teste") || "";
+  if (teste === "fiscal-varredura" || teste === "fiscal-aplicar") {
+    try {
+      const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token, merchant_token, marketplace_id").eq("shop_id", SHOP[conta]).maybeSingle();
+      if (!tk?.merchant_token) return json({ erro: `conta ${conta} sem Merchant Token` }, 400);
+      const mkt = tk.marketplace_id || MKT_BR; const token = String(tk.access_token); const seller = String(tk.merchant_token);
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const val = (a: any, k: string) => (a?.[k]?.[0]?.value ?? null);
+      if (teste === "fiscal-varredura") {
+        // todos os anúncios da conta, 20 por página, com os campos fiscais; ~20 s por chamada, `proxima` continua
+        const t0 = Date.now(); let pagina = u.searchParams.get("pagina") || ""; const itens: any[] = []; let paginas = 0; let total: number | null = null;
+        while (Date.now() - t0 < 20000) {
+          const r = await sp(token, "GET", `/listings/2021-08-01/items/${encodeURIComponent(seller)}`,
+            { marketplaceIds: mkt, includedData: "summaries,attributes", pageSize: "20", ...(pagina ? { pageToken: pagina } : {}) });
+          if (r.status === 429) { await sleep(2500); continue; }
+          if (!r.ok) return json({ erro: pend(r.body).slice(0, 3), http: r.status, itens, proxima: pagina || null });
+          total = r.body?.numberOfResults ?? total;
+          for (const x of (r.body?.items ?? []) as any[]) {
+            const a = x.attributes ?? {}; const s = x.summaries?.[0] ?? {};
+            itens.push({ sku_amazon: x.sku, asin: s.asin ?? null, tipo: s.productType ?? null, status: (s.status ?? []).join("|"), nome: String(s.itemName ?? "").slice(0, 90),
+              ncm: val(a, "ncm_code"), origem: val(a, "import_designation"), papel: val(a, "contributor_supply_chain_role"), csosn: val(a, "tax_treatment"), cest: val(a, "tax_classification_code") });
+          }
+          paginas++;
+          pagina = r.body?.pagination?.nextToken ?? "";
+          if (!pagina) break;
+          await sleep(300);
+        }
+        return json({ conta, paginas, n: itens.length, total, proxima: pagina || null, itens });
+      }
+      // fiscal-aplicar: ESCRITA REAL autorizada pelo dono em 19/out/2026 — só estes SKUs, só os campos fiscais, até a meia-noite
+      const LIBERADOS = new Set(["15984_FBA", "16457_FBA"]);
+      if (Date.now() > Date.parse("2026-10-20T03:00:00Z")) return json({ erro: "rota de correção encerrada" }, 403);
+      const skuAmz = (u.searchParams.get("sku_amazon") || "").trim();
+      if (!LIBERADOS.has(skuAmz)) return json({ erro: `SKU ${skuAmz} não está liberado para correção` }, 403);
+      const caminho = `/listings/2021-08-01/items/${encodeURIComponent(seller)}/${encodeURIComponent(skuAmz)}`;
+      const ler = async () => {
+        const r = await sp(token, "GET", caminho, { marketplaceIds: mkt, includedData: "summaries,attributes" });
+        const a = r.body?.attributes ?? {};
+        return { http: r.status, tipo: r.body?.summaries?.[0]?.productType ?? null, ncm_code: a.ncm_code ?? null, import_designation: a.import_designation ?? null, contributor_supply_chain_role: a.contributor_supply_chain_role ?? null };
+      };
+      const antes = await ler();
+      if (!antes.tipo) return json({ erro: "não consegui ler o anúncio", antes }, 400);
+      const so = (v: unknown) => [{ value: v, marketplace_id: mkt }];
+      const patches: any[] = [];
+      for (const [q, k] of [["ncm", "ncm_code"], ["origem", "import_designation"], ["papel", "contributor_supply_chain_role"]] as const) {
+        const v = u.searchParams.get(q); if (v) patches.push({ op: "replace", path: `/attributes/${k}`, value: so(v) });
+      }
+      if (!patches.length) return json({ erro: "nada a alterar" }, 400);
+      const corpo = { productType: antes.tipo, patches };
+      const pv = await sp(token, "PATCH", caminho, { marketplaceIds: mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, corpo);
+      const registro: Record<string, unknown> = { sku_amazon: skuAmz, antes, enviado: corpo, previa: { http: pv.status, situacao: pv.body?.status ?? null, pendencias: pend(pv.body, 20) } };
+      if (pv.body?.status !== "VALID" || u.searchParams.get("confirmar") !== "1") {
+        await sb.from("debug_fulfillment").insert({ modulo: "amazon-fiscal-aplicar", etapa: `${skuAmz}:previa`, status_http: pv.status, resultado: registro });
+        return json({ ...registro, aplicado: false, motivo: pv.body?.status !== "VALID" ? "a validação não passou" : "sem confirmar=1" });
+      }
+      // escrita real: uma vez só, sem repetição automática
+      const r = await fetch(`${SPAPI}${caminho}?marketplaceIds=${mkt}&issueLocale=pt_BR`, {
+        method: "PATCH", headers: { "x-amz-access-token": token, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(corpo),
+      });
+      const txt = await r.text(); let corpoR: any = null; try { corpoR = JSON.parse(txt); } catch { corpoR = { bruto: txt.slice(0, 300) }; }
+      registro.resposta = { http: r.status, situacao: corpoR?.status ?? null, submissionId: corpoR?.submissionId ?? null, pendencias: pend(corpoR, 20) };
+      await sleep(4000);
+      registro.depois = await ler();
+      await sb.from("debug_fulfillment").insert({ modulo: "amazon-fiscal-aplicar", etapa: skuAmz, status_http: r.status, resultado: registro });
+      return json({ ...registro, aplicado: r.ok && corpoR?.status === "ACCEPTED" });
     } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
   }
   if (!sku && !asinQ) return json({ erro: "informe ?sku= ou ?asin=" }, 400);
