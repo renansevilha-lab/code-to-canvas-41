@@ -176,6 +176,15 @@ async function chamarFuncao(funcao: string, modulo: string, body: Record<string,
 }
 /** Geração: briefing, texto, prompts de imagem, imagens, foto de referência. */
 export const chamarIa = (modulo: string, body: Record<string, unknown>) => chamarFuncao("ia-anuncio", modulo, body);
+/** Resultado de um código no "Importar do Tiny" (edge fn tiny-produto-importar). */
+export interface ItemImportado {
+  sku: string; ok: boolean; origem: string; erro?: string; novo?: boolean; nome?: string | null; tipo?: string | null;
+  situacao?: string | null; custo?: number | null; preco?: number | null; estoque?: number | null; foto?: string | null;
+  sku_pai?: string | null; componentes?: number; variacoes?: number;
+}
+/** Lê o produto no Tiny e grava (ou atualiza) no cadastro do sistema na hora — sem esperar a sincronização da madrugada. */
+export const importarDoTiny = (skus: string[]) =>
+  chamarFuncao("tiny-produto-importar", "importar", { skus }) as Promise<{ itens: ItemImportado[]; faltam: string[]; tudo_ok: boolean }>;
 /**
  * Variações na Amazon (edge fn `amazon-variacoes`, 18/out/2026): `ler` e `previa` só leem/validam; `aplicar`
  * escreve. Devolve a resposta mesmo com `ok: false` (o `aplicar` diz o que já foi feito antes de parar).

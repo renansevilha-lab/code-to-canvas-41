@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, RefreshCw, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CriarVariacoes } from "@/components/ia/anuncio/CriarVariacoes";
 import { CriarVariacoesCores } from "@/components/ia/anuncio/CriarVariacoesCores";
+import { ImportarDoTiny, importarTudo } from "@/components/ia/anuncio/ImportarDoTiny";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -123,6 +124,9 @@ function AnunciosPage() {
   // seleção de produtos SIMPLES (vale entre páginas e buscas) → um produto com variações de cor × quantidade
   const [selecionados, setSelecionados] = useState<string[]>([]);
   const [coresAberto, setCoresAberto] = useState(false);
+  // "Importar do Tiny": produto cadastrado hoje no Tiny entra no sistema na hora (sem esperar a madrugada)
+  const [importarAberto, setImportarAberto] = useState<string | null>(null);
+  const verSku = (sku: string) => { setDigitado(sku); set({ q: sku, sit: undefined, tipo: undefined, sem: undefined, marca: undefined }); };
   const alternar = (sku: string) => setSelecionados((s) => (s.includes(sku) ? s.filter((x) => x !== sku) : [...s, sku]));
 
   // kits como no Tiny: a composicao (quantidade x componente) aparece na linha. So os kits da pagina.
@@ -203,6 +207,10 @@ function AnunciosPage() {
           <SelectTrigger className="h-9 w-[220px]"><SelectValue /></SelectTrigger>
           <SelectContent>{ORDENS.filter((o) => o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120").map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
         </Select>
+        <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={() => setImportarAberto(digitado.trim())}
+          title="Produto cadastrado hoje no Tiny ainda não aparece? Traga agora (ou atualize um que já está aqui).">
+          <Download className="h-4 w-4" />Importar do Tiny
+        </Button>
         {catQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </div>
 
@@ -237,7 +245,17 @@ function AnunciosPage() {
         ) : catQ.isError ? (
           <div className="p-10 text-center text-destructive">Falha: {(catQ.error as Error).message}</div>
         ) : !cat?.linhas.length ? (
-          <div className="p-10 text-center text-muted-foreground">Nenhum produto com esses filtros.</div>
+          <div className="p-10 text-center text-muted-foreground space-y-2">
+            <div>Nenhum produto com esses filtros.</div>
+            {q && (
+              <div className="text-sm">
+                Cadastrou hoje no Tiny? A lista só recebe produto novo na sincronização da madrugada.{" "}
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 ml-1" onClick={() => setImportarAberto(q)}>
+                  <Download className="h-3.5 w-3.5" />Importar "{q}" do Tiny agora
+                </Button>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="divide-y">{cat.linhas.map((x) => <Linha key={x.sku} x={comCapa(x)} canalPadrao={canalPadrao} composicao={kitsQ.data?.[x.sku]} onVariacoes={setVariacoesDe}
             selecionado={selecionados.includes(x.sku)} onSelecionar={alternar} />)}</div>
@@ -245,6 +263,7 @@ function AnunciosPage() {
       </Card>
 
       {variacoesDe && <CriarVariacoes sku={variacoesDe} onFechar={() => setVariacoesDe(null)} />}
+      {importarAberto !== null && <ImportarDoTiny inicial={importarAberto} onFechar={() => setImportarAberto(null)} onVer={verSku} />}
       {coresAberto && <CriarVariacoesCores skus={selecionados} onFechar={() => { setCoresAberto(false); setSelecionados([]); }} />}
 
       {total > 0 && (
@@ -267,6 +286,18 @@ function AnunciosPage() {
 }
 
 interface Componente { sku_componente: string; quantidade: number; nome_componente: string | null }
+
+/** Relê o produto no Tiny e regrava no sistema (nome, custo, foto, kit; o pai traz as variações). */
+async function atualizarDoTiny(sku: string, qc: ReturnType<typeof useQueryClient>) {
+  const aviso = toast.loading(`Lendo ${sku} no Tiny…`);
+  try {
+    const itens = await importarTudo([sku]);
+    const falhas = itens.filter((i) => !i.ok);
+    if (falhas.length) toast.error(`${sku}: não atualizou tudo`, { id: aviso, description: falhas.map((i) => `${i.sku}: ${i.erro}`).join(" · "), duration: 15000 });
+    else toast.success(itens.length > 1 ? `${sku} e mais ${itens.length - 1} atualizados do Tiny` : `${sku} atualizado do Tiny`, { id: aviso, duration: 6000 });
+    void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+  } catch (e) { toast.error("Não consegui ler o Tiny", { id: aviso, description: (e as Error).message, duration: 15000 }); }
+}
 
 /** Produto criado pelo app: põe a foto principal do produto base no pai e nas variações que ainda não têm foto no Tiny. */
 async function copiarFotoDoBase(sku: string) {
@@ -293,6 +324,7 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
   selecionado?: boolean; onSelecionar?: (sku: string) => void;
 }) {
   const podeSelecionar = !!onSelecionar && !variacao && x.tipo === "S";
+  const qc = useQueryClient();
   const primeiro = x.rascunhos[0];
   const filhas = x.variacoes ?? [];
   const [aberto, setAberto] = useState(false);
@@ -363,6 +395,10 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
             <DropdownMenuItem disabled={x.tipo !== "S" || variacao} onSelect={() => onVariacoes(x.sku)}>
               <Layers className="h-4 w-4 mr-2" />Criar produto com variações
               {x.tipo !== "S" && <span className="ml-2 text-[10px] text-muted-foreground">só produto simples</span>}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void atualizarDoTiny(x.sku, qc)}>
+              <RefreshCw className="h-4 w-4 mr-2" />Atualizar do Tiny
+              <span className="ml-2 text-[10px] text-muted-foreground">custo, foto, kit, variações</span>
             </DropdownMenuItem>
             {x.criado_app && !variacao && (
               <DropdownMenuItem onSelect={() => copiarFotoDoBase(x.sku)}>

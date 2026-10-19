@@ -3105,6 +3105,33 @@ antiga; (2) a observação ia só no FIM do prompt, depois de "Barra inferior: 8
   selo do prompt viram "sem" na hora de gerar + aviso "ESTILO SEM TEXTO" — vale para prompt antigo e
   editado à mão; (3) `EditorPrompt` salva ao sair do campo e mostra "não salvo / salvo".
 
+## 5.11.11.12 Importar/atualizar produto do Tiny na hora (19/out/2026)
+
+Pedido do dono: produto cadastrado no Tiny durante o dia não aparecia em `/ia/anuncios`.
+- **Causa:** o espelho `produtos` só recebe produto novo na listagem da madrugada (cron 19). Desde a
+  `tiny-sync-produtos` v29, `?modulo=produtos` chamado no meio do dia responde "passada de hoje já
+  completa" **sem ir ao Tiny** (só `forcar=1` começa outra passada inteira), e `?modulo=detalhar&sku=`
+  só serve a SKU que já está no espelho (precisa do `id_tiny`). Ou seja, não havia caminho para trazer
+  um produto novo. **O atalho da tela de Promoções (`useCustoTinyAutomatico`, §5.9.1) também parou por
+  isso** — ele chama `modulo=produtos` e depois `detalhar&sku=`; trocar pela função nova é pendência.
+- **Edge fn `tiny-produto-importar` v1** (função nova, separada da `tiny-sync-produtos` crítica e da
+  `tiny-produto-variacoes`; sessão de usuário qualquer, `verify_jwt` true): `POST {skus: [...]}` (até 20)
+  → `GET /produtos?codigo=` (código exato) + `GET /produtos/{id}` → upsert em `produtos` com os MESMOS
+  campos da listagem (`mapearItemBasico` da v29: custo, preço, situação, gtin, unidade, tipo_variacao,
+  `tiny_alterado_em`) + do detalhe (foto, marca, categoria, fornecedor, estoque, pai,
+  `detalhe_atualizado_em`) e a composição do kit em `produto_kits`. Já existe = atualiza. Traz junto a
+  família: as variações de um pai (e liga `sku_pai`), o pai de uma variação e o componente de um kit
+  que ainda não estão no espelho. Só LÊ no Tiny. Orçamento 22 s → `faltam` (a tela chama de novo).
+  Responde `ok: true` + resultado por código (`itens[].ok/erro`) e `tudo_ok`. Registro em
+  `debug_fulfillment` (`modulo = 'tiny-produto-importar'`).
+- **Tela:** botão "Importar do Tiny" ao lado da busca em `/ia/anuncios` (diálogo `ImportarDoTiny.tsx`:
+  códigos separados por vírgula/espaço, resultado com foto, novo/atualizado, custo, kit, variações, e
+  "Ver na lista"); a lista vazia com busca oferece "Importar "<busca>" do Tiny agora"; menu "…" da
+  linha → "Atualizar do Tiny" (relê custo, foto, kit, variações). Produto inativo no Tiny entra com
+  `ativo=false` e não aparece na lista (o diálogo avisa).
+- **Não testado com login** (o teste real é do dono pela tela). Conferido: preflight 200, sem sessão
+  401, no ar = repositório por sha256 (`cea505f6…a470`).
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -3280,6 +3307,7 @@ novo" de `Publicar.tsx` (antes travado para a Amazon). Só a conta **ACZ** (a SV
 | `anuncio-publicar` | v11 (deploy 12; 19/out: a Amazon também CRIA — oferta em ASIN existente ou ficha nova, §5.11.12.2); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `amazon-lwa-debug` | v18 (= `amazon-anuncio-sonda` v3) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar e, v3, pesquisa pelo ASIN + ensaio de variação — ver §5.11.12 e §5.11.12.1 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
