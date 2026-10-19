@@ -51,6 +51,8 @@ interface DevAberta {
   due_date: string | null;
   /** prazo de disputa do Seller Center (cai no due_date quando a Shopee não informa) — 18/out/2026 */
   prazo_disputa: string | null;
+  /** PENDING_REQUEST = a Shopee pediu a validação do vendedor (dá para disputar); vazio/NOT_REQUIRED = nada a fazer */
+  compensacao_status: string | null;
   itens: { sku: string | null; nome: string | null; qtd: number | null }[] | null;
   create_time: string | null;
   // cruzamento com o recebimento fisico no estoque (bipagem) — por order_sn
@@ -175,7 +177,7 @@ export function DevolucoesShopeeAbertas() {
       const { data, error } = await supabaseExternal
         .from("view_devolucoes_shopee_abertas")
         .select("*")
-        .or(`status.in.(REQUESTED,PROCESSING,JUDGING),and(status.eq.ACCEPTED,prazo_disputa.gt.${new Date().toISOString()})`)
+        .or(`status.in.(REQUESTED,PROCESSING,JUDGING),and(status.eq.ACCEPTED,compensacao_status.eq.PENDING_REQUEST,prazo_disputa.gt.${new Date().toISOString()})`)
         .order("prazo_disputa", { ascending: true, nullsFirst: false })
         .limit(200);
       if (error) throw error;
@@ -424,10 +426,13 @@ export function DevolucoesShopeeAbertas() {
             // reembolso aceito com o prazo de DISPUTA vencido = a Shopee já finalizou e reembolsou: nada a
             // aprovar nem disputar (18/out: "Aprovar" numa achada pela busca voltou "Invalid return status:
             // RETURN_ACCEPTED"). O prazo de disputa real (prazo_disputa) é confiável; o due_date antigo não era.
-            const encerrada = d.status === "ACCEPTED" && !!prazoIso && new Date(prazoIso).getTime() <= Date.now();
-            const st = encerrada ? { rotulo: "Reembolso concluído", cor: "#5C6470" }
+            // reembolso aceito SEM pedido de compensação ao vendedor (ex.: "não recebi") também não tem o que
+            // validar nem disputar — o Seller Center não lista com "Disputar" (18/out, caso 2610170U790YQUV)
+            const semValidacao = d.status === "ACCEPTED" && d.compensacao_status !== "PENDING_REQUEST";
+            const encerrada = d.status === "ACCEPTED" && (semValidacao || (!!prazoIso && new Date(prazoIso).getTime() <= Date.now()));
+            const st = encerrada ? { rotulo: semValidacao ? "Reembolso aprovado pela Shopee" : "Reembolso concluído", cor: "#5C6470" }
               : STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
-            const prazo = encerrada ? { txt: "disputa encerrada", urgente: false } : prazoTexto(prazoIso);
+            const prazo = encerrada ? { txt: semValidacao ? "sem validação do vendedor" : "disputa encerrada", urgente: false } : prazoTexto(prazoIso);
             // Quem decide se ainda da pra responder e a SHOPEE, nao o nosso
             // relogio: o due_date do espelho vence e a solicitacao segue aberta
             // (visto ao vivo 31/ago — TODOS os cards com "prazo venceu" e sem

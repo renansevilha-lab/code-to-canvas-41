@@ -22,6 +22,8 @@ export interface InfoDevolucao {
   due_date: string | null;
   /** "disputa até" do Seller Center (seller_compensation_due_date); sem ele vale o due_date — 18/out/2026 */
   prazo_disputa: string | null;
+  /** PENDING_REQUEST = validação do vendedor pedida (dá para disputar) */
+  compensacao_status: string | null;
   needs_logistics: boolean | null;
   logistica_reversa: string | null;
   tracking_number: string | null;
@@ -39,7 +41,7 @@ export interface InfoDevolucao {
 }
 
 const COLS_DEV =
-  "return_sn,order_sn,status,solucao,due_date,prazo_disputa,needs_logistics,logistica_reversa,tracking_number,itens," +
+  "return_sn,order_sn,status,solucao,due_date,prazo_disputa,compensacao_status,needs_logistics,logistica_reversa,tracking_number,itens," +
   "ida_status,ida_entregue_em,ida_falha_em,ida_devolvido_em,ida_ultimo_evento,ida_ultimo_em,ida_consultado_em";
 
 /** Detalhe das devoluções (por return_sn) + transportadora/status do pedido. */
@@ -90,6 +92,8 @@ export function statusSolicitacao(d: InfoDevolucao | undefined): Rotulo {
   const st = d?.status ?? "";
   const prazo = d?.prazo_disputa ?? d?.due_date ?? null;
   const dentroDoPrazo = !!prazo && new Date(prazo).getTime() > Date.now();
+  // sem pedido de compensação ao vendedor não há validação nem disputa (18/out/2026)
+  const pedeValidacao = d?.compensacao_status === "PENDING_REQUEST";
   switch (st) {
     case "REQUESTED": return { rotulo: "Solicitado", detalhe: "aguardando a Shopee", cor: "#2F6FB0" };
     case "PROCESSING":
@@ -97,6 +101,7 @@ export function statusSolicitacao(d: InfoDevolucao | undefined): Rotulo {
         ? { rotulo: "Em devolução", detalhe: "o comprador está devolvendo o produto", cor: "#B7791F" }
         : { rotulo: "Em processamento", cor: "#B7791F" };
     case "ACCEPTED":
+      if (!pedeValidacao) return { rotulo: "Reembolso aprovado pela Shopee", detalhe: "sem validação do vendedor — não há o que disputar", cor: CINZA };
       return dentroDoPrazo
         ? { rotulo: "Pendente validação do vendedor", detalhe: `a Shopee aprovou o reembolso · disputa até ${dia(prazo)}`, cor: "#C9432F" }
         : { rotulo: "Reembolso concluído", detalhe: "prazo de disputa encerrado", cor: CINZA };

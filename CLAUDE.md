@@ -1805,6 +1805,15 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   `coalesce(prazo_disputa, due_date)`, mesma regra em `view_shopee_devolucoes_a_rastrear`, na aba de abertas e em
   `statusSolicitacao` (`src/lib/shopeeDevolucao.ts`). A Shopee só informa o prazo em parte das aceitas (19 de 82
   em 15 dias); sem ele vale o `due_date`. Na hora da correção: abertas dentro do prazo 4 → 8.
+- **"Aguardando sua validação" = `compensacao_status = PENDING_REQUEST` (18/out, 2ª rodada):** reembolso aceito sem
+  pedido de compensação ao vendedor (vazio ou `NOT_REQUIRED` — ex.: 2610170U790YQUV "não recebi") não tem validação
+  nem disputa e o Seller Center não o lista com "Disputar"; o app mostrava todo ACCEPTED dentro do prazo. Agora a aba
+  de abertas filtra `status = ACCEPTED and compensacao_status = PENDING_REQUEST and prazo_disputa > now()` (coluna
+  nova na `view_devolucoes_shopee_abertas`), o card dos demais aceitos (achados pela busca) diz "Reembolso aprovado
+  pela Shopee · sem validação do vendedor", sem botões, e `statusSolicitacao` usa a mesma regra. Aceita ainda sem
+  detalhe lido some da aba até o `detalhar` (cron 124, :13/:43) preencher o status.
+- Reembolso aceito com o prazo de DISPUTA vencido = "Reembolso concluído", sem botões (o "Aprovar" numa achada pela
+  busca voltava "Invalid return status: RETURN_ACCEPTED").
 - **Busca na aba "Shopee (abertas)" (18/out, pedido do dono):** campo ao lado dos filtros de loja — pedido,
   solicitação, rastreio ou SKU/produto filtram as abertas; pedido/solicitação/rastreio (6+ caracteres) que NÃO está
   entre as abertas é procurado na `view_devolucoes_shopee_abertas` sem filtro de status e aparece com o selo "fora
