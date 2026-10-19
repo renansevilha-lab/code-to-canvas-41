@@ -41,3 +41,23 @@ export function rotulosDasCores(bases: BaseRotulo[]): { cores: { sku: string; ro
   });
   return { cores, comum: comum.replace(/[\s\-–[(]+$/, "").trim(), temCor };
 }
+
+/** "Toalhas … 50 Un" → 50; sem contagem de unidades no fim do nome → null. */
+export function unidadesDoNome(nome: string | null | undefined): number | null {
+  const m = String(nome ?? "").match(/(\d+)\s*(un|und|unid|unidades?)\.?\s*$/i);
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isFinite(n) && n > 1 ? n : null;
+}
+
+/** Contagem de unidades por pacote quando TODOS os produtos base têm a mesma (a Shopee usa a mesma lista de
+ *  quantidades para todos os tipos — pacotes de tamanhos diferentes dariam rótulos diferentes por tipo). */
+export function unidadesComuns(nomes: (string | null | undefined)[]): number | null {
+  const us = nomes.map(unidadesDoNome);
+  return us.length && us.every((u) => u != null && u === us[0]) ? us[0] : null;
+}
+
+/** Opção do grupo Quantidade: "6 pct (300 un)" quando o pacote tem contagem (pedido do dono, 19/out —
+ *  "6 un" não dizia quantas toalhas o kit tem); senão "6 un". Sempre ≤ 20 letras para kits de até 999. */
+export function rotuloQuantidade(qtd: number, unidadesPorPacote: number | null): string {
+  return unidadesPorPacote ? `${qtd} pct (${qtd * unidadesPorPacote} un)` : `${qtd} un`;
+}

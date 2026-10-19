@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
-import { rotulosDasCores } from "@/lib/rotulosVariacao";
+import { rotuloQuantidade, rotulosDasCores, unidadesComuns } from "@/lib/rotulosVariacao";
 
 // ============================================================================
 // "Criar produto com variações de cor × quantidade" (14/out/2026, pedido do dono — ex.: Carpete Autocolante
@@ -32,7 +32,6 @@ interface Resultado { pai: { sku: string; id: number; nome: string }; variacoes:
 
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
-const rotuloQtd = (n: number) => `${n} un`;
 
 
 export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFechar: () => void }) {
@@ -74,6 +73,9 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
   const [progresso, setProgresso] = useState("");
 
   const bases = basesQ.data ?? [];
+  // "6 pct (300 un)" quando todo produto base diz quantas unidades tem (ex.: toalhas "50 Un"); senão "6 un"
+  const porPacote = unidadesComuns(bases.map((b) => b.nome));
+  const rotuloQtd = (n: number) => rotuloQuantidade(n, porPacote);
   const livres = sugQ.data?.skus ?? [];
   useEffect(() => {
     if (!bases.length) return;

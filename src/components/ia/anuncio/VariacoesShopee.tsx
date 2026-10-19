@@ -10,7 +10,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes, chamarVariacoesShopee, nomeEmpresa, urlsAssinadas } from "@/lib/iaAnuncio";
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
-import { rotulosDasCores } from "@/lib/rotulosVariacao";
+import { rotuloQuantidade, rotulosDasCores, unidadesComuns } from "@/lib/rotulosVariacao";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -107,6 +107,8 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         // sem "[Cor]" no nome os produtos não são cores (ex.: toalhas Higiene Face × Limpa Patas): o grupo vira "Tipo"
         if (!r.temCor && grades[0] === "Cor") grades = ["Tipo", grades[1]];
       }
+      // 2º grupo: "6 pct (300 un)" quando o pacote diz quantas unidades tem (pedido do dono, 19/out)
+      const porPacote = grades.length === 2 && comps.length > 1 ? unidadesComuns(comps.map((c) => c.nome)) : null;
       const baseDe = (skuVar: string) => { const m = kits.filter((x) => x.sku_kit === skuVar); return m.length === 1 ? m[0].sku_componente : null; };
       const herdadas = new Map(((medPai.data ?? []) as Medida[]).map((m) => [m.sku, m]));
       const completa = (m?: Medida) => (m && Number(m.comprimento_cm) > 0 && Number(m.largura_cm) > 0 && Number(m.altura_cm) > 0 ? m : null);
@@ -133,7 +135,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const vals = valoresDe.get(v.sku);
         const doBase = rotuloDoBase.get(baseDe(v.sku) ?? "");
         const opcao = (doBase ?? vals?.[0] ?? (nome.startsWith(`${nomePai} - `) ? nome.slice(nomePai.length + 3) : nome)).trim().slice(0, 20);
-        const opcao2 = (vals?.[1] ?? "").trim().slice(0, 20);
+        const opcao2 = (porPacote && qtd.get(v.sku) ? rotuloQuantidade(qtd.get(v.sku)!, porPacote) : vals?.[1] ?? "").trim().slice(0, 20);
         const auto = padraoDe(v.sku);
         return {
           sku: v.sku, opcao, opcao2, peso: emTexto(conferidas.get(v.sku)?.peso_kg) || pesoDaOpcao(opcao),
