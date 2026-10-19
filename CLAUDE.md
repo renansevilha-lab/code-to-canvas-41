@@ -3256,6 +3256,26 @@ novo" de `Publicar.tsx` (antes travado para a Amazon). Só a conta **ACZ** (a SV
   seguem exigindo login — 401 conferido). `existentesAmz` passou a procurar também `<sku>_FBA`.
 - **Depois de criar:** a Amazon processa em minutos (ficha nova pode levar horas para ganhar ASIN); só vende
   quando o estoque chega ao CD (envio pelo Seller Central; na SVL, pela Reposição).
+
+## 5.11.12.3 Amazon — dados fiscais pela API (19/out/2026, só ensaio)
+
+Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `amazon-anuncio-sonda` **v4** (slot
+`amazon-lwa-debug` v20): `?teste=fiscal&conta=ottz[&sku_amazon=X&ncm=&origem=&papel=&csosn=&cest=]` (só leitura
++ VALIDATION_PREVIEW).
+- **No anúncio: SIM.** O esquema (ANIMAL_LITTER e PET_SUPPLIES) tem, todos opcionais: `ncm_code` (8 dígitos),
+  `import_designation` (origem 0–8), `contributor_supply_chain_role` (distributor/manufacturer/importer),
+  `tax_treatment` (CSOSN: csosn_102, _103, _300, _400, _500), `tax_classification_code` (CEST),
+  `tax_legal_proceeding`. O PATCH desses campos dá **VALID** (ensaio: 15984_FBA com origem 0 + NCM 11062000;
+  FBA-15825 com NCM, origem e papel). Os anúncios já têm NCM/origem/papel (preenchidos no Seller Central) e
+  nenhum tem CSOSN nem CEST.
+- **Achado:** o **15984_FBA** está com origem **1** (estrangeira, importação direta) — areia nacional deveria ser 0.
+  Não corrigido (escrita real precisa do OK do dono).
+- **`anuncio-publicar` NÃO manda nenhum campo fiscal** na ficha nova (§5.11.12.2): o anúncio nasce sem NCM/origem.
+- **Notas fiscais: NÃO, por enquanto.** Invoices API (`/tax/invoices/2024-06-19/…`: NF que a Amazon emite no FBA e
+  a nota de REMESSA do envio ao CD, `governmentInvoiceRequests`) e Shipment Invoicing (`/fba/outbound/brazil/v0`,
+  só FBA Onsite) dão **403 nas duas contas**: os apps (Ottz Analytics, SISTEMINHA I) não têm o papel
+  **"Tax Invoicing (Restricted)"** — papel restrito, pedido no Developer Central (a Amazon analisa). Na venda FBA a
+  NF é emitida pela própria Amazon (Faturador), a partir dos campos fiscais do anúncio.
 - **Regra do dono (19/out, `anuncio-publicar` v12, deploy 13): na Amazon, só produto Bumi vai com a marca própria;
   todo o resto vai como "Genérico"** (marca e fabricante; `/bumi/i` na marca do cadastro). Na FICHA NOVA de um
   Genérico o EAN do cadastro NÃO vai — é do fabricante na GS1 e dá **8572**; só vai se for digitado. `opcoes.sem_gtin`
@@ -3316,7 +3336,7 @@ novo" de `Publicar.tsx` (antes travado para a Amazon). Só a conta **ACZ** (a SV
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
-| `amazon-lwa-debug` | v18 (= `amazon-anuncio-sonda` v3) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar e, v3, pesquisa pelo ASIN + ensaio de variação — ver §5.11.12 e §5.11.12.1 |
+| `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |

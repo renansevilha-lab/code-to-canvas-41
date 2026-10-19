@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-anuncio-sonda v3 (18/out/2026) — IA · Anúncios
+// Edge Function: amazon-anuncio-sonda v4 (19/out/2026) — IA · Anúncios
 // (publicada no slot `amazon-lwa-debug`: criar função nova no projeto falha — ver CLAUDE.md §5.11)
 // ----------------------------------------------------------------------------
 // DIAGNÓSTICO do envio de anúncio para a Amazon (SP-API, Listings Items). NÃO altera nada:
@@ -17,6 +17,10 @@
 //       tema), quais SKUs NOSSOS estão nesse ASIN (searchListingsItems por ASIN), os temas de variação
 //       que o tipo de produto aceita e um ENSAIO de pôr o anúncio como variação (pai novo + este
 //       anúncio como filho), só com VALIDATION_PREVIEW. Nada é criado.
+// GET ?conta=ottz|svl&teste=fiscal
+//       v4 (19/out/2026): DADOS FISCAIS. Invoices API (notas do FBA + nota de remessa), Shipment Invoicing
+//       (papel) e os campos fiscais que o esquema do anúncio aceita (com as opções). &sku_amazon=X&ncm=&origem=
+//       &papel=&csosn=&cest= ensaia gravar esses campos num anúncio (VALIDATION_PREVIEW, nada é aplicado).
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -58,6 +62,58 @@ Deno.serve(async (req) => {
   const sku = (u.searchParams.get("sku") || "").trim();
   const asinQ = (u.searchParams.get("asin") || "").trim().toUpperCase();
   const ensaioCriar = u.searchParams.get("ensaio") === "criar";
+  // ------------------------------------------------------------ v4: DADOS FISCAIS (só leitura)
+  if (u.searchParams.get("teste") === "fiscal") {
+    try {
+      const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token, merchant_token, marketplace_id").eq("shop_id", SHOP[conta]).maybeSingle();
+      if (!tk) return json({ erro: `conta ${conta} da Amazon não conectada` }, 400);
+      const mkt = tk.marketplace_id || MKT_BR; const token = String(tk.access_token);
+      const resumo = (r: { status: number; body: any }, n = 1500) => ({ http: r.status, erro: pend(r.body).slice(0, 3), corpo: JSON.stringify(r.body ?? null).slice(0, n) });
+      const desde = new Date(Date.now() - 10 * 86400_000).toISOString();
+      const out: Record<string, unknown> = { conta };
+      // Invoices API (Brasil, FBA): notas que a Amazon emite + nota de remessa do envio ao CD (papel "Tax Invoicing")
+      out.invoices_atributos = resumo(await sp(token, "GET", "/tax/invoices/2024-06-19/attributes", { marketplaceId: mkt }), 3000);
+      out.invoices_ultimas = resumo(await sp(token, "GET", "/tax/invoices/2024-06-19/invoices", { marketplaceId: mkt, pageSize: "5", dateStart: desde, sortOrder: "DESC", sortBy: "START_DATE_TIME" }), 3000);
+      out.invoices_exports = resumo(await sp(token, "GET", "/tax/invoices/2024-06-19/exports", { marketplaceId: mkt, pageSize: "3" }));
+      // Shipment Invoicing (só FBA Onsite): o código diz se o papel existe (403 = sem papel; 400/404 = tem)
+      out.shipment_invoicing = resumo(await sp(token, "GET", "/fba/outbound/brazil/v0/shipments/TESTE-PAPEL", {}));
+      // campos fiscais que o anúncio aceita (esquema do tipo de produto)
+      const fiscais: Record<string, unknown> = {};
+      for (const tipo of ["ANIMAL_LITTER", "PET_SUPPLIES"]) {
+        const def = await sp(token, "GET", `/definitions/2020-09-01/productTypes/${tipo}`, { marketplaceIds: mkt, requirements: "LISTING", locale: "pt_BR", ...(tk.merchant_token ? { sellerId: String(tk.merchant_token) } : {}) });
+        const link = def.body?.schema?.link?.resource;
+        if (!link) { fiscais[tipo] = { http: def.status, erro: pend(def.body).slice(0, 2) }; continue; }
+        const sc = await (await fetch(String(link))).json();
+        const props = (sc?.properties ?? {}) as Record<string, any>;
+        fiscais[tipo] = Object.entries(props)
+          .filter(([k, p]) => /ncm|tax|fiscal|cfop|cest|imposto|tribut|hs_code|harmon|origin|origem|import|supply_chain/i.test(`${k} ${p?.title ?? ""}`))
+          .map(([k, p]) => {
+            const v = p?.items?.properties?.value ?? {};
+            const en = [...((v.enum ?? []) as unknown[]), ...((v.anyOf ?? []) as any[]).flatMap((x) => (x.enum ?? []) as unknown[])].map(String);
+            const nm = [...((v.enumNames ?? []) as unknown[]), ...((v.anyOf ?? []) as any[]).flatMap((x) => (x.enumNames ?? []) as unknown[])].map(String);
+            return { campo: k, nome: p?.title ?? null, obrigatorio: ((sc?.required ?? []) as string[]).includes(k), descricao: String(p?.description ?? "").slice(0, 160),
+              opcoes: en.slice(0, 40).map((e, i) => `${e}${nm[i] && nm[i] !== e ? ` = ${nm[i]}` : ""}`) };
+          });
+      }
+      out.campos_fiscais_no_anuncio = fiscais;
+      // &sku_amazon=X[&ncm=][&origem=][&papel=][&csosn=][&cest=]: ENSAIO de gravar os campos fiscais (VALIDATION_PREVIEW)
+      const skuAmz = (u.searchParams.get("sku_amazon") || "").trim();
+      if (skuAmz && tk.merchant_token) {
+        const it = await sp(token, "GET", `/listings/2021-08-01/items/${encodeURIComponent(String(tk.merchant_token))}/${encodeURIComponent(skuAmz)}`, { marketplaceIds: mkt, includedData: "summaries,attributes" });
+        const tipo = it.body?.summaries?.[0]?.productType;
+        const so = (v: unknown) => [{ value: v, marketplace_id: mkt }];
+        const patches: any[] = [];
+        const campos: [string, string][] = [["ncm", "ncm_code"], ["origem", "import_designation"], ["papel", "contributor_supply_chain_role"], ["csosn", "tax_treatment"], ["cest", "tax_classification_code"]];
+        for (const [q, k] of campos) { const v = u.searchParams.get(q); if (v) patches.push({ op: "replace", path: `/attributes/${k}`, value: so(v) }); }
+        const atual = Object.fromEntries(campos.map(([, k]) => [k, ((it.body?.attributes?.[k] ?? []) as any[]).map((x) => x.value)]));
+        const pv = patches.length && tipo
+          ? await sp(token, "PATCH", `/listings/2021-08-01/items/${encodeURIComponent(String(tk.merchant_token))}/${encodeURIComponent(skuAmz)}`, { marketplaceIds: mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, { productType: tipo, patches })
+          : null;
+        out.ensaio_fiscal = { sku_amazon: skuAmz, tipo, hoje: atual, enviado: patches, http: pv?.status ?? null, situacao: pv?.body?.status ?? null, pendencias: pv ? pend(pv.body, 20) : [] };
+      }
+      return json(out);
+    } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
+  }
   if (!sku && !asinQ) return json({ erro: "informe ?sku= ou ?asin=" }, 400);
   try {
     const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token, expires_at, merchant_token, marketplace_id").eq("shop_id", SHOP[conta]).maybeSingle();
