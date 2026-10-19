@@ -1,6 +1,11 @@
 // ============================================================================
-// Edge Function: fulfillment-sync v4
+// Edge Function: fulfillment-sync v5
 // ----------------------------------------------------------------------------
+// v5 (19/out/2026, pedido do dono) — ESTOQUE DO FULL DO ML SEMPRE INTEIRO. A fase de stock lia 120
+//   anúncios por rodada, um por vez, e o cron roda 2×/dia: cada anúncio era relido a cada ~1,5 dia
+//   (o 14560 aparecia com 0 no Full tendo vendido 6 depois da última leitura). Agora cada rodada lê
+//   TODOS os estoques (inventory_id único — 270 para 374 anúncios), 6 em paralelo, gravando em lote;
+//   quem vendeu pelo Full depois da última leitura vai primeiro. `limite` é ignorado (`max` limita).
 // v4 (14/out/2026, pedido do dono) — EM TRÂNSITO DA AMAZON PELOS ENVIOS. O inventário FBA soma em
 //   "inbound" os envios CRIADOS e nunca despachados (WORKING) e envios despachados há meses que
 //   nunca chegaram (IN_TRANSIT desde mai/jun com 0 recebido) — a Reposição contava como "a caminho"
@@ -25,7 +30,7 @@
 //
 // Modulos:
 //   ?modulo=amazon                 -> FBA Inventory (paginado, warehouse=FBA)
-//   ?modulo=ml&limite=100          -> itens Full: cache (ml_full_itens) + stock
+//   ?modulo=ml[&max=N]             -> itens Full: cache (ml_full_itens) + stock de todos
 //   ?modulo=shopee&loja=ottz|svl   -> SBS get_current_inventory (por armazem)
 // ============================================================================
 
@@ -254,7 +259,6 @@ serve(async (req: Request) => {
   // v3: roda para todas as contas; cache guarda o dono (user_id)
   // ==========================================================================
   if (modulo === "ml") {
-    const limite = parseInt(url.searchParams.get("limite") || "100", 10);
     const { data: toks } = await supabase
       .from("oauth_tokens_ml")
       .select("user_id, access_token, expires_at")
@@ -346,45 +350,118 @@ serve(async (req: Request) => {
       itensFullPorConta.push({ user_id: tok.user_id, itens_full: idsFull.length, a_buscar: aBuscar.length });
     }
 
-    // ---- Fase 2: stock dos mais antigos (rotativo, todas as contas juntas)
-    const { data: paraStock } = await supabase
+    // ---- Fase 2 (v5): stock de TODOS os estoques do Full, 6 em paralelo, gravação em lote.
+    // Um inventory_id pode servir a vários anúncios (anúncio normal + catálogo): lê uma vez só.
+    // Ordem: primeiro quem vendeu pelo Full depois da última leitura, depois os mais antigos.
+    // `limite` (antigo, cron/tela mandam 120) é ignorado; `max` limita, se precisar.
+    const maxInv = parseInt(url.searchParams.get("max") || "0", 10) || Infinity;
+    const { data: cacheStock } = await supabase
       .from("ml_full_itens")
-      .select("item_id, inventory_id, sku, titulo, user_id")
+      .select("item_id, inventory_id, sku, titulo, user_id, stock_atualizado_em")
       .not("inventory_id", "is", null)
-      .order("stock_atualizado_em", { ascending: true, nullsFirst: true })
-      .limit(limite);
-    let stockOk = 0, semTokenDaConta = 0;
-    for (const it of (paraStock || [])) {
-      if (Date.now() - inicio > TIMEOUT_MS) { erros.push("timeout stock"); break; }
-      const tokenItem = tokenPorConta.get(Number(it.user_id));
-      if (!tokenItem) { semTokenDaConta++; continue; }
-      try {
-        const r = await fetch(`${ML_HOST}/inventories/${it.inventory_id}/stock/fulfillment`, { headers: { Authorization: `Bearer ${tokenItem}` } });
-        if (!r.ok) { erros.push(`stock ${it.inventory_id}: HTTP ${r.status}`); await sleep(150); continue; }
-        const p = await r.json();
-        const naoDisponivel = num(p?.not_available_quantity);
-        const { error } = await supabase.from("estoque_fulfillment").upsert({
-          marketplace: "mercadolivre", shop_id: Number(it.user_id),
-          sku_marketplace: String(it.inventory_id),
+      .limit(5000);
+    type Inv = { inventory_id: string; user_id: number; sku: string | null; titulo: string | null; itens: string[]; lido_em: number };
+    const porInv = new Map<string, Inv>();
+    for (const r of (cacheStock || [])) {
+      const chave = `${r.user_id}|${r.inventory_id}`;
+      const lido = r.stock_atualizado_em ? new Date(r.stock_atualizado_em).getTime() : 0;
+      const atual = porInv.get(chave);
+      if (!atual) {
+        porInv.set(chave, { inventory_id: String(r.inventory_id), user_id: Number(r.user_id), sku: r.sku ?? null, titulo: r.titulo ?? null, itens: [r.item_id], lido_em: lido });
+      } else {
+        atual.itens.push(r.item_id);
+        if (!atual.sku && r.sku) atual.sku = r.sku;
+        if (!atual.titulo && r.titulo) atual.titulo = r.titulo;
+        atual.lido_em = Math.min(atual.lido_em, lido);
+      }
+    }
+
+    // vendas pelo Full nos últimos 3 dias, por SKU (2 consultas, sem laço por item)
+    const ultimaVenda = new Map<string, number>();
+    {
+      const { data: peds } = await supabase.from("pedidos")
+        .select("id, data_pedido")
+        .eq("marketplace", "mercadolivre").eq("logistica_tipo", "fulfillment")
+        .gte("data_pedido", new Date(Date.now() - 3 * 86400000).toISOString())
+        .limit(2000);
+      const dataPorPedido = new Map<string, number>((peds || []).map((p: any) => [String(p.id), new Date(p.data_pedido).getTime()]));
+      const ids = [...dataPorPedido.keys()];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: its } = await supabase.from("pedido_itens").select("pedido_id, sku_filho, sku_pai").in("pedido_id", ids.slice(i, i + 200));
+        for (const it of (its || [])) {
+          const t = dataPorPedido.get(String(it.pedido_id)) ?? 0;
+          for (const s of [it.sku_filho, it.sku_pai]) {
+            const n = normalizarSku(s);
+            if (n && t > (ultimaVenda.get(n) ?? 0)) ultimaVenda.set(n, t);
+          }
+        }
+      }
+    }
+    const vendeuDepois = (v: Inv) => !!v.sku && (ultimaVenda.get(v.sku) ?? 0) > v.lido_em;
+    const fila = [...porInv.values()]
+      .sort((a, b) => (Number(vendeuDepois(b)) - Number(vendeuDepois(a))) || (a.lido_em - b.lido_em))
+      .slice(0, maxInv);
+    const prioritarios = fila.filter(vendeuDepois).length;
+
+    let stockOk = 0, semTokenDaConta = 0, estoquesLidos = 0;
+    const PARALELO = 6;
+    async function lerStock(v: Inv): Promise<any | null> {
+      const tokenItem = tokenPorConta.get(v.user_id);
+      if (!tokenItem) { semTokenDaConta++; return null; }
+      for (let tentativa = 0; tentativa < 2; tentativa++) {
+        try {
+          const r = await fetch(`${ML_HOST}/inventories/${v.inventory_id}/stock/fulfillment`, { headers: { Authorization: `Bearer ${tokenItem}` } });
+          if (r.status === 429 || r.status >= 500) { await sleep(1200); continue; }
+          if (!r.ok) { erros.push(`stock ${v.inventory_id}: HTTP ${r.status}`); return null; }
+          return await r.json();
+        } catch (err) {
+          if (tentativa === 1) erros.push(`stock ${v.inventory_id}: ${(err as Error).message.substring(0, 50)}`);
+          await sleep(500);
+        }
+      }
+      erros.push(`stock ${v.inventory_id}: sem resposta`);
+      return null;
+    }
+
+    for (let i = 0; i < fila.length; i += PARALELO) {
+      if (Date.now() - inicio > TIMEOUT_MS) { erros.push(`timeout stock (faltaram ${fila.length - i})`); break; }
+      const lote = fila.slice(i, i + PARALELO);
+      const resp = await Promise.all(lote.map(lerStock));
+      const agora = new Date().toISOString();
+      const linhas: any[] = [];
+      const itensOk: string[] = [];
+      lote.forEach((v, k) => {
+        const p = resp[k];
+        if (!p) return;
+        estoquesLidos++;
+        linhas.push({
+          marketplace: "mercadolivre", shop_id: v.user_id,
+          sku_marketplace: v.inventory_id,
           warehouse: "MELI",
-          sku: it.sku,
-          titulo: it.titulo,
+          sku: v.sku,
+          titulo: v.titulo,
           sellable: num(p?.available_quantity),
           reserved: 0,
           in_transit: 0,
-          unsellable: naoDisponivel,
-          atualizado_em: new Date().toISOString(),
-        }, { onConflict: "marketplace,shop_id,sku_marketplace,warehouse" });
-        if (error) erros.push(`upsert ${it.inventory_id}: ${error.message.substring(0, 50)}`);
+          unsellable: num(p?.not_available_quantity),
+          atualizado_em: agora,
+        });
+        itensOk.push(...v.itens);
+      });
+      if (linhas.length) {
+        const { error } = await supabase.from("estoque_fulfillment")
+          .upsert(linhas, { onConflict: "marketplace,shop_id,sku_marketplace,warehouse" });
+        if (error) erros.push(`upsert: ${error.message.substring(0, 60)}`);
         else {
-          stockOk++;
-          await supabase.from("ml_full_itens").update({ stock_atualizado_em: new Date().toISOString() }).eq("item_id", it.item_id);
+          stockOk += linhas.length;
+          const { error: e2 } = await supabase.from("ml_full_itens").update({ stock_atualizado_em: agora }).in("item_id", itensOk);
+          if (e2) erros.push(`cache stamp: ${e2.message.substring(0, 60)}`);
         }
-      } catch (err) { erros.push(`stock: ${(err as Error).message.substring(0, 50)}`); }
-      await sleep(180);
+      }
+      await sleep(120);
     }
 
-    return Response.json({ modulo, contas: itensFullPorConta, novos_no_cache: cacheados, stock_atualizados: stockOk, sem_token_da_conta: semTokenDaConta, erros: erros.slice(0, 4), tempo_ms: Date.now() - inicio });
+    return Response.json({ modulo, versao: 5, contas: itensFullPorConta, novos_no_cache: cacheados, estoques_na_fila: fila.length, prioritarios_vendidos: prioritarios, estoques_lidos: estoquesLidos, stock_atualizados: stockOk, sem_token_da_conta: semTokenDaConta, erros: erros.slice(0, 6), tempo_ms: Date.now() - inicio });
   }
 
   // ==========================================================================

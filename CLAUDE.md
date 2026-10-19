@@ -1727,6 +1727,17 @@ concluir.
   emissor do ML: `/users/{id}/invoices/sites/MLB/batch_request/period/stream?...&full=inbound` (não testado).
 - Sonda: `ml-anuncio-sonda` v6 (deploy 7) `?teste=inbound&conta=ottz|svl` (expira 21/out).
 
+## 5.9.4.2 Estoque do Full do ML ficava até 1,5 dia velho (19/out/2026)
+
+Relato do dono: "problema com atualização dos estoques fulfillment". Nenhuma rodada falhava. O `fulfillment-sync?modulo=ml`
+lia só 120 anúncios por rodada, um por vez (~0,35 s cada), e o cron 61 roda 2×/dia — com 374 anúncios no cache, cada um era
+relido a cada ~1,5 dia, e o botão da tela relia só ~60 (tempo). Ex.: 14560 aparecia com 0 no Full tendo vendido 6 pelo Full
+depois da última leitura (32 h antes). **v5 (deploy 20):** lê os estoques por `inventory_id` único (270 para 374 anúncios —
+catálogo e anúncio normal dividem o estoque), 6 em paralelo, grava `estoque_fulfillment` e o carimbo de `ml_full_itens` em
+lote; quem vendeu pelo Full depois da última leitura vai primeiro. `limite` (cron e tela mandam 120) é ignorado; `max=N`
+limita. 1ª rodada: 270/270 em 38 s, sem erro. Amazon e Shopee já liam tudo a cada rodada. Shopee SBS quase vazio na data
+(Ottz 5 un, Bumi 0) é real — as vendas pelo Full da Shopee caíram a ~0 desde 15/out.
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura
@@ -3418,7 +3429,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `ml-sync-ads` | v6 | ADS ML: janela por campanha (`ml_ads_campanha`) + `modulo=diario` (série `ml_ads_diario` **e** `ml_ads_campanha_diario`; `&so_campanha=1` grava só a por campanha) + `modulo=anuncios` (por MLB/dia → `ml_ads_anuncio_diario`; ~1 s/dia, para em 20 s e devolve `parou_em`) + `sonda-ads`. Só leitura na API |
 | `ml-sync-anuncios` | v4 | Catálogo ML (`ml_anuncios`): v4 grava também `preco` (cheio), `preco_original`, `estoque` — base do snapshot do Agente de ADS. Conta Ottz fixa |
 | `ml-etiqueta` | v16 | Etiqueta ML (ZPL via PrintNode ou fila própria §5.9) + **upload de NF-e ao ML** quando o Tiny falha (`enviar-nf` manual; `varrer-nf` = cron jobid 96 a cada 10 min, backoff em `ml_nf_estado`). Endpoint certo: `POST /shipments/{sid}/invoice_data?siteId=MLB` com o **nfeProc puro** (o obter.xml da v2 do Tiny devolve envelope `<retorno><xml_nfe>` — mandar o envelope dá "Malformed XML"). Bloqueio v2 cod 6 aborta a rodada — ver seção 6.2 |
-| `fulfillment-sync` | v4 (deploy 19) | Estoque nos CDs. v4: em trânsito da Amazon pelos envios (§5.9.4); fonte em `supabase/functions/fulfillment-sync/` |
+| `fulfillment-sync` | v5 (deploy 20) | Estoque nos CDs. v5: o ML lê TODOS os estoques do Full a cada rodada (§5.9.4.2); v4: em trânsito da Amazon pelos envios (§5.9.4); fonte em `supabase/functions/fulfillment-sync/` |
 | `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
 | `fulfillment-inbound` | v15 | **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
