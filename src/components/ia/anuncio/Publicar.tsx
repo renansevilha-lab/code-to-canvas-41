@@ -65,6 +65,8 @@ interface Previa {
   amazon?: {
     caminho: "oferta" | "ficha"; asin: string | null; tipo: string; tipos: string[]; sku_amazon: string; unidades: number; canal_envio: string;
     asins: { asin: string; titulo: string | null; marca: string | null; tipo: string | null; foto: string | null; url: string }[];
+    // v12 (19/out/2026): fora da Bumi a marca vai "Genérico" e, na ficha nova, sem o EAN do fabricante
+    marca?: string; generico?: boolean; ean_ficha?: string | null;
   };
   /** limites do marketplace/categoria (sem isso valem os da Shopee: 120 e 9) */
   limites?: { titulo: number; fotos: number };
@@ -614,7 +616,10 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
                 </select>
               </label>
             )}
-            {(ml || amz) && <Medida rotulo={amz ? "Código de barras (EAN)" : "Código de barras"} largo valor={typeof op.gtin === "string" ? op.gtin : (p.ean ?? "")} onChange={(v) => setOp({ ...op, gtin: v })} />}
+            {(ml || amz) && <Medida rotulo={amz ? "Código de barras (EAN)" : "Código de barras"} largo
+              // Amazon, ficha nova: mostra o código que VAI (Genérico sai sem o EAN do fabricante)
+              valor={typeof op.gtin === "string" ? op.gtin : (amz && p.amazon?.caminho === "ficha" ? (p.amazon.ean_ficha ?? "") : (p.ean ?? ""))}
+              onChange={(v) => setOp({ ...op, gtin: v })} />}
           </div>
           {(ml || amz) && (p.atributos ?? []).length > 0 && (
             <div className="border-t pt-3 space-y-2">
@@ -755,6 +760,14 @@ function BlocoAmazon({ a, ean, parado, tipoEscolhido, onTrocar }: {
         </Button>
         <Button size="sm" variant={a.caminho === "ficha" ? "default" : "outline"} disabled={parado} onClick={() => onTrocar({ caminho: "ficha" })}>Ficha nova (ASIN novo)</Button>
       </div>
+      {a.caminho === "ficha" && a.generico && (
+        <p className="text-xs rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1.5">
+          Marca na Amazon: <b>Genérico</b> (só os produtos Bumi vão com a marca própria).
+          {ean && !a.ean_ficha
+            ? <> O código de barras <span className="font-mono">{ean}</span> é do fabricante e não vai: com ele a Amazon recusa (8572). A ficha sai sem código.</>
+            : null}
+        </p>
+      )}
       {a.asins.length === 0 ? (
         <p className="text-xs text-muted-foreground">{ean ? <>Nenhum produto do catálogo da Amazon tem o código <b className="font-mono">{ean}</b>: vai como ficha nova.</> : "Sem código de barras: vai como ficha nova (só passa se a marca tiver isenção de GTIN)."}</p>
       ) : (

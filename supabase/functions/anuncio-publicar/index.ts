@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v11 (19/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v12 (19/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -64,6 +64,9 @@
 //   Sempre FBA; SKU na Amazon = `<sku>_FBA`. opcoes extras: caminho (oferta|ficha), asin, tipo_produto, gtin,
 //   sku_amazon, atributos {campo: valor}. Só a conta que tem o Merchant Token (hoje a ACZ).
 //   Até 20/out 03:00 UTC a PRÉVIA da Amazon aceita a chave publicável (rota de ensaio: só leitura + validador).
+// v12 (19/out/2026, regra do dono): na Amazon, só produto da Bumi vai com a marca própria; o resto vai como
+//   "Genérico" (marca e fabricante). Na ficha nova, o EAN do cadastro de um Genérico NÃO vai (é do fabricante na
+//   GS1 → erro 8572); só o digitado. opcoes.sem_gtin = true tira o código de qualquer produto.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -1422,7 +1425,14 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
 
   // ---------------- formulário: campos que a pessoa confere (com sugestão) + os que a Amazon exigir
   const nomeProd = String(cadR.data?.nome ?? b.titulo);
-  const marca = String(d.produto?.marca ?? "").trim();
+  // Regra do dono (19/out): na Amazon, só a Bumi vai com a marca própria; o resto vai como "Genérico".
+  const marcaCad = String(d.produto?.marca ?? "").trim();
+  const ehBumi = /bumi/i.test(marcaCad);
+  const marca = ehBumi ? marcaCad : "Genérico";
+  if (caminho === "ficha" && !ehBumi) avisos.push(`marca na Amazon: "Genérico" (regra da casa: só a Bumi vai com a marca própria; no cadastro está "${marcaCad || "sem marca"}")`);
+  // Genérico + EAN do fabricante = 8572 (a GS1 diz que o código é de outra marca): na ficha nova, o EAN
+  // do cadastro só vai para a Bumi; para Genérico, só se for digitado. "sem_gtin" tira o código de vez.
+  const eanFicha = op.sem_gtin ? null : (ehBumi || digitado ? ean : null);
   const liquido = /\b\d+\s*ml\b|spray|l[ií]quid|shampoo|lo[cç][aã]o|perfume|col[oô]nia/i.test(nomeProd);
   const uso = /gat/i.test(nomeProd) && /c[aã]es|cachorr/i.test(nomeProd) ? "Cães e gatos" : /gat/i.test(nomeProd) ? "Gatos" : /c[aã]es|cachorr/i.test(nomeProd) ? "Cães" : "Animais de estimação";
   const sugestoes: Record<string, string> = caminho === "ficha" ? {
@@ -1464,7 +1474,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
       if (med.medidas.peso_kg) a.item_package_weight = [{ unit: "kilograms", value: Math.round(med.medidas.peso_kg * 100) / 100, marketplace_id: c.mkt }];
       const cm = (v: number | null) => ({ unit: "centimeters", value: Math.max(1, Math.round(Number(v) || 1)) });
       a.item_package_dimensions = [{ length: cm(med.medidas.comprimento_cm), width: cm(med.medidas.largura_cm), height: cm(med.medidas.altura_cm), marketplace_id: c.mkt }];
-      if (ean) a.externally_assigned_product_identifier = [{ type: "ean", value: ean, marketplace_id: c.mkt }];
+      if (eanFicha) a.externally_assigned_product_identifier = [{ type: "ean", value: eanFicha, marketplace_id: c.mkt }];
       else a.supplier_declared_has_product_identifier_exemption = so(true);
       urls.slice(0, LIM_AMZ.fotos).forEach((u, i) => { a[FOTOS_AMZ[i]] = [{ media_location: u, marketplace_id: c.mkt }]; });
     }
@@ -1489,8 +1499,10 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   if (caminho === "ficha") {
     pendencias.push(...b.problemas.titulo, ...b.problemas.fotos);
     if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
-    if (!ean) avisos.push("sem código de barras: a Amazon só aceita a ficha nova se a marca tiver isenção de GTIN aprovada no Seller Central");
-    if (!marca && !valorForm("brand")) pendencias.push("informe a marca (o cadastro está sem marca)");
+    if (!eanFicha) avisos.push(ean && !ehBumi
+      ? `o código de barras ${ean} é do fabricante: com a marca "Genérico" ele não vai (a Amazon recusaria, 8572). Sem código, a ficha só passa se "Genérico" tiver isenção de GTIN no Seller Central`
+      : "sem código de barras: a Amazon só aceita a ficha nova se a marca tiver isenção de GTIN aprovada no Seller Central");
+    if (!valorForm("brand")) pendencias.push("informe a marca");
   } else {
     avisos.push(`entra como OFERTA no produto ${alvoAsin?.asin ?? ""} que já existe na Amazon: título, fotos e descrição são os da ficha dela — os deste anúncio não vão`);
   }
@@ -1529,7 +1541,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
       loja: c.nome, sku, titulo: caminho === "oferta" ? (alvoAsin?.titulo ?? b.titulo) : b.titulo, descricao: junto, preco: b.preco,
       fotos: caminho === "oferta" ? [] : b.fotos, ean, medidas: med.medidas, estoque: 0, fora_do_ar: false,
       atributos, limites: { titulo: LIM_AMZ.titulo, fotos: LIM_AMZ.fotos },
-      amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA" },
+      amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA", marca, generico: !ehBumi, ean_ficha: eanFicha },
     },
   };
 }
