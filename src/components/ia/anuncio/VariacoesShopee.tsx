@@ -172,10 +172,16 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
     if (!q.data || q.isPlaceholderData || q.data.empresa !== empresa || iniciado.current === empresa) return;
     const nova = q.data.linhas;
     if (iniciado.current === null) {
-      let salvo: { grade?: string; grade2?: string; linhas?: Record<string, Partial<Digitado>> } = {};
+      let salvo: { grade?: string; grade2?: string; grades_tiny?: string[]; linhas?: Record<string, Partial<Digitado>> } = {};
       try { salvo = JSON.parse(localStorage.getItem(guarda) ?? "{}") ?? {}; } catch { /* sem armazenamento: segue com o padrão */ }
       const gs = q.data.grades ?? [];
-      if (gs.length === 2) { setGrade(String(salvo.grade || gs[0]).slice(0, 14)); setGrade2(String(salvo.grade2 || gs[1]).slice(0, 14)); }
+      // o nome do grupo guardado só vale se foi digitado em cima da MESMA grade do Tiny. 19/out: a tela aberta antes de
+      // os kits existirem (um grupo, padrão "Tamanho") guardou "Tamanho", que depois passava por cima do "Cor" do Tiny.
+      const mesmaGrade = (salvo.grades_tiny ?? []).join("|") === gs.join("|");
+      if (gs.length === 2) {
+        setGrade(String((mesmaGrade && salvo.grade) || gs[0]).slice(0, 14));
+        setGrade2(String((mesmaGrade && salvo.grade2) || gs[1]).slice(0, 14));
+      }
       else if (salvo.grade) setGrade(String(salvo.grade).slice(0, 14));
       setLinhas(nova.map((n) => {
         const d = salvo.linhas?.[n.sku];
@@ -204,7 +210,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
         const p = padrao.get(l.sku);
         return [l.sku, Object.fromEntries(campos.filter((c) => !p || l[c] !== p[c]).map((c) => [c, l[c]]))];
       }).filter(([, v]) => Object.keys(v as object).length > 0));
-      localStorage.setItem(guarda, JSON.stringify({ grade, grade2, linhas: mudou }));
+      localStorage.setItem(guarda, JSON.stringify({ grade, grade2, grades_tiny: q.data?.grades ?? [], linhas: mudou }));
     } catch { /* sem armazenamento: só não lembra */ }
   }, [linhas, grade, grade2, guarda]);
   // o envio do anúncio (bloco de baixo) avisa quando criou: as variações entram em seguida

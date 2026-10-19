@@ -20,7 +20,7 @@ import { chamarVariacoes } from "@/lib/iaAnuncio";
 // (`kit`) e as fotos (`foto`) até acabar.
 // ============================================================================
 
-interface Base { sku: string; nome: string; preco: number | null; custo: number | null; tipo: string | null }
+interface Base { sku: string; nome: string; preco: number | null; custo: number | null; tipo: string | null; marca: string | null }
 interface Cor { sku: string; rotulo: string }
 interface Linha { chave: string; base: string; cor: string; qtd: number; sku: string; preco: string }
 interface Previa {
@@ -34,17 +34,42 @@ const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
 const rotuloQtd = (n: number) => `${n} un`;
 
-/** "Carpete Autocolante 31X48cm [Bege]" → "Bege"; sem colchete, o que sobra depois do começo comum dos nomes. */
-function rotulosDasCores(bases: Base[]): { cores: Cor[]; comum: string } {
-  const nomes = bases.map((b) => b.nome);
+/** Até 20 letras (limite da opção na Shopee) sem cortar palavra no meio: "Higiene Face Olhos Focinho" → "Higiene Face Olhos". */
+function caber20(t: string): string {
+  const s = t.replace(/\s+/g, " ").trim();
+  if (s.length <= 20) return s;
+  const palavras = s.split(" "); let out = "";
+  for (const p of palavras) { if ((out ? out.length + 1 : 0) + p.length > 20) break; out = out ? `${out} ${p}` : p; }
+  return out || s.slice(0, 20);
+}
+const semAcento = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/**
+ * "Carpete Autocolante 31X48cm [Bege]" → "Bege"; sem colchete, o que sobra do nome tirando o começo comum (palavras
+ * inteiras), a quantidade do fim ("50 Un", "500ml") e a marca ("Pet Clean"), em até 20 letras sem cortar palavra.
+ * 19/out: "Toalhas Umedecidas Cães Higiene Face Olhos Focinho 50un" saía "Higiene Face Olhos F" (o resto inteiro
+ * cortado na 20ª letra) e "Limpa Popô Pet Clean 50 Un" levava a marca.
+ */
+function rotulosDasCores(bases: Base[]): { cores: Cor[]; comum: string; temCor: boolean } {
+  const nomes = bases.map((b) => b.nome.replace(/\s+/g, " ").trim());
   let comum = nomes[0] ?? "";
   for (const n of nomes.slice(1)) { let i = 0; while (i < comum.length && i < n.length && comum[i] === n[i]) i++; comum = comum.slice(0, i); }
-  const cores = bases.map((b) => {
+  // o começo comum só vale até a última palavra inteira ("Limpa Popô" × "Limpa Patas" não come o "P")
+  if (nomes.some((n) => n.length > comum.length && n[comum.length] !== " ")) comum = comum.slice(0, comum.lastIndexOf(" ") + 1);
+  const marcas = [...new Set(bases.map((b) => (b.marca ?? "").trim()).filter(Boolean))];
+  let temCor = false;
+  const cores = bases.map((b, i) => {
     const col = b.nome.match(/\[([^\]]+)\]\s*$/);
-    const resto = col ? col[1] : b.nome.slice(comum.length).replace(/^[\s\-–[(]+|[\s\])]+$/g, "");
-    return { sku: b.sku, rotulo: (resto || b.sku).trim().slice(0, 20) };
+    if (col) { temCor = true; return { sku: b.sku, rotulo: caber20(col[1]) }; }
+    let resto = nomes[i].slice(comum.length).replace(/^[\s\-–[(]+|[\s\])]+$/g, "");
+    resto = resto.replace(/\s*[-–]?\s*\d+([.,]\d+)?\s*(un|und|unid|unidades?|pcs|p[çc]s|ml|l|g|gr|grs|kg)\.?$/i, "").trim();
+    for (const m of marcas) {
+      const i0 = semAcento(resto).indexOf(semAcento(m));
+      if (i0 >= 0 && resto.length > m.length) resto = `${resto.slice(0, i0)} ${resto.slice(i0 + m.length)}`.replace(/\s+/g, " ").trim();
+    }
+    return { sku: b.sku, rotulo: caber20(resto || b.sku) };
   });
-  return { cores, comum: comum.replace(/[\s\-–[(]+$/, "").trim() };
+  return { cores, comum: comum.replace(/[\s\-–[(]+$/, "").trim(), temCor };
 }
 
 export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFechar: () => void }) {
@@ -54,15 +79,16 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
     staleTime: 0,
     queryFn: async (): Promise<Base[]> => {
       const [p, c] = await Promise.all([
-        supabaseExternal.from("produtos").select("sku, nome, preco, tipo").in("sku", skus),
+        supabaseExternal.from("produtos").select("sku, nome, preco, tipo, marca, marca_manual").in("sku", skus),
         supabaseExternal.from("view_cmv_efetivo").select("sku, cmv_efetivo").in("sku", skus),
       ]);
       if (p.error) throw p.error;
       const custo = new Map(((c.data ?? []) as { sku: string; cmv_efetivo: number | null }[]).map((x) => [x.sku, x.cmv_efetivo]));
-      const por = new Map(((p.data ?? []) as { sku: string; nome: string | null; preco: number | null; tipo: string | null }[]).map((x) => [x.sku, x]));
+      type Prod = { sku: string; nome: string | null; preco: number | null; tipo: string | null; marca: string | null; marca_manual: string | null };
+      const por = new Map(((p.data ?? []) as Prod[]).map((x) => [x.sku, x]));
       return skus.filter((s) => por.has(s)).map((s) => {
         const x = por.get(s)!;
-        return { sku: s, nome: x.nome ?? s, preco: x.preco != null ? Number(x.preco) : null, custo: custo.get(s) != null ? Number(custo.get(s)) : null, tipo: x.tipo };
+        return { sku: s, nome: x.nome ?? s, preco: x.preco != null ? Number(x.preco) : null, custo: custo.get(s) != null ? Number(custo.get(s)) : null, tipo: x.tipo, marca: x.marca_manual ?? x.marca };
       });
     },
   });
@@ -91,6 +117,8 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
     const r = rotulosDasCores(bases);
     setCores(r.cores);
     setNome((n) => n || r.comum);
+    // sem "[Cor]" no nome os produtos não são cores (ex.: toalhas Higiene Face × Limpa Patas): o grupo vira "Tipo"
+    if (!r.temCor) setGrades((g) => (g[0] === "Cor" ? ["Tipo", g[1]] : g));
   }, [basesQ.data]);
   useEffect(() => { if (livres.length) setSkuPai((s) => s || livres[0]); }, [sugQ.data]);
 

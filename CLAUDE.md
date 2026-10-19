@@ -2494,6 +2494,15 @@ faltou no anúncio criado direto na Shopee).
     cor), nunca a do pai.
   - **Não testado ao vivo** (criação no Tiny e na Shopee exigem sessão). Os carpetes não têm foto
     no Tiny: as variações nascem sem foto.
+  - **Nome da opção cortado (19/out, pai 16594 "Kit Atacado Toalhas Umedecidas", bases 15962/15963/15964):** sem
+    `[Cor]` no nome, a opção era "o que sobra depois do começo comum" cortado na 20ª letra → "Higiene Face Olhos F",
+    "Limpa Popô Pet Clean" (com a marca e sem o "50 Un"). Agora (`rotulosDasCores`) o começo comum é por palavra
+    inteira, sai a quantidade do fim ("50 Un", "500ml") e a marca do produto, e o corte de 20 letras não parte
+    palavra ("Higiene Face Olhos", "Limpa Popô", "Limpa Patas Passeio"); sem `[Cor]` o grupo nasce "Tipo", não "Cor".
+    Na tela da Shopee (`VariacoesShopee`) o nome do grupo guardado no navegador só vale se foi digitado sobre a MESMA
+    grade do Tiny (`grades_tiny` no `localStorage`): a tela aberta antes de os kits existirem guardou "Tamanho" e ele
+    passava por cima do "Cor" do Tiny. O 16594 continua com os nomes antigos no Tiny (a opção da Shopee pode ser
+    corrigida no próprio bloco antes de enviar; o vínculo é pelo SKU).
   - **Pai duplicado 16523 (14/out, inativado com o OK do dono):** criado com o MESMO nome do 16506 —
     o Tiny recusou transformar as variações em kit ("Registro em duplicidade - nome do produto já
     cadastrado"), e 16524/26/28/30 ficaram simples. Inativados pela v2 (`produto.alterar.php`,
