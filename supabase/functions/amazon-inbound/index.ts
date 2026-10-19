@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v6 (19/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v7.1 (19/out/2026; itens do envio v0 sem repetição) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -31,6 +31,12 @@
 //                      parou se o tempo acabar (`faltam`). dry = só lê e baixa as etiquetas, não grava nada.
 //   A nota de remessa é emitida pela Amazon (regime especial) e pela API exige o papel "Tax Invoicing (Restricted)" — hoje
 //   403 nas duas contas: anexar o DANFE à mão até o papel sair.
+// v7 (19/out/2026): ENVIOS JÁ CRIADOS NA AMAZON (Seller Central) e RECEBIMENTO (API v0 de envios):
+//   amazon-envios → {empresa, dias?=45}: envios da conta atualizados no período (nome, status, CD) e se
+//                   já estão na aba Envios (pelo número FBA). Só leitura.
+//   importar      → {empresa, ids:[FBA…], confirmar: true}: cria na aba Envios os escolhidos (itens = SellerSKU × enviado).
+//   recebimento   → {empresa, numero}: por SKU, enviado × recebido AO VIVO + status do envio. Só leitura.
+//   Conta sem o papel de envios no app da Amazon (hoje a ACZ) → 403: a resposta diz o que falta.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -84,7 +90,7 @@ async function exigirAcesso(req: Request, modulo = ""): Promise<Quem | Response>
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { nome: "sistema" };
-  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && (modulo === "transporte" || modulo === "previa" || modulo === "envios-app")) return { nome: "ensaio" };
+  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && ["transporte", "previa", "envios-app", "amazon-envios", "recebimento"].includes(modulo)) return { nome: "ensaio" };
   if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
@@ -233,6 +239,64 @@ async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uin
   });
   if (error) { await db.storage.from(DOCS_BUCKET).remove([caminho]); throw new Error(`banco: ${error.message}`); }
   return "anexado";
+}
+
+// ---------------------------------------------------------------- envios já criados na Amazon (API v0)
+const SEM_PAPEL = "a conta não tem o papel de envios (Amazon Fulfillment) no aplicativo da Amazon — a ACZ (app \"Ottz Analytics\") precisa ganhar o papel e ser autorizada de novo";
+const STATUS_V0 = ["WORKING", "READY_TO_SHIP", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CHECKED_IN", "RECEIVING", "CLOSED"];
+const STATUS_APP: Record<string, string> = { WORKING: "separando", READY_TO_SHIP: "pronto_envio" }; // o resto já saiu: enviado
+const STATUS_PT: Record<string, string> = {
+  WORKING: "em preparação", READY_TO_SHIP: "pronto para enviar", SHIPPED: "enviado", IN_TRANSIT: "em trânsito", DELIVERED: "entregue no CD",
+  CHECKED_IN: "conferido na chegada", RECEIVING: "recebendo", CLOSED: "fechado (recebido)", CANCELLED: "cancelado", DELETED: "excluído",
+};
+async function v0Envios(token: string, filtro: string, ate: number): Promise<any[] | null> {
+  const out: any[] = [];
+  let next = "";
+  for (let pag = 0; pag < 10 && Date.now() < ate; pag++) {
+    const r = await sp(token, "GET", next
+      ? `/fba/inbound/v0/shipments?MarketplaceId=${MKT}&QueryType=NEXT_TOKEN&NextToken=${encodeURIComponent(next)}`
+      : `/fba/inbound/v0/shipments?MarketplaceId=${MKT}&${filtro}`);
+    if (r.status === 403) return null;
+    if (r.status === 429) { await sleep(1500); pag--; continue; }
+    if (!ok(r)) throw new Error(`envios da Amazon: ${motivo(r)}`);
+    out.push(...((r.body?.payload?.ShipmentData ?? []) as any[]));
+    next = String(r.body?.payload?.NextToken ?? "");
+    if (!next) break;
+    await sleep(500);
+  }
+  return out;
+}
+async function v0Itens(token: string, fba: string): Promise<any[] | null> {
+  const out: any[] = [];
+  let next = "";
+  const vistos = new Set<string>();
+  for (let pag = 0; pag < 5; pag++) {
+    // a continuação NÃO é o mesmo endereço com NextToken (devolvia a 1ª página de novo e cada item saía 5×):
+    // é o /shipmentItems com QueryType=NEXT_TOKEN
+    const caminho = next
+      ? `/fba/inbound/v0/shipmentItems?MarketplaceId=${MKT}&QueryType=NEXT_TOKEN&NextToken=${encodeURIComponent(next)}`
+      : `/fba/inbound/v0/shipments/${encodeURIComponent(fba)}/items?MarketplaceId=${MKT}`;
+    let r = await sp(token, "GET", caminho);
+    if (r.status === 429) { await sleep(1500); r = await sp(token, "GET", caminho); }
+    if (r.status === 403) return null;
+    if (!ok(r)) throw new Error(`itens do envio ${fba}: ${motivo(r)}`);
+    for (const it of (r.body?.payload?.ItemData ?? []) as any[]) {
+      const k = `${it.ShipmentId ?? fba}|${it.SellerSKU ?? ""}|${it.FulfillmentNetworkSKU ?? ""}`;
+      if (vistos.has(k)) continue; // um SKU aparece uma vez por envio
+      vistos.add(k);
+      out.push(it);
+    }
+    const prox = String(r.body?.payload?.NextToken ?? "");
+    if (!prox || prox === next) break;
+    next = prox;
+  }
+  return out;
+}
+/** SKU da Amazon → nosso SKU: estoque do FBA da conta (o mesmo de-para da reposição), senão tira _FBA/FBA-. */
+async function mapaSkus(shopId: number) {
+  const { data } = await db.from("estoque_fulfillment").select("sku, sku_marketplace").eq("marketplace", "amazon").eq("shop_id", shopId);
+  const m = new Map(((data ?? []) as any[]).filter((x) => x.sku).map((x) => [String(x.sku_marketplace), String(x.sku)]));
+  return (cru: string) => m.get(cru) ?? cru.replace(/^FBA-/i, "").replace(/[-_](FBA|FBAA|FBM)$/i, "").trim();
 }
 
 // ---------------------------------------------------------------- passos
@@ -399,6 +463,81 @@ Deno.serve(async (req) => {
         .select("id, empresa, shop_id, passo, plano_id, itens_origem, envios_amazon, erro, criado_por, criado_em, atualizado_em")
         .gte("criado_em", desde).order("criado_em", { ascending: false }).limit(30);
       return json({ ok: true, planos: data ?? [] });
+    }
+
+    if (modulo === "amazon-envios" || modulo === "importar" || modulo === "recebimento") {
+      const conta = CONTA[String(b.empresa ?? "")];
+      if (!conta) return json({ ok: false, erro: "informe a empresa (SVL Store ou ACZ Pet)" }, 400);
+      const token = await tokenConta(conta.shop_id);
+
+      if (modulo === "recebimento") {
+        const numero = String(b.numero ?? "").trim();
+        if (!/^FBA[0-9A-Z]{6,}$/.test(numero)) return json({ ok: false, erro: "número FBA inválido" }, 400);
+        const [env, itens] = [await v0Envios(token, `QueryType=SHIPMENT&ShipmentIdList=${numero}`, ate), await v0Itens(token, numero)];
+        if (env === null || itens === null) return json({ ok: false, sem_papel: true, erro: SEM_PAPEL }, 200);
+        const sku = await mapaSkus(conta.shop_id);
+        const e = env[0] ?? {};
+        const linhas = itens.map((it) => ({ sku: sku(String(it.SellerSKU)), sku_amazon: String(it.SellerSKU), fnsku: it.FulfillmentNetworkSKU ?? null,
+          enviado: Number(it.QuantityShipped) || 0, recebido: Number(it.QuantityReceived) || 0 }));
+        return json({ ok: true, numero, nome: e.ShipmentName ?? null, status: e.ShipmentStatus ?? null, status_pt: STATUS_PT[String(e.ShipmentStatus)] ?? e.ShipmentStatus ?? null,
+          cd: e.DestinationFulfillmentCenterId ?? null, itens: linhas,
+          enviado: linhas.reduce((s, l) => s + l.enviado, 0), recebido: linhas.reduce((s, l) => s + l.recebido, 0), lido_em: new Date().toISOString() });
+      }
+
+      if (modulo === "amazon-envios") {
+        const dias = Math.min(120, Math.max(3, Number(b.dias) || 45));
+        const desde = new Date(Date.now() - dias * 86400000).toISOString();
+        const lista = await v0Envios(token, `QueryType=DATE_RANGE&ShipmentStatusList=${STATUS_V0.join(",")}&LastUpdatedAfter=${encodeURIComponent(desde)}&LastUpdatedBefore=${encodeURIComponent(new Date().toISOString())}`, ate);
+        if (lista === null) return json({ ok: false, sem_papel: true, erro: SEM_PAPEL }, 200);
+        const ids = lista.map((e) => String(e.ShipmentId));
+        const { data: noApp } = await db.from("fulfillment_envios").select("id, numero, status, arquivado_em").eq("marketplace", "amazon").in("numero", ids.length ? ids : ["-"]);
+        const porNum = new Map(((noApp ?? []) as any[]).map((x) => [String(x.numero), x]));
+        const envios = lista.map((e) => ({
+          numero: String(e.ShipmentId), nome: e.ShipmentName ?? null, status: e.ShipmentStatus ?? null, status_pt: STATUS_PT[String(e.ShipmentStatus)] ?? e.ShipmentStatus,
+          cd: e.DestinationFulfillmentCenterId ?? null, no_app: porNum.get(String(e.ShipmentId))?.id ?? null,
+        })).sort((a, b) => String(b.nome ?? "").localeCompare(String(a.nome ?? "")));
+        return json({ ok: true, empresa: b.empresa, dias, envios });
+      }
+
+      // importar
+      if (quem.nome === "ensaio") return json({ ok: false, erro: "faça login no app" }, 401);
+      if (b.confirmar !== true) return json({ ok: false, erro: "importar exige confirmar: true" }, 400);
+      const pedidos = [...new Set(((b.ids ?? []) as unknown[]).map(String).filter((x) => /^FBA[0-9A-Z]{6,}$/.test(x)))].slice(0, 15);
+      if (!pedidos.length) return json({ ok: false, erro: "escolha os envios" }, 400);
+      const env = await v0Envios(token, `QueryType=SHIPMENT&ShipmentIdList=${pedidos.join(",")}`, ate);
+      if (env === null) return json({ ok: false, sem_papel: true, erro: SEM_PAPEL }, 200);
+      const sku = await mapaSkus(conta.shop_id);
+      const resultado: any[] = [];
+      for (const numero of pedidos) {
+        if (Date.now() > ate - 3000) { resultado.push({ numero, erro: "sem tempo: importe de novo" }); continue; }
+        try {
+          const e = env.find((x) => String(x.ShipmentId) === numero);
+          if (!e) throw new Error("a Amazon não devolveu este envio");
+          const { data: ja } = await db.from("fulfillment_envios").select("id").eq("marketplace", "amazon").eq("numero", numero).limit(1);
+          if (ja?.length) { resultado.push({ numero, envio_id: ja[0].id, criado: false }); continue; }
+          const itens = await v0Itens(token, numero);
+          if (itens === null) throw new Error(SEM_PAPEL);
+          const skus = itens.map((it) => sku(String(it.SellerSKU)));
+          const { data: prods } = await db.from("produtos").select("sku, nome").in("sku", skus.length ? skus : ["-"]);
+          const nomes = new Map(((prods ?? []) as any[]).map((x) => [String(x.sku), x.nome]));
+          const status = STATUS_APP[String(e.ShipmentStatus)] ?? "enviado";
+          const linhas = itens.map((it, k) => {
+            const q = Number(it.QuantityShipped) || 0;
+            return { sku: skus[k], sku_origem: String(it.SellerSKU), titulo: nomes.get(skus[k]) ?? null, qtd_planejada: q,
+              qtd_separada: status === "enviado" ? q : 0, ordem: k };
+          });
+          const { data: novo, error } = await db.from("fulfillment_envios").insert({
+            marketplace: "amazon", empresa: b.empresa, numero, centro: e.DestinationFulfillmentCenterId ?? null, status,
+            total_unidades: linhas.reduce((s, l) => s + l.qtd_planejada, 0), criado_por: quem.nome,
+            observacao: `Importado da Amazon (${e.ShipmentName ?? numero} · ${STATUS_PT[String(e.ShipmentStatus)] ?? e.ShipmentStatus}).`,
+          }).select("id").single();
+          if (error || !novo) throw new Error(`banco (envio): ${error?.message}`);
+          const { error: eI } = await db.from("fulfillment_envio_itens").insert(linhas.map((l) => ({ ...l, envio_id: novo.id })));
+          if (eI) { await db.from("fulfillment_envios").delete().eq("id", novo.id); throw new Error(`banco (itens): ${eI.message}`); }
+          resultado.push({ numero, envio_id: novo.id, criado: true, itens: linhas.length, status });
+        } catch (x) { resultado.push({ numero, erro: String((x as Error).message ?? x) }); }
+      }
+      return json({ ok: !resultado.some((r) => r.erro), resultado });
     }
 
     // plano existente (continuar / destino / cancelar) ou itens novos vindos da Reposição
@@ -595,7 +734,7 @@ Deno.serve(async (req) => {
       return json({ ...resumo(p), ok: !resultado.some((r) => r.erro), dry, faltam, envios_app: resultado });
     }
 
-    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app ou cancelar" }, 400);
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app, amazon-envios, importar, recebimento ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }
