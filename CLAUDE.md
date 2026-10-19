@@ -3666,6 +3666,14 @@ deploy `npx wrangler deploy --config .output/server/wrangler.json`. **Push na ma
 (`bun.lockb`/`bunfig.toml` do Lovable removidos — lock do bun estava parado em
 21/jul). Endereço definitivo decidido pelo dono: **ottz-pet-app.ottzpet.workers.dev**.
 Pendente: avisar a equipe (login 1× + reescolher impressora) e desligar o Lovable.
+**Push não garante publicado (18/out/2026):** o site ficou parado desde 16/10 sem ninguém ver — todos os builds de
+18/10 falharam no `npm ci` da Cloudflare (**npm 10.9.2**, Node 24): "package.json e package-lock.json fora de
+sincronia — Missing: miniflare@4.20260730.0, workerd… (cópias aninhadas do `nitro`)". O npm 11 deste PC aceita o
+lock e o build local passa, por isso nada acusava. Cura: lock refeito com `npx npm@10.9.2 install
+--package-lock-only` (só +9 cópias aninhadas, nenhuma versão mudou). **Regra:** mexeu em dependência, conferir com
+`npx npm@10.9.2 ci`; depois de cada push, conferir o build em
+`https://api.github.com/repos/renansevilha-lab/code-to-canvas-41/commits/<sha>/check-runs` (público). O registro
+completo do erro fica no painel da Cloudflare (Workers › ottz-pet-app › Deployments), que pede login do dono.
 
 URL publicada: **https://code-to-canvas-41.lovable.app** (o `id-preview--…lovable.app`
 do editor exige login e não serve para checar). Front só muda com **Publish**
