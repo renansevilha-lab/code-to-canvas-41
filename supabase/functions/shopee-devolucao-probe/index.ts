@@ -29,6 +29,9 @@
 // v26 (18/out/2026) — detalhar grava prazo_disputa (seller_compensation.seller_compensation_due_date):
 //  o "disputa ate dd-mm" do Seller Center. O due_date (abertura + 2 dias) vencia um dia antes e o app
 //  tirava a devolucao aceita da aba "abertas" ainda dentro do prazo de disputa.
+// v27 (18/out/2026) — detalhar grava prazo_vendedor (return_seller_due_date: validar o produto devolvido)
+//  e volta_entregue_em (quando o pacote da devolucao chegou: returns.get_reverse_tracking_info; sem
+//  evento, return_seller_due_date - 3 dias). modulo=volta&return_sn=X = rastreio cru da volta (debug).
 // ============================================================================
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -141,6 +144,8 @@ function mapDetalhe(d: any): Record<string, any> {
     // Center. O due_date é outro prazo (abertura + 2 dias) e vencia um dia antes.
     prazo_disputa: Number(d.seller_compensation?.seller_compensation_due_date) > 0
       ? new Date(Number(d.seller_compensation.seller_compensation_due_date) * 1000).toISOString() : null,
+    // v27: prazo do vendedor validar o produto devolvido (entrega da volta + 3 dias)
+    prazo_vendedor: Number(d.return_seller_due_date) > 0 ? new Date(Number(d.return_seller_due_date) * 1000).toISOString() : null,
     frete_responsavel: vazio(d.shipping_fee_responsibility) ? null : d.shipping_fee_responsibility,
     frete_resp_motivo: vazio(d.shipping_fee_responsibility_reason) ? null : d.shipping_fee_responsibility_reason,
     valor_antes_desconto: d.amount_before_discount ?? null,
@@ -152,6 +157,30 @@ function mapDetalhe(d: any): Record<string, any> {
     update_time: d.update_time ? new Date(d.update_time * 1000).toISOString() : undefined,
     detalhe_em: new Date().toISOString(),
   };
+}
+
+/**
+ * v27: quando o pacote da DEVOLUCAO chegou ao vendedor. Rastreio da volta
+ * (returns.get_reverse_tracking_info): o evento de entrega mais recente. Sem ele, o
+ * return_seller_due_date - 3 dias (a Shopee da 3 dias a partir da entrega) e, por fim,
+ * o update_time do detalhe.
+ */
+async function voltaEntregueEm(ctx: LojaCtx, returnSn: string, d: any): Promise<string | null> {
+  try {
+    const r = await shopeeGet(ctx, "/api/v2/returns/get_reverse_tracking_info", { return_sn: returnSn });
+    const resp = r.body?.response ?? {};
+    // Volta entregue: reverse_logistics_status LOGISTICS_DELIVERY_DONE, hora em reverse_logistics_update_time
+    if (resp.reverse_logistics_status === "LOGISTICS_DELIVERY_DONE" && Number(resp.reverse_logistics_update_time) > 1e9) {
+      return new Date(Number(resp.reverse_logistics_update_time) * 1000).toISOString();
+    }
+    // Os eventos so trazem update_time + tracking_description ("Pedido devolvido")
+    const evs: any[] = Array.isArray(resp.tracking_info) ? resp.tracking_info : [];
+    const entregues = evs.filter((e) => /^Pedido devolvido|entregue ao vendedor|delivered/i.test(String(e.tracking_description ?? e.description ?? "")));
+    const t = Math.max(0, ...entregues.map((e) => Number(e.update_time ?? e.time ?? 0)));
+    if (t > 1e9) return new Date(t * 1000).toISOString();
+  } catch { /* cai no fallback */ }
+  if (Number(d.return_seller_due_date) > 0) return new Date((Number(d.return_seller_due_date) - 3 * 86400) * 1000).toISOString();
+  return d.update_time ? new Date(Number(d.update_time) * 1000).toISOString() : null;
 }
 
 async function syncLoja(supabase: ReturnType<typeof createClient>, ctx: LojaCtx, inicioEpoch: number) {
@@ -222,6 +251,13 @@ serve(async (req: Request) => {
       if (error) return json({ erro: `fila: ${error.message}` }, { status: 500 });
       let feitos = 0; const erros: string[] = [];
       const lista = (fila || []) as any[];
+      // v27: quem ja tem a data da volta nao consulta o rastreio de novo
+      const comVolta = new Set<string>();
+      for (let i = 0; i < lista.length; i += 200) {
+        const { data: vs } = await supabase.from("shopee_devolucoes").select("return_sn")
+          .in("return_sn", lista.slice(i, i + 200).map((f) => f.return_sn)).not("volta_entregue_em", "is", null);
+        for (const v of (vs || []) as any[]) comVolta.add(String(v.return_sn));
+      }
       for (let i = 0; i < lista.length; i += 5) {
         if (Date.now() - inicio > ORCAMENTO) break;
         await Promise.all(lista.slice(i, i + 5).map(async (f) => {
@@ -233,7 +269,10 @@ serve(async (req: Request) => {
             erros.push(`${f.return_sn}: ${r.body?.error || r.http} ${r.body?.message || ""}`.slice(0, 120));
             return;
           }
-          const upd = mapDetalhe(d);
+          const upd: Record<string, any> = mapDetalhe(d);
+          if (d.reverse_logistics_status === "LOGISTICS_DELIVERY_DONE" && !comVolta.has(String(f.return_sn))) {
+            upd.volta_entregue_em = await voltaEntregueEm(ctx, String(f.return_sn), d);
+          }
           for (const k of Object.keys(upd)) if (upd[k] === undefined) delete upd[k];
           const { error: eUp } = await supabase.from("shopee_devolucoes").update(upd).eq("return_sn", f.return_sn);
           if (eUp) erros.push(`${f.return_sn}: ${eUp.message.slice(0, 80)}`); else feitos++;
@@ -361,6 +400,14 @@ serve(async (req: Request) => {
       const now = Math.floor(Date.now() / 1000);
       const r = await shopeeGet(ctxs[0], "/api/v2/returns/get_return_list", { page_no: 0, page_size: 5, create_time_from: now - dias * 86400, create_time_to: now });
       return json({ modulo, shop_id: ctxs[0].shopId, ...r });
+    }
+    if (modulo === "volta") {
+      // v27 (debug): rastreio CRU da devolucao (volta do produto)
+      const rsn = par("return_sn");
+      if (!rsn) return json({ erro: "informe ?return_sn=..." }, { status: 400 });
+      const ctx = await ctxDoReturn(supabase, ctxs, rsn);
+      const r = await shopeeGet(ctx, "/api/v2/returns/get_reverse_tracking_info", { return_sn: rsn });
+      return json({ modulo, shop_id: ctx.shopId, ...r });
     }
     if (modulo === "return-detail") {
       const rsn = par("return_sn");

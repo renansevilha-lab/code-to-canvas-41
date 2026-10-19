@@ -26,6 +26,10 @@ export interface InfoDevolucao {
   compensacao_status: string | null;
   needs_logistics: boolean | null;
   logistica_reversa: string | null;
+  /** quando o pacote da devolução chegou ao vendedor (rastreio da volta) — 18/out/2026 */
+  volta_entregue_em: string | null;
+  /** prazo do vendedor validar o produto devolvido (entrega da volta + 3 dias) */
+  prazo_vendedor: string | null;
   tracking_number: string | null;
   itens: { sku: string | null; nome: string | null; qtd: number | null }[] | null;
   ida_status: string | null;
@@ -41,7 +45,7 @@ export interface InfoDevolucao {
 }
 
 const COLS_DEV =
-  "return_sn,order_sn,status,solucao,due_date,prazo_disputa,compensacao_status,needs_logistics,logistica_reversa,tracking_number,itens," +
+  "return_sn,order_sn,status,solucao,due_date,prazo_disputa,compensacao_status,needs_logistics,logistica_reversa,volta_entregue_em,prazo_vendedor,tracking_number,itens," +
   "ida_status,ida_entregue_em,ida_falha_em,ida_devolvido_em,ida_ultimo_evento,ida_ultimo_em,ida_consultado_em";
 
 /** Detalhe das devoluções (por return_sn) + transportadora/status do pedido. */
@@ -75,6 +79,7 @@ export interface Rotulo { rotulo: string; detalhe?: string; cor: string }
 
 const CINZA = "#5C6470";
 const dia = (iso: string | null) => (iso ? format(parseISO(iso), "dd/MM/yyyy") : "");
+const diaHora = (iso: string | null) => (iso ? format(parseISO(iso), "dd/MM 'às' HH:mm") : "");
 
 // A Shopee devolve a descrição do rastreio com UTF-8 duplo ("DevoluÃ§Ã£o").
 function corrigirTexto(s: string | null): string | null {
@@ -97,6 +102,13 @@ export function statusSolicitacao(d: InfoDevolucao | undefined): Rotulo {
   switch (st) {
     case "REQUESTED": return { rotulo: "Solicitado", detalhe: "aguardando a Shopee", cor: "#2F6FB0" };
     case "PROCESSING":
+      if (d?.solucao === 0 && d?.logistica_reversa === "LOGISTICS_DELIVERY_DONE") {
+        const pv = d.prazo_vendedor;
+        const noPrazo = !!pv && new Date(pv).getTime() > Date.now();
+        return noPrazo
+          ? { rotulo: "Aguardando sua validação", detalhe: `o produto chegou · validar até ${diaHora(pv)}`, cor: "#C9432F" }
+          : { rotulo: "Aguardando a Shopee", detalhe: pv ? `prazo de validação venceu em ${diaHora(pv)}` : "o produto chegou", cor: "#B7791F" };
+      }
       return d?.solucao === 0
         ? { rotulo: "Em devolução", detalhe: "o comprador está devolvendo o produto", cor: "#B7791F" }
         : { rotulo: "Em processamento", cor: "#B7791F" };
@@ -186,6 +198,7 @@ export function statusDevolucaoProduto(d: InfoDevolucao | undefined): Rotulo | n
     : /FAIL|LOST/.test(c) ? "#C9432F"
     : c === "LOGISTICS_PICKUP_DONE" ? "#B7791F"
     : c === "LOGISTICS_REQUEST_CANCELED" ? CINZA : "#2F6FB0";
-  const detalhe = [base.detalhe, transportadoraVolta(d.tracking_number), d.tracking_number].filter(Boolean).join(" · ");
+  const chegou = c === "LOGISTICS_DELIVERY_DONE" && d.volta_entregue_em ? `em ${diaHora(d.volta_entregue_em)}` : null;
+  const detalhe = [chegou, base.detalhe, transportadoraVolta(d.tracking_number), d.tracking_number].filter(Boolean).join(" · ");
   return { rotulo: base.rotulo, detalhe: detalhe || undefined, cor };
 }

@@ -53,7 +53,11 @@ interface DevAberta {
   prazo_disputa: string | null;
   /** PENDING_REQUEST = a Shopee pediu a validação do vendedor (dá para disputar); vazio/NOT_REQUIRED = nada a fazer */
   compensacao_status: string | null;
-  itens: { sku: string | null; nome: string | null; qtd: number | null }[] | null;
+  /** quando o pacote da devolução chegou ao vendedor (rastreio da volta) — 18/out/2026 */
+  volta_entregue_em: string | null;
+  /** prazo para validar o produto devolvido (chegada + 3 dias); a view já o usa como prazo_disputa */
+  prazo_vendedor: string | null;
+  itens:{ sku: string | null; nome: string | null; qtd: number | null }[] | null;
   create_time: string | null;
   // cruzamento com o recebimento fisico no estoque (bipagem) — por order_sn
   recebida_id: string | null;
@@ -430,9 +434,13 @@ export function DevolucoesShopeeAbertas() {
             // validar nem disputar — o Seller Center não lista com "Disputar" (18/out, caso 2610170U790YQUV)
             const semValidacao = d.status === "ACCEPTED" && d.compensacao_status !== "PENDING_REQUEST";
             const encerrada = d.status === "ACCEPTED" && (semValidacao || (!!prazoIso && new Date(prazoIso).getTime() <= Date.now()));
+            // produto devolvido já entregue ao vendedor: o prazo é para VALIDAR (chegada + 3 dias)
+            const chegou = d.status === "PROCESSING" && !!d.volta_entregue_em;
             const st = encerrada ? { rotulo: semValidacao ? "Reembolso aprovado pela Shopee" : "Reembolso concluído", cor: "#5C6470" }
+              : chegou ? { rotulo: "Produto chegou · valide", cor: "#C9432F" }
               : STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
-            const prazo = encerrada ? { txt: semValidacao ? "sem validação do vendedor" : "disputa encerrada", urgente: false } : prazoTexto(prazoIso);
+            const prazoBase = encerrada ? { txt: semValidacao ? "sem validação do vendedor" : "disputa encerrada", urgente: false } : prazoTexto(prazoIso);
+            const prazo = prazoBase && chegou ? { ...prazoBase, txt: `validar: ${prazoBase.txt}` } : prazoBase;
             // Quem decide se ainda da pra responder e a SHOPEE, nao o nosso
             // relogio: o due_date do espelho vence e a solicitacao segue aberta
             // (visto ao vivo 31/ago — TODOS os cards com "prazo venceu" e sem
@@ -486,6 +494,12 @@ export function DevolucoesShopeeAbertas() {
                       {d.needs_logistics && (
                         <span className="text-[11px] text-muted-foreground ml-2">
                           📦 comprador devolve o produto{d.tracking_number ? ` · ${d.tracking_number}` : ""}
+                        </span>
+                      )}
+                      {d.volta_entregue_em && (
+                        <span className="text-[11px] font-bold ml-2 px-2 py-0.5 rounded" style={{ background: "#0E8A5F1A", color: "#0E8A5F" }}
+                          title="Quando o pacote da devolução foi entregue ao vendedor (rastreio da volta na Shopee)">
+                          devolvido em {format(parseISO(d.volta_entregue_em), "dd/MM 'às' HH:mm")}
                         </span>
                       )}
                     </div>

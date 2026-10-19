@@ -1014,6 +1014,21 @@ Shopee + [SVLL] ML); depois Ottz.
   para drenar. **A equipe deve PARAR de criar devolução na mão no Tiny SVL** para os
   casos cobertos — o controle de duplicata só enxerga nota manual depois do espelho
   (a cada rodada, 4 dias para trás).
+- **EMISSÃO automática (18/out/2026, decisão do dono — opção B):** a criação funcionava,
+  mas a emissão ficava no clique e, de 01/10 a 18/10, **456 notas** criadas pelo motor
+  ficaram Pendentes (~R$ 36 mil). `devolucao-auto` **v6** `?modulo=emitir[&max=3][&dry=1]`:
+  só as notas que o MOTOR criou (`devolucao_auto.estado = 'criada'`) e seguem `situacao 1`
+  em `devolucoes_svl_base`, a mais antiga primeiro, pelo mesmo caminho do botão
+  (`nf-devolucao` POST `{modulo:"emitir", conta:"svl", id_nota, confirmar:"1"}`), 4 s entre
+  notas, orçamento de 40 s. **SEFAZ 656** = para a rodada, pausa de 1 h e aviso no Discord
+  (canal `devolucoes`); recusa = a nota espera 12 h (aviso só na 1ª); "ainda processando" =
+  1 h; nota com **mais de 29 dias** não é emitida (a SEFAZ recusa — clonar; aviso 1×/dia às
+  9h). Cada tentativa em `debug_fulfillment` (`modulo 'devolucao-auto-emitir'`, `etapa` = id
+  da nota; 200 autorizada · 429 = 656 · 409 recusa · 202 processando). Cron **158**
+  `devolucao-auto-emitir-svl` (`3,18,33,48`, `max=3`, Bearer publicável) ≈ 12 notas/h → o
+  backlog drena em ~1,6 dia. 1ª real: **001489** autorizada ("autorização fora de prazo" —
+  nota antiga, a SEFAZ aceita até ~30 dias). Nota criada à mão pela equipe NÃO é emitida
+  pelo robô.
 
 ## 5.3 DRE — categorização de despesas e camada de override
 
@@ -1818,6 +1833,17 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   solicitação, rastreio ou SKU/produto filtram as abertas; pedido/solicitação/rastreio (6+ caracteres) que NÃO está
   entre as abertas é procurado na `view_devolucoes_shopee_abertas` sem filtro de status e aparece com o selo "fora
   das abertas". Com busca, os cartões de status (validar/disputa) não filtram.
+- **Quando o produto devolvido chegou (18/out, pedido do dono):** devolução COM produto (`solucao 0`) que já foi
+  entregue ao vendedor fica `PROCESSING` com `logistica_reversa = LOGISTICS_DELIVERY_DONE`, e o prazo que vale é
+  o de VALIDAR o produto: `get_return_detail.return_seller_due_date` = chegada + 3 dias (o card mostrava "prazo
+  venceu · 11/10" pelo `due_date`). `shopee-devolucao-probe` **v27/v28** grava **`prazo_vendedor`** e
+  **`volta_entregue_em`** — `returns.get_reverse_tracking_info`: com `reverse_logistics_status =
+  LOGISTICS_DELIVERY_DONE` a hora é `reverse_logistics_update_time` (os eventos só trazem `update_time` +
+  `tracking_description`, ex. "Pedido devolvido"); sem isso, `return_seller_due_date − 3 dias`. O rastreio da volta
+  só é lido 1× por devolução. `?modulo=volta&return_sn=` = rastreio cru. A view de abertas usa `prazo_vendedor`
+  como prazo das não aceitas (`coalesce(prazo_disputa, prazo_vendedor se ≠ ACCEPTED, due_date)`) e o `detalhar`
+  relê as `solucao 0` dos últimos 45 dias. Card: selo "devolvido em dd/mm às HH:mm", status "Produto chegou ·
+  valide" e prazo "validar: vence em …". Ex.: 26100907HT3QWQ8 chegou 17/10 11h58, validar até 20/10 11h58.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
@@ -3136,7 +3162,8 @@ Sonda `amazon-anuncio-sonda` **v3** (slot `amazon-lwa-debug` v18; fonte no repos
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
 | `fulfillment-inbound` | v15 | **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
 | `nf-devolucao` | v3.21 (deploy 36) | Devoluções: `varrer-cancelados` (cron), `pendentes`, `emitir`, `criar` (SVL aceita reembolso aceito, itens parciais com kit aberto, anti-duplicata), `clonar`/`clonar-lote` — ver seções 5.2 e 5.2.3 |
-| `devolucao-auto` | v2 | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), `status` — ver §5.2.3 |
+| `devolucao-auto` | v6 (deploy 9; fonte em `supabase/functions/devolucao-auto/`) | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), **`emitir`** (v6: emite as notas que o motor criou; cron 158), `status` — ver §5.2.3 |
+| `shopee-devolucao-probe` | v28 (fonte em `supabase/functions/shopee-devolucao-probe/`) | Returns da Shopee: `sync`, `detalhar` (v26 `prazo_disputa`, v27/v28 `prazo_vendedor` + `volta_entregue_em`), `escrow`, `rastreio-ida`, `volta`, responder — ver §5.10. **Não apagar** (crons 124–126) |
 | `etiquetas-saude` | v5 | **Quadro do dia e alerta de risco de cancelamento vão para o canal `atualizacoes`** (#atualizações-projeto, pedido do dono 16/set); token e pipeline degradado seguem em `erros`. Texto do risco = UMA linha por loja (tudo que já venceu ou cancela hoje somado). `resumo` / `discord` (quadro 2×/dia) / `verificar` (watchdog 20 min) / **`entrega-rapida`** (cron jobid 103, 12h10 BRT): lista pedidos Shopee **Entrega Rápida** ainda não entregues ao motorista com prazo hoje/vencido, via `view_entrega_rapida_pendentes` (status Shopee pré-envio E situação Tiny não enviada, janela 10 dias — o espelho da Shopee tem 1.204 fantasmas em PROCESSED de mai–jul). Silêncio se não há pendente; `&sempre=1` força |
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |
 | `discord-avisos` | v2 | Cobra checklist não fechado, marcando a pessoa — ver seção 6.1 |
