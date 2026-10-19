@@ -67,6 +67,8 @@ interface Previa {
     asins: { asin: string; titulo: string | null; marca: string | null; tipo: string | null; foto: string | null; url: string }[];
     // v12 (19/out/2026): fora da Bumi a marca vai "Genérico" e, na ficha nova, sem o EAN do fabricante
     marca?: string; generico?: boolean; ean_ficha?: string | null;
+    // v13: dados fiscais que vão no anúncio (NCM do Tiny, origem 0, atividade e CEST)
+    fiscal?: { ncm: string | null; ncm_fonte: string | null; origem: string; origem_tiny: string | null; papel: string | null; cest: string | null; regime: string | null; no_esquema: string[] };
   };
   /** limites do marketplace/categoria (sem isso valem os da Shopee: 120 e 9) */
   limites?: { titulo: number; fotos: number };
@@ -766,6 +768,17 @@ function BlocoAmazon({ a, ean, parado, tipoEscolhido, onTrocar }: {
           {ean && !a.ean_ficha
             ? <> O código de barras <span className="font-mono">{ean}</span> é do fabricante e não vai: com ele a Amazon recusa (8572). A ficha sai sem código.</>
             : null}
+        </p>
+      )}
+      {a.fiscal && a.fiscal.no_esquema.length > 0 && (
+        <p className="text-xs rounded border px-2 py-1.5">
+          Dados fiscais (vão no anúncio, no lugar da planilha do Faturador):{" "}
+          NCM <b className="font-mono">{a.fiscal.ncm ?? "—"}</b>
+          {a.fiscal.ncm_fonte === "tiny" ? " (do Tiny)" : a.fiscal.ncm_fonte === "digitado" ? " (digitado)" : a.fiscal.ncm_fonte === "conferido" ? " (já conferido aqui)" : ""}
+          {" · "}origem <b>{a.fiscal.origem}</b>
+          {a.fiscal.origem_tiny && a.fiscal.origem_tiny !== a.fiscal.origem ? <span className="text-amber-700"> (no Tiny: {a.fiscal.origem_tiny})</span> : null}
+          {a.fiscal.cest ? <> · CEST <b className="font-mono">{a.fiscal.cest}</b></> : null}
+          . Para corrigir, use os campos abaixo.
         </p>
       )}
       {a.asins.length === 0 ? (

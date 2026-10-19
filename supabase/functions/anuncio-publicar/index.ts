@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v12 (19/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v13 (19/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -67,6 +67,10 @@
 // v12 (19/out/2026, regra do dono): na Amazon, só produto da Bumi vai com a marca própria; o resto vai como
 //   "Genérico" (marca e fabricante). Na ficha nova, o EAN do cadastro de um Genérico NÃO vai (é do fabricante na
 //   GS1 → erro 8572); só o digitado. opcoes.sem_gtin = true tira o código de qualquer produto.
+// v13 (19/out/2026, briefing do dono): DADOS FISCAIS na criação do anúncio Amazon (no lugar da planilha do Invoicer):
+//   ncm_code = NCM do Tiny (8 dígitos), import_designation = 0 sempre, contributor_supply_chain_role e regime por conta
+//   (FISCAL_AMZ), tax_classification_code = CEST do Tiny (API v2; a v3 não traz). Campos do formulário: dá para corrigir.
+//   Sem NCM = pendência. Origem diferente de 0 no Tiny = aviso (a NF sai diferente do declarado).
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -333,8 +337,23 @@ async function medidasTiny(idTiny: number | null): Promise<Record<string, any>> 
     if (!resp.ok) return {};
     const p = await resp.json();
     const d = p?.dimensoes ?? {};
-    return { peso_kg: num(d.pesoBruto), comprimento_cm: num(d.comprimento), largura_cm: num(d.largura), altura_cm: num(d.altura), gtin: p?.gtin || null, ncm: p?.ncm || null };
+    return {
+      peso_kg: num(d.pesoBruto), comprimento_cm: num(d.comprimento), largura_cm: num(d.largura), altura_cm: num(d.altura), gtin: p?.gtin || null, ncm: p?.ncm || null,
+      origem: p?.origem != null && String(p.origem).trim() !== "" ? String(p.origem).trim() : null,
+    };
   } catch { return {}; }
+}
+/** CEST do cadastro do Tiny. A API v3 não traz o campo; a v2 (produto.obter) traz. Melhor-esforço. */
+async function cestTiny(idTiny: number | null): Promise<string | null> {
+  const tk = (Deno.env.get("TINY_V2_TOKEN") || "").trim();
+  if (!idTiny || !tk) return null;
+  try {
+    const r = await fetch(`https://api.tiny.com.br/api2/produto.obter.php?token=${encodeURIComponent(tk)}&id=${idTiny}&formato=json`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const c = String(j?.retorno?.produto?.cest ?? "").replace(/\D/g, "");
+    return c || null;
+  } catch { return null; }
 }
 
 /** Só número MAIOR que zero conta (o Tiny devolve 0 para o que não foi cadastrado). */
@@ -1256,6 +1275,13 @@ const AUTO_AMZ = new Set(["item_name", "bullet_point", "product_description", "e
   "fulfillment_availability", "item_package_weight", "item_package_dimensions", "unit_count", "number_of_items", "model_number",
   "external_testing_certification", "number_of_boxes", "parentage_level", "child_parent_sku_relationship", "variation_theme", ...FOTOS_AMZ]);
 const esquemasAmz = new Map<string, { props: Record<string, any>; obrig: string[] } | null>();
+// v13: dados fiscais por conta (Faturador da Amazon). regime "normal" = lucro real/presumido: o anúncio só tem campo de
+// CSOSN (Simples), não de CST, então nada vai nesse campo. papel = "Atividade da empresa para esse produto".
+// SVL: regime a confirmar com o dono (null = o campo CSOSN aparece vazio no formulário).
+const FISCAL_AMZ: Record<number, { regime: "normal" | "simples" | null; papel: string }> = {
+  900001: { regime: "normal", papel: "distributor" },
+  900002: { regime: null, papel: "distributor" },
+};
 /** Esquema do tipo de produto (o que cada campo aceita). Guardado por isolate: o arquivo é grande. */
 async function esquemaAmz(c: ContaAmz, tipo: string, requisitos: string) {
   const chave = `${tipo}:${requisitos}`;
@@ -1349,10 +1375,11 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
 
   // código de barras: o digitado → o já conferido → o do Tiny → o do cadastro. Só vale se for DESTE produto
   // (kit costuma herdar o da unidade; na Amazon um EAN é um produto e o kit cairia na ficha da unidade).
-  const [tiny, cadR, kitR] = await Promise.all([
+  const [tiny, cadR, kitR, cest] = await Promise.all([
     medidasTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null),
     db.from("produtos").select("gtin, nome").eq("sku", sku).maybeSingle(),
     db.from("produto_kits").select("sku_componente, quantidade").eq("sku_kit", sku),
+    cestTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null),
   ]);
   const digitado = String(op.gtin ?? "").replace(/\D/g, "");
   let ean: string | null = digitado || String(d.extra?.gtin ?? tiny.gtin ?? cadR.data?.gtin ?? "").replace(/\D/g, "") || null;
@@ -1442,6 +1469,17 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
     contains_liquid_contents: liquido ? "true" : "false", is_expiration_dated_product: "false",
     country_of_origin: "BR", batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable",
   } : { batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable" };
+  // v13: DADOS FISCAIS do Faturador (no lugar da planilha do Invoicer). Fonte = Tiny: NCM da "Classificação fiscal"
+  // (8 dígitos, sem ponto) e CEST; origem SEMPRE 0 (decisão do dono, mesmo quando o Tiny diz outra coisa);
+  // atividade da empresa e regime pela conta. Vão como campos do formulário (a pessoa pode corrigir).
+  const fiscalConta = FISCAL_AMZ[c.shop_id] ?? { regime: null, papel: "distributor" };
+  const ncmTiny = String(tiny.ncm ?? "").replace(/\D/g, "");
+  const ncmBase = ncmTiny || String(d.extra?.ncm ?? "").replace(/\D/g, "");
+  Object.assign(sugestoes, {
+    ncm_code: ncmBase, import_designation: "0", contributor_supply_chain_role: fiscalConta.papel,
+    ...(cest ? { tax_classification_code: cest } : {}),
+    ...(fiscalConta.regime === "normal" ? {} : { tax_treatment: "" }),
+  });
   const digitados = (op.atributos ?? {}) as Record<string, unknown>;
   const noForm = new Set<string>([
     ...Object.keys(sugestoes).filter(temCampo),
@@ -1508,6 +1546,18 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   }
   avisos.push("vendas pelo FBA: o anúncio só vende depois que o estoque chegar ao CD da Amazon (envio pelo Seller Central ou, na SVL, pela Reposição)");
 
+  // dados fiscais: sem NCM o Faturador não emite a nota (e o anúncio pode ser bloqueado no transbordo)
+  const ncmFinal = String(valorForm("ncm_code")).replace(/\D/g, "");
+  if (temCampo("ncm_code")) {
+    if (!ncmFinal) pendencias.push(d.cad?.id_tiny ? "o produto está sem NCM (Classificação fiscal) no Tiny: cadastre lá ou digite no formulário" : "o produto não foi achado no Tiny para puxar o NCM: digite no formulário");
+    else if (ncmFinal.length !== 8) pendencias.push(`o NCM ${ncmFinal} precisa ter 8 dígitos`);
+    else if (!ncmTiny && !String(digitados.ncm_code ?? "").trim()) avisos.push(`NCM ${ncmFinal} veio do que já foi conferido aqui, não do Tiny (o Tiny não respondeu)`);
+  }
+  if (tiny.origem && tiny.origem !== "0" && temCampo("import_designation")) {
+    avisos.push(`no Tiny a origem deste produto é ${tiny.origem}; na Amazon vai 0 (Nacional, regra da casa). A NF que o Tiny emite sai com ${tiny.origem}: acerte o cadastro no Tiny`);
+  }
+  if (fiscalConta.regime === null && temCampo("tax_treatment")) avisos.push("regime tributário desta conta não está definido: o CSOSN (só para o Simples) fica para preencher no formulário");
+
   // VALIDADOR da Amazon: confere o corpo sem criar nada
   const errosCampo = new Set<string>();
   if (!pendencias.length && b.preco) {
@@ -1536,12 +1586,18 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
 
   const junto = [String(d.r.descricao ?? "").trim(), ((Array.isArray(d.r.bullet_points) ? d.r.bullet_points : []) as unknown[]).map((x) => `• ${String(x).trim()}`).join("\n")].filter(Boolean).join("\n\n");
   return {
-    pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], montar, assinar, skuAmz, caminho, alvoAsin, ean, med, tiny,
+    pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], montar, assinar, skuAmz, caminho, alvoAsin, ean, med, tiny, ncm: ncmFinal || null,
     previa: {
       loja: c.nome, sku, titulo: caminho === "oferta" ? (alvoAsin?.titulo ?? b.titulo) : b.titulo, descricao: junto, preco: b.preco,
       fotos: caminho === "oferta" ? [] : b.fotos, ean, medidas: med.medidas, estoque: 0, fora_do_ar: false,
       atributos, limites: { titulo: LIM_AMZ.titulo, fotos: LIM_AMZ.fotos },
-      amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA", marca, generico: !ehBumi, ean_ficha: eanFicha },
+      amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA", marca, generico: !ehBumi, ean_ficha: eanFicha,
+        fiscal: {
+          ncm: ncmFinal || null, ncm_fonte: String(digitados.ncm_code ?? "").trim() ? "digitado" : ncmTiny ? "tiny" : ncmBase ? "conferido" : null,
+          origem: String(valorForm("import_designation") || "0"), origem_tiny: tiny.origem ?? null,
+          papel: valorForm("contributor_supply_chain_role") || null, cest: String(valorForm("tax_classification_code") || "") || null,
+          regime: fiscalConta.regime, no_esquema: ["ncm_code", "import_designation", "contributor_supply_chain_role", "tax_treatment", "tax_classification_code"].filter(temCampo),
+        } },
     },
   };
 }
@@ -1561,7 +1617,7 @@ async function enviarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, m: Awaited<Retu
     return json({ ok: false, erro, resposta }, 200);
   };
   if (m.caminho === "ficha") {
-    await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...m.med.salvar, gtin: m.ean ?? d.extra?.gtin ?? null, ncm: d.extra?.ncm ?? m.tiny.ncm ?? null }, { onConflict: "sku" });
+    await db.from("ia_produto_extra").upsert({ sku: d.r.sku, ...m.med.salvar, gtin: m.ean ?? d.extra?.gtin ?? null, ncm: m.ncm ?? d.extra?.ncm ?? m.tiny.ncm ?? null }, { onConflict: "sku" });
   }
   // o endereço das fotos vale 7 dias: a Amazon baixa as imagens depois de aceitar o pedido
   try { corpo = m.montar(await m.assinar(7 * 24 * 3600)); }
