@@ -3320,6 +3320,17 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
   sonda v5 (`amazon-lwa-debug` v21) `?teste=fiscal-aplicar` — lê antes, valida, aplica UMA vez, relê; registro em
   `debug_fulfillment` (`modulo='amazon-fiscal-aplicar'`). A rota só aceita esses dois SKUs e morre em 20/out 03:00 UTC.
   `?teste=fiscal-varredura[&pagina=]` (só leitura) lista os anúncios com os campos fiscais: ACZ = 499 anúncios.
+- **Varredura ACZ × Tiny (19/out, só leitura; planilha entregue ao dono para aprovar):** 499 anúncios, 62 "ativos"
+  (venda em 90 d ou estoque no FBA); só 56 sem nenhuma divergência (31 dos ativos). Amazon sem NCM/origem: 299 (11
+  ativos); sem atividade: 412; origem 1 na Amazon: 21 (8 ativos, ex. 15983_FBA, 0Q-MGF3-VY0C, J3-A6R2-YDMX, 16330_FBA);
+  origem 5: 5; **NCM diferente do Tiny: 30** (9 ativos — Gatissimo/Kets/Mr. Miau com 35051000 na Amazon × 25059000 no
+  Tiny; 14426 sílica 35051000 × 28112230; 16011 Mya Cat 35051000 × 11062000; 16163 11062000 × 11081400; 15818
+  33051000 × 33059000) — NCM muda o imposto: confirmar com o contador antes de trocar. **Origem ≠ 0 no próprio Tiny:
+  26 produtos** (Good Pad/PetLike 5, Ultra Secão, Tofu/Purple Moon/Great Pets 1, Kets White 2, Seresto 6, Drontal 2) —
+  acertar no Tiny, senão a NF sai diferente do anúncio. 82 anúncios apontam para SKU que não existe mais no Tiny
+  (antigos, sem venda). Tiny lido por `tiny-fiscal-produtos?skus=` → `produtos_fiscal` (a função não espera o 429 do
+  Tiny: em lotes de 28 metade falhava; lotes de 5 com 8 s de pausa passaram). De-para usado: `sku_mapeamento`
+  (J3-A6R2-YDMX = 15679 lá; o briefing dizia "produto do 15825") + tirar `_FBA`/`_FBAA`/`_FBM`/`FBA-`/`-FBA`/`- HJ`.
 - **Regra do dono (19/out, `anuncio-publicar` v12, deploy 13): na Amazon, só produto Bumi vai com a marca própria;
   todo o resto vai como "Genérico"** (marca e fabricante; `/bumi/i` na marca do cadastro). Na FICHA NOVA de um
   Genérico o EAN do cadastro NÃO vai — é do fabricante na GS1 e dá **8572**; só vai se for digitado. `opcoes.sem_gtin`
