@@ -1697,6 +1697,22 @@ concluir.
   "Cotar transporte" com a data → opções agrupadas (coleta parceira / por nossa conta), "em todos" repete a escolha nos
   envios, "Confirmar transporte" com confirmação. `transporte`/`previa` aceitam a chave publicável até 20/out 03:00 UTC
   (rota de ensaio). **Daqui em diante todo plano criado pelo app precisa passar pelo transporte no app.**
+- **Aba sem recarregar = "carregando eternamente" (19/out):** o dono abriu o plano numa aba de ANTES do deploy; a tela velha não
+  conhecia `escolher_transporte` e o "Continuar" repetia 16 chamadas por clique (vistas nos logs, nada mudou na Amazon).
+  Recarregar resolveu; o dono confirmou a coleta Total Express parceira em 21/10 para os dois envios.
+- **v6 (deploy 7) — envio nasce na aba Envios:** `envios-app {plano, dry?}` (automático na tela ao chegar em
+  `transporte_confirmado`; botão para refazer). Um `fulfillment_envios` por envio da Amazon (numero = FBA…, centro = CD,
+  status `separando`, `data_envio_agendada` = dia da coleta, itens de `listShipmentItems`: sku pelo plano, `sku_origem` = msku)
+  + anexos: **etiquetas das caixas** (v0 `getLabels` PackageLabel_Thermal, UNIQUE, `PackageLabelsToPrint` = boxIds de
+  `listShipmentBoxes`; o link vale 15 s) e **etiquetas de produto** (`POST items/labels`, THERMAL 50×25 mm, itens com
+  labelOwner SELLER). Idempotente (envio pelo número FBA, anexo pelo nome); `envios_amazon[].envio_app_id`. Ensaio `dry` no
+  wf44bb679e: 6 + 24 caixas, PDFs de 92/364 kB e 63/46 kB. **Não rodado de verdade** (precisa de login).
+- **Nota de remessa:** quem emite hoje é a PRÓPRIA Amazon (regime especial, Portaria CAT 31/2019; DANFEs anexados: SVL série 5
+  emitente BMPC, ACZ série 25; "Outras Saídas - Remessa para Depósito Temporário", CFOP 5949, transportadora preenchida). Pela
+  API = Invoices `POST /tax/invoices/2024-06-19/governmentInvoiceRequests` {inboundPlanId, shipmentId, marketplaceId,
+  transactionType INBOUND_SHIPMENT, invoiceType REMITTANCE} + `GET …/governmentInvoiceRequests/{shipmentId}` (documento). Exige o
+  papel **Tax Invoicing (Restricted)** — 403 nas duas contas; o dono vai pedir para o SISTEMINHA I. A API de envios (v0 e
+  2024-03-20) não tem campo de nota. Emitir pelo Tiny foi descartado (fora do regime especial, duplicaria).
 
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
@@ -3406,7 +3422,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v5 (deploy 6; 19/out: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |

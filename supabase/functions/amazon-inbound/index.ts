@@ -1,11 +1,10 @@
 // ============================================================================
-// Edge Function: amazon-inbound v5 (19/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v6 (19/out/2026) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
-// destino. NÃO cria envio no app: confirmado o destino, a pessoa segue no Seller Central (transportadora,
-// nota fiscal, etiquetas), baixa o PDF e lança em Envios como sempre. Só a conta cujo app tem a permissão
-// de envios (hoje a SVL; a ACZ responde 403).
+// destino e o transporte; confirmado o transporte, o envio nasce sozinho na aba Envios (v6) e a nota de remessa
+// segue no Seller Central. Só a conta cujo app tem a permissão de envios (hoje a SVL; a ACZ responde 403).
 //
 // POST body {modulo, ...} — exige sessão de usuário com o módulo `galpao` (ou service role):
 //   lista              → planos dos últimos 30 dias (andamento, resumo). Só leitura.
@@ -25,6 +24,13 @@
 //                          por envio (transportadora, modo, quem contrata, custo, pré-condições).
 //   confirmar-transporte → {plano, escolhas: {shipmentId: transportationOptionId}, confirmar: true}.
 //   As opções ficam em envios_amazon[].transporte_opcoes (sem coluna nova).
+// v6 (19/out/2026): ENVIO NO APP. Transporte confirmado → cria um envio na aba Fulfillment › Envios por envio da Amazon
+//   (fulfillment_envios + itens de listShipmentItems) e anexa as etiquetas das CAIXAS (v0 getLabels, PackageLabel_Thermal
+//   10×15) e as de PRODUTO (createMarketplaceItemLabels, térmica 50×25 mm, só itens com labelOwner SELLER).
+//   envios-app       → {plano, dry?}: idempotente (envio achado pelo número FBA; documento achado pelo nome); retoma de onde
+//                      parou se o tempo acabar (`faltam`). dry = só lê e baixa as etiquetas, não grava nada.
+//   A nota de remessa é emitida pela Amazon (regime especial) e pela API exige o papel "Tax Invoicing (Restricted)" — hoje
+//   403 nas duas contas: anexar o DANFE à mão até o papel sair.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -78,7 +84,7 @@ async function exigirAcesso(req: Request, modulo = ""): Promise<Quem | Response>
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { nome: "sistema" };
-  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && (modulo === "transporte" || modulo === "previa")) return { nome: "ensaio" };
+  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && (modulo === "transporte" || modulo === "previa" || modulo === "envios-app")) return { nome: "ensaio" };
   if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
@@ -189,6 +195,44 @@ async function disparar(planoRef: string, token: string, metodo: string, caminho
   }
   const extra: Record<string, unknown> = r.body?.inboundPlanId ? { plano_id: String(r.body.inboundPlanId) } : {};
   return await salvar(planoRef, { passo: passoEspera, operacao_id: String(r.body.operationId), erro: null, ...extra }, { acao, http: r.status, operacao: r.body.operationId });
+}
+
+// ---------------------------------------------------------------- envio no app (aba Envios)
+const DOCS_BUCKET = "fulfillment-docs";
+const diaBRT = (iso: string | null | undefined) => (iso ? new Date(Date.parse(iso) - 3 * 3600000).toISOString().slice(0, 10) : null);
+async function baixarPdf(url: string): Promise<Uint8Array> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`download ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+/** Etiquetas das caixas (v0 getLabels): o link vale 15 s, então baixa na hora. */
+async function etiquetasCaixas(token: string, fba: string, caixas: string[]): Promise<Uint8Array> {
+  const q = new URLSearchParams({ PageType: "PackageLabel_Thermal", LabelType: "UNIQUE", PackageLabelsToPrint: caixas.join(",") });
+  const r = await sp(token, "GET", `/fba/inbound/v0/shipments/${encodeURIComponent(fba)}/labels?${q}`);
+  const url = r.body?.payload?.DownloadURL;
+  if (!ok(r) || !url) throw new Error(`etiquetas das caixas: ${motivo(r)}`);
+  return await baixarPdf(String(url));
+}
+/** Etiquetas de produto (FNSKU), térmicas 50×25 mm, das unidades que o vendedor etiqueta. */
+async function etiquetasProduto(token: string, mskus: { msku: string; quantity: number }[]): Promise<Uint8Array> {
+  const r = await sp(token, "POST", `${API}/items/labels`, {
+    marketplaceId: MKT, labelType: "THERMAL_PRINTING", width: 50, height: 25, localeCode: "pt_BR", mskuQuantities: mskus,
+  });
+  const url = ((r.body?.documentDownloads ?? []) as any[])[0]?.uri;
+  if (!ok(r) || !url) throw new Error(`etiquetas de produto: ${motivo(r)}`);
+  return await baixarPdf(String(url));
+}
+async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uint8Array, por: string | null) {
+  const { data: ja } = await db.from("fulfillment_envio_docs").select("id").eq("envio_id", envioId).eq("nome", nome).limit(1);
+  if (ja?.length) return "ja_tinha";
+  const caminho = `${envioId}/${crypto.randomUUID().slice(0, 8)}-${nome.replace(/[^A-Za-z0-9._-]+/g, "_")}`;
+  const { error: eUp } = await db.storage.from(DOCS_BUCKET).upload(caminho, bytes, { contentType: "application/pdf", upsert: false });
+  if (eUp) throw new Error(`storage: ${eUp.message}`);
+  const { error } = await db.from("fulfillment_envio_docs").insert({
+    envio_id: envioId, tipo, nome, mime: "application/pdf", tamanho: bytes.length, storage_path: caminho, criado_por: por,
+  });
+  if (error) { await db.storage.from(DOCS_BUCKET).remove([caminho]); throw new Error(`banco: ${error.message}`); }
+  return "anexado";
 }
 
 // ---------------------------------------------------------------- passos
@@ -476,7 +520,82 @@ Deno.serve(async (req) => {
       return json(resumo(p));
     }
 
-    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte ou cancelar" }, 400);
+    if (modulo === "envios-app") {
+      // cria na aba Envios um envio por envio da Amazon, com itens e etiquetas — só depois do transporte confirmado
+      const dry = b.dry === true || quem.nome === "ensaio";
+      if (!dry && planoRow.passo !== "transporte_confirmado") return json({ ok: false, erro: "o envio no app é criado depois de confirmar o transporte" }, 400);
+      const porMsku = new Map(((planoRow.itens ?? []) as Linha[]).map((l) => [String(l.msku), l]));
+      const envios = (planoRow.envios_amazon ?? []) as any[];
+      const resultado: any[] = [];
+      let faltam = 0;
+      for (const e of envios) {
+        if (Date.now() > ate - 6000) { faltam++; continue; }
+        const r: Record<string, any> = { fba: e.fba, cd: e.cd, avisos: [] as string[] };
+        try {
+          const [ri, rc] = [await sp(token, "GET", `${API}/inboundPlans/${planoRow.plano_id}/shipments/${e.id}/items?pageSize=100`),
+            await sp(token, "GET", `${API}/inboundPlans/${planoRow.plano_id}/shipments/${e.id}/boxes?pageSize=100`)];
+          if (!ok(ri)) throw new Error(`itens do envio: ${motivo(ri)}`);
+          const itens = ((ri.body?.items ?? []) as any[]).map((it, k) => {
+            const l = porMsku.get(String(it.msku));
+            return { sku: l?.sku ?? String(it.msku), sku_origem: String(it.msku), titulo: l?.titulo ?? null, qtd_planejada: Number(it.quantity) || 0,
+              qtd_separada: 0, ordem: k, _rotula: String(it.labelOwner) === "SELLER" };
+          });
+          const listaCx = (rc.body?.boxes ?? []) as any[];
+          const caixas = listaCx.map((x) => String(x.boxId ?? "")).filter(Boolean);
+          if (!ok(rc)) r.avisos.push(`caixas: ${motivo(rc)}`);
+          if (listaCx.some((x) => Number(x.quantity) > 1)) r.avisos.push("caixas agrupadas pela Amazon: confira se veio uma etiqueta por caixa");
+          r.itens = itens.map(({ _rotula, ...x }) => ({ ...x, etiqueta_produto: _rotula }));
+          r.caixas = caixas.length;
+          const total = itens.reduce((s, i) => s + i.qtd_planejada, 0);
+          const opc = ((e.transporte_opcoes ?? []) as any[]).find((o) => o.id === e.transporte_escolhido);
+          const dia = diaBRT(opc?.coleta_inicio) ?? diaBRT(e.pronto_em);
+          // etiquetas (baixadas na hora; no dry só confere que vieram)
+          let pdfCaixas: Uint8Array | null = null, pdfProduto: Uint8Array | null = null;
+          if (caixas.length) { try { pdfCaixas = await etiquetasCaixas(token, String(e.fba), caixas); } catch (x) { r.avisos.push(String((x as Error).message)); } }
+          else r.avisos.push("a Amazon não devolveu as caixas: etiquetas das caixas ficam para o Seller Central");
+          const rotular = itens.filter((i) => i._rotula).map((i) => ({ msku: i.sku_origem, quantity: i.qtd_planejada }));
+          if (rotular.length) { try { pdfProduto = await etiquetasProduto(token, rotular); } catch (x) { r.avisos.push(String((x as Error).message)); } }
+          r.etiquetas_caixas_kb = pdfCaixas ? Math.round(pdfCaixas.length / 1024) : null;
+          r.etiquetas_produto_kb = pdfProduto ? Math.round(pdfProduto.length / 1024) : null;
+          if (dry) { resultado.push(r); continue; }
+
+          // envio no app (reaproveita o que já foi criado para este FBA)
+          let envioId = e.envio_app_id as string | undefined;
+          if (!envioId) {
+            const { data: ja } = await db.from("fulfillment_envios").select("id").eq("marketplace", "amazon").eq("numero", String(e.fba)).limit(1);
+            envioId = ja?.[0]?.id;
+          }
+          if (!envioId) {
+            const transp = opc ? (opc.solucao === "AMAZON_PARTNERED_CARRIER" ? `coleta ${opc.transportadora ?? ""} (parceira Amazon) em ${dia ?? "?"}` : `por nossa conta (${opc.transportadora ?? ""})`) : "transporte confirmado pelo app";
+            const { data: novo, error } = await db.from("fulfillment_envios").insert({
+              marketplace: "amazon", empresa: planoRow.empresa, numero: String(e.fba), centro: e.cd ?? null, status: "separando",
+              total_unidades: total, data_envio_agendada: dia, criado_por: quem.nome,
+              observacao: `Criado pelo app (plano Amazon ${planoRow.plano_id}) · ${transp}. Nota de remessa: gerar no Seller Central e anexar.`,
+            }).select("id").single();
+            if (error || !novo) throw new Error(`banco (envio): ${error?.message}`);
+            envioId = String(novo.id);
+            const { error: eI } = await db.from("fulfillment_envio_itens").insert(itens.map(({ _rotula, ...x }) => ({ ...x, envio_id: envioId })));
+            if (eI) { await db.from("fulfillment_envios").delete().eq("id", envioId); throw new Error(`banco (itens): ${eI.message}`); }
+            r.criado = true;
+          } else r.criado = false;
+          r.envio_id = envioId;
+          if (pdfCaixas) r.doc_caixas = await anexarDoc(envioId, "etiquetas", `Etiquetas das caixas ${e.fba}.pdf`, pdfCaixas, quem.nome);
+          if (pdfProduto) r.doc_produto = await anexarDoc(envioId, "etiqueta_produto", `Etiquetas de produto ${e.fba}.pdf`, pdfProduto, quem.nome);
+          e.envio_app_id = envioId;
+        } catch (x) {
+          r.erro = String((x as Error).message ?? x);
+        }
+        resultado.push(r);
+      }
+      let p = planoRow;
+      if (!dry && resultado.some((r) => r.envio_id)) {
+        p = await salvar(ref, { envios_amazon: envios }, { acao: "envios criados no app", por: quem.nome,
+          envios: resultado.map((r) => ({ fba: r.fba, envio: r.envio_id ?? null, criado: r.criado ?? false, erro: r.erro ?? null, avisos: r.avisos })) });
+      }
+      return json({ ...resumo(p), ok: !resultado.some((r) => r.erro), dry, faltam, envios_app: resultado });
+    }
+
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }

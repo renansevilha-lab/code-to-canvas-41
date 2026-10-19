@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Boxes, CheckCircle2, ExternalLink, Loader2, PackagePlus, RefreshCw, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -35,7 +35,9 @@ interface OpcaoTransporte {
   id: string; transportadora: string | null; modo: string | null; solucao: string | null; custo: number | null;
   coleta_inicio: string | null; coleta_fim: string | null; precondicoes: string[];
 }
-interface EnvioAmazon { id: string; fba: string | null; cd: string | null; status: string | null; transporte_opcoes?: OpcaoTransporte[]; transporte_escolhido?: string | null }
+interface EnvioAmazon { id: string; fba: string | null; cd: string | null; status: string | null; transporte_opcoes?: OpcaoTransporte[]; transporte_escolhido?: string | null; envio_app_id?: string | null }
+// v6: depois do transporte confirmado o servidor cria o envio na aba Envios (itens + etiquetas das caixas e de produto)
+interface EnvioApp { fba: string | null; cd: string | null; envio_id?: string; criado?: boolean; erro?: string; avisos: string[]; caixas?: number; doc_caixas?: string; doc_produto?: string }
 interface Destino { id: string; expira: string | null; taxa: number; desconto: number; envios: { id: string; cd: string | null; cidade: string | null }[] }
 interface Plano {
   id: string; plano_id: string | null; passo: string; erro: string | null; destinos: Destino[] | null;
@@ -212,7 +214,7 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
       const r: Resposta = await chamar({ modulo: "confirmar-transporte", plano: planoRef, escolhas: transp, confirmar: true });
       pronto(r); atualizarLista();
       if (r.ok === false) toast.error(r.erro ?? "A Amazon recusou");
-      else if (r.plano?.passo === "transporte_confirmado") toast.success("Transporte confirmado: siga no Seller Central (nota fiscal e etiquetas)");
+      else if (r.plano?.passo === "transporte_confirmado") { toast.success("Transporte confirmado: criando o envio na aba Envios…"); await criarEnviosApp(); }
       else if (r.plano?.passo === "erro") toast.error("A Amazon recusou", { description: r.plano.erro ?? undefined });
     } catch (e) { toast.error("Falha na Amazon", { description: (e as Error).message }); } finally { setRodando(null); }
   }
@@ -226,6 +228,29 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
     }
     setTransp(novo);
   }
+  // envio na aba Envios: automático ao chegar em "transporte confirmado" (1× por janela); o botão refaz
+  const [enviosApp, setEnviosApp] = useState<EnvioApp[] | null>(null);
+  const tentouEnvios = useRef(false);
+  async function criarEnviosApp() {
+    if (!planoRef) return;
+    tentouEnvios.current = true;
+    setRodando("Criando o envio na aba Envios e baixando as etiquetas…");
+    try {
+      let r: Resposta & { envios_app?: EnvioApp[]; faltam?: number } = await chamar({ modulo: "envios-app", plano: planoRef });
+      for (let i = 0; i < 3 && (r.faltam ?? 0) > 0; i++) r = await chamar({ modulo: "envios-app", plano: planoRef });
+      if (r.plano) pronto(r);
+      setEnviosApp(r.envios_app ?? []);
+      void qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+      void qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
+      if (r.ok === false) toast.error("Envio na aba Envios: algo falhou", { description: r.erro ?? (r.envios_app ?? []).map((e) => e.erro).filter(Boolean).join(" · ") });
+      else toast.success("Envio criado na aba Envios, com as etiquetas");
+    } catch (e) { toast.error("Falha ao criar o envio na aba Envios", { description: (e as Error).message }); } finally { setRodando(null); }
+  }
+  const faltaEnvioApp = plano?.passo === "transporte_confirmado" && (plano.envios_amazon ?? []).some((e) => !e.envio_app_id);
+  useEffect(() => {
+    if (faltaEnvioApp && !tentouEnvios.current && !rodando) void criarEnviosApp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faltaEnvioApp]);
   const enviosTransp = plano?.envios_amazon ?? [];
   const transpCompleto = enviosTransp.length > 0 && enviosTransp.every((e) => transp[e.id]);
 
@@ -465,8 +490,36 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                 return `${e.fba ?? e.id} → ${e.cd ?? "?"}${o ? ` (${rotuloOpcao(o)})` : ""}`;
               }).join(" · ")}
             </div>
+            <div className="rounded-md border px-3 py-2">
+              <div className="mb-1 font-medium">Aba Envios</div>
+              {enviosTransp.map((e) => {
+                const r = enviosApp?.find((x) => x.fba === e.fba);
+                return (
+                  <div key={e.id} className="text-[12.5px]">
+                    {e.envio_app_id || r?.envio_id ? <CheckCircle2 className="mr-1 inline h-3.5 w-3.5 text-emerald-600" /> : <AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-amber-600" />}
+                    <b>{e.fba}</b> → {e.cd ?? "?"}: {e.envio_app_id || r?.envio_id ? "criado na aba Envios" : r?.erro ? `não criado — ${r.erro}` : "ainda não criado"}
+                    {r && (r.doc_caixas || r.doc_produto) ? ` · etiquetas: ${[r.doc_caixas ? "caixas" : null, r.doc_produto ? "produto" : null].filter(Boolean).join(" e ")}` : ""}
+                    {r?.avisos?.length ? <span className="text-amber-700"> · {r.avisos.join(" · ")}</span> : null}
+                  </div>
+                );
+              })}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {faltaEnvioApp && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!!rodando} onClick={() => void criarEnviosApp()}>
+                    <PackagePlus className="h-4 w-4" /> Criar na aba Envios
+                  </Button>
+                )}
+                {!faltaEnvioApp && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!!rodando} onClick={() => void criarEnviosApp()}
+                    title="Refaz só o que faltar (não duplica envio nem etiqueta)">
+                    <RefreshCw className="h-4 w-4" /> Conferir etiquetas de novo
+                  </Button>
+                )}
+              </div>
+            </div>
             <p className="text-muted-foreground">
-              Falta no Seller Central: a nota fiscal de remessa e as etiquetas (etapa 3). Depois baixe o PDF do envio e lance em Fulfillment › Envios.
+              Falta no Seller Central: a <b>nota fiscal de remessa</b> (etapa 3). Baixe o DANFE e anexe no envio da aba Envios. As
+              etiquetas das caixas e de produto já vão anexadas pelo app.
             </p>
             <Button asChild variant="outline" size="sm" className="gap-1.5">
               <a href={`https://sellercentral.amazon.com.br/fba/sendtoamazon?wf=${plano.plano_id}`} target="_blank" rel="noreferrer">
