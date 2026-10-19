@@ -20,6 +20,8 @@ export interface InfoDevolucao {
   status: string | null;
   solucao: number | null;
   due_date: string | null;
+  /** "disputa até" do Seller Center (seller_compensation_due_date); sem ele vale o due_date — 18/out/2026 */
+  prazo_disputa: string | null;
   needs_logistics: boolean | null;
   logistica_reversa: string | null;
   tracking_number: string | null;
@@ -37,7 +39,7 @@ export interface InfoDevolucao {
 }
 
 const COLS_DEV =
-  "return_sn,order_sn,status,solucao,due_date,needs_logistics,logistica_reversa,tracking_number,itens," +
+  "return_sn,order_sn,status,solucao,due_date,prazo_disputa,needs_logistics,logistica_reversa,tracking_number,itens," +
   "ida_status,ida_entregue_em,ida_falha_em,ida_devolvido_em,ida_ultimo_evento,ida_ultimo_em,ida_consultado_em";
 
 /** Detalhe das devoluções (por return_sn) + transportadora/status do pedido. */
@@ -86,7 +88,8 @@ export function solucaoReembolso(d: InfoDevolucao | undefined): Rotulo {
 
 export function statusSolicitacao(d: InfoDevolucao | undefined): Rotulo {
   const st = d?.status ?? "";
-  const dentroDoPrazo = !!d?.due_date && new Date(d.due_date).getTime() > Date.now();
+  const prazo = d?.prazo_disputa ?? d?.due_date ?? null;
+  const dentroDoPrazo = !!prazo && new Date(prazo).getTime() > Date.now();
   switch (st) {
     case "REQUESTED": return { rotulo: "Solicitado", detalhe: "aguardando a Shopee", cor: "#2F6FB0" };
     case "PROCESSING":
@@ -95,7 +98,7 @@ export function statusSolicitacao(d: InfoDevolucao | undefined): Rotulo {
         : { rotulo: "Em processamento", cor: "#B7791F" };
     case "ACCEPTED":
       return dentroDoPrazo
-        ? { rotulo: "Pendente validação do vendedor", detalhe: `a Shopee aprovou o reembolso · disputa até ${dia(d!.due_date)}`, cor: "#C9432F" }
+        ? { rotulo: "Pendente validação do vendedor", detalhe: `a Shopee aprovou o reembolso · disputa até ${dia(prazo)}`, cor: "#C9432F" }
         : { rotulo: "Reembolso concluído", detalhe: "prazo de disputa encerrado", cor: CINZA };
     case "JUDGING": return { rotulo: "Em disputa", detalhe: "julgamento da Shopee", cor: "#7A5CC7" };
     case "SELLER_DISPUTE": return { rotulo: "Disputa aberta", detalhe: "pelo vendedor", cor: "#7A5CC7" };

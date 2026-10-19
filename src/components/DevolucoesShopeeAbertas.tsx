@@ -2,7 +2,8 @@
 // Devoluções ABERTAS na Shopee — espelho de shopee_devolucoes (Returns API).
 //
 // Mostra o que o Seller Center mostra: motivo (+ texto do comprador), fotos,
-// itens, valor e o PRAZO do vendedor (due_date — depois dele a Shopee finaliza
+// itens, valor e o PRAZO do vendedor (prazo_disputa da view = seller_compensation_due_date, o "disputa
+// até" do Seller Center; sem ele, due_date — depois dele a Shopee finaliza
 // sozinha a favor do comprador). E deixa RESPONDER pelo app:
 //   · Aceitar reembolso  = v2.returns.confirm  ("finalizar sem disputa")
 //   · Negar / Disputar   = v2.returns.dispute  (vai a julgamento)
@@ -48,6 +49,8 @@ interface DevAberta {
   needs_logistics: boolean | null;
   tracking_number: string | null;
   due_date: string | null;
+  /** prazo de disputa do Seller Center (cai no due_date quando a Shopee não informa) — 18/out/2026 */
+  prazo_disputa: string | null;
   itens: { sku: string | null; nome: string | null; qtd: number | null }[] | null;
   create_time: string | null;
   // cruzamento com o recebimento fisico no estoque (bipagem) — por order_sn
@@ -170,8 +173,8 @@ export function DevolucoesShopeeAbertas() {
       const { data, error } = await supabaseExternal
         .from("view_devolucoes_shopee_abertas")
         .select("*")
-        .or(`status.in.(REQUESTED,PROCESSING,JUDGING),and(status.eq.ACCEPTED,due_date.gt.${new Date().toISOString()})`)
-        .order("due_date", { ascending: true, nullsFirst: false })
+        .or(`status.in.(REQUESTED,PROCESSING,JUDGING),and(status.eq.ACCEPTED,prazo_disputa.gt.${new Date().toISOString()})`)
+        .order("prazo_disputa", { ascending: true, nullsFirst: false })
         .limit(200);
       if (error) throw error;
       return (data ?? []) as DevAberta[];
@@ -203,7 +206,7 @@ export function DevolucoesShopeeAbertas() {
     // Acionaveis no topo (da pra aprovar/disputar), depois prazo mais apertado.
     const peso = (d: DevAberta) => (RESPONDIVEIS.includes(d.status ?? "") ? 0 : 1);
     if (peso(a) !== peso(b)) return peso(a) - peso(b);
-    return (a.due_date ?? "9999") < (b.due_date ?? "9999") ? -1 : 1;
+    return (a.prazo_disputa ?? a.due_date ?? "9999") < (b.prazo_disputa ?? b.due_date ?? "9999") ? -1 : 1;
   }), [lista, filtroLoja, filtroStatus]);
 
   const resumo = useMemo(() => {
@@ -370,7 +373,8 @@ export function DevolucoesShopeeAbertas() {
         <div className="flex flex-col gap-3">
           {listaFiltrada.map((d) => {
             const st = STATUS_PT[d.status ?? ""] ?? { rotulo: d.status ?? "?", cor: "#5C6470" };
-            const prazo = prazoTexto(d.due_date);
+            const prazoIso = d.prazo_disputa ?? d.due_date;
+            const prazo = prazoTexto(prazoIso);
             // Quem decide se ainda da pra responder e a SHOPEE, nao o nosso
             // relogio: o due_date do espelho vence e a solicitacao segue aberta
             // (visto ao vivo 31/ago — TODOS os cards com "prazo venceu" e sem
@@ -502,7 +506,7 @@ export function DevolucoesShopeeAbertas() {
                           prazo.urgente ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300" : "bg-muted text-muted-foreground",
                         )}>
                           <Clock className="h-3 w-3" />
-                          {prazo.txt}{d.due_date ? ` · ${format(parseISO(d.due_date), "dd/MM HH:mm")}` : ""}
+                          {prazo.txt}{prazoIso ? ` · ${format(parseISO(prazoIso), "dd/MM HH:mm")}` : ""}
                         </span>
                       )}
                     </div>

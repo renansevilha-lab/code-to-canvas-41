@@ -1796,6 +1796,15 @@ semanal do Pet Shop: buscas em alta e top 20 das categorias em que não atuamos)
   `due_date` (antes: só `solucao = 1`, e as com produto nunca tinham "Status da
   entrega"). Fila foi de 1 para 30; 1ª rodada 30/30 gravados em 5 s. Cron 126
   passou a `7 10,11,16,20 * * *` (antes 10,11) — devolução aberta vence em dias.
+- **Prazo de disputa ≠ due_date (18/out/2026, print do dono: 3 devoluções "Pendente validação · disputa até
+  18-10" que o app já não mostrava):** o `due_date` da Returns API é **abertura + 2 dias**; o "disputa até" do
+  Seller Center é `get_return_detail.seller_compensation.seller_compensation_due_date` — 24 a 55 h depois. O app
+  usava o `due_date` para filtrar a aba "Shopee (abertas)" e no rótulo "disputa até", e tirava a devolução aceita
+  da lista um dia antes. Agora: coluna **`shopee_devolucoes.prazo_disputa`** (gravada pelo `detalhar`,
+  `shopee-devolucao-probe` **v26** — fonte agora no repositório), `view_devolucoes_shopee_abertas.prazo_disputa` =
+  `coalesce(prazo_disputa, due_date)`, mesma regra em `view_shopee_devolucoes_a_rastrear`, na aba de abertas e em
+  `statusSolicitacao` (`src/lib/shopeeDevolucao.ts`). A Shopee só informa o prazo em parte das aceitas (19 de 82
+  em 15 dias); sem ele vale o `due_date`. Na hora da correção: abertas dentro do prazo 4 → 8.
 - Achado: "não recebi" (NOT_RECEIPT, RRBOC) = escrow ZERADO — a venda não gera
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
