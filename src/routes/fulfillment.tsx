@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
 import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/components/fulfillment/PlanoAmazon";
+import { MargemFullCell, chaveMargem, useMargemFull } from "@/components/fulfillment/MargemFull";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -445,6 +446,7 @@ function ReposicaoTab({
   // envio à Amazon pela API (plano criado daqui; não cria envio no app)
   const [planoAmazon, setPlanoAmazon] = useState<{ chave: number; empresa: string | null; itens?: ItemReposicao[]; planoId?: string } | null>(null);
   const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
+  const { data: margens } = useMargemFull();
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -531,6 +533,8 @@ function ReposicaoTab({
                 <th className="text-left font-semibold px-3 py-3">Canal</th>
                 <th className="text-right font-semibold px-3 py-3"
                   title="Unidades vendidas nos últimos 30 dias NESTE canal e conta, só as que saíram do CD (Full/FBA) — a mesma base da cobertura e da sugestão. Embaixo, a média por dia.">Vendas 30d</th>
+                <th className="text-right font-semibold px-3 py-3"
+                  title="Margem de contribuição média dos últimos 30 dias nas vendas que saíram do Full/FBA nesta conta (recebido − custo − imposto, sem ADS e sem armazenagem). Embaixo: margem por unidade e a margem das vendas FORA do Full, para comparar.">MC 30d Full</th>
                 <th className="text-right font-semibold px-3 py-3">Estoque CD</th>
                 <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
                 <th className="text-right font-semibold px-3 py-3"
@@ -551,14 +555,14 @@ function ReposicaoTab({
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-t">
-                    <td colSpan={12} className="px-3 py-3">
+                    <td colSpan={13} className="px-3 py-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))
               ) : filtradas.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={13} className="px-3 py-12 text-center text-sm text-muted-foreground">
                     Nenhum item para reposição com os filtros atuais
                   </td>
                 </tr>
@@ -604,6 +608,9 @@ function ReposicaoTab({
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px]">
                         <div className={num(r.unidades_30d) > 0 ? "font-semibold" : "text-muted-foreground"}>{formatNumber(num(r.unidades_30d))}</div>
                         <div className="text-[10.5px] text-muted-foreground">{num(r.und_dia).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}/dia</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <MargemFullCell m={margens?.get(chaveMargem(r.shop_id, r.sku))} />
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] font-semibold">{formatNumber(num(r.estoque_full))}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-mono text-[13px] text-[#4A7BD9]">
