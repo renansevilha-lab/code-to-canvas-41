@@ -1714,6 +1714,19 @@ concluir.
   papel **Tax Invoicing (Restricted)** — 403 nas duas contas; o dono vai pedir para o SISTEMINHA I. A API de envios (v0 e
   2024-03-20) não tem campo de nota. Emitir pelo Tiny foi descartado (fora do regime especial, duplicaria).
 
+## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
+
+- Existe a API **Inbound FBM** (`POST /marketplace/fbm/inbounds` {items:[{user_product_id, quantity}]} → 202 + `process_id`;
+  `GET /marketplace/fbm/inbounds/process/{id}` → `inbound_id` + link para o vendedor AGENDAR no painel do ML), mas a doc diz
+  "só para vendedores do Fulfillment China". Teste com produto INEXISTENTE (nada criado) nas duas contas: **403
+  `unauthorized_user` — "The seller is not authorized to access this workflow."** (lista vazia dá 400 antes da checagem do
+  vendedor, não serve de teste). Não há leitura de inbound (`/inbounds/{id}` 403 nginx, demais 404).
+- O que a API dá: estoque (`/inventories/{inventory_id}/stock/fulfillment`) e operações
+  (`/stock/fulfillment/operations/search?seller_id&inventory_id`) — SVL ok; na Ottz, anúncio antigo do Full vem sem
+  `user_product_id`/`inventory_id` no `/items` (14 de 20 da amostra têm). NF de inbound (Matriz → armazém ML) só para quem usa o
+  emissor do ML: `/users/{id}/invoices/sites/MLB/batch_request/period/stream?...&full=inbound` (não testado).
+- Sonda: `ml-anuncio-sonda` v6 (deploy 7) `?teste=inbound&conta=ottz|svl` (expira 21/out).
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura

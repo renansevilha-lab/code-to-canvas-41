@@ -1,3 +1,5 @@
+// ml-anuncio-sonda v6 (19/out/2026): ?teste=inbound = o que a API de envios ao Full (Inbound FBM) deixa a conta fazer —
+//   leituras + POST com lista VAZIA e com produto INEXISTENTE (recusados, não criam nada). Expira em 21/out.
 // ml-anuncio-sonda v5 (14/out/2026) - DIAGNOSTICO. So o modo ?teste=limite escreve (v4: regrava o mesmo valor; v5: &valor=N troca e volta).
 // v3 (12/out/2026): nao publica nem altera nada.
 // Ensaia, so com LEITURA e com o VALIDADOR do Mercado Livre (/items/validate confere o corpo e
@@ -27,6 +29,37 @@ Deno.serve(async (req) => {
   const { data: tk } = await sb.from("oauth_tokens_ml").select("access_token").eq("user_id", userId).maybeSingle();
   if (!tk) return json({ erro: "sem token" }, 400);
   const token = tk.access_token as string;
+
+  if (u.searchParams.get("teste") === "inbound") {
+    if (Date.now() > Date.parse("2026-10-21T03:00:00Z")) return json({ erro: "teste expirado" }, 410);
+    const inb = String(u.searchParams.get("inbound") || "79528075").replace(/\D/g, "");
+    const curto = (r: { status: number; body: any }) => ({ status: r.status, body: typeof r.body === "string" ? r.body.slice(0, 300) : JSON.stringify(r.body)?.slice(0, 700) });
+    const out: Record<string, unknown> = {};
+    out.post_vazio = curto(await ml(token, "/marketplace/fbm/inbounds", "POST", { items: [] }));
+    out.processo_falso = curto(await ml(token, "/marketplace/fbm/inbounds/process/teste0000"));
+    for (const c of [`/marketplace/fbm/inbounds/${inb}`, `/inbounds/${inb}`, `/fbm/inbounds/${inb}`, `/shipping/inbounds/${inb}`, `/marketplace/inbounds/${inb}`,
+      `/users/${userId}/inbounds`, `/marketplace/fbm/inbounds?seller_id=${userId}`]) out[c] = curto(await ml(token, c));
+    const it = (await ml(token, `/users/${userId}/items/search?logistic_type=fulfillment&status=active&limit=1`)).body?.results?.[0];
+    if (it) {
+      const item = (await ml(token, `/items/${it}?attributes=id,user_product_id,inventory_id,shipping`)).body;
+      out.item_full = { id: item?.id, user_product_id: item?.user_product_id, inventory_id: item?.inventory_id, logistic: item?.shipping?.logistic_type };
+      if (item?.inventory_id) {
+        out.estoque = curto(await ml(token, `/inventories/${item.inventory_id}/stock/fulfillment`));
+        out.operacoes = curto(await ml(token, `/stock/fulfillment/operations/search?seller_id=${userId}&inventory_id=${item.inventory_id}&limit=3`));
+      }
+    }
+    // produto que NÃO existe: se a conta pode usar o fluxo, o processo falha por item inválido (nada é criado);
+    // se não pode, a recusa vem já no POST (403 unauthorized_user / INVALID_SELLER_MODEL)
+    const falso = await ml(token, "/marketplace/fbm/inbounds", "POST", { items: [{ user_product_id: "MLBU0000000001", quantity: 1 }] });
+    out.post_produto_inexistente = curto(falso);
+    const pid = falso.body?.process_id;
+    if (pid) { await new Promise((r) => setTimeout(r, 8000)); out.processo_do_falso = curto(await ml(token, `/marketplace/fbm/inbounds/process/${pid}`)); }
+    const lista = (await ml(token, `/users/${userId}/items/search?logistic_type=fulfillment&status=active&limit=50`)).body?.results ?? [];
+    const mg = lista.length ? (await ml(token, `/items?ids=${lista.slice(0, 20).join(",")}&attributes=id,user_product_id,inventory_id`)).body : [];
+    out.full_ativos = (await ml(token, `/users/${userId}/items/search?logistic_type=fulfillment&status=active&limit=1`)).body?.paging?.total;
+    out.amostra_up = (Array.isArray(mg) ? mg : []).map((x: any) => `${x?.body?.id}:${x?.body?.user_product_id ?? "-"}:${x?.body?.inventory_id ?? "-"}`);
+    return json({ conta, inbound: inb, ...out });
+  }
 
   // v4 (14/out/2026, autorizado pelo dono): o limite de unidades por compra (sale_term
   // PURCHASE_MAX_QUANTITY) pode ser alterado pela API? O validador recusa na criacao; aqui o teste
