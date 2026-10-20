@@ -1,10 +1,11 @@
 // ============================================================================
-// Edge Function: amazon-inbound v7.1 (19/out/2026; itens do envio v0 sem repetição) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v8 (20/out/2026; ACZ liberada + modelos de caixa do histórico) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
 // destino e o transporte; confirmado o transporte, o envio nasce sozinho na aba Envios (v6) e a nota de remessa
-// segue no Seller Central. Só a conta cujo app tem a permissão de envios (hoje a SVL; a ACZ responde 403).
+// segue no Seller Central. As DUAS contas (v8, 20/out/2026: o app da ACZ, "Ottz Analytics", ganhou o papel de envios —
+// a leitura dos envios v0 da ACZ passou a responder às 8h05 de 20/out; até 19/out dava 403).
 //
 // POST body {modulo, ...} — exige sessão de usuário com o módulo `galpao` (ou service role):
 //   lista              → planos dos últimos 30 dias (andamento, resumo). Só leitura.
@@ -36,7 +37,13 @@
 //                   já estão na aba Envios (pelo número FBA). Só leitura.
 //   importar      → {empresa, ids:[FBA…], confirmar: true}: cria na aba Envios os escolhidos (itens = SellerSKU × enviado).
 //   recebimento   → {empresa, numero}: por SKU, enviado × recebido AO VIVO + status do envio. Só leitura.
-//   Conta sem o papel de envios no app da Amazon (hoje a ACZ) → 403: a resposta diz o que falta.
+//   Conta sem o papel de envios no app da Amazon → 403: a resposta diz o que falta.
+// v8 (20/out/2026, pedido do dono "liberar tudo do Full Amazon" para a ACZ): tirada a pendência fixa "por enquanto só a
+//   SVL" da prévia e:
+//   modelos-importar → {empresa, planos?=40, dry?}: lê as CAIXAS dos últimos planos enviados da conta (listInboundPlans
+//                      SHIPPED + listInboundPlanBoxes) e cria em amazon_modelo_caixa um modelo por anúncio (msku) com a
+//                      caixa mais usada (só caixas de um anúncio só; validade = a mais recente vista). NÃO mexe em modelo
+//                      que já existe (o cadastrado à mão vale mais). dry = só mostra o que criaria.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -80,7 +87,7 @@ const DEPOIS: Record<string, string> = {
 };
 const PARADOS = new Set(["escolher_destino", "destino_confirmado", "escolher_transporte", "transporte_confirmado", "cancelado", "erro"]);
 // rota de ensaio: gerar/ler opções de transporte com a chave publicável (só cotação, nada é confirmado) — morre sozinha
-const ENSAIO_ATE = Date.parse("2026-10-20T03:00:00Z");
+const ENSAIO_ATE = Date.parse("2026-10-22T03:00:00Z"); // v8: ensaio de leitura da ACZ (prévia, envios, modelos dry)
 
 // ---------------------------------------------------------------- acesso
 type Quem = { nome: string | null };
@@ -90,7 +97,7 @@ async function exigirAcesso(req: Request, modulo = ""): Promise<Quem | Response>
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { nome: "sistema" };
-  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && ["transporte", "previa", "envios-app", "amazon-envios", "recebimento"].includes(modulo)) return { nome: "ensaio" };
+  if (pl.role === "anon" && Date.now() < ENSAIO_ATE && ["previa", "amazon-envios", "recebimento", "modelos-importar"].includes(modulo)) return { nome: "ensaio" };
   if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
@@ -170,7 +177,6 @@ async function montar(empresa: string | null, entrada: Entrada[]) {
   const pendencias = [
     ...linhas.filter((l) => l.problema).map((l) => `${l.sku}: ${l.problema}`),
     ...(linhas.length === 0 ? ["nenhum produto com quantidade"] : []),
-    ...(conta.shop_id === 900001 ? ["a conta ACZ ainda não tem a permissão de envios no aplicativo da Amazon (\"Ottz Analytics\"): por enquanto só a SVL"] : []),
     ...(repetidos.length ? [`anúncio repetido: ${[...new Set(repetidos)].join(", ")} — junte as quantidades num item só`] : []),
   ];
   const avisos = linhas.filter((l) => l.msku && !l.validade).map((l) => `${l.sku}: sem validade no modelo — se o produto exigir (areia exige), a Amazon recusa o plano`);
@@ -242,7 +248,7 @@ async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uin
 }
 
 // ---------------------------------------------------------------- envios já criados na Amazon (API v0)
-const SEM_PAPEL = "a conta não tem o papel de envios (Amazon Fulfillment) no aplicativo da Amazon — a ACZ (app \"Ottz Analytics\") precisa ganhar o papel e ser autorizada de novo";
+const SEM_PAPEL = "a conta não tem o papel de envios (Amazon Fulfillment) no aplicativo da Amazon — o app precisa ganhar o papel e a conta ser autorizada de novo";
 const STATUS_V0 = ["WORKING", "READY_TO_SHIP", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CHECKED_IN", "RECEIVING", "CLOSED"];
 const STATUS_APP: Record<string, string> = { WORKING: "separando", READY_TO_SHIP: "pronto_envio" }; // o resto já saiu: enviado
 const STATUS_PT: Record<string, string> = {
@@ -463,6 +469,78 @@ Deno.serve(async (req) => {
         .select("id, empresa, shop_id, passo, plano_id, itens_origem, envios_amazon, erro, criado_por, criado_em, atualizado_em")
         .gte("criado_em", desde).order("criado_em", { ascending: false }).limit(30);
       return json({ ok: true, planos: data ?? [] });
+    }
+
+    // v8: modelos de caixa a partir do histórico de envios da conta
+    if (modulo === "modelos-importar") {
+      const conta = CONTA[String(b.empresa ?? "")];
+      if (!conta) return json({ ok: false, erro: "informe a empresa (SVL Store ou ACZ Pet)" }, 400);
+      const dry = b.dry === true || b.dry === "1";
+      if (quem.nome === "ensaio" && !dry) return json({ ok: false, erro: "gravar exige login" }, 401);
+      const token = await tokenConta(conta.shop_id);
+      const maxPlanos = Math.min(Number(b.planos) || 40, 80);
+      const planos: string[] = [];
+      let next: string | null = null;
+      while (planos.length < maxPlanos && Date.now() < ate) {
+        const q = `status=SHIPPED&pageSize=30&sortBy=LAST_UPDATED_TIME&sortOrder=DESC${next ? `&paginationToken=${encodeURIComponent(next)}` : ""}`;
+        const r = await sp(token, "GET", `${API}/inboundPlans?${q}`);
+        if (r.status === 403) return json({ ok: false, erro: SEM_PAPEL }, 403);
+        if (!ok(r)) return json({ ok: false, erro: `planos: ${motivo(r)}` }, 502);
+        for (const p of ((r.body?.inboundPlans ?? []) as any[])) if (p.inboundPlanId) planos.push(String(p.inboundPlanId));
+        next = r.body?.pagination?.nextToken ?? null;
+        if (!next) break;
+        await sleep(600);
+      }
+      const skuDe = await mapaSkus(conta.shop_id);
+      // por anúncio: contagem de cada formato de caixa (un × medidas × peso) + validade mais recente
+      const porMsku = new Map<string, { formatos: Map<string, { n: number; un: number; c: number; l: number; a: number; kg: number; nome: string | null }>; validade: string | null }>();
+      let lidos = 0, mistas = 0;
+      for (const id of planos.slice(0, maxPlanos)) {
+        if (Date.now() > ate) break;
+        let tk: string | null = null;
+        do {
+          const r = await sp(token, "GET", `${API}/inboundPlans/${encodeURIComponent(id)}/boxes?pageSize=1000${tk ? `&paginationToken=${encodeURIComponent(tk)}` : ""}`);
+          if (!ok(r)) break;
+          for (const bx of ((r.body?.boxes ?? []) as any[])) {
+            const its = ((bx.items ?? []) as any[]).filter((i) => i.msku && Number(i.quantity) > 0);
+            if (new Set(its.map((i) => i.msku)).size !== 1) { if (its.length) mistas++; continue; }
+            const msku = String(its[0].msku);
+            const un = its.reduce((s, i) => s + Number(i.quantity), 0);
+            const fat = String(bx.dimensions?.unitOfMeasurement ?? "CM").toUpperCase() === "IN" ? 2.54 : 1;
+            const kgf = String(bx.weight?.unit ?? "KG").toUpperCase() === "LB" ? 0.453592 : 1;
+            const c = Math.round(Number(bx.dimensions?.length) * fat * 10) / 10, l = Math.round(Number(bx.dimensions?.width) * fat * 10) / 10;
+            const a = Math.round(Number(bx.dimensions?.height) * fat * 10) / 10, kg = Math.round(Number(bx.weight?.value) * kgf * 100) / 100;
+            if (!(un > 0 && c > 0 && l > 0 && a > 0 && kg > 0)) continue;
+            const reg = porMsku.get(msku) ?? { formatos: new Map(), validade: null };
+            const chave = `${un}|${c}|${l}|${a}|${kg}`;
+            const f = reg.formatos.get(chave) ?? { n: 0, un, c, l, a, kg, nome: bx.templateName ?? null };
+            f.n += Math.max(1, Number(bx.quantity) || 1);
+            reg.formatos.set(chave, f);
+            for (const i of its) if (i.expiration && (!reg.validade || String(i.expiration) > reg.validade)) reg.validade = String(i.expiration).slice(0, 10);
+            porMsku.set(msku, reg);
+          }
+          tk = r.body?.pagination?.nextToken ?? null;
+          await sleep(550);
+        } while (tk && Date.now() < ate);
+        lidos++;
+      }
+      const { data: existentes } = await db.from("amazon_modelo_caixa").select("msku").eq("shop_id", conta.shop_id);
+      const tem = new Set(((existentes ?? []) as any[]).map((x) => String(x.msku)));
+      const novos: Record<string, unknown>[] = [];
+      const jaExistiam: string[] = [];
+      for (const [msku, reg] of porMsku) {
+        if (tem.has(msku)) { jaExistiam.push(msku); continue; }
+        const melhor = [...reg.formatos.values()].sort((x, y) => y.n - x.n)[0];
+        novos.push({ shop_id: conta.shop_id, msku, sku: skuDe(msku), nome: melhor.nome ?? `Caixa com ${melhor.un}`, un_por_caixa: melhor.un,
+          comprimento_cm: melhor.c, largura_cm: melhor.l, altura_cm: melhor.a, peso_kg: melhor.kg, validade: reg.validade,
+          origem: "historico", caixas_historico: [...reg.formatos.values()].reduce((s, x) => s + x.n, 0), atualizado_por: quem.nome ?? "importação" });
+      }
+      if (!dry && novos.length) {
+        const { error } = await db.from("amazon_modelo_caixa").insert(novos);
+        if (error) return json({ ok: false, erro: `gravar modelos: ${error.message}`, novos }, 500);
+      }
+      return json({ ok: true, dry, conta: conta.nome, planos_encontrados: planos.length, planos_lidos: lidos, caixas_mistas_ignoradas: mistas,
+        novos, ja_existiam: jaExistiam, faltou_tempo: lidos < Math.min(planos.length, maxPlanos) });
     }
 
     if (modulo === "amazon-envios" || modulo === "importar" || modulo === "recebimento") {

@@ -21,7 +21,7 @@ import { ModelosCaixaAmazon } from "./ModelosCaixaAmazon";
 // "Montar envio" viram o plano de envio na Amazon (edge fn amazon-inbound) — anúncio × modelo de caixa,
 // caixas preenchidas pelos modelos, e a pessoa escolhe o centro de destino. Não cria envio no app: depois
 // do destino, segue no Seller Central (transportadora, nota fiscal, etiquetas), baixa o PDF e lança em
-// Envios como sempre. Só a SVL por enquanto (a ACZ ainda não tem a permissão de envios).
+// Envios como sempre. As duas contas (a ACZ ganhou a permissão de envios em 20/out/2026).
 // ============================================================================
 
 export interface ItemReposicao { sku: string; quantidade: number; titulo?: string | null }

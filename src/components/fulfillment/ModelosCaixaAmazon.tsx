@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { History, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ export interface ModeloCaixa {
 type Rascunho = Omit<ModeloCaixa, "origem" | "caixas_historico" | "atualizado_em" | "atualizado_por"> & { novo?: boolean };
 
 const CONTA_NOME: Record<number, string> = { 900001: "Amazon · ACZ Pet", 900002: "Amazon · SVL" };
+const EMPRESA_DE: Record<number, string> = { 900001: "ACZ Pet", 900002: "SVL Store" };
 
 export function ModelosCaixaAmazon({ shopId, aberto, onFechar, novoMsku, novoSku }: {
   shopId: number; aberto: boolean; onFechar: () => void; novoMsku?: string | null; novoSku?: string | null;
@@ -44,6 +45,37 @@ export function ModelosCaixaAmazon({ shopId, aberto, onFechar, novoMsku, novoSku
   const [linhas, setLinhas] = useState<Rascunho[]>([]);
   const [salvando, setSalvando] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [importando, setImportando] = useState(false);
+  /** v8 (20/out/2026): lê as caixas dos envios já despachados da conta e cria os modelos que faltam (amazon-inbound
+   *  modelos-importar). Primeiro mostra o que criaria; nunca mexe em modelo que já existe. */
+  async function importarHistorico() {
+    const empresa = EMPRESA_DE[shopId];
+    if (!empresa) return;
+    setImportando(true);
+    try {
+      const chamar = async (dry: boolean) => {
+        const { data, error } = await supabaseExternal.functions.invoke("amazon-inbound", { body: { modulo: "modelos-importar", empresa, dry, planos: 60 } });
+        if (error) throw new Error(error.message);
+        const d = data as { ok: boolean; erro?: string; novos: (ModeloCaixa & { origem: string; caixas_historico: number })[]; planos_lidos: number; planos_encontrados: number; faltou_tempo: boolean };
+        if (!d.ok) throw new Error(d.erro ?? "falhou");
+        return d;
+      };
+      const previa = await chamar(true);
+      if (!previa.novos.length) { toast.info(`Nenhum modelo novo nos ${previa.planos_lidos} envios lidos — os anúncios enviados já têm modelo.`); return; }
+      const lista = previa.novos.slice(0, 25).map((n) => `${n.msku}: ${n.nome ?? ""} (${n.un_por_caixa} un/caixa)${n.validade ? "" : " — sem validade"}`).join("\n");
+      if (!window.confirm(`Criar ${previa.novos.length} modelo(s) de caixa a partir de ${previa.planos_lidos} envio(s) já despachado(s)?\n\n${lista}${previa.novos.length > 25 ? "\n…" : ""}\n\nModelos que já existem não mudam. Confira a validade dos produtos que exigem (areia exige).`)) return;
+      // grava a própria prévia (a leitura recomeça sempre pelos envios mais recentes); quem já existe é ignorado
+      const { error: eIns } = await supabaseExternal.from("amazon_modelo_caixa").upsert(
+        previa.novos.map((n) => ({ ...n, atualizado_por: perfil?.nome ?? "importação" })),
+        { onConflict: "shop_id,msku", ignoreDuplicates: true },
+      );
+      if (eIns) throw new Error(eIns.message);
+      toast.success(`${previa.novos.length} modelo(s) criados`, { description: `Dos ${previa.planos_lidos} envios mais recentes (de ${previa.planos_encontrados}). Anúncio que não aparece neles: cadastre à mão.` });
+      void qc.invalidateQueries({ queryKey: ["amazon-modelos", shopId] });
+    } catch (e) {
+      toast.error("Não consegui importar", { description: (e as Error).message });
+    } finally { setImportando(false); }
+  }
 
   useEffect(() => {
     if (!q.data) return;
@@ -109,6 +141,9 @@ export function ModelosCaixaAmazon({ shopId, aberto, onFechar, novoMsku, novoSku
         <div className="flex flex-wrap items-center gap-2">
           <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar anúncio, SKU ou modelo" className="h-9 max-w-xs" />
           <Button size="sm" variant="outline" className="gap-1.5" onClick={adicionar}><Plus className="h-4 w-4" /> Novo modelo</Button>
+          <Button size="sm" variant="outline" className="gap-1.5" disabled={importando} onClick={() => void importarHistorico()}>
+            {importando ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />} Importar dos envios anteriores
+          </Button>
           {q.isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
         <div className="overflow-x-auto rounded-md border">

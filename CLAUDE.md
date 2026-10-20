@@ -1729,6 +1729,18 @@ concluir.
   papel **Tax Invoicing (Restricted)** — 403 nas duas contas; o dono vai pedir para o SISTEMINHA I. A API de envios (v0 e
   2024-03-20) não tem campo de nota. Emitir pelo Tiny foi descartado (fora do regime especial, duplicaria).
 
+- **ACZ LIBERADA (20/out/2026, pedido do dono "liberar tudo do Full Amazon"):** o app da ACZ ("Ottz Analytics") ganhou o papel de
+  envios — a leitura v0 dos envios da ACZ respondeu pela 1ª vez no sync das 8h05 de 20/out (21 envios, 13 nos 45 dias), então o
+  em trânsito da ACZ na Reposição passou a vir dos envios reais. `amazon-inbound` **v8** (deploy 10; idêntica ao repositório antes da
+  troca): tirada a pendência fixa "por enquanto só a SVL" da prévia; módulo **`modelos-importar {empresa, planos?, dry?}`** lê as caixas
+  dos planos SHIPPED (`listInboundPlans` + `/boxes`) e propõe um modelo por anúncio com a caixa mais usada (só caixas de um anúncio;
+  validade = a mais recente; nunca mexe em modelo existente). Lê ~15 planos por chamada (22 s), sempre os mais recentes — a tela
+  (`ModelosCaixaAmazon`, botão "Importar dos envios anteriores") roda a prévia e grava ela mesma o que a prévia mostrou (upsert
+  ignorando os que já existem). Prévia de 20/out na ACZ: 60 planos, 15 lidos, 16 modelos novos (2 já existiam); vários de AREIA sem
+  validade (15742_FBA, 15627, 15825…) — preencher antes de criar plano, a Amazon recusa areia sem validade. Ensaio sem login até
+  22/out 03:00 UTC só em `previa`, `amazon-envios`, `recebimento` e `modelos-importar` dry (o `transporte`/`envios-app` saíram do ensaio).
+  Prévia de envio ACZ (15987 ×10 + 15820 ×24) sem pendência. **Nenhum plano real da ACZ criado ainda.**
+
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
 - Existe a API **Inbound FBM** (`POST /marketplace/fbm/inbounds` {items:[{user_product_id, quantity}]} → 202 + `process_id`;
@@ -3272,6 +3284,14 @@ não é mais alcançado por eles (não republicada). O rótulo "Menor preço da 
 (aviso da conferência) também ficou o antigo. Prompts já escritos por SKU (`ia_prompt_imagem`) seguem com o texto antigo até
 o "prompt" ser refeito.
 
+**Complemento (20/out, mesmo dia):** a 1ª capa de selo de preço gerada depois da troca (15810) saiu com "AREIA DE GATO / BIO GOLD
+FINA": a aba estava aberta antes da publicação e mandou o título vazio, e o texto de reserva da `ia-anuncio` ainda chamava esses
+estilos de "Menor Preço da Shopee" — a IA não reconheceu o estilo novo e usou o nome do produto. Correções só no banco: os 29
+prompts gravados desses estilos passaram a dizer PREÇO DE / ATACADO (os de título próprio 16506/14091 ficaram), e o
+`meta_prompt_imagem` **v4** manda o selo PREÇO DE / ATACADO nos estilos 1, 3 e 6 mesmo sem título e mesmo se algo citar o nome antigo.
+**Capa sem texto centralizada (pedido do dono):** `imagem_capa_ambientada_limpa` **v2** com o bloco CENTRALIZAÇÃO (produto ou conjunto
+no centro do quadro, mesma margem dos dois lados, pet e objetos nas laterais) e a mesma regra acrescentada aos 19 prompts já gravados.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
@@ -3502,7 +3522,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
