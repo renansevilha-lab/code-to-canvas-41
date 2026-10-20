@@ -32,7 +32,9 @@ interface Analise {
   margem: { mc_pct: number | null; confiavel: boolean | null; roas_equilibrio: number | null; meta_minima: number | null };
   resumo: { u7: Bloco & { dias_gasto: number; dias_orcamento_esgotado: number | null }; a7: Bloco; periodo?: Periodo; anterior?: Periodo | null };
   dias: Dia[];
-  mudancas: { campo: string; de: string | null; para: string | null; quando: string; origem: string; quem: string | null; aproximada?: boolean; antes: Bloco; depois: Bloco }[];
+  /** tipo "anuncio" (20/out): mudança no próprio anúncio — enviada pelo sistema (origem app) ou vista no retrato diário (origem retrato) */
+  mudancas: { tipo?: "anuncio"; campo: string; de: string | null; para: string | null; descricao?: string | null; item_id?: string | null;
+    quando: string; origem: string; quem: string | null; aproximada?: boolean; antes: Bloco; depois: Bloco }[];
   skus?: string[] | null;
   diagnostico: { tom: "ruim" | "atencao" | "oportunidade" | "info"; titulo: string; texto: string; acao: string | null }[];
 }
@@ -40,7 +42,11 @@ interface Analise {
 const x = (v: number | null | undefined, casas = 2) => (v == null ? "—" : `${Number(v).toFixed(casas).replace(".", ",")}x`);
 const dm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const varPct = (a: number, b: number) => (b > 0 ? Math.round(((a - b) / b) * 100) : null);
-const CAMPO: Record<string, string> = { roas_target: "Meta de ROAS", budget: "Orçamento", status: "Status", bidding_method: "Lance" };
+const CAMPO: Record<string, string> = {
+  roas_target: "Meta de ROAS", budget: "Orçamento", status: "Status", bidding_method: "Lance",
+  anuncio_criado: "Anúncio", fotos: "Fotos", titulo: "Título", descricao: "Descrição", preco: "Preço cheio",
+  preco_venda: "Preço de venda", promocao: "Promoção", status_anuncio: "Situação do anúncio",
+};
 const TOM: Record<string, { cls: string; icone: typeof Info }> = {
   ruim: { cls: "border-red-500/40 bg-red-500/5 text-red-800 dark:text-red-300", icone: AlertTriangle },
   atencao: { cls: "border-amber-500/40 bg-amber-500/5 text-amber-800 dark:text-amber-300", icone: TrendingDown },
@@ -148,7 +154,7 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, peri
 
             {/* mudanças */}
             <div>
-              <div className="text-sm font-medium mb-1">Alterações de meta e orçamento</div>
+              <div className="text-sm font-medium mb-1">Alterações de meta, orçamento e do anúncio</div>
               {a.mudancas.length === 0 ? (
                 <div className="text-xs text-muted-foreground">
                   Nenhuma alteração registrada. O registro começou em {a.config?.primeira_vez ? new Date(a.config.primeira_vez).toLocaleDateString("pt-BR") : "20/10/2026"} (o {MK} não informa alterações passadas).
@@ -158,11 +164,23 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, peri
                   {a.mudancas.map((m, i) => (
                     <div key={i} className="text-xs rounded border px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
                       <span className="font-medium">{new Date(m.quando).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-                      <span>{CAMPO[m.campo] ?? m.campo}: {fmtCampo(m.campo, m.de)} → <b>{fmtCampo(m.campo, m.para)}</b></span>
+                      {m.tipo === "anuncio" ? (
+                        <span>
+                          <span className="rounded bg-muted px-1 mr-1 text-[10.5px] uppercase tracking-wide text-muted-foreground">anúncio</span>
+                          {CAMPO[m.campo] ?? m.campo}: {m.descricao}
+                          {(m.de != null || m.para != null) && m.campo !== "descricao" && m.campo !== "anuncio_criado" && (
+                            <> ({fmtCampo(m.campo, m.de)} → <b>{fmtCampo(m.campo, m.para)}</b>)</>
+                          )}
+                          {ehMl && !ml?.item && m.item_id && <span className="text-muted-foreground"> · {m.item_id}</span>}
+                        </span>
+                      ) : (
+                        <span>{CAMPO[m.campo] ?? m.campo}: {fmtCampo(m.campo, m.de)} → <b>{fmtCampo(m.campo, m.para)}</b></span>
+                      )}
                       <span className="text-muted-foreground">{m.origem === "app" ? `pelo sistema${m.quem ? ` (${m.quem})` : ""}`
+                        : m.origem === "retrato" ? "visto no retrato diário (mudou entre a véspera e este dia)"
                         : m.aproximada ? "registro diário (data aproximada, pode estar adiantada até ~8 dias)"
                         : `no painel ${ehMl ? "do Mercado Ads" : "da Shopee"} ou automático`}</span>
-                      {(m.campo === "roas_target" || m.campo === "budget") && (
+                      {(m.campo === "roas_target" || m.campo === "budget" || m.tipo === "anuncio") && m.antes && (
                         <span className="text-muted-foreground">7 dias antes: ROAS {x(m.antes?.roas)} · {formatBRL(m.antes?.gasto ?? 0)} → depois ({m.depois?.dias ?? 0} d): ROAS {x(m.depois?.roas)} · {formatBRL(m.depois?.gasto ?? 0)}</span>
                       )}
                     </div>
@@ -233,6 +251,8 @@ function fmtCampo(campo: string, v: string | null) {
   if (v == null || v === "") return "—";
   if (campo === "roas_target") return x(Number(v), 1);
   if (campo === "budget") return textoOrcamento(Number(v));
+  if ((campo === "preco" || campo === "preco_venda") && !Number.isNaN(Number(v))) return formatBRL(Number(v));
+  if (campo === "fotos") return `${v} fotos`;
   return v;
 }
 

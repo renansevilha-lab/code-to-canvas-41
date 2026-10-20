@@ -1882,6 +1882,13 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   interno); `resumo.periodo` e `resumo.anterior` (mesmo nº de dias logo antes). O diálogo abre no período da tela que o
   abriu e tem o próprio filtro; o diagnóstico continua sendo dos últimos 7 dias. Migração `ads_analise_com_periodo`
   (a fonte em `docs/ads-analise-anuncio*.sql` é a de antes do período — vale o que está no banco).
+- **Mudanças do anúncio na análise de ADS (20/out, pedido do dono):** além de meta/orçamento, a lista de alterações da análise
+  por anúncio (Shopee e ML) mostra o que o SISTEMA enviou ao anúncio (`ia_publicacao`: criado, fotos — "N novas do sistema, M
+  mantidas" —, título, descrição, preço cheio; "pelo sistema (quem)") e o que o RETRATO DIÁRIO viu mudar (`ads_anuncio_snapshot`:
+  preço de venda, entrou/saiu de promoção, situação; desde 05/out), cada um com ADS 7 dias antes × depois. Função
+  **`ads_mudancas_anuncio(mkt, shop, itens[])`** (`docs/ads-mudancas-anuncio.sql`), juntada às duas análises pela migração
+  `ads_analise_mudancas_anuncio`; no ML com anúncio escolhido o antes/depois é do anúncio (`ml_ads_anuncio_diario`). Mudança
+  feita direto no Seller Center/painel do ML só aparece se mexer em preço, promoção ou situação (o retrato não guarda fotos/texto).
 - **Promoções Amazon — itens com produto (20/out):** os itens de uma promoção mostram foto, nome, nosso SKU, SKU da Amazon e
   ASIN (catálogo da tela → `produtos` → `pesquisa_amz_asins`), preço cheio × promoção com % de desconto, vendas 30 d e
   estoque (`ItensDaPromocao` em `PromocoesAmazon.tsx`).
