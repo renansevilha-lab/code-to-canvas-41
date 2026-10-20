@@ -1,7 +1,9 @@
 // ============================================================================
-// Edge Function: ml-sync-ads v7
+// Edge Function: ml-sync-ads v8
 // Metricas de campanhas do Mercado Ads -> tabela ml_ads_campanha (+ retorna a lista).
 //
+// v8 (19/out/2026, pedido do dono): modulo=campanha-anuncios&campanha=ID[&de&ate] -> os anuncios da campanha com as
+//   metricas do periodo (so leitura) — a tela /ads-ml abre a campanha e mostra os produtos.
 // v7 (19/out/2026, pedido do dono): modulo=roas-alvo&campanha=ID&roas=N -> 1a ESCRITA no Mercado Ads:
 //   troca o ROAS objetivo de UMA campanha. Le a campanha antes, envia a troca UMA vez e le de novo.
 //   So aceita as campanhas/valores liberados em ROAS_LIBERADO e expira em 21/out. Se o ML recusar o
@@ -156,6 +158,50 @@ serve(async (req: Request) => {
     await new Promise((r) => setTimeout(r, 2500));
     const depois = await ler();
     return json({ ok: !!aceito, campanha, pedido: { roas_target: roas, acos_equivalente: acos }, antes, depois, aceito, tentativas });
+  }
+
+  // ------------------------------------------------------- modulo CAMPANHA-ANUNCIOS (v8: leitura pura)
+  // Anuncios de UMA campanha com as metricas do periodo, inclusive os sem impressao (o espelho
+  // ml_ads_anuncio_diario so guarda quem teve atividade). Tenta o filtro da API; se ele for ignorado,
+  // pagina tudo e filtra por campaign_id.
+  if ((p("modulo") || "") === "campanha-anuncios") {
+    const campanha = String(p("campanha") || "").replace(/\D/g, "");
+    if (!campanha) return json({ erro: "informe campanha" }, { status: 400 });
+    const hoje = fmtSP(new Date());
+    const de = p("de") || fmtSP(new Date(Date.now() - 29 * 86400000));
+    const ate = p("ate") || hoje;
+    const base = `/marketplace/advertising/${site}/advertisers/${advertiserId}/product_ads/ads/search`;
+    const inicio = Date.now();
+    const out: any[] = [];
+    let filtroOk = false, erro: string | null = null;
+    for (const comFiltro of [true, false]) {
+      out.length = 0;
+      let offset = 0; const limit = 50; let total = Infinity;
+      while (offset < total && offset < 5000 && Date.now() - inicio < 25000) {
+        const q = `?limit=${limit}&offset=${offset}&date_from=${de}&date_to=${ate}&metrics=${METRICS}` +
+          (comFiltro ? `&filters[campaign_id]=${campanha}` : "");
+        const r = await mlGet(base + q, token, "2");
+        if (r.status !== 200) { erro = `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`; break; }
+        total = r.body?.paging?.total ?? 0;
+        const res = r.body?.results || [];
+        out.push(...res);
+        offset += limit;
+        if (res.length < limit) break;
+      }
+      if (comFiltro && !erro && out.length && out.every((a) => String(a.campaign_id) === campanha)) { filtroOk = true; break; }
+      erro = null;
+    }
+    const anuncios = out.filter((a) => String(a.campaign_id) === campanha).map((a) => {
+      const m = a.metrics || {};
+      return {
+        item_id: a.item_id, titulo: a.title ?? null, status: a.status ?? null, preco: a.price != null ? n(a.price) : null,
+        catalogo: a.catalog_listing ?? null, logistica: a.logistic_type ?? null, foto: a.thumbnail ?? null, link: a.permalink ?? null,
+        gasto: n(m.cost), cliques: Math.round(n(m.clicks)), impressoes: Math.round(n(m.prints)),
+        vendas: n(m.total_amount), unidades: Math.round(n(m.units_quantity)),
+        roas: n(m.cost) > 0 ? Math.round((n(m.total_amount) / n(m.cost)) * 100) / 100 : null,
+      };
+    }).sort((a, z) => z.gasto - a.gasto || z.impressoes - a.impressoes);
+    return json({ campanha, de, ate, filtro_da_api: filtroOk, anuncios, erro, campos_do_anuncio: out[0] ? Object.keys(out[0]) : [] });
   }
 
   // ------------------------------------------------------- modulo SONDA-ADS (leitura pura, nao grava)
