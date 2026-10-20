@@ -258,13 +258,30 @@ export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" |
 export const chamarVariacoesShopee = (modulo: "previa" | "criar" | "ativar" | "ler" | "ampliar", body: Record<string, unknown>) =>
   chamarFuncao("anuncio-shopee-variacoes", modulo, body);
 
-/** URLs assinadas (1 h) das imagens do bucket privado, em lote. */
+/** URLs assinadas (1 h) das imagens do bucket privado, em lote.
+ *  20/out/2026 — a cota de tráfego do Supabase estourou (18 GB): cada leitura gerava um token novo, a URL mudava e o
+ *  navegador baixava de novo o PNG inteiro (~1,3 MB) — 114 fotos baixadas 1.376 vezes num dia. Agora a mesma URL é
+ *  reaproveitada enquanto faltar mais de 10 min para vencer, e o navegador usa o próprio cache. Caminho de foto não é
+ *  regravado (o worker grava cada versão com hash no nome), então reaproveitar não mostra foto velha. */
+const cacheAssinadas = new Map<string, { url: string; vence: number }>();
 export async function urlsAssinadas(paths: string[]): Promise<Record<string, string>> {
   const unicos = [...new Set(paths.filter(Boolean))];
   if (!unicos.length) return {};
-  const { data, error } = await supabaseExternal.storage.from(BUCKET_ANUNCIOS).createSignedUrls(unicos, 3600);
-  if (error) throw error;
+  const agora = Date.now();
   const out: Record<string, string> = {};
-  for (const d of data ?? []) if (d.path && d.signedUrl) out[d.path] = d.signedUrl;
+  const faltam: string[] = [];
+  for (const p of unicos) {
+    const c = cacheAssinadas.get(p);
+    if (c && c.vence - agora > 10 * 60_000) out[p] = c.url;
+    else faltam.push(p);
+  }
+  if (!faltam.length) return out;
+  const { data, error } = await supabaseExternal.storage.from(BUCKET_ANUNCIOS).createSignedUrls(faltam, 3600);
+  if (error) throw error;
+  for (const d of data ?? []) {
+    if (!d.path || !d.signedUrl) continue;
+    out[d.path] = d.signedUrl;
+    cacheAssinadas.set(d.path, { url: d.signedUrl, vence: agora + 3600_000 });
+  }
   return out;
 }
