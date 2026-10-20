@@ -52,6 +52,7 @@ import {
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MetaRoasCelula, SeloImpulsionado, textoOrcamento, useShopeeAdsConfig } from "@/components/ads/ShopeeAdsConfig";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -449,6 +450,8 @@ function AdsShopeePage() {
   const acosAlvo = faixas?.acos_alvo ?? 20;
   const { rows: daily, loading: loadingDaily } = useDaily(sp.empresa, sp.periodo);
   const { rows: anuncios, total, loading: loadingAds, error: errAds } = useAnuncios(sp);
+  // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
+  const cfgQ = useShopeeAdsConfig(anuncios);
 
   // Contadores por classificação (totais dentro do escopo empresa)
   const countsByClassif = useMemo(() => {
@@ -840,6 +843,20 @@ function AdsShopeePage() {
           </div>
         )}
 
+        {cfgQ.data && cfgQ.data.lojas.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
+            {cfgQ.data.lojas.map((l) => (
+              <span key={l.loja}>
+                Saldo de ADS {l.loja === "svl" ? "SVL/Bumi" : "Ottz"}: <b className="text-foreground">{l.saldo != null ? formatBRL(Number(l.saldo)) : "—"}</b>
+                {l.recarga_automatica != null && <> · recarga automática {l.recarga_automatica ? "ligada" : "desligada"}</>}
+                {l.erros?.length ? <span className="text-amber-700"> · {l.erros.join("; ")}</span> : null}
+              </span>
+            ))}
+            <span>Meta de ROAS, orçamento e “impulsionado” lidos agora na Shopee{cfgQ.isFetching ? " (atualizando…)" : ""}.</span>
+          </div>
+        )}
+        {cfgQ.isError && <div className="text-xs text-amber-700 px-1">Não consegui ler a meta de ROAS na Shopee: {(cfgQ.error as Error).message}</div>}
+
         {/* Lista */}
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -857,6 +874,7 @@ function AdsShopeePage() {
                   <SortableHead label="Investimento" keyId="investimento" sort={sp.sort} dir={sp.dir} onSort={onSort} />
                   <SortableHead label="Vendas" keyId="vendas" sort={sp.sort} dir={sp.dir} onSort={onSort} />
                   <SortableHead label="ROAS" keyId="roas" sort={sp.sort} dir={sp.dir} onSort={onSort} align="center" />
+                  <TableHead className="text-center" title="Meta de ROAS da campanha na Shopee (lápis = alterar meta e orçamento)">Meta ROAS</TableHead>
                   <SortableHead label="ACOS" keyId="acos" sort={sp.sort} dir={sp.dir} onSort={onSort} align="center" />
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -864,14 +882,14 @@ function AdsShopeePage() {
               <TableBody>
                 {loadingAds && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center py-8">
+                    <TableCell colSpan={14} className="text-center py-8">
                       <Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Carregando…
                     </TableCell>
                   </TableRow>
                 )}
                 {!loadingAds && anuncios.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
                       Nenhum anúncio no filtro atual.
                     </TableCell>
                   </TableRow>
@@ -882,6 +900,8 @@ function AdsShopeePage() {
                   const semRetorno = num(a.investimento) > 0 && num(a.vendas) === 0;
                   const acosAlto = acosVal > acosAlvo && num(a.investimento) > 0;
                   const rowCls = semRetorno ? "bg-red-50/60" : acosAlto ? "bg-amber-50/40" : "";
+                  const cfg = cfgQ.data?.porCampanha.get(String(a.campaign_id));
+                  const impulsionado = a.item_id != null && !!cfgQ.data?.impulsionados.has(String(a.item_id));
                   return (
                     <TableRow key={String(a.campaign_id)} className={rowCls}>
                       <TableCell><Thumb src={a.foto} alt={a.anuncio ?? ""} /></TableCell>
@@ -890,11 +910,12 @@ function AdsShopeePage() {
                         <div className="text-[11px] text-muted-foreground truncate">
                           {a.sku_pai && <span className="font-mono mr-2">{a.sku_pai}</span>}
                           {a.tipo_anuncio && <span className="capitalize">{a.tipo_anuncio}</span>}
+                          {impulsionado && <span className="ml-2"><SeloImpulsionado /></span>}
                         </div>
                       </TableCell>
                       <TableCell><LojaBadge empresa={a.empresa} /></TableCell>
                       <TableCell className="text-right text-sm">
-                        {num(a.orcamento_diario) > 0 ? formatBRL(num(a.orcamento_diario)) : "—"}
+                        {cfg ? textoOrcamento(cfg.budget) : num(a.orcamento_diario) > 0 ? formatBRL(num(a.orcamento_diario)) : "—"}
                       </TableCell>
                       <TableCell className="text-right text-xs">{formatNumber(num(a.impressoes))}</TableCell>
                       <TableCell className="text-right text-xs">{formatNumber(num(a.cliques))}</TableCell>
@@ -907,6 +928,10 @@ function AdsShopeePage() {
                           {roasVal > 0 && <span className="text-xs font-medium tabular-nums">{fmtRoas(roasVal)}</span>}
                           <ClassifBadge c={a.classificacao_roas} />
                         </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {cfgQ.isLoading ? <Loader2 className="h-3 w-3 animate-spin inline-block text-muted-foreground" />
+                          : <MetaRoasCelula cfg={cfg} nome={a.anuncio ?? String(a.campaign_id)} roasAtual={roasVal} />}
                       </TableCell>
                       <TableCell className="text-center text-xs">
                         {num(a.investimento) > 0 && num(a.vendas) > 0 ? (

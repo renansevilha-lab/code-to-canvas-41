@@ -1791,6 +1791,25 @@ e com `acos_target`, `/advertising/product_ads/campaigns/{id}` v1 e v2) dão o M
 caminho com `advertisers/{id}` dá 404. Reautorizar não muda nada. A recusa é do lado do ML (escrita em campanhas não liberada para o
 nosso app/conta) — caminho: chamado no suporte de desenvolvedores do ML; até lá, ROAS objetivo só pelo painel do Mercado Ads. A leitura (campanhas, métricas, `roas_target`/`acos_target` = 100 ÷ ROAS) já funciona.
 
+## 5.9.4.4 Shopee Ads — meta de ROAS, orçamento e impulsionado (20/out/2026)
+
+Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, e alterar meta e orçamento pelo sistema.
+- **Edge fn `shopee-ads-gestao` v2 — publicada no slot `shopee-flashsale-probe`** (o projeto bateu o LIMITE DE FUNÇÕES do plano:
+  criar função nova dá "Max number of functions reached"; o slot era uma sonda de agosto sem cron nem front). Fonte em
+  `supabase/functions/shopee-ads-gestao/`. Módulos: `sonda` (cru), `config {loja, campanhas}` e `editar`.
+- **Leitura (conferida nas duas lojas):** `ads/get_product_level_campaign_setting_info` (`info_type_list 1,3`) → `common_info`
+  (`ad_type`, `bidding_method`, `campaign_status`, `campaign_budget` — **0 = sem limite**) e `auto_bidding_info.roas_target` (a meta
+  de ROAS; todas as nossas campanhas são "manual" com lance automático). `product/get_boosted_list` = impulsionados agora (vazio nas
+  duas em 20/out). `ads/get_total_balance` e `ads/get_shop_toggle_info` = saldo de ADS e recarga automática.
+- **Escrita:** `POST ads/edit_manual_product_ads` (documentado) `{reference_id aleatório, campaign_id, edit_action change_budget|
+  change_roas_target, budget|roas_target}`. Prévia sem `confirmar`; com `confirmar` exige login (chave publicável = 401), manda cada
+  troca uma vez, para no 1º recusado, relê e grava em `debug_fulfillment` (`modulo shopee-ads-editar`). Campanha `ad_type auto`
+  não é editável (a doc não tem edit_auto_product_ads). **Nenhuma alteração real feita ainda** — o 1º uso pela tela confirma se o app
+  tem permissão de escrita nas ADS.
+- **Tela `/ads-shopee`:** coluna **Meta ROAS** (âmbar quando o ROAS do período está abaixo da meta) com lápis → diálogo Conferir →
+  Aplicar na Shopee (com confirmação); Orç. diário passa a ser o valor ao vivo; selo **impulsionado** no anúncio; saldo de ADS por
+  loja acima da lista. Só a página visível é lida (`src/components/ads/ShopeeAdsConfig.tsx`).
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura
@@ -3541,6 +3560,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
+| `shopee-flashsale-probe` | v16 (= `shopee-ads-gestao` v2) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`) e alteração de meta/orçamento (`editar`, com login) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
