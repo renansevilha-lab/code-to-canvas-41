@@ -2799,6 +2799,16 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
     `shopee_anuncios_variacao`). Promocional ≥ preço cheio ou sem preço = fica de fora, com aviso.
     Sem repetição automática: "Tentar cadastrar de novo" é clique. A última promoção/margem
     escolhida fica no `localStorage` (`ia.envio.promo.<empresa>`).
+  - **Também no ATUALIZAR (20/out/2026, pedido do dono):** o bloco aparece na conferência de
+    atualizar anúncio Shopee que já existe (contexto `EnvioAlvoContext` em `PromocaoNoEnvio.tsx`:
+    modo, `itemId`, preço cheio que vai ficar e o de hoje). Lê o `detalhe` das promoções em
+    andamento/programadas para achar em qual o anúncio está (pré-escolhe essa, com "hoje R$ x" por
+    SKU); variações vêm de `shopee_anuncios_variacao` do próprio anúncio. Ao terminar a atualização
+    (`EV_PRONTO` também no modo atualizar): já está na promoção escolhida → `atualizar-itens`
+    (mantém `purchase_limit` e o preço das outras variações); senão `add-itens` (aviso: a Shopee
+    costuma recusar o mesmo anúncio em duas promoções). Botão "Só trocar/cadastrar agora" faz só a
+    promoção, comparando com o preço cheio de HOJE. Os anúncios de "Atualizar também" não entram.
+    **Não testado ao vivo.**
   - **Como os blocos conversam** (`src/lib/iaEnvioEventos.ts`): `ia-anuncio-vai-criar` (síncrono,
     detalhe mutável: variações e promoção dizem o que farão — entra no texto da confirmação) →
     `ia-anuncio-criado` (`ativar`) → `ia-anuncio-pronto` (item, modelos, preços cheios).
