@@ -11,7 +11,8 @@ import type { Decisao, MiniKpi } from "./tipos";
 // Card aberto do agente de ADS (resumo = ads_relatorio_diario(), versao 'v1'):
 // resumo_lojas[], alertas[] (com causas), margem{prejuizo, apertado, folgado},
 // tendencias{subindo, caindo, organico_sem_ads, ctr_alto_orcamento_limitado},
-// sugestoes[], qualidade{}. Layout "DetalheAds" do design. Só leitura —
+// sugestoes[], qualidade{}, metas{resumo, itens} e alteracoes_config[] (20/out/2026: metas de ROAS
+// × ROAS de equilíbrio e o que mudou de meta/orçamento). Layout "DetalheAds" do design. Só leitura —
 // nenhuma ação em campanha. O registro v0 (05/10) só tem a versão completa.
 // ============================================================================
 
@@ -159,6 +160,8 @@ export function RelatorioAds({ rel, mobile }: { rel: RelatorioLista; mobile?: bo
       </Secao>
 
       <Sugestoes sug={sug} total={num(res.sugestoes_total ?? sug.length)} fotos={fotos} />
+
+      {res.metas != null && <Metas metas={obj(res.metas)} alteracoes={arr(res.alteracoes_config)} />}
 
       <Secao titulo="Tendências" nota="4 semanas · receita das 4 semanas">
         <div className={mobile ? "grid grid-cols-1 gap-x-7 gap-y-3" : "grid grid-cols-1 lg:grid-cols-2 gap-x-7 gap-y-3"}>
@@ -437,6 +440,92 @@ function Sugestoes({ sug, total, fotos }: { sug: Record<string, unknown>[]; tota
           {todos ? "Mostrar menos" : `Mostrar todas (${sug.length})`}
         </button>
       )}
+    </Secao>
+  );
+}
+
+const LIM_METAS = 10;
+const TOM_META: Record<string, { rot: string; cor: string }> = {
+  ruim: { rot: "ruim", cor: "var(--rl-red)" }, atencao: { rot: "atenção", cor: "var(--rl-amber)" },
+  oportunidade: { rot: "oportunidade", cor: "var(--rl-green)" },
+};
+const CAMPO: Record<string, string> = { roas_target: "meta de ROAS", budget: "orçamento", status: "situação" };
+const lojaMeta = (x: Record<string, unknown>) => str(x.loja) || (str(x.mkt) === "ml" ? "ML Ottz" : "Shopee");
+
+/** Metas de ROAS × ROAS de equilíbrio (ads_metas_situacao) + alterações de meta/orçamento dos últimos 7 dias. */
+function Metas({ metas, alteracoes }: { metas: Record<string, unknown>; alteracoes: Record<string, unknown>[] }) {
+  const [todos, setTodos] = useState(false);
+  const r = obj(metas.resumo);
+  const itens = arr(metas.itens);
+  const vis = todos ? itens : itens.slice(0, LIM_METAS);
+  const nota = `7 dias · ${num(r.campanhas)} campanhas · ${num(r.ruim)} ruins, ${num(r.atencao)} em atenção`
+    + ` · ${num(r.meta_abaixo_equilibrio)} com meta abaixo do equilíbrio · perda estimada ${brl(r.perda_7d_total)} de ${brl(r.gasto_7d_total)} investidos`;
+  return (
+    <Secao titulo="Metas de ROAS" nota={nota}>
+      {itens.length === 0 ? <div className="text-[13px] text-(--rl-text-3)">Nenhuma campanha fora do normal.</div> : (
+        <div className="overflow-x-auto border border-(--rl-border) rounded-lg">
+          <table className="w-full min-w-[900px] border-collapse text-[13px]">
+            <thead>
+              <tr>
+                <th className="rl-th text-left">Campanha</th>
+                <th className="rl-th text-right" title="meta de ROAS de hoje → ROAS real dos últimos 7 dias">Meta → ROAS 7d</th>
+                <th className="rl-th text-right" title="100 ÷ margem de contribuição sem ADS (30 dias): abaixo disso o ADS dá prejuízo">Equilíbrio</th>
+                <th className="rl-th text-right">Gasto 7d</th>
+                <th className="rl-th text-right" title="gasto − margem que a venda do ADS trouxe">Perda 7d</th>
+                <th className="rl-th text-left">Sugestão</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vis.map((x, i) => {
+                const tom = TOM_META[str(x.tom)];
+                const perda = numOuNull(x.perda_7d);
+                return (
+                  <tr key={i}>
+                    <td className="rl-td align-top py-2.5">
+                      <div className="min-w-[220px] max-w-[320px]" title={str(x.nome)}>
+                        <div className="font-medium line-clamp-2">{produtoCurto(x.nome ?? x.campanha, 60)}</div>
+                        <div className="text-[12px] text-(--rl-text-3)">
+                          {tom && <span style={{ color: tom.cor }} className="font-medium">{tom.rot}</span>} · {lojaMeta(x)}{x.sku ? ` · ${str(x.sku)}` : ""}
+                        </div>
+                      </div>
+                    </td>
+                    <td className={`rl-td align-top py-2.5 text-right whitespace-nowrap ${MONO}`}>{roas(x.meta)} → {roas(x.roas_7d)}</td>
+                    <td className={`rl-td align-top py-2.5 text-right whitespace-nowrap ${MONO}`}>{roas(x.roas_equilibrio)}</td>
+                    <td className={`rl-td align-top py-2.5 text-right whitespace-nowrap ${MONO}`}>{brl(x.gasto_7d)}</td>
+                    <td className={`rl-td align-top py-2.5 text-right whitespace-nowrap ${MONO}`} style={{ color: perda ? "var(--rl-red)" : undefined }}>{perda ? brl(perda) : "—"}</td>
+                    <td className="rl-td align-top py-2.5 text-(--rl-text-2) leading-[1.45] max-w-[360px]">
+                      {str(x.sugestao)}
+                      {Array.isArray(x.problemas) && x.problemas.length > 0 && <div className="text-[12px] text-(--rl-text-3)">{(x.problemas as string[]).join(" · ")}</div>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {itens.length > LIM_METAS && (
+        <button type="button" onClick={() => setTodos((v) => !v)}
+          className="mt-2 text-[13px] font-medium text-(--rl-accent-text) hover:underline cursor-pointer">
+          {todos ? "Mostrar menos" : `Mostrar todas (${itens.length})`}
+        </button>
+      )}
+      <div className="mt-3 text-[13px]">
+        <div className="font-medium mb-1">Alterações de meta/orçamento · 7 dias</div>
+        {alteracoes.length === 0 ? <div className="text-(--rl-text-3)">Ninguém mexeu em meta ou orçamento.</div> : (
+          <ul className="flex flex-col gap-1">
+            {alteracoes.slice(0, 15).map((a, i) => (
+              <li key={i} className="text-(--rl-text-2)">
+                <span className={MONO}>{a.quando ? new Date(str(a.quando)).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+                {" · "}{lojaMeta(a)} · <span className="font-medium">{produtoCurto(a.nome ?? a.campanha, 50)}</span>
+                {" · "}{CAMPO[str(a.campo)] ?? str(a.campo)} {str(a.de) || "—"} → {str(a.para) || "—"}
+                <span className="text-(--rl-text-3)"> · {str(a.origem) === "app" ? `pelo sistema${a.quem ? ` (${str(a.quem)})` : ""}` : "no painel ou automático"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="text-[12px] text-(--rl-text-3) mt-1.5">Shopee: meta e orçamento mudam pelo lápis da tela ADS Shopee. Mercado Livre: só no painel do Mercado Ads.</div>
+      </div>
     </Secao>
   );
 }

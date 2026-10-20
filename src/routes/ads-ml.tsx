@@ -303,7 +303,8 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
 
   return (
     <div className="flex flex-col gap-2">
-      {analise && <AnaliseAnuncioAds ml={{ item: analise.item }} campaignId={campanha.campaign_id} nome={analise.nome} onFechar={() => setAnalise(null)} />}
+      {analise && <AnaliseAnuncioAds ml={{ item: analise.item }} campaignId={campanha.campaign_id} nome={analise.nome}
+        periodo={{ preset: "custom", from: de, to: ate }} onFechar={() => setAnalise(null)} />}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-xs text-muted-foreground">
           {q.isLoading ? "Lendo os produtos da campanha no Mercado Ads…"

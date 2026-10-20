@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Info, Loader2, Lightbulb, TrendingDown } from "lucide-react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { textoOrcamento } from "@/components/ads/ShopeeAdsConfig";
+import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
+import { resolveRange, type PeriodRange } from "@/lib/dashboard/period";
 
 // ============================================================================
 // Análise de ADS por anúncio (20/out/2026, pedido do dono). Tudo vem da RPC `ads_analise_anuncio`
@@ -23,11 +25,12 @@ interface Dia {
   uso_orcamento: number | null; venda_total: number | null; margem: number | null; margem_pos_ads: number | null;
 }
 interface Bloco { gasto: number; receita: number; pedidos: number; roas: number | null; dias?: number }
+interface Periodo extends Bloco { de: string; ate: string; margem_pos_ads: number | null }
 interface Analise {
   ok: boolean; erro?: string; nome: string | null; item_id: string | null;
   config: { roas_target: number | null; budget: number | null; status: string | null; bidding_method: string | null; primeira_vez: string } | null;
   margem: { mc_pct: number | null; confiavel: boolean | null; roas_equilibrio: number | null; meta_minima: number | null };
-  resumo: { u7: Bloco & { dias_gasto: number; dias_orcamento_esgotado: number }; a7: Bloco };
+  resumo: { u7: Bloco & { dias_gasto: number; dias_orcamento_esgotado: number | null }; a7: Bloco; periodo?: Periodo; anterior?: Periodo | null };
   dias: Dia[];
   mudancas: { campo: string; de: string | null; para: string | null; quando: string; origem: string; quem: string | null; aproximada?: boolean; antes: Bloco; depois: Bloco }[];
   skus?: string[] | null;
@@ -45,26 +48,31 @@ const TOM: Record<string, { cls: string; icone: typeof Info }> = {
   info: { cls: "border-border bg-muted/30 text-muted-foreground", icone: Info },
 };
 
-export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml }: {
+export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, periodo }: {
   shopId?: number | string; campaignId: number | string; nome: string; onFechar: () => void;
   /** Mercado Livre: anúncio (MLB) ou, sem item, a campanha inteira */
   ml?: { item?: string | null };
+  /** período inicial (o da tela que abriu); dentro da análise dá para trocar */
+  periodo?: PeriodRange;
 }) {
   const ehMl = !!ml;
+  // filtro de data da análise (20/out): começa no período da tela; padrão 30 dias
+  const [range, setRange] = useState<PeriodRange>(() => periodo ?? resolveRange("last30", undefined, undefined));
   const q = useQuery({
-    queryKey: ["ads-analise", ehMl ? "ml" : "shopee", String(shopId ?? ""), String(campaignId), ml?.item ?? ""],
-    staleTime: 5 * 60_000, placeholderData: undefined,
+    queryKey: ["ads-analise", ehMl ? "ml" : "shopee", String(shopId ?? ""), String(campaignId), ml?.item ?? "", range.from, range.to],
+    staleTime: 5 * 60_000, placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<Analise> => {
       const { data, error } = ehMl
-        ? await supabaseExternal.rpc("ads_analise_anuncio_ml", { p_item: ml?.item ?? null, p_campaign: String(campaignId), p_dias: 30 })
-        : await supabaseExternal.rpc("ads_analise_anuncio", { p_shop: Number(shopId), p_campaign: String(campaignId), p_dias: 30 });
+        ? await supabaseExternal.rpc("ads_analise_anuncio_ml", { p_item: ml?.item ?? null, p_campaign: String(campaignId), p_dias: 30, p_de: range.from, p_ate: range.to })
+        : await supabaseExternal.rpc("ads_analise_anuncio", { p_shop: Number(shopId), p_campaign: String(campaignId), p_dias: 30, p_de: range.from, p_ate: range.to });
       if (error) throw error;
       return data as Analise;
     },
   });
   const MK = ehMl ? "Mercado Livre" : "Shopee";
   const a = q.data;
-  const u7 = a?.resumo.u7; const a7 = a?.resumo.a7;
+  const u7 = a?.resumo.u7; const per = a?.resumo.periodo; const ant = a?.resumo.anterior;
+  const textoAnt = ant ? `vs ${dm(ant.de)}–${dm(ant.ate)}` : "";
   const eq = a?.margem.roas_equilibrio ?? null;
   const serie = (a?.dias ?? []).map((d) => ({ ...d, rotulo: dm(d.data) }));
   const tabela = [...(a?.dias ?? [])].reverse().filter((d) => d.gasto > 0 || d.receita > 0 || d.meta != null);
@@ -79,6 +87,12 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml }: {
           </DialogDescription>
         </DialogHeader>
 
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <DashboardPeriodFilter value={range} onChange={setRange} />
+          {per && <span>Período {dm(per.de)} a {dm(per.ate)}{ant ? ` · comparado com ${dm(ant.de)} a ${dm(ant.ate)}` : ""}</span>}
+          {q.isFetching && !q.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        </div>
+
         {q.isLoading ? (
           <div className="py-16 text-center text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Calculando…</div>
         ) : q.isError || !a?.ok ? (
@@ -87,9 +101,10 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml }: {
           <div className="space-y-4">
             {/* resumo */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              <Bloco titulo="Investimento 7 dias" valor={formatBRL(u7!.gasto)} sub={comparacao(u7!.gasto, a7!.gasto, true)} />
-              <Bloco titulo="Receita do ADS 7 dias" valor={formatBRL(u7!.receita)} sub={comparacao(u7!.receita, a7!.receita)} />
-              <Bloco titulo="ROAS 7 dias" valor={x(u7!.roas)} sub={a7!.roas != null ? `antes ${x(a7!.roas)}` : ""} />
+              <Bloco titulo="Investimento no período" valor={formatBRL(per?.gasto ?? u7!.gasto)} sub={ant ? comparacao(per!.gasto, ant.gasto, true, textoAnt) : ""} />
+              <Bloco titulo="Receita do ADS no período" valor={formatBRL(per?.receita ?? u7!.receita)} sub={ant ? comparacao(per!.receita, ant.receita, false, textoAnt) : ""} />
+              <Bloco titulo="ROAS no período" valor={x(per?.roas ?? u7!.roas)}
+                sub={<>{ant?.roas != null ? `antes ${x(ant.roas)}` : ""}{per?.margem_pos_ads != null ? <> · margem pós-ADS <span className={Number(per.margem_pos_ads) < 0 ? "text-red-700" : ""}>{formatBRL(Number(per.margem_pos_ads))}</span></> : null}</>} />
               <Bloco titulo={ehMl ? "ROAS objetivo hoje (campanha)" : "Meta de ROAS hoje"} valor={a.config?.roas_target != null ? x(a.config.roas_target, 1) : "—"}
                 sub={`orçamento ${textoOrcamento(a.config?.budget)}`} />
               <Bloco titulo="ROAS de equilíbrio" valor={eq != null ? x(eq) : "—"}
@@ -98,6 +113,7 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml }: {
 
             {/* diagnóstico */}
             <div className="space-y-1.5">
+              <div className="text-[11px] text-muted-foreground">Diagnóstico de agora: últimos 7 dias completos (ROAS {x(u7!.roas)} · {formatBRL(u7!.gasto)} investidos), independente do período escolhido.</div>
               {a.diagnostico.map((d, i) => {
                 const t = TOM[d.tom] ?? TOM.info; const Ic = t.icone;
                 return (
@@ -220,11 +236,11 @@ function fmtCampo(campo: string, v: string | null) {
   return v;
 }
 
-function comparacao(atual: number, antes: number, inverso = false) {
+function comparacao(atual: number, antes: number, inverso = false, rotulo = "vs 7 dias antes") {
   const p = varPct(atual, antes);
   if (p == null) return "";
   const cor = p === 0 ? "" : (p > 0) !== inverso ? "text-emerald-700" : "text-red-700";
-  return <span className={cor}>{p > 0 ? "+" : ""}{p}% vs 7 dias antes</span>;
+  return <span className={cor}>{p > 0 ? "+" : ""}{p}% {rotulo}</span>;
 }
 
 function Bloco({ titulo, valor, sub }: { titulo: string; valor: string; sub?: ReactNode }) {

@@ -297,7 +297,14 @@ function Promocoes({ conta }: { conta: Conta }) {
 }
 
 interface ItemPromo { asin: string | null; sku_amazon: string | null; sku: string | null; cmv: number | null; beneficio: string | null; preco: number | null; percentual: number | null; limite_unidades: number | null }
+interface ProdutoInfo { nome: string | null; foto: string | null; preco_cheio: number | null; vendas_30d: number | null; estoque: number | null }
+
+/** Produtos de uma promoção (20/out/2026, pedido do dono: "não dá pra saber qual é o produto"): a Amazon devolve só
+ *  SKU, ASIN e preço. Nome e foto vêm do catálogo da tela (se o anúncio está nele: também preço cheio, vendas e
+ *  estoque), senão do nosso cadastro (produtos, pelo nosso SKU) e, por último, do catálogo da Amazon que a pesquisa
+ *  de produtos guarda (pesquisa_amz_asins, pelo ASIN). Só os SKUs/ASINs desta promoção são lidos. */
 function ItensDaPromocao({ conta, id }: { conta: Conta; id: string }) {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["promo-amazon", "selecao", conta, id],
     queryFn: async () => {
@@ -305,7 +312,27 @@ function ItensDaPromocao({ conta, id }: { conta: Conta; id: string }) {
       const com = r.itens.filter((x) => x.sku_amazon && x.preco);
       const sim = com.length ? await chamar<{ itens: { sku: string; preco: number; taxa: number | null; mc: Mc | null }[] }>({ modulo: "simular", conta, itens: com.map((x) => ({ sku: x.sku_amazon, preco: x.preco })) }) : { itens: [] };
       const mcDe = new Map(sim.itens.map((s) => [`${s.sku}|${s.preco}`, s]));
-      return r.itens.map((x) => ({ ...x, sim: mcDe.get(`${x.sku_amazon}|${x.preco}`) ?? null }));
+      // nome/foto: catálogo da tela → cadastro → pesquisa de produtos da Amazon
+      const cat = qc.getQueryData<Catalogo>(["promo-amazon", "catalogo", conta]);
+      const porSkuAmz = new Map((cat?.itens ?? []).map((i) => [i.sku_amazon, i]));
+      const skus = [...new Set(r.itens.map((x) => x.sku).filter((s): s is string => !!s))];
+      const asins = [...new Set(r.itens.map((x) => x.asin).filter((s): s is string => !!s))];
+      const [prods, pesq] = await Promise.all([
+        skus.length ? supabaseExternal.from("produtos").select("sku, nome, foto_capa").in("sku", skus) : Promise.resolve({ data: [] }),
+        asins.length ? supabaseExternal.from("pesquisa_amz_asins").select("asin, nome").in("asin", asins) : Promise.resolve({ data: [] }),
+      ]);
+      const prodDe = new Map(((prods.data ?? []) as { sku: string; nome: string | null; foto_capa: string | null }[]).map((p) => [p.sku, p]));
+      const pesqDe = new Map(((pesq.data ?? []) as { asin: string; nome: string | null }[]).map((p) => [p.asin, p]));
+      return r.itens.map((x) => {
+        const c = x.sku_amazon ? porSkuAmz.get(x.sku_amazon) : undefined;
+        const p = x.sku ? prodDe.get(x.sku) : undefined;
+        const info: ProdutoInfo = {
+          nome: c?.titulo ?? p?.nome ?? (x.asin ? pesqDe.get(x.asin)?.nome : null) ?? null,
+          foto: c?.foto ?? p?.foto_capa ?? null,
+          preco_cheio: c?.preco_cheio ?? null, vendas_30d: c?.vendas_30d ?? null, estoque: c?.estoque ?? null,
+        };
+        return { ...x, info, sim: mcDe.get(`${x.sku_amazon}|${x.preco}`) ?? null };
+      });
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -314,29 +341,53 @@ function ItensDaPromocao({ conta, id }: { conta: Conta; id: string }) {
   const lista = q.data ?? [];
   if (!lista.length) return <div className="px-10 py-3 text-[12px] text-muted-foreground">Sem produtos nesta promoção (ou a Amazon não devolveu a lista).</div>;
   return (
-    <div className="px-10 py-2 bg-muted/20">
+    <div className="px-4 md:px-10 py-2 bg-muted/20 overflow-x-auto">
       <table className="w-full text-[12px]">
         <thead className="text-muted-foreground"><tr>
-          <th className="text-left font-medium py-1">SKU Amazon</th><th className="text-left font-medium py-1">ASIN</th>
-          <th className="text-right font-medium py-1">Preço na promoção</th><th className="text-right font-medium py-1">Limite (un.)</th>
-          <th className="text-right font-medium py-1">Taxas</th><th className="text-right font-medium py-1">CMV</th><th className="text-right font-medium py-1">MC</th>
+          <th className="text-left font-medium py-1.5">Produto</th>
+          <th className="text-right font-medium py-1.5">Preço cheio</th>
+          <th className="text-right font-medium py-1.5">Na promoção</th>
+          <th className="text-right font-medium py-1.5">Limite (un.)</th>
+          <th className="text-right font-medium py-1.5" title="vendas dos últimos 30 dias · estoque no FBA">Vendas 30d · estoque</th>
+          <th className="text-right font-medium py-1.5">Taxas</th><th className="text-right font-medium py-1.5">CMV</th>
+          <th className="text-right font-medium py-1.5">MC na promoção</th>
         </tr></thead>
         <tbody>
-          {lista.map((x, k) => (
-            <tr key={k} className="border-t">
-              <td className="py-1 font-mono">{x.sku_amazon ?? "—"}{x.sku && x.sku !== x.sku_amazon ? <span className="text-muted-foreground font-sans"> · {x.sku}</span> : null}</td>
-              <td className="py-1">{x.asin ?? "—"}</td>
-              <td className="py-1 text-right tabular-nums">{x.preco != null ? formatBRL(x.preco) : x.percentual != null ? `${x.percentual}% off` : (x.beneficio ?? "—")}</td>
-              <td className="py-1 text-right tabular-nums">{x.limite_unidades ?? "—"}</td>
-              <td className="py-1 text-right tabular-nums">{x.sim?.taxa != null ? formatBRL(x.sim.taxa) : "—"}</td>
-              <td className="py-1 text-right tabular-nums">{x.cmv != null ? formatBRL(x.cmv) : "—"}</td>
-              <td className="py-1 text-right tabular-nums font-semibold" style={{ color: corPct(x.sim?.mc?.pct) }}>
-                {x.sim?.mc?.pct != null ? `${x.sim.mc.pct.toFixed(1).replace(".", ",")}% · ${formatBRL(x.sim.mc.reais ?? 0)}` : "—"}
-              </td>
-            </tr>
-          ))}
+          {lista.map((x, k) => {
+            const desc = x.preco != null && x.info.preco_cheio ? Math.round((1 - x.preco / x.info.preco_cheio) * 100) : null;
+            return (
+              <tr key={k} className="border-t">
+                <td className="py-1.5 pr-3">
+                  <div className="flex items-center gap-2 min-w-[280px] max-w-[460px]">
+                    <Foto url={x.info.foto} size={40} />
+                    <div className="min-w-0">
+                      <div className="truncate font-medium" title={x.info.nome ?? ""}>{x.info.nome ?? <span className="text-muted-foreground font-normal">produto sem nome no sistema</span>}</div>
+                      <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-1.5">
+                        {x.sku && <span>nosso SKU <b className="text-foreground">{x.sku}</b></span>}
+                        {x.sku_amazon && <span className="font-mono">· {x.sku_amazon}</span>}
+                        {x.asin && <a className="hover:underline" href={`https://www.amazon.com.br/dp/${x.asin}`} target="_blank" rel="noreferrer">· {x.asin}</a>}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td className="py-1.5 text-right tabular-nums text-muted-foreground">{x.info.preco_cheio != null ? formatBRL(x.info.preco_cheio) : "—"}</td>
+                <td className="py-1.5 text-right tabular-nums font-medium">
+                  {x.preco != null ? formatBRL(x.preco) : x.percentual != null ? `${x.percentual}% off` : (x.beneficio ?? "—")}
+                  {desc != null && desc > 0 && <div className="text-[10.5px] text-muted-foreground font-normal">{desc}% de desconto</div>}
+                </td>
+                <td className="py-1.5 text-right tabular-nums">{x.limite_unidades ?? "—"}</td>
+                <td className="py-1.5 text-right tabular-nums text-muted-foreground">{x.info.vendas_30d ?? "—"} · {x.info.estoque ?? "—"}</td>
+                <td className="py-1.5 text-right tabular-nums">{x.sim?.taxa != null ? formatBRL(x.sim.taxa) : "—"}</td>
+                <td className="py-1.5 text-right tabular-nums">{x.cmv != null ? formatBRL(x.cmv) : "—"}</td>
+                <td className="py-1.5 text-right tabular-nums font-semibold" style={{ color: corPct(x.sim?.mc?.pct) }}>
+                  {x.sim?.mc?.pct != null ? `${x.sim.mc.pct.toFixed(1).replace(".", ",")}% · ${formatBRL(x.sim.mc.reais ?? 0)}` : "—"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
+      <p className="text-[10.5px] text-muted-foreground py-1">Preço cheio, vendas e estoque aparecem quando o anúncio está no catálogo acima (FBA com estoque ou venda em 30 dias).</p>
     </div>
   );
 }

@@ -1866,6 +1866,26 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
 - **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
   sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
 
+- **Agente de ADS com metas (20/out/2026, noite):** **`ads_metas_situacao(p_ref default ontem)`** (fonte em
+  `docs/ads-metas-situacao.sql`) = todas as campanhas com gasto ≥ R$ 5 em 7 dias (Shopee por campanha/anúncio, ML por
+  campanha) com meta/orçamento de `ads_config_atual` (ML sem registro = `100 ÷ acos_target` do registro diário), MC sem
+  ADS 30 d (`ads_margem_anuncio`; ML = SKUs da campanha), ROAS de equilíbrio, meta mínima (×1,15), `perda_7d`, `tom`,
+  `problemas` e `sugestao` prontos; top 40 em `itens`. Meta JÁ acima do equilíbrio com ROAS real abaixo NÃO sugere subir
+  a meta (só corta alcance): pausar ou rever preço/anúncio — regra igual nas duas análises por anúncio (migração
+  `ads_sugestao_meta_ja_alta`). O `ads_relatorio_diario` ganhou **`metas`** e **`alteracoes_config`**
+  (`ads_config_historico` com `ate` nos últimos 7 dias; `quando` = `ate`) — migração `ads_relatorio_metas`. Card
+  `RelatorioAds` mostra a seção "Metas de ROAS" + alterações; skill `agentes/agente-ads/SKILL.md` atualizada (o agente
+  segue sem executar nada — nem a troca de meta da Shopee, que é do dono pela tela). 1ª leitura (19/out): 127 campanhas,
+  28 ruins, 14 com meta abaixo do equilíbrio, perda estimada R$ 930 de R$ 7,8 mil em 7 d; pior = ML "BUMI MANDIOCA l 4kg"
+  (objetivo 7,2, ROAS 6,1, equilíbrio 9,9).
+- **Análise com filtro de data (20/out):** `ads_analise_anuncio` / `_ml` aceitam `p_de`/`p_ate` (e `p_sem_anterior`
+  interno); `resumo.periodo` e `resumo.anterior` (mesmo nº de dias logo antes). O diálogo abre no período da tela que o
+  abriu e tem o próprio filtro; o diagnóstico continua sendo dos últimos 7 dias. Migração `ads_analise_com_periodo`
+  (a fonte em `docs/ads-analise-anuncio*.sql` é a de antes do período — vale o que está no banco).
+- **Promoções Amazon — itens com produto (20/out):** os itens de uma promoção mostram foto, nome, nosso SKU, SKU da Amazon e
+  ASIN (catálogo da tela → `produtos` → `pesquisa_amz_asins`), preço cheio × promoção com % de desconto, vendas 30 d e
+  estoque (`ItensDaPromocao` em `PromocoesAmazon.tsx`).
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura

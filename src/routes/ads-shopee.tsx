@@ -908,7 +908,7 @@ function AdsShopeePage() {
           )}
         </Card>
 
-        {analise && <AnaliseAnuncioAds shopId={analise.shopId} campaignId={analise.campaignId} nome={analise.nome} onFechar={() => setAnalise(null)} />}
+        {analise && <AnaliseAnuncioAds shopId={analise.shopId} campaignId={analise.campaignId} nome={analise.nome} periodo={range} onFechar={() => setAnalise(null)} />}
 
         <Tooltip>
           <TooltipTrigger asChild>

@@ -20,6 +20,10 @@ Todo o cálculo mora no Supabase (projeto `vhogjofsxyhnyxdyglmq`). O seu papel �
 - `ads_sugestoes` / `ads_sugestoes_em(data)` — sugestões com impacto em R$ e prioridade.
 - `ads_anuncio_snapshot` — retrato diário de preço, estoque, promoção e status por anúncio/variação.
 - Configuração: `ads_config_alertas` (limites dos alertas) e `config_roas_faixas` (faixas de ROAS e ACOS-alvo).
+- **Metas de ROAS e orçamento (20/out/2026):** `ads_config_atual` (meta/orçamento/status de HOJE por campanha; Shopee capturada a cada 2 h, ML pelo sync) e `ads_config_historico` (cada mudança: `campo` roas_target/budget/status, `de` → `para`, `ate` = quando mudou, `origem` app = pelo sistema / externo = painel do marketplace ou automático, `quem`). O registro começou em 20/10/2026: antes disso a Shopee não informa a meta de dias passados; no ML existe um registro diário aproximado (`ml_ads_campanha_diario.acos_target/budget`, "≈").
+- `ads_metas_situacao(data default ontem)` → jsonb `{resumo, itens}`: todas as campanhas com gasto nos 7 dias, com meta, orçamento, ROAS 7 d, MC sem ADS (30 d), **ROAS de equilíbrio** (100 ÷ MC%), **meta mínima** (equilíbrio × 1,15), `perda_7d` (gasto − margem que a venda do ADS trouxe), `tom` ruim/atencao/oportunidade, `problemas` e `sugestao` já escritos. Mesmas regras do diagnóstico da tela.
+- `ads_analise_anuncio(shop, campanha, dias, de, ate)` (Shopee) e `ads_analise_anuncio_ml(item, campanha, dias, de, ate)` (ML; item nulo = campanha inteira) → análise por dia de um anúncio: gasto, receita, ROAS, meta do dia, orçamento, venda total e margem pós-ADS, período × período anterior, efeito de cada mudança de meta/orçamento (antes × depois) e diagnóstico dos últimos 7 dias. Histórico de desempenho da Shopee desde ~abr/2026 (backfill de 6 meses).
+- `ads_shopee_painel(...)` — o que a tela /ads-shopee mostra no período (cartões, totais, bolhas e tabela por anúncio).
 
 ## Modo 1 — Relatório diário
 
@@ -35,7 +39,13 @@ Monte o relatório nesta ordem, a partir do JSON (não consulte outras fontes pa
 4. **Margem** (`margem`) — prejuízo, apertado e folgado. Regra de ouro: ROAS "excelente" ou "bom" com margem apertada ou em prejuízo (`roas_enganoso`) é alerta, não elogio.
 5. **Tendências** (`tendencias`) — subindo, caindo, orgânico forte sem ADS, CTR alto com orçamento limitado.
 6. **Sugestões** (`sugestoes`) — tabela: ação | anúncio | justificativa | impacto R$/mês. Ordem: prioridade e depois impacto. Diga que é sugestão.
-7. **Qualidade** (`qualidade`) — dias faltando, dado de ontem que não chegou, retrato curto, anúncios sem SKU, SKUs sem CMV.
+7. **Metas de ROAS** (`metas`) — leia `metas.resumo` (campanhas ruins/atenção, quantas com meta abaixo do equilíbrio, quantas no prejuízo em 7 dias, `perda_7d_total` sobre `gasto_7d_total`) e liste as piores de `metas.itens` (já vêm ordenadas): campanha | loja | meta → ROAS 7 d | equilíbrio | perda 7 d | sugestão. Regras de leitura:
+   - Meta abaixo do equilíbrio = a plataforma tem licença para gastar com prejuízo; a sugestão é a `meta_minima`.
+   - Meta já acima do equilíbrio mas ROAS real abaixo = subir mais a meta só corta alcance; o caminho é pausar ou rever preço/anúncio (a `sugestao` já diz isso).
+   - `oportunidade` = ROAS bem acima da meta gastando pouco ou orçamento esgotando com ROAS bom: dá para ganhar volume.
+   - Diga ONDE se muda: **Shopee** = pelo lápis na coluna Meta de ROAS da tela ADS Shopee (o sistema altera meta e orçamento, com confirmação); **Mercado Livre** = só no painel do Mercado Ads (a API do ML recusa a escrita).
+8. **Alterações de meta/orçamento** (`alteracoes_config`, últimos 7 dias) — o que mudou, quando, quem (app = pelo sistema, externo = painel/automático) e, se der para ler, o efeito (para o efeito antes × depois de uma mudança, `ads_analise_anuncio` / `_ml` do anúncio). Lista vazia = ninguém mexeu; diga uma vez.
+9. **Qualidade** (`qualidade`) — dias faltando, dado de ontem que não chegou, retrato curto, anúncios sem SKU, SKUs sem CMV.
 
 ### Gravação no app (única entrega)
 
@@ -67,10 +77,13 @@ Responda consultando a view específica, sem rodar o relatório inteiro:
 - "Quais anúncios dão prejuízo?" → `ads_margem_anuncio where situacao = 'prejuizo'` (Shopee `nivel='anuncio'`, ML `nivel='sku'`); avise quando `confiavel = false`.
 - "Quais campanhas do ML estão acima do ACOS?" → `ads_metrica_campanha_dia` (30 dias) ou a chave `ml_campanhas` do relatório.
 - "O que vocês sugerem?" → `ads_sugestoes`.
+- "Qual meta de ROAS eu ponho no anúncio X?" / "a meta está certa?" → `ads_metas_situacao()` (procure a campanha em `itens`) ou, para um anúncio fora do top 40, `ads_analise_anuncio` / `_ml`: responda com o ROAS de equilíbrio, a meta mínima e o ROAS real.
+- "O que aconteceu depois que mudei a meta/orçamento?" → `ads_analise_anuncio` / `_ml` (bloco `mudancas`: antes × depois de cada alteração) ou `ads_config_historico`.
+- "Como foi o anúncio no dia 14/10?" → `ads_analise_anuncio(..., p_de => '2026-10-14', p_ate => '2026-10-14')` (meta do dia só existe a partir de 20/10/2026 na Shopee).
 
 ## Regras
 
-- Nunca execute ação em campanha ou anúncio. Apresente decisões como opções A/B/C, com o trade-off de cada uma.
+- Nunca execute ação em campanha ou anúncio — nem a mudança de meta/orçamento da Shopee, que o sistema permite: quem aplica é o Renan, pela tela. Apresente decisões como opções A/B/C, com o trade-off de cada uma.
 - Shopee: o número de vendas é o **direto**; o "amplo" é só informativo. A Shopee atribui quase toda a venda da loja ao ADS — olhe o TACOS (gasto ÷ venda total da loja), não só o ROAS.
 - ML: os últimos 2–3 dias são provisórios (o ML reatribui vendas). No ML não existe venda real por anúncio (o pedido não guarda o MLB): margem do ML é por SKU.
 - Diga quando o dado de ontem ainda não chegou: Shopee por volta das 03:30, ML por volta das 06:00 (horário de Brasília). O campo `qualidade.dado_de_ontem.aviso` já traz o texto.
