@@ -1758,9 +1758,11 @@ Pedido do dono: subir o ROAS objetivo da campanha "Kit 2 Bumi l Escmectita" (359
 lê depois; tentativas em `debug_fulfillment` `modulo=ml-ads-roas`). O ML recusou na 1ª chamada — `PUT
 /marketplace/advertising/MLB/product_ads/campaigns/{id}` (Api-Version 2, corpo `{roas_target: 7}`) → **401 "User does not
 have permission to write."** (`mclics.campaigns.exceptions.UnauthorizedException`); nada mudou (antes e depois 6,5 / ACOS
-15,38). O endpoint existe e reconhece a campanha; falta a permissão de ESCRITA em Publicidade no app do ML (DevCenter →
-o app → Permissões → Publicidade/Product Ads em leitura **e escrita**) e, depois, reautorizar a Ottz (`ml-oauth?help=1`) para
-o token ganhar o escopo novo. A leitura (campanhas, métricas, `roas_target`/`acos_target` = 100 ÷ ROAS) já funciona.
+15,38). **Não é o app nem o token:** o DevCenter já tem "Publicidade de um produto" em Leitura e escrita e o token da Ottz já traz
+`urn:ml:mktp:ads:/read-write`. Os 4 caminhos válidos (`/marketplace/advertising/MLB/product_ads/campaigns/{id}` v2 com `roas_target`
+e com `acos_target`, `/advertising/product_ads/campaigns/{id}` v1 e v2) dão o MESMO 401 do serviço do Mercado Ads (`mclics`); o
+caminho com `advertisers/{id}` dá 404. Reautorizar não muda nada. A recusa é do lado do ML (escrita em campanhas não liberada para o
+nosso app/conta) — caminho: chamado no suporte de desenvolvedores do ML; até lá, ROAS objetivo só pelo painel do Mercado Ads. A leitura (campanhas, métricas, `roas_target`/`acos_target` = 100 ÷ ROAS) já funciona.
 
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 

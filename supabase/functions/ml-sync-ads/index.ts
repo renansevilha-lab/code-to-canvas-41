@@ -139,6 +139,7 @@ serve(async (req: Request) => {
       { path: `/marketplace/advertising/${site}/product_ads/campaigns/${campanha}`, ver: "2", corpo: { acos_target: acos } },
       { path: `/marketplace/advertising/${site}/advertisers/${advertiserId}/product_ads/campaigns/${campanha}`, ver: "2", corpo: { roas_target: roas } },
       { path: `/advertising/product_ads/campaigns/${campanha}`, ver: "1", corpo: { acos_target: acos } },
+      { path: `/advertising/product_ads/campaigns/${campanha}`, ver: "2", corpo: { roas_target: roas } },
     ];
     const tentativas: any[] = [];
     let aceito: any = null;
@@ -148,7 +149,9 @@ serve(async (req: Request) => {
       tentativas.push(t);
       await supabase.from("debug_fulfillment").insert({ modulo: "ml-ads-roas", etapa: campanha, status_http: r.status, resultado: t });
       if (r.status >= 200 && r.status < 300) { aceito = t; break; }
-      if (r.status === 401 || r.status === 403 || r.status === 429 || r.status >= 500) break; // permissao/limite/erro do ML: para
+      // 401 "User does not have permission to write" veio no 1o formato com o token JA com urn:ml:mktp:ads:/read-write:
+      // os outros caminhos podem ter outra checagem, entao 401 tambem passa ao proximo; limite/erro do ML para.
+      if (r.status === 429 || r.status >= 500) break;
     }
     await new Promise((r) => setTimeout(r, 2500));
     const depois = await ler();
