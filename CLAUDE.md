@@ -1833,6 +1833,17 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   clicar no nome do anúncio em `/ads-shopee` abre `src/components/ads/AnaliseAnuncioAds.tsx` (gráfico investimento/receita/ROAS/
   meta/equilíbrio, alterações, tabela por dia). Só Shopee; ML fica para depois. Ex. 20/out: Kit Adestrador meta 19,5 × ROAS 11,8 em
   7 d, equilíbrio 5,3 (MC 18,8%) — lucrativo, mas a Shopee não entrega a meta.
+- **Desempenho para trás (20/out, pedido do dono):** a API diária da Shopee aceita até **6 meses para trás e no máximo 1 mês
+  por consulta** (erros `error_date_too_old` / `error_date_range_too_long`); o ML recusa > 90 dias (já temos mais do que isso).
+  `shopee-ads-gestao` **v4** `?modulo=historico-desempenho&loja=&de=&ate=[&loja_total=1]` grava `shopee_ads_campanha` (orçamento e
+  status em branco) e, com `loja_total`, `shopee_ads_diario` — os dois com `ignoreDuplicates` (nunca sobrescreve). Armadilhas: o
+  PostgREST corta em 1.000 linhas (a Ottz tem 1.109 campanhas — a lista é paginada) e campanha que não é de anúncio de produto
+  (ex. 20662003) faz a Shopee recusar o lote de 100 inteiro (`invalid product ads campaign ids-`): tirada e o lote refeito.
+  Feito em 20/out: campanhas 21/abr→03/jul nas duas lojas (Ottz +4.990 linhas, SVL +4.164) e total da loja 21/abr→15/jun.
+  **O DRE mudou nesses meses** (`view_dre_ads_marketplace` lê `shopee_ads_diario`): ADS Shopee abr ACZ 0→4.977,60 / SVL 0→3.612,47;
+  mai ACZ 0→21.491,34 / SVL 0→9.765,55; jun ACZ 10.645,80→23.058,48 / SVL 5.521,11→9.604,61 (jun só tinha a 2ª quinzena);
+  jul em diante igual. Baseline em `_bkp_ads_antes_20out`. As campanhas somam 85–92% do total da loja (o resto é ADS que não é
+  anúncio de produto), a mesma proporção de julho.
 - **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
   sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
 
@@ -3586,7 +3597,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
-| `shopee-flashsale-probe` | v17 (= `shopee-ads-gestao` v3) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
+| `shopee-flashsale-probe` | v19 (= `shopee-ads-gestao` v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |

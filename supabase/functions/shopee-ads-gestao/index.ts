@@ -1,3 +1,4 @@
+// v4 (20/out/2026): ?modulo=historico-desempenho&loja=&de=YYYY-MM-DD&ate=YYYY-MM-DD[&loja_total=1] — busca para trás (até 6 meses, 1 mês por vez).
 // v3 (20/out/2026, opção A do dono — histórico de configuração): ?modulo=capturar&loja=ottz|svl|todas lê TODAS as
 //   campanhas da loja e grava em ads_config_atual / ads_config_historico (RPC ads_config_registrar; cron a cada 2 h);
 //   `editar` registra a troca com origem 'app' e o nome de quem alterou; ?modulo=desempenho-cru&loja=&campanha=&de=&ate=
@@ -209,6 +210,87 @@ serve(async (req: Request) => {
       await sleep(300);
       const toggle = await shopeeGet(ctx, "/api/v2/ads/get_shop_toggle_info");
       return json({ ok: true, loja, shop_id: shopId, campanhas: ids, setting, boosted, saldo, toggle });
+    }
+
+    // v4 (20/out/2026, pedido do dono): histórico de desempenho para trás. A Shopee guarda até 6 meses e aceita no
+    // máximo 1 mês por consulta (erros ads.performance.error_date_too_old / error_date_range_too_long).
+    // Grava em shopee_ads_campanha SEM sobrescrever o que já existe (ignoreDuplicates) e com orçamento/status em
+    // branco (o valor de hoje não é o daquela época). &loja_total=1 também grava o total da loja em shopee_ads_diario
+    // (que alimenta o ADS do DRE e do Dashboard).
+    if (modulo === "historico-desempenho") {
+      const de = String(p("de") ?? ""), ate = String(p("ate") ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate)) return json({ ok: false, erro: "de/ate em YYYY-MM-DD" }, { status: 400 });
+      const dias = (Date.parse(ate) - Date.parse(de)) / 86400000;
+      if (!(dias >= 1 && dias <= 30)) return json({ ok: false, erro: "intervalo de 2 a 31 dias (a Shopee aceita até 1 mês por consulta)" }, { status: 400 });
+      const br = (iso: string) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}`;
+      const iso = (d: string) => { const [dd, mm, yyyy] = String(d ?? "").split("-"); return `${yyyy}-${mm}-${dd}`; };
+      const empresa = shopId === 522186766 ? "Ottz Pet" : "SVL Store";
+      const erros: string[] = [];
+      // o PostgREST devolve no máximo 1.000 linhas por leitura (a Ottz tem 1.100+ campanhas): pagina
+      const cfgs: { campaign_id: string; item_id: string | null }[] = [];
+      for (let o = 0; o < 20000; o += 1000) {
+        const { data, error: eCfg } = await supabase.from("ads_config_atual").select("campaign_id, item_id")
+          .eq("mkt", "shopee").eq("shop_id", shopId).order("campaign_id").range(o, o + 999);
+        if (eCfg) return json({ ok: false, erro: `ads_config_atual: ${eCfg.message}` }, { status: 500 });
+        cfgs.push(...((data ?? []) as typeof cfgs));
+        if ((data ?? []).length < 1000) break;
+      }
+      const itemDe = new Map(cfgs.map((c) => [c.campaign_id, c.item_id]));
+      const ids = [...itemDe.keys()];
+      const registros: Record<string, unknown>[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        let lote = ids.slice(i, i + 100);
+        let r = await shopeeGet(ctx, "/api/v2/ads/get_product_campaign_daily_performance",
+          { start_date: br(de), end_date: br(ate), campaign_id_list: lote.join(",") });
+        // campanha que não é de anúncio de produto (ex.: anúncio da loja) derruba o lote inteiro: tira e refaz uma vez
+        const invalidos = String(r.message ?? "").match(/invalid product ads campaign ids-\s*([\d,\s]+)/i)?.[1]
+          ?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+        if (r.error && invalidos.length) {
+          lote = lote.filter((id) => !invalidos.includes(id));
+          await sleep(300);
+          r = await shopeeGet(ctx, "/api/v2/ads/get_product_campaign_daily_performance",
+            { start_date: br(de), end_date: br(ate), campaign_id_list: lote.join(",") });
+        }
+        if (r.error) { erros.push(`campanhas ${i}: ${r.error} ${r.message ?? ""}`); continue; }
+        for (const c of (r.response?.campaign_list ?? []) as any[]) {
+          for (const m of (c.metrics_list ?? []) as any[]) {
+            if (!((m.impression ?? 0) > 0 || (m.expense ?? 0) > 0)) continue;
+            registros.push({
+              campaign_id: c.campaign_id, shop_id: shopId, data: iso(m.date), empresa,
+              ad_name: c.ad_name ?? null, ad_type: c.ad_type ?? null, status: null, placement: c.campaign_placement ?? null,
+              budget: null, item_id: itemDe.get(String(c.campaign_id)) ?? null,
+              impressoes: m.impression ?? 0, cliques: m.clicks ?? 0, ctr: m.ctr ?? 0, gasto: m.expense ?? 0,
+              gmv_direto: m.direct_gmv ?? 0, gmv_amplo: m.broad_gmv ?? 0, pedidos_direto: m.direct_order ?? 0, pedidos_amplo: m.broad_order ?? 0,
+              roi_direto: m.direct_roi ?? 0, roi_amplo: m.broad_roi ?? 0, cir_direto: m.direct_cir ?? 0, cir_amplo: m.broad_cir ?? 0,
+              cpc: m.cpc ?? 0, cr: m.cr ?? 0, atualizado_em: new Date().toISOString(),
+            });
+          }
+        }
+        await sleep(300);
+      }
+      let gravados = 0;
+      for (let i = 0; i < registros.length; i += 500) {
+        const { error } = await supabase.from("shopee_ads_campanha").upsert(registros.slice(i, i + 500), { onConflict: "shop_id,campaign_id,data", ignoreDuplicates: true });
+        if (error) erros.push(`gravar campanhas: ${error.message.slice(0, 120)}`); else gravados += Math.min(500, registros.length - i);
+      }
+      let loja_dias = null as number | null;
+      if (p("loja_total") === "1") {
+        const r = await shopeeGet(ctx, "/api/v2/ads/get_all_cpc_ads_daily_performance", { start_date: br(de), end_date: br(ate) });
+        if (r.error) erros.push(`loja: ${r.error} ${r.message ?? ""}`);
+        else {
+          const linhas = ((r.response ?? []) as any[]).map((d) => ({
+            shop_id: shopId, empresa, data: iso(d.date), impressoes: d.impression ?? 0, cliques: d.clicks ?? 0, ctr: d.ctr ?? 0,
+            gasto: d.expense ?? 0, gmv_direto: d.direct_gmv ?? 0, gmv_amplo: d.broad_gmv ?? 0, roas_direto: d.direct_roas ?? 0,
+            roas_amplo: d.broad_roas ?? 0, pedidos_diretos: d.direct_order ?? 0, pedidos_amplos: d.broad_order ?? 0,
+            itens_vendidos_direto: d.direct_item_sold ?? 0, custo_por_conversao: d.cost_per_conversion ?? 0, atualizado_em: new Date().toISOString(),
+          }));
+          const { error } = linhas.length ? await supabase.from("shopee_ads_diario").upsert(linhas, { onConflict: "shop_id,data", ignoreDuplicates: true }) : { error: null };
+          if (error) erros.push(`gravar loja: ${error.message.slice(0, 120)}`); else loja_dias = linhas.length;
+        }
+      }
+      const datas = registros.map((x) => String(x.data)).sort();
+      return json({ ok: !erros.length, loja, de, ate, campanhas_consultadas: ids.length, linhas: registros.length, enviados: gravados,
+        primeiro_dia: datas[0] ?? null, ultimo_dia: datas[datas.length - 1] ?? null, loja_dias, erros });
     }
 
     if (modulo === "desempenho-cru") {
