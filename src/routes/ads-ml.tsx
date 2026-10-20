@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Megaphone, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronRight, ExternalLink, Copy } from "lucide-react";
+import { Megaphone, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronRight, ExternalLink, Copy, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -33,7 +33,58 @@ interface Campanha {
 const num = (v: number | null | undefined) => (v ?? 0).toLocaleString("pt-BR");
 const VALID_PRESETS: PeriodPreset[] = ["today", "yesterday", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
 
-type SearchParams = { period: PeriodPreset; from?: string; to?: string; campanha?: number };
+type Dir = "asc" | "desc";
+type SearchParams = { period: PeriodPreset; from?: string; to?: string; campanha?: number; ord?: string; dir?: Dir };
+
+/** Ordena pela coluna; vazio (sem valor) vai sempre para o fim, nos dois sentidos. */
+function ordenar<T>(lista: T[], valor: (x: T) => number | string | null | undefined, dir: Dir): T[] {
+  return [...lista].sort((a, b) => {
+    const va = valor(a), vb = valor(b);
+    const na = va == null || va === "", nb = vb == null || vb === "";
+    if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+    const c = typeof va === "string" || typeof vb === "string"
+      ? String(va).localeCompare(String(vb), "pt-BR", { sensitivity: "base" })
+      : Number(va) - Number(vb);
+    return dir === "asc" ? c : -c;
+  });
+}
+
+/** Cabeçalho que ordena ao clicar: 1º clique do maior para o menor (texto: A→Z), 2º inverte. */
+function ThOrdena({ rotulo, chave, ord, dir, onOrdenar, alinhar = "right", className }: {
+  rotulo: string; chave: string; ord: string; dir: Dir; onOrdenar: (chave: string) => void; alinhar?: "left" | "center" | "right"; className?: string;
+}) {
+  const ativo = ord === chave;
+  const Icone = !ativo ? ArrowUpDown : dir === "desc" ? ArrowDown : ArrowUp;
+  return (
+    <th className={cn("font-medium select-none", alinhar === "left" ? "text-left" : alinhar === "center" ? "text-center" : "text-right", className)}
+      aria-sort={ativo ? (dir === "desc" ? "descending" : "ascending") : "none"}>
+      <button type="button" onClick={() => onOrdenar(chave)}
+        className={cn("inline-flex items-center gap-1 hover:text-foreground", ativo && "text-foreground", alinhar === "right" && "flex-row-reverse")}
+        title={ativo ? (dir === "desc" ? "Do maior para o menor — clique para inverter" : "Do menor para o maior — clique para inverter") : "Ordenar por esta coluna"}>
+        {rotulo}<Icone className={cn("h-3 w-3 shrink-0", !ativo && "opacity-40")} />
+      </button>
+    </th>
+  );
+}
+
+/** Colunas de texto começam em A→Z; as de número, do maior para o menor. */
+const COLUNAS_TEXTO = new Set(["nome", "status", "titulo", "sku"]);
+const proximaOrdem = (ord: string, dir: Dir, chave: string): { ord: string; dir: Dir } =>
+  ord === chave ? { ord, dir: dir === "desc" ? "asc" : "desc" } : { ord: chave, dir: COLUNAS_TEXTO.has(chave) ? "asc" : "desc" };
+
+const VALOR_CAMPANHA: Record<string, (r: Campanha) => number | string | null> = {
+  nome: (r) => r.nome ?? String(r.campaign_id),
+  status: (r) => r.status,
+  gasto: (r) => r.gasto ?? 0,
+  vendas: (r) => r.vendas_total ?? 0,
+  roas: (r) => r.roas ?? 0,
+  meta: (r) => r.roas_target,
+  acos: (r) => r.acos,
+  cpc: (r) => r.cpc,
+  cliques: (r) => r.cliques ?? 0,
+  impressoes: (r) => r.impressoes ?? 0,
+  budget: (r) => r.budget,
+};
 
 /** Página da campanha no painel do Mercado Ads. Endereço não conferido com login — se não abrir a campanha,
  *  trocar aqui pelo endereço que o navegador mostra ao abrir uma campanha no painel. */
@@ -51,6 +102,8 @@ export const Route = createFileRoute("/ads-ml")({
     from: typeof s.from === "string" ? s.from : undefined,
     to: typeof s.to === "string" ? s.to : undefined,
     campanha: Number(s.campanha) > 0 ? Number(s.campanha) : undefined,
+    ord: typeof s.ord === "string" && s.ord in VALOR_CAMPANHA ? s.ord : undefined,
+    dir: s.dir === "asc" || s.dir === "desc" ? s.dir : undefined,
   }),
   component: AdsMlPage,
 });
@@ -59,7 +112,11 @@ function AdsMlPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const range = resolveRange(search.period, search.from, search.to);
-  const setRange = (r: PeriodRange) => navigate({ search: { period: r.preset, from: r.from, to: r.to, campanha: search.campanha }, replace: true });
+  const setRange = (r: PeriodRange) => navigate({ search: { ...search, period: r.preset, from: r.from, to: r.to }, replace: true });
+  // ordem da tabela na URL (padrão: maior investimento primeiro)
+  const ord = search.ord ?? "gasto";
+  const dir: Dir = search.dir ?? (COLUNAS_TEXTO.has(ord) ? "asc" : "desc");
+  const ordenarPor = (chave: string) => navigate({ search: { ...search, ...proximaOrdem(ord, dir, chave) }, replace: true, resetScroll: false });
   // campanha aberta na URL: sobrevive à remontagem e dá para mandar o link
   const abrir = (id: number) => navigate({ search: { ...search, campanha: search.campanha === id ? undefined : id }, replace: true, resetScroll: false });
 
@@ -72,10 +129,10 @@ function AdsMlPage() {
       if (error) throw new Error(error.message);
       const d = data as { erro?: string; lista?: Campanha[] };
       if (d?.erro) throw new Error(d.erro);
-      return (d?.lista ?? []).sort((a, b) => (b.gasto ?? 0) - (a.gasto ?? 0));
+      return d?.lista ?? [];
     },
   });
-  const rows = q.data ?? [];
+  const rows = useMemo(() => ordenar(q.data ?? [], VALOR_CAMPANHA[ord] ?? VALOR_CAMPANHA.gasto, dir), [q.data, ord, dir]);
 
   const tot = useMemo(() => {
     const gasto = rows.reduce((s, r) => s + (r.gasto ?? 0), 0);
@@ -137,17 +194,13 @@ function AdsMlPage() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-xs text-muted-foreground">
               <tr>
-                <th className="text-left font-medium px-3 py-2">Campanha</th>
-                <th className="text-center font-medium px-3 py-2">Status</th>
-                <th className="text-right font-medium px-3 py-2">Investimento</th>
-                <th className="text-right font-medium px-3 py-2">Vendas</th>
-                <th className="text-right font-medium px-3 py-2">ROAS</th>
-                <th className="text-right font-medium px-3 py-2">Meta ROAS</th>
-                <th className="text-right font-medium px-3 py-2">ACOS</th>
-                <th className="text-right font-medium px-3 py-2">CPC</th>
-                <th className="text-right font-medium px-3 py-2">Cliques</th>
-                <th className="text-right font-medium px-3 py-2">Impr.</th>
-                <th className="text-right font-medium px-3 py-2">Budget/dia</th>
+                {([
+                  ["Campanha", "nome", "left"], ["Status", "status", "center"], ["Investimento", "gasto"], ["Vendas", "vendas"],
+                  ["ROAS", "roas"], ["Meta ROAS", "meta"], ["ACOS", "acos"], ["CPC", "cpc"], ["Cliques", "cliques"],
+                  ["Impr.", "impressoes"], ["Budget/dia", "budget"],
+                ] as [string, string, ("left" | "center")?][]).map(([rotulo, chave, alinhar]) => (
+                  <ThOrdena key={chave} rotulo={rotulo} chave={chave} alinhar={alinhar} ord={ord} dir={dir} onOrdenar={ordenarPor} className="px-3 py-2" />
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -201,7 +254,7 @@ function AdsMlPage() {
         Vendas atribuídas = diretas + indiretas. ROAS <span className="text-red-600 dark:text-red-400">vermelho</span> = abaixo de 1 (gasta mais do que vende);
         <span className="text-amber-600 dark:text-amber-400"> âmbar</span> = abaixo da meta; <span className="text-emerald-600 dark:text-emerald-400">verde</span> = na meta ou acima.
         A tabela `ml_ads_campanha` é atualizada por cron (30 dias) para outros usos; esta tela consulta ao vivo o período escolhido.
-        Clique numa campanha para ver os produtos dela (lidos ao vivo no Mercado Ads, com as métricas do mesmo período). O ROAS objetivo
+        Clique no nome de uma coluna para ordenar (1º clique: do maior para o menor; de novo: inverte). Clique numa campanha para ver os produtos dela (lidos ao vivo no Mercado Ads, com as métricas do mesmo período). O ROAS objetivo
         só muda pelo painel do Mercado Ads — a API do ML recusa a escrita para a nossa conta (19/out).
       </p>
     </div>
@@ -229,7 +282,16 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
       return anuncios.map((a) => ({ ...a, sku: porMlb.get(a.item_id)?.sku ?? null, estoque: porMlb.get(a.item_id)?.estoque ?? null }));
     },
   });
-  const lista = q.data ?? [];
+  const [ordem, setOrdem] = useState<{ ord: string; dir: Dir }>({ ord: "gasto", dir: "desc" });
+  const lista = useMemo(() => {
+    const v: Record<string, (a: AnuncioCampanha & { sku: string | null; estoque: number | null }) => number | string | null> = {
+      titulo: (a) => a.titulo ?? a.item_id, sku: (a) => a.sku, status: (a) => a.status, preco: (a) => a.preco,
+      gasto: (a) => a.gasto, vendas: (a) => a.vendas, roas: (a) => a.roas, unidades: (a) => a.unidades,
+      cliques: (a) => a.cliques, impressoes: (a) => a.impressoes, estoque: (a) => a.estoque,
+    };
+    return ordenar(q.data ?? [], v[ordem.ord] ?? v.gasto, ordem.dir);
+  }, [q.data, ordem]);
+  const ordenarPor = (chave: string) => setOrdem((o) => proximaOrdem(o.ord, o.dir, chave));
   const comGasto = lista.filter((a) => a.gasto > 0).length;
   const copiarId = () => {
     void navigator.clipboard?.writeText(String(campanha.campaign_id));
@@ -265,17 +327,13 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
           <table className="w-full text-xs">
             <thead className="bg-muted/50 text-muted-foreground">
               <tr>
-                <th className="text-left font-medium px-2 py-1.5">Produto</th>
-                <th className="text-left font-medium px-2 py-1.5">SKU</th>
-                <th className="text-center font-medium px-2 py-1.5">Status</th>
-                <th className="text-right font-medium px-2 py-1.5">Preço</th>
-                <th className="text-right font-medium px-2 py-1.5">Investimento</th>
-                <th className="text-right font-medium px-2 py-1.5">Vendas</th>
-                <th className="text-right font-medium px-2 py-1.5">ROAS</th>
-                <th className="text-right font-medium px-2 py-1.5">Unid.</th>
-                <th className="text-right font-medium px-2 py-1.5">Cliques</th>
-                <th className="text-right font-medium px-2 py-1.5">Impr.</th>
-                <th className="text-right font-medium px-2 py-1.5">Estoque</th>
+                {([
+                  ["Produto", "titulo", "left"], ["SKU", "sku", "left"], ["Status", "status", "center"], ["Preço", "preco"],
+                  ["Investimento", "gasto"], ["Vendas", "vendas"], ["ROAS", "roas"], ["Unid.", "unidades"], ["Cliques", "cliques"],
+                  ["Impr.", "impressoes"], ["Estoque", "estoque"],
+                ] as [string, string, ("left" | "center")?][]).map(([rotulo, chave, alinhar]) => (
+                  <ThOrdena key={chave} rotulo={rotulo} chave={chave} alinhar={alinhar} ord={ordem.ord} dir={ordem.dir} onOrdenar={ordenarPor} className="px-2 py-1.5" />
+                ))}
               </tr>
             </thead>
             <tbody>
