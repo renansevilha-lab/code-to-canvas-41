@@ -22,8 +22,10 @@ import { EV_PRONTO, EV_VAI_CRIAR, type AnuncioPronto, type VaiCriar } from "@/li
 // anúncio que já existe. Ele procura em que promoção (em andamento ou programada) o anúncio já
 // está e mostra o preço promocional de hoje; ao terminar a atualização (ou pelo botão "Só trocar
 // agora"), troca o preço na promoção em que o item já está (`atualizar-itens`, mantendo o limite
-// de compra e as outras variações) ou cadastra numa promoção nova (`add-itens`). Vale só para o
-// anúncio principal da conferência — os de "Atualizar também" não entram.
+// de compra e as outras variações) ou cadastra numa promoção nova (`add-itens`).
+// "ATUALIZAR TAMBÉM" (20/out/2026, pedido do dono): cada anúncio marcado ali (outra loja, ex. Bumi) ganha
+// o SEU bloco, com as promoções da loja dele e o botão "Só cadastrar na promoção agora". Os avisos do envio
+// levam o `item_id`, e cada bloco só responde pelo seu anúncio.
 // ============================================================================
 
 /** O que o envio diz a este bloco: criar (o anúncio ainda não existe) ou atualizar o anúncio `itemId`.
@@ -32,6 +34,7 @@ export interface EnvioAlvo { modo: "criar" | "atualizar"; itemId: string | null;
 export const EnvioAlvoContext = createContext<EnvioAlvo>({ modo: "criar", itemId: null, precoCheio: null });
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
+const NOME_LOJA: Record<string, string> = { ottz: "Ottz", svl: "Bumi" };
 export const FAIXAS_PROMO = [0.1, 0.15, 0.1725, 0.2];
 const FAIXA_PADRAO = 0.1725;
 const rotulo = (f: number) => `${(f * 100).toFixed(2).replace(/\.?0+$/, "").replace(".", ",")}%`;
@@ -250,10 +253,15 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   }
 
   // os avisos do envio leem sempre o estado atual
-  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length, troca: false });
-  agora.current = { desconto, faixa, cadastrar, skus: skus.length, troca: !!noEscolhido };
+  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length, troca: false, alvo });
+  agora.current = { desconto, faixa, cadastrar, skus: skus.length, troca: !!noEscolhido, alvo };
   useEffect(() => {
-    const eDaqui = (d: { canal?: string; empresa?: string; sku?: string }) => d.canal === "shopee" && d.empresa === empresa && d.sku === sku;
+    // no atualizar, cada bloco responde só pelo SEU anúncio (o principal e os de "Atualizar também" podem ser da mesma loja)
+    const eDaqui = (d: { canal?: string; empresa?: string; sku?: string; item_id?: string | null }) => {
+      if (!(d.canal === "shopee" && d.empresa === empresa && d.sku === sku)) return false;
+      const a = agora.current.alvo;
+      return !(a.modo === "atualizar" && a.itemId && d.item_id && String(d.item_id) !== String(a.itemId));
+    };
     const vaiCriar = (ev: Event) => {
       const d = (ev as CustomEvent).detail as VaiCriar;
       const a = agora.current;
@@ -261,7 +269,9 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     };
     const pronto = (ev: Event) => {
       const d = (ev as CustomEvent).detail as AnuncioPronto;
-      if (eDaqui(d) && d.item_id && agora.current.desconto) void agora.current.cadastrar(d);
+      const a = agora.current;
+      // sem o preço cheio no aviso, vale o que o envio disse a este bloco (o de depois da atualização)
+      if (eDaqui(d) && d.item_id && a.desconto) void a.cadastrar(a.alvo.precoCheio != null && d.precos[sku] == null ? { ...d, precos: { ...d.precos, [sku]: a.alvo.precoCheio } } : d);
     };
     window.addEventListener(EV_VAI_CRIAR, vaiCriar); window.addEventListener(EV_PRONTO, pronto);
     return () => { window.removeEventListener(EV_VAI_CRIAR, vaiCriar); window.removeEventListener(EV_PRONTO, pronto); };
@@ -272,7 +282,7 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Tag className="h-4 w-4" /><b>Minha Promoção</b>
         <span className="text-xs text-muted-foreground">{atualizar
-          ? `— o preço promocional do anúncio ${alvo.itemId}, enviado junto com a atualização`
+          ? `— o preço promocional do anúncio ${alvo.itemId} (Shopee ${NOME_LOJA[empresa] ?? empresa}), enviado junto com a atualização`
           : "— cadastrar o anúncio numa promoção assim que ele for criado"}</span>
         {(descQ.isFetching || precosQ.isFetching || ondeQ.isFetching || ocupado) && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
       </div>
@@ -330,7 +340,7 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
           </div>
           <p className="text-[11px] text-muted-foreground">
             Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço); se você mudar o preço à mão, a margem ao lado mostra quanto ele rende. Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio{atualizar && alvo.precoCheio != null ? ` (${formatBRL(alvo.precoCheio)} depois desta atualização)` : ""}, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
-            {atualizar ? " Vai junto com o botão de atualizar, depois da troca do anúncio; só este anúncio (os de “Atualizar também” não entram)." : ""}
+            {atualizar ? " Vai junto com o botão de atualizar, depois da troca do anúncio. Cada anúncio marcado em “Atualizar também” tem o seu próprio bloco de promoção." : ""}
           </p>
           {atualizar && (
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={ocupado || precosQ.isFetching || ondeQ.isFetching}

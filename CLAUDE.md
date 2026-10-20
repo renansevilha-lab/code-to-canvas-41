@@ -1852,6 +1852,17 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   último registrado no período). Validado: com os últimos 30 dias bate com as views antigas (186 anúncios, resumo idêntico, mesma
   ordem). 6 meses = 1,2 s. Índice novo `shopee_ads_campanha_data`. Tela: o filtro de data (`DashboardPeriodFilter`, o mesmo do ADS
   ML; `?period=&from=&to=`, padrão 30 dias) foi para o topo; o "Período (gráfico)" saiu. As views antigas seguem (outras telas).
+- **Análise por anúncio — Mercado Livre (20/out, pedido do dono):** RPC **`ads_analise_anuncio_ml(p_item, p_campaign, p_dias)`**
+  (SQL em `docs/ads-analise-anuncio-ml.sql`), mesmo formato da Shopee: com `p_item` (MLB) = série do anúncio (`ml_ads_anuncio_diario`,
+  desde 07/jul); só `p_campaign` = campanha inteira (`ml_ads_campanha_diario`, desde 06/jul). Receita = `vendas_total` (diretas +
+  indiretas, a base da tela /ads-ml). Meta (ROAS = 100 ÷ `acos_target`) e orçamento são da CAMPANHA: histórico capturado desde 20/out e,
+  antes, o REGISTRO DIÁRIO da campanha (`ml_ads_campanha_diario.acos_target/budget`, marcado `meta_aproximada`/≈ — o cron 81 regrava os
+  últimos 8 dias com a config do momento, então a troca aparece até ~8 dias antes; ex. BUMI MANDIOCA 6,8→7,2 aparece em 09/10). Margem
+  = do SKU (`ml_anuncios.sku`; o ML não liga venda a MLB): MC sem ADS 30 d de `ads_margem_anuncio` nivel sku e venda/margem diária do
+  SKU em `ads_metrica_anuncio_dia` (margem − ADS da linha). Diagnóstico com as mesmas regras (ação "no painel do Mercado Ads" — a API
+  recusa escrita) + orçamento esgotando pelo gasto da CAMPANHA. Tela: em /ads-ml, campanha aberta → "Análise da campanha" ou clique
+  no nome do produto; componente `AnaliseAnuncioAds` com prop `ml`. Achados em 20/out: MLB4908814821 (Areia Bumi 4kg, SKU 15984) margem
+  10,2% → equilíbrio 9,8 × objetivo 7,2 e ROAS 6,15 em 7 d (R$ 1.079 investidos, no prejuízo); DILICAT (15919) margem 1,3%.
 - **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
   sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
 
@@ -2871,7 +2882,7 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
     (`EV_PRONTO` também no modo atualizar): já está na promoção escolhida → `atualizar-itens`
     (mantém `purchase_limit` e o preço das outras variações); senão `add-itens` (aviso: a Shopee
     costuma recusar o mesmo anúncio em duas promoções). Botão "Só trocar/cadastrar agora" faz só a
-    promoção, comparando com o preço cheio de HOJE. Os anúncios de "Atualizar também" não entram.
+    promoção, comparando com o preço cheio de HOJE. **Atualizar também (20/out, pedido do dono):** cada anúncio Shopee marcado ali (ex.: Bumi) ganha o SEU bloco, com as promoções da loja dele e "Só cadastrar na promoção agora"; no envio, a promoção dele entra depois da atualização dele. Os avisos (`ia-anuncio-vai-criar` / `-pronto`) levam o `item_id` e cada bloco só responde pelo seu anúncio (prop `promoPara` de `Publicar`).
     **Não testado ao vivo.**
   - **Como os blocos conversam** (`src/lib/iaEnvioEventos.ts`): `ia-anuncio-vai-criar` (síncrono,
     detalhe mutável: variações e promoção dizem o que farão — entra no texto da confirmação) →

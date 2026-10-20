@@ -255,7 +255,8 @@ function GerarAnuncioPage() {
 
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}
-          noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />} />
+          noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />}
+          promoPara={(emp, item) => <PromocaoNoEnvio key={`pe-${sku}-${emp}-${item}`} sku={sku} nome={dados.produto?.nome ?? ""} empresa={emp} comVariacoes={dados.produto?.tipo === "V"} />} />
       )}
       </>)}
     </div>

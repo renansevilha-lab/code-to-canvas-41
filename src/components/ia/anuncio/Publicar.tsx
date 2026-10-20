@@ -96,10 +96,12 @@ const LOJAS: Record<string, { rotulo: string; empresa: string }[]> = {
   amazon: [{ rotulo: "ACZ", empresa: "ottz" }, { rotulo: "SVL", empresa: "svl" }],
 };
 
-export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
+export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPara }: {
   rascunho: IaRascunho; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
   /** bloco extra dentro da conferência de CRIAR (ex.: cadastrar em Minha Promoção, na Shopee) */
   noEnvio?: ReactNode;
+  /** o mesmo bloco de promoção para um anúncio de "Atualizar também" (outra loja) */
+  promoPara?: (empresa: string, itemId: string) => ReactNode;
 }) {
   const exQ = useQuery({
     queryKey: ["ia-anuncio", "existentes", rascunho.sku],
@@ -186,7 +188,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio }: {
       <div ref={caixa} className="scroll-mt-20 scroll-mb-6">
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} demais={demais} onIr={irPara}
+            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} promoPara={promoPara} demais={demais} onIr={irPara}
             ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })}
             medidasIniciais={medidasComuns?.id === rascunho.id ? medidasComuns.m : null}
             onMedidas={(m) => setMedidasComuns((a) => ({ id: rascunho.id, m: { ...(a?.id === rascunho.id ? a.m : {}), ...m } }))} />
@@ -206,8 +208,9 @@ interface Outro { empresa: string; rotulo: string; e: Existente }
 /** Peso e medidas da embalagem: digitados na conferência de um destino, acompanham a troca de marketplace/loja. */
 const MEDIDAS = ["peso_kg", "comprimento_cm", "largura_cm", "altura_cm"] as const;
 
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, promoPara, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
   rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
+  promoPara?: (empresa: string, itemId: string) => ReactNode;
   demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
   /** ordem das fotos já arrumada em outro destino deste anúncio */
   ordemInicial?: string[] | null; onOrdem?: (ordem: string[]) => void;
@@ -382,17 +385,24 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   async function enviar() {
     if (!p) return;
     const c = p.campos;
-    const junto: VaiCriar = { canal, empresa, sku: rascunho.sku, variacoes: false, promocao: null };
+    const junto: VaiCriar = { canal, empresa, sku: rascunho.sku, variacoes: false, promocao: null, item_id: modo === "atualizar" ? (p.alvo?.item_id ?? null) : null };
     // atualizar também pergunta: a promoção (bloco Minha Promoção) vai junto
     window.dispatchEvent(new CustomEvent(EV_VAI_CRIAR, { detail: junto }));
     const promoJunto = canal === "shopee" ? junto.promocao : null;
+    // cada anúncio de "Atualizar também" tem o seu bloco de promoção (outra loja)
+    const promoExtra = new Map<string, string>();
+    if (canal === "shopee") for (const o of extrasProntos) {
+      const j: VaiCriar = { canal, empresa: o.empresa, sku: rascunho.sku, variacoes: false, promocao: null, item_id: o.e.item_id };
+      window.dispatchEvent(new CustomEvent(EV_VAI_CRIAR, { detail: j }));
+      if (j.promocao) promoExtra.set(chaveT(o), j.promocao);
+    }
     // com variações, o anúncio simples nasce fora do ar e só vai ao ar depois que elas existem
     const ativarDepois = modo !== "atualizar" && canal === "shopee" && junto.variacoes && !p.fora_do_ar;
     const aviso = modo === "atualizar" ? [
       `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
       `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
-      extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})`).join(", ")}.` : "",
+      extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})${promoExtra.has(chaveT(o)) ? ` + promoção ${promoExtra.get(chaveT(o))}` : ""}`).join(", ")}.` : "",
       extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
       promoJunto ? `Em seguida: preço promocional na promoção ${promoJunto} — vale na hora.` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
@@ -443,6 +453,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
         try {
           const rr = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino: { canal, empresa: o.empresa }, opcoes: opcoesT(o, true), confirmar: true });
           toast.success(`Também atualizado: ${MK} ${o.rotulo}`, { description: `Código ${rr.item_id} · ${(rr.atualizados ?? []).join(", ")}` });
+          // a promoção escolhida no bloco deste anúncio entra agora (o bloco sabe o preço cheio que ficou)
+          if (promoExtra.has(chaveT(o))) {
+            const pronto: AnuncioPronto = { canal, empresa: o.empresa, sku: rascunho.sku, item_id: String(o.e.item_id), precos: {} };
+            window.dispatchEvent(new CustomEvent(EV_PRONTO, { detail: pronto }));
+          }
         } catch (e) {
           toast.error(`${MK} ${o.rotulo} (${o.e.item_id}) não aceitou a atualização`, { description: (e as Error).message, duration: 20000 });
         }
@@ -680,7 +695,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
         <div className="rounded-md border p-3 space-y-1.5">
           <div className="text-sm"><b>Atualizar também</b> <span className="text-xs text-muted-foreground">— a mesma troca nos outros anúncios deste produto {NO} {MK}. As fotos atuais que ficam são as das mesmas posições.</span></div>
           {alvosT.map((o) => (
-            <Tambem key={chaveT(o)} rascunho={rascunho} canal={canal} alvo={o} opcoes={opcoesT(o, false)} parado={mudou || previaQ.isFetching}
+            <Tambem key={chaveT(o)} rascunho={rascunho} canal={canal} alvo={o} opcoes={opcoesT(o, false)} parado={mudou || previaQ.isFetching} promoPara={promoPara}
               marcado={tambem[chaveT(o)] === true} onMarcar={(v) => setTambem((x) => ({ ...x, [chaveT(o)]: v }))}
               onPronto={(v) => setProntoT((x) => (x[chaveT(o)] === v ? x : { ...x, [chaveT(o)]: v }))} />
           ))}
@@ -903,9 +918,9 @@ function Selecao({ itens, marcados, fora, onAlternar }: {
   );
 }
 /** Outro anúncio do mesmo produto que recebe a MESMA troca; é conferido em separado antes de entrar no envio. */
-function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPronto }: {
+function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPronto, promoPara }: {
   rascunho: IaRascunho; canal: string; alvo: Outro; opcoes: Record<string, unknown>; marcado: boolean; parado: boolean;
-  onMarcar: (v: boolean) => void; onPronto: (v: boolean) => void;
+  onMarcar: (v: boolean) => void; onPronto: (v: boolean) => void; promoPara?: (empresa: string, itemId: string) => ReactNode;
 }) {
   const q = useQuery({
     queryKey: ["ia-anuncio", "publicar-tambem", rascunho.id, rascunho.updated_at, canal, alvo.empresa, alvo.e.item_id, JSON.stringify(opcoes)],
@@ -917,7 +932,15 @@ function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPr
   const pronto = marcado && !parado && !!q.data?.previa && pend.length === 0 && !q.isFetching && !q.isError;
   useEffect(() => { onPronto(pronto); }, [pronto]);
   const e = alvo.e;
+  // Minha Promoção deste anúncio (Shopee): o preço cheio que fica é o novo, se o preço for trocado
+  const pv = q.data?.previa;
+  const alvoPromo: EnvioAlvo = {
+    modo: "atualizar", itemId: String(e.item_id),
+    precoCheio: pv?.campos?.preco === true ? (pv.preco ?? null) : (pv?.atual?.preco ?? e.preco ?? null),
+    precoAtual: pv?.atual?.preco ?? e.preco ?? null,
+  };
   return (
+    <div className="space-y-1.5">
     <label className="flex items-start gap-2 rounded border px-2 py-1.5 cursor-pointer text-xs">
       <Checkbox className="mt-0.5" checked={marcado} onCheckedChange={(v) => onMarcar(v === true)} />
       <span className="min-w-0 flex-1">
@@ -941,6 +964,10 @@ function Tambem({ rascunho, canal, alvo, opcoes, marcado, parado, onMarcar, onPr
       </span>
       {e.url && <a href={e.url} target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-0.5 shrink-0">abrir<ExternalLink className="h-3 w-3" /></a>}
     </label>
+    {marcado && canal === "shopee" && promoPara && (
+      <div className="ml-6"><EnvioAlvoContext.Provider value={alvoPromo}>{promoPara(alvo.empresa, String(e.item_id))}</EnvioAlvoContext.Provider></div>
+    )}
+    </div>
   );
 }
 
