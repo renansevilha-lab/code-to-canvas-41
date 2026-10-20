@@ -3924,6 +3924,16 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   Cortes de cron em 02/out: 95 desligado, 113 → a cada 2 h (peso é lido 1× por SKU; só pega produto novo), 111 pausado, 104 → 2×/dia, 109 → 15 min,
   26 → 10 min, 62 → 30 min. Regra: **DDL/migrations e backfills fora do horário comercial**;
   diagnóstico: `query_logs` postgrest_logs "schema cache".
+- **Alerta "Table publicly accessible" do Supabase (20/out/2026):** 26 tabelas, 37 views/MVs e 14 funções security definer
+  criadas depois do fechamento de 15/ago ainda davam acesso ao **anon** (a chave pública que vai no site) — várias migrações
+  faziam `grant … to anon, authenticated` por hábito, e funções herdam EXECUTE de PUBLIC. Dava para ler e APAGAR compras,
+  contas a pagar, CMV manual etc. sem login, e baixar boletos/NF dos buckets `contas-pagar-docs`/`fulfillment-docs`.
+  Migração `seguranca_revogar_anon_20out`: revoke de tudo isso do anon, funções só `authenticated`/`service_role`, as
+  duas políticas de storage só `authenticated`, e default privileges do postgres sem anon (funções e sequências). Conferido
+  de fora: REST com a chave pública = 401. **Regra: nunca `grant … to anon`** — o app inteiro passa pelo login
+  (`AuthGate`); edge function que lê com a chave pública repassa o JWT do usuário. O alerta do Supabase olha RLS desligado,
+  não grants: ~110 tabelas seguem sem RLS (acesso = `authenticated`, app de uma empresa só) e ele vai continuar aparecendo
+  até ligar RLS com política `to authenticated using (true)` nelas.
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
   transaction block"). `TRUNCATE` libera espaço na hora.
 
