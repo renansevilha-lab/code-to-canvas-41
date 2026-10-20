@@ -227,7 +227,7 @@ export function DialogoTrazer({ fonte, dados, sku, canal, empresa, rascunho, onF
                 : !mesmo && f.tipo.startsWith("capa_") ? "capa de outro produto" : null)} />
             {substitui > 0 && <p className="text-xs text-amber-600">{substitui} foto(s) marcada(s) já existe(m) neste rascunho e será(ão) substituída(s).</p>}
             {escolhidas.some((i) => temSeloShopee(i.tipo)) && canal !== "shopee" && (
-              <p className="text-xs text-destructive">Há capa com o selo "Menor Preço da Shopee" marcada: ela não pode ir para outro canal.</p>
+              <p className="text-xs text-destructive">Há capa com o selo "Preço de Atacado" (estilo da Shopee) marcada: ela não pode ir para outro canal.</p>
             )}
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <Checkbox checked={aprovadas} onCheckedChange={(v) => setAprovadas(v === true)} />

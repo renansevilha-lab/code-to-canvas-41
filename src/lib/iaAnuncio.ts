@@ -160,12 +160,12 @@ export const DESCRICAO_FOTO: Record<string, string> = {
   imagem_variantes: "A linha completa: sabores, tamanhos ou versões.",
   imagem_kit: "Os itens do kit lado a lado, vistos de cima.",
   imagem_cta: "Foto de fechamento, reunindo os argumentos principais.",
-  imagem_capa_shopee_basica: "Estilo 1: fiel à foto real, com o selo \"Menor Preço da Shopee\".",
+  imagem_capa_shopee_basica: "Estilo 1: fiel à foto real, com o selo \"Preço de Atacado\".",
   imagem_capa_ml_branca: "Estilo 2: fundo branco puro, no padrão do Mercado Livre.",
-  imagem_capa_shopee_livre: "Estilo 3: selo da Shopee, com fundo e composição livres.",
+  imagem_capa_shopee_livre: "Estilo 3: selo \"Preço de Atacado\", com fundo e composição livres.",
   imagem_capa_ambientada_texto: "Estilo 4: produto no ambiente de uso, com o selo de título do produto (sem benefícios).",
   imagem_capa_ambientada_limpa: "Estilo 5: produto no ambiente de uso, sem nenhum texto.",
-  imagem_capa_ambientada_shopee: "Estilo 6: ambiente de uso com o selo \"Menor Preço da Shopee\".",
+  imagem_capa_ambientada_shopee: "Estilo 6: ambiente de uso com o selo \"Preço de Atacado\".",
 };
 
 /** Chama uma edge fn da IA (exige login com o módulo IA). Erro vira exceção com a mensagem da função. */

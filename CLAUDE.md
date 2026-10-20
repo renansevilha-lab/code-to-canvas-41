@@ -3245,6 +3245,18 @@ Pedido do dono: produto cadastrado no Tiny durante o dia não aparecia em `/ia/a
 - **Não testado com login** (o teste real é do dono pela tela). Conferido: preflight 200, sem sessão
   401, no ar = repositório por sha256 (`cea505f6…a470`).
 
+## 5.11.11.16 Selo "Preço de Atacado" no lugar de "Menor Preço da Shopee" (20/out/2026)
+
+Pedido do dono. Os três estilos de capa com selo de preço (1 Básica `imagem_capa_shopee_basica`, 3 Livre `_shopee_livre`, 6
+Ambientada `imagem_capa_ambientada_shopee`) ganharam a **versão 3** com o selo **PREÇO DE / ATACADO** (v2 desligada, não
+apagada); `imagem_capa_ambientada_texto` v3 só troca a frase "Sem faixa Menor Preço" e a regra
+`inst_imagem_sem_logo_marketplace` cita o selo novo. Os nomes dos tipos (`capa_*shopee*`) e a regra de capa por loja
+(§5.11.11.11) não mudaram. A tela (`EtapaFotos.escreverPrompts`) manda `faixa: "PREÇO DE|ATACADO"` explícito para esses
+estilos — o texto de reserva da `ia-anuncio` (`blocoOperador`, título vazio) ainda fala em "MENOR PRECO / DA SHOPEE", mas
+não é mais alcançado por eles (não republicada). O rótulo "Menor preço da Shopee" de `CAPA_DO_DESTINO` na `anuncio-publicar`
+(aviso da conferência) também ficou o antigo. Prompts já escritos por SKU (`ia_prompt_imagem`) seguem com o texto antigo até
+o "prompt" ser refeito.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só

@@ -76,7 +76,7 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
     const v = varsQ.data;
     if (v) setCapa((c) => ({ ...c, barra: c.barra || v.barra, quantidade: c.quantidade || v.quantidade }));
   }, [varsQ.data]);
-  /** Capa com o selo "Menor Preço da Shopee": o título digitado NÃO vale para ela (só para a Ambientada Texto). */
+  /** Capa com o selo "Preço de Atacado" (era "Menor Preço da Shopee" até 20/out): o título digitado NÃO vale para ela (só para a Ambientada Texto). */
   const seloShopee = (x: string) => x.startsWith("imagem_capa_") && x.includes("shopee");
   /** Capa "ambientada limpa" (estilo 5) não tem texto: nunca recebe barra, selo nem ícones do formulário
    *  (18/out/2026: a do 15987 saiu com "8kg 20kg" porque a barra preenchida ia para todas as capas). */
@@ -88,7 +88,8 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
     for (const g of grupos) {
       const dados = !g.some((x) => x.startsWith("imagem_capa_")) ? null
         : g.every(capaLimpa) ? { ...capa, barra: "", faixa: "", icones: "", sem_texto: true }
-        : g.every(seloShopee) ? { ...capa, faixa: "" } : capa;
+        // selo de preço (estilos 1, 3 e 6): sempre PREÇO DE / ATACADO (pedido do dono, 20/out — era "Menor Preço da Shopee")
+        : g.every(seloShopee) ? { ...capa, faixa: "PREÇO DE|ATACADO" } : capa;
       const r = await chamarIa("prompts-imagem", { sku, canal, fotos: g, forcar: forcarAgora, capa: dados });
       out.prompts_escritos.push(...((r.prompts_escritos ?? []) as { tipo: string; confirmar: boolean }[]));
       out.pulados.push(...((r.pulados ?? []) as { tipo: string; motivo: string }[]));
@@ -208,7 +209,7 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
                 <Input className="h-7 text-xs" placeholder="Qtd. de embalagens" value={capa.quantidade} onChange={(e) => setCapa({ ...capa, quantidade: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Peso na embalagem (ex. 4kg)" value={capa.peso} onChange={(e) => setCapa({ ...capa, peso: e.target.value })} />
                 <Input className="h-7 text-xs" placeholder="Barra de variações (ex. 4kg 8kg 12kg)" value={capa.barra} onChange={(e) => setCapa({ ...capa, barra: e.target.value })} disabled={capa.sem_texto} />
-                <Input className="h-7 text-xs" placeholder="Título do selo (vazio = pelo nome do produto)" title="Só vale na Capa Ambientada Texto (as da Shopee levam sempre MENOR PREÇO DA SHOPEE). Vazio: a IA escreve o tipo de produto e o diferencial, tirados do nome. Use | para separar a 2ª linha." value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
+                <Input className="h-7 text-xs" placeholder="Título do selo (vazio = pelo nome do produto)" title="Só vale na Capa Ambientada Texto (as de selo de preço levam sempre PREÇO DE ATACADO). Vazio: a IA escreve o tipo de produto e o diferencial, tirados do nome. Use | para separar a 2ª linha." value={capa.faixa} onChange={(e) => setCapa({ ...capa, faixa: e.target.value })} disabled={capa.sem_texto} />
                 <Input className="h-7 text-xs" placeholder="Ícones de benefício (vazio = nenhum)" value={capa.icones} onChange={(e) => setCapa({ ...capa, icones: e.target.value })} disabled={capa.sem_texto} />
                 <Input className="h-7 text-xs" placeholder="Fundo / composição" value={capa.fundo} onChange={(e) => setCapa({ ...capa, fundo: e.target.value })} />
               </div>
