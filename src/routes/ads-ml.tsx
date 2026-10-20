@@ -13,6 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import { resolveRange, type PeriodPreset, type PeriodRange } from "@/lib/dashboard/period";
+import { AnaliseAnuncioAds } from "@/components/ads/AnaliseAnuncioAds";
 
 interface Campanha {
   campaign_id: number;
@@ -254,7 +255,7 @@ function AdsMlPage() {
         Vendas atribuídas = diretas + indiretas. ROAS <span className="text-red-600 dark:text-red-400">vermelho</span> = abaixo de 1 (gasta mais do que vende);
         <span className="text-amber-600 dark:text-amber-400"> âmbar</span> = abaixo da meta; <span className="text-emerald-600 dark:text-emerald-400">verde</span> = na meta ou acima.
         A tabela `ml_ads_campanha` é atualizada por cron (30 dias) para outros usos; esta tela consulta ao vivo o período escolhido.
-        Clique no nome de uma coluna para ordenar (1º clique: do maior para o menor; de novo: inverte). Clique numa campanha para ver os produtos dela (lidos ao vivo no Mercado Ads, com as métricas do mesmo período). O ROAS objetivo
+        Clique no nome de uma coluna para ordenar (1º clique: do maior para o menor; de novo: inverte). Clique numa campanha para ver os produtos dela (e em "Análise da campanha" ou no nome de um produto para a análise por dia, com meta, margem e diagnóstico) (lidos ao vivo no Mercado Ads, com as métricas do mesmo período). O ROAS objetivo
         só muda pelo painel do Mercado Ads — a API do ML recusa a escrita para a nossa conta (19/out).
       </p>
     </div>
@@ -293,6 +294,8 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
   }, [q.data, ordem]);
   const ordenarPor = (chave: string) => setOrdem((o) => proximaOrdem(o.ord, o.dir, chave));
   const comGasto = lista.filter((a) => a.gasto > 0).length;
+  // análise (20/out): do anúncio (MLB) ou da campanha inteira
+  const [analise, setAnalise] = useState<{ item: string | null; nome: string } | null>(null);
   const copiarId = () => {
     void navigator.clipboard?.writeText(String(campanha.campaign_id));
     toast.success(`ID da campanha copiado: ${campanha.campaign_id}`);
@@ -300,12 +303,16 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
 
   return (
     <div className="flex flex-col gap-2">
+      {analise && <AnaliseAnuncioAds ml={{ item: analise.item }} campaignId={campanha.campaign_id} nome={analise.nome} onFechar={() => setAnalise(null)} />}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-xs text-muted-foreground">
           {q.isLoading ? "Lendo os produtos da campanha no Mercado Ads…"
             : `${lista.length} produto(s) na campanha · ${comGasto} com gasto no período`}
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setAnalise({ item: null, nome: campanha.nome ?? String(campanha.campaign_id) })}>
+            <TrendingUp className="h-3.5 w-3.5" /> Análise da campanha
+          </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copiarId}>
             <Copy className="h-3.5 w-3.5" /> ID {campanha.campaign_id}
           </Button>
@@ -350,7 +357,11 @@ function AnunciosDaCampanha({ campanha, de, ate }: { campanha: Campanha; de: str
                         {a.foto ? <img src={a.foto.replace(/^http:/, "https:")} alt="" className="h-9 w-9 rounded object-cover shrink-0 bg-muted" loading="lazy" />
                           : <div className="h-9 w-9 rounded bg-muted shrink-0" />}
                         <div className="min-w-0">
-                          <div className="truncate" title={a.titulo ?? ""}>{a.titulo ?? a.item_id}</div>
+                          <button type="button" className="truncate block max-w-full text-left hover:underline hover:text-primary"
+                            title={`${a.titulo ?? ""} — clique para ver a análise por dia`}
+                            onClick={() => setAnalise({ item: a.item_id, nome: a.titulo ?? a.item_id })}>
+                            {a.titulo ?? a.item_id}
+                          </button>
                           <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                             {a.link ? <a href={a.link} target="_blank" rel="noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>{a.item_id}</a> : a.item_id}
                             {a.logistica === "fulfillment" && <span>· Full</span>}

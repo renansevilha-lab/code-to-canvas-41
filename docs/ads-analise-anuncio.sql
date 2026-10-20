@@ -38,7 +38,7 @@ begin
     from public.ads_margem_anuncio m
    where m.nivel = 'anuncio' and m.marketplace = 'shopee' and m.shop_id = p_shop and m.anuncio_id = v_item limit 1;
   v_eq := case when v_mc > 0 then round(100 / v_mc, 2) end;
-  v_min_meta := case when v_eq is not null then ceil(v_eq * 1.15 * 10) / 10 end;   -- equilíbrio + 15% de folga
+  v_min_meta := case when v_eq is not null then round(ceil(v_eq * 1.15 * 10) / 10, 1) end;   -- equilíbrio + 15% de folga
 
   -- série diária
   with dd as (select d::date as data from generate_series(v_ini, v_hoje - 1, interval '1 day') d),

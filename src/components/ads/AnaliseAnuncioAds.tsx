@@ -13,11 +13,13 @@ import { textoOrcamento } from "@/components/ads/ShopeeAdsConfig";
 // (as regras do diagnóstico ficam no banco): série diária com investimento, receita, ROAS e a meta/orçamento
 // VIGENTES no dia (histórico capturado a cada 2 h — a Shopee não informa a meta de dias passados), margem do
 // anúncio, ROAS de equilíbrio, efeito de cada mudança de meta/orçamento e o diagnóstico.
+// Mercado Livre (20/out): prop `ml` → RPC `ads_analise_anuncio_ml` (anúncio MLB ou campanha inteira), mesmo formato.
+// No ML a meta/orçamento de antes de 20/10 vêm do registro diário da campanha (aproximado: "≈").
 // ============================================================================
 
 interface Dia {
   data: string; gasto: number; receita: number; pedidos: number; impressoes: number; cliques: number;
-  roas: number | null; meta: number | null; meta_conhecida: boolean; orcamento: number | null; orcamento_aproximado: boolean;
+  roas: number | null; meta: number | null; meta_conhecida: boolean; meta_aproximada?: boolean; orcamento: number | null; orcamento_aproximado: boolean;
   uso_orcamento: number | null; venda_total: number | null; margem: number | null; margem_pos_ads: number | null;
 }
 interface Bloco { gasto: number; receita: number; pedidos: number; roas: number | null; dias?: number }
@@ -27,7 +29,8 @@ interface Analise {
   margem: { mc_pct: number | null; confiavel: boolean | null; roas_equilibrio: number | null; meta_minima: number | null };
   resumo: { u7: Bloco & { dias_gasto: number; dias_orcamento_esgotado: number }; a7: Bloco };
   dias: Dia[];
-  mudancas: { campo: string; de: string | null; para: string | null; quando: string; origem: string; quem: string | null; antes: Bloco; depois: Bloco }[];
+  mudancas: { campo: string; de: string | null; para: string | null; quando: string; origem: string; quem: string | null; aproximada?: boolean; antes: Bloco; depois: Bloco }[];
+  skus?: string[] | null;
   diagnostico: { tom: "ruim" | "atencao" | "oportunidade" | "info"; titulo: string; texto: string; acao: string | null }[];
 }
 
@@ -42,16 +45,24 @@ const TOM: Record<string, { cls: string; icone: typeof Info }> = {
   info: { cls: "border-border bg-muted/30 text-muted-foreground", icone: Info },
 };
 
-export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shopId: number | string; campaignId: number | string; nome: string; onFechar: () => void }) {
+export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml }: {
+  shopId?: number | string; campaignId: number | string; nome: string; onFechar: () => void;
+  /** Mercado Livre: anúncio (MLB) ou, sem item, a campanha inteira */
+  ml?: { item?: string | null };
+}) {
+  const ehMl = !!ml;
   const q = useQuery({
-    queryKey: ["ads-shopee", "analise", String(shopId), String(campaignId)],
+    queryKey: ["ads-analise", ehMl ? "ml" : "shopee", String(shopId ?? ""), String(campaignId), ml?.item ?? ""],
     staleTime: 5 * 60_000, placeholderData: undefined,
     queryFn: async (): Promise<Analise> => {
-      const { data, error } = await supabaseExternal.rpc("ads_analise_anuncio", { p_shop: Number(shopId), p_campaign: String(campaignId), p_dias: 30 });
+      const { data, error } = ehMl
+        ? await supabaseExternal.rpc("ads_analise_anuncio_ml", { p_item: ml?.item ?? null, p_campaign: String(campaignId), p_dias: 30 })
+        : await supabaseExternal.rpc("ads_analise_anuncio", { p_shop: Number(shopId), p_campaign: String(campaignId), p_dias: 30 });
       if (error) throw error;
       return data as Analise;
     },
   });
+  const MK = ehMl ? "Mercado Livre" : "Shopee";
   const a = q.data;
   const u7 = a?.resumo.u7; const a7 = a?.resumo.a7;
   const eq = a?.margem.roas_equilibrio ?? null;
@@ -62,8 +73,10 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
     <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }}>
       <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="pr-6 leading-snug">Análise do anúncio</DialogTitle>
-          <DialogDescription className="line-clamp-2">{a?.nome ?? nome}{a?.item_id ? ` · item ${a.item_id}` : ""} · campanha {String(campaignId)}</DialogDescription>
+          <DialogTitle className="pr-6 leading-snug">{ehMl && !ml?.item ? "Análise da campanha" : "Análise do anúncio"} · {MK}</DialogTitle>
+          <DialogDescription className="line-clamp-2">
+            {a?.nome ?? nome}{a?.item_id ? ` · ${ehMl ? "" : "item "}${a.item_id}` : ""}{a?.skus?.length ? ` · SKU ${a.skus.join(", ")}` : ""} · campanha {String(campaignId)}
+          </DialogDescription>
         </DialogHeader>
 
         {q.isLoading ? (
@@ -77,7 +90,7 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
               <Bloco titulo="Investimento 7 dias" valor={formatBRL(u7!.gasto)} sub={comparacao(u7!.gasto, a7!.gasto, true)} />
               <Bloco titulo="Receita do ADS 7 dias" valor={formatBRL(u7!.receita)} sub={comparacao(u7!.receita, a7!.receita)} />
               <Bloco titulo="ROAS 7 dias" valor={x(u7!.roas)} sub={a7!.roas != null ? `antes ${x(a7!.roas)}` : ""} />
-              <Bloco titulo="Meta de ROAS hoje" valor={a.config?.roas_target != null ? x(a.config.roas_target, 1) : "—"}
+              <Bloco titulo={ehMl ? "ROAS objetivo hoje (campanha)" : "Meta de ROAS hoje"} valor={a.config?.roas_target != null ? x(a.config.roas_target, 1) : "—"}
                 sub={`orçamento ${textoOrcamento(a.config?.budget)}`} />
               <Bloco titulo="ROAS de equilíbrio" valor={eq != null ? x(eq) : "—"}
                 sub={a.margem.mc_pct != null ? `margem sem ADS ${String(a.margem.mc_pct).replace(".", ",")}%${a.margem.meta_minima != null ? ` · meta mín. ${x(a.margem.meta_minima, 1)}` : ""}` : "sem margem calculada"} />
@@ -122,7 +135,7 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
               <div className="text-sm font-medium mb-1">Alterações de meta e orçamento</div>
               {a.mudancas.length === 0 ? (
                 <div className="text-xs text-muted-foreground">
-                  Nenhuma alteração registrada. O registro começou em {a.config?.primeira_vez ? new Date(a.config.primeira_vez).toLocaleDateString("pt-BR") : "20/10/2026"} (a Shopee não informa alterações passadas).
+                  Nenhuma alteração registrada. O registro começou em {a.config?.primeira_vez ? new Date(a.config.primeira_vez).toLocaleDateString("pt-BR") : "20/10/2026"} (o {MK} não informa alterações passadas).
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -130,7 +143,9 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
                     <div key={i} className="text-xs rounded border px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
                       <span className="font-medium">{new Date(m.quando).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
                       <span>{CAMPO[m.campo] ?? m.campo}: {fmtCampo(m.campo, m.de)} → <b>{fmtCampo(m.campo, m.para)}</b></span>
-                      <span className="text-muted-foreground">{m.origem === "app" ? `pelo sistema${m.quem ? ` (${m.quem})` : ""}` : "no painel da Shopee ou automático"}</span>
+                      <span className="text-muted-foreground">{m.origem === "app" ? `pelo sistema${m.quem ? ` (${m.quem})` : ""}`
+                        : m.aproximada ? "registro diário (data aproximada, pode estar adiantada até ~8 dias)"
+                        : `no painel ${ehMl ? "do Mercado Ads" : "da Shopee"} ou automático`}</span>
                       {(m.campo === "roas_target" || m.campo === "budget") && (
                         <span className="text-muted-foreground">7 dias antes: ROAS {x(m.antes?.roas)} · {formatBRL(m.antes?.gasto ?? 0)} → depois ({m.depois?.dias ?? 0} d): ROAS {x(m.depois?.roas)} · {formatBRL(m.depois?.gasto ?? 0)}</span>
                       )}
@@ -152,7 +167,9 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
                     <th className="text-right px-2 py-1.5 font-medium">ROAS</th>
                     <th className="text-right px-2 py-1.5 font-medium">Meta</th>
                     <th className="text-right px-2 py-1.5 font-medium">Orçamento</th>
-                    <th className="text-right px-2 py-1.5 font-medium" title="Venda total do anúncio (todas as campanhas e orgânico) e margem depois do ADS">Venda · margem pós-ADS</th>
+                    <th className="text-right px-2 py-1.5 font-medium" title={ehMl
+                      ? "Venda total do SKU no Mercado Livre (todos os anúncios, com e sem ADS) e a margem dele menos o ADS desta linha"
+                      : "Venda total do anúncio (todas as campanhas e orgânico) e margem depois do ADS"}>{ehMl ? "Venda do SKU · margem − ADS" : "Venda · margem pós-ADS"}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -165,7 +182,9 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
                         <td className="px-2 py-1 text-right tabular-nums">{formatBRL(d.receita)}</td>
                         <td className="px-2 py-1 text-right tabular-nums">{d.pedidos}</td>
                         <td className={`px-2 py-1 text-right tabular-nums font-medium ${abaixoEq ? "text-red-700" : d.meta != null && d.roas != null && d.roas < d.meta ? "text-amber-700" : ""}`}>{x(d.roas)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{d.meta != null ? x(d.meta, 1) : <span title="A Shopee não informa a meta de dias passados; o registro começou em 20/10/2026">sem registro</span>}</td>
+                        <td className="px-2 py-1 text-right tabular-nums text-muted-foreground" title={d.meta_aproximada ? "do registro diário da campanha (aproximado)" : ""}>
+                          {d.meta != null ? <>{d.meta_aproximada ? "≈" : ""}{x(d.meta, 1)}</> : <span title="O marketplace não informa a meta de dias passados; o registro começou em 20/10/2026">sem registro</span>}
+                        </td>
                         <td className="px-2 py-1 text-right tabular-nums text-muted-foreground" title={d.orcamento_aproximado ? "valor registrado pelo sync do dia (aproximado)" : ""}>
                           {textoOrcamento(d.orcamento)}{d.uso_orcamento != null ? ` · ${d.uso_orcamento}%` : ""}{d.orcamento_aproximado ? "*" : ""}
                         </td>
@@ -179,9 +198,13 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar }: { shop
               </table>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Receita e ROAS = vendas atribuídas ao ADS pela Shopee. Os últimos ~4 dias ainda podem mudar (a Shopee reatribui vendas).
-              ROAS de equilíbrio = 100 ÷ margem de contribuição sem ADS (30 dias): abaixo dele o ADS custa mais do que a margem paga.
-              Orçamento com * = valor registrado no dia pelo sync (aproximado). Meta de dias antes de 20/10/2026: sem registro (a Shopee não informa).
+              {ehMl
+                ? <>Receita e ROAS = vendas atribuídas ao ADS pelo Mercado Livre (diretas + indiretas). Os últimos ~8 dias ainda podem mudar (o ML reatribui vendas).
+                    A margem é do SKU (o ML não liga a venda ao anúncio): a venda e a margem da tabela são de todas as vendas do SKU no ML.
+                    ROAS de equilíbrio = 100 ÷ margem de contribuição sem ADS do SKU (30 dias). Meta e orçamento com ≈ / * = registro diário da campanha (aproximado). O ROAS objetivo e o orçamento só mudam no painel do Mercado Ads (a API do ML recusa a escrita).</>
+                : <>Receita e ROAS = vendas atribuídas ao ADS pela Shopee. Os últimos ~4 dias ainda podem mudar (a Shopee reatribui vendas).
+                    ROAS de equilíbrio = 100 ÷ margem de contribuição sem ADS (30 dias): abaixo dele o ADS custa mais do que a margem paga.
+                    Orçamento com * = valor registrado no dia pelo sync (aproximado). Meta de dias antes de 20/10/2026: sem registro (a Shopee não informa).</>}
             </p>
           </div>
         )}
