@@ -1384,6 +1384,21 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   está em `tiktok_promocao_acoes.resposta`. Front: `src/components/promocoes/TikTokAcoes.tsx`
   ("Nova promoção", seleção na tabela → "Adicionar à promoção…" com prévia de margem, expandir a
   promoção → tirar produto, "Encerrar").
+- **Amazon — ABA FUNCIONANDO (20/out/2026, opções B + C do dono): `amazon-promocoes` v5 (deploy 8; fonte em
+  `supabase/functions/amazon-promocoes/`) + `src/components/promocoes/PromocoesAmazon.tsx`.** Módulos: `catalogo {conta}` (anúncios
+  FBA com estoque ou venda em 30 d — `estoque_fulfillment` + `pedido_itens.sku_filho` — com preço cheio e preço de oferta da Listings,
+  **taxas reais** da Product Fees API no preço atual (20 por chamada, ~2 s entre lotes), CMV de `view_cmv_efetivo`, MC e preço por faixa
+  10/15/17,25/20% = (CMV + taxa fixa) ÷ (1 − comissão% − imposto − MC); imposto = `lojas.aliquota_imposto` ou 10% ACZ / 7,5% SVL, o
+  efetivo dos pedidos), `promocoes` (searchPromotions; ACZ 60: 12 descontos de preço rodando, ofertas/cupons encerrados),
+  `selecao {promocao}` (itens: `GET /promotions/2025-12-01/promotions/{id}/selections/{selectionId}?revisionId=` →
+  `selection.selectionDetails.items[{asin, sku, benefit{type FIXED_PRICE, price}, budget{UNITS}}]`; o `/selections/{id}` solto dá 403),
+  `simular`, `oferta` / `remover-oferta` (PATCH `purchasable_offer` com `discounted_price.schedule` — o objeto inteiro é regravado
+  mantendo `our_price`; sempre passa no VALIDATION_PREVIEW antes; com `confirmar` exige login — anon = 401 — e grava em
+  `debug_fulfillment` `modulo=amazon-promo-preco`). Ensaio 20/out: FBA-15825 a R$ 44,90 (cheio 49,90) = VALID, MC 26,9%. **Nenhuma
+  oferta aplicada de verdade ainda.** O preço da PROMOÇÃO (Seller Central) é outra coisa: FBA-15825 está a R$ 42,64 na promoção "BUMI"
+  sem ter preço de oferta no anúncio. Atalhos do Seller Central na tela (cupom, oferta relâmpago, promoções) com endereços não
+  conferidos. **Achado:** o 15742_FBA (170 vendas em 30 d) está NÃO comprável — "oferta bloqueada pela recusa de faturas: GTIN (cEAN)
+  inválido" (Faturador Amazon); a tela mostra esse alerta no topo.
 - **Amazon — teste de permissões (07/out/2026), edge fn `amazon-promocoes` v2 (só diagnóstico,
   `?modulo=teste[&conta=acz|svl]`):** Promotions API 2025-12-01 (`marketplaceIds` obrigatório) e
   Pricing v0 **liberadas** nas duas contas (ACZ com PRICE_DISCOUNT/DEAL/COUPON ativos; SVL 0).

@@ -5,15 +5,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LOJAS } from "@/components/promocoes/comum";
 import { PromocoesShopee, type AbaShopee } from "@/components/promocoes/PromocoesShopee";
 import { PromocoesML } from "@/components/promocoes/PromocoesML";
-import { PromocoesEmBreve } from "@/components/promocoes/PromocoesEmBreve";
 import { PromocoesTikTok } from "@/components/promocoes/PromocoesTikTok";
+import { PromocoesAmazon } from "@/components/promocoes/PromocoesAmazon";
 
 // ============================================================================
 // Promoções — todas as promoções num lugar só (07/out/2026, pedido do dono),
 // uma sub-aba por marketplace:
 //   · Shopee: Minha Promoção / Relâmpago (antes /promocoes-shopee);
 //   · Mercado Livre: Central de Promoções (antes /promocoes-ml);
-//   · Amazon e TikTok: o que a API permite e o que falta (estudo).
+//   · Amazon (20/out/2026): promoções da conta, MC por produto e preço de oferta com início e fim;
+//   · TikTok: promoções da loja ACZ.
 // /promocoes-shopee, /promocoes-ml e /flash-sale redirecionam para cá.
 // Sub-aba, aba da Shopee e loja ficam na URL (sobrevivem à remontagem).
 // ============================================================================
@@ -71,7 +72,7 @@ function PromocoesPage() {
           <PromocoesML />
         </TabsContent>
         <TabsContent value="amazon" className="mt-5">
-          <PromocoesEmBreve marketplace="amazon" />
+          <PromocoesAmazon />
         </TabsContent>
         <TabsContent value="tiktok" className="mt-5">
           <PromocoesTikTok />
