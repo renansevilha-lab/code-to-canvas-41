@@ -12,6 +12,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
+import { EnvioAlvoContext, type EnvioAlvo } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { calcularPreco, chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
@@ -372,11 +373,19 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const extrasProntos = extras.filter((o) => prontoT[chaveT(o)]);
   const existentes = d?.existentes ?? jaExiste ?? [];
 
+  // o bloco Minha Promoção (noEnvio) precisa saber se é criar ou atualizar, e qual anúncio
+  const trocaPreco = modo === "atualizar" && aplicado.c_preco === true && p?.campos?.preco === true;
+  const alvoPromo: EnvioAlvo = modo === "atualizar"
+    ? { modo: "atualizar", itemId: p?.alvo?.item_id ? String(p.alvo.item_id) : null, precoCheio: trocaPreco ? (p?.preco ?? null) : (p?.atual?.preco ?? null), precoAtual: p?.atual?.preco ?? null }
+    : { modo: "criar", itemId: null, precoCheio: p?.preco ?? null };
+
   async function enviar() {
     if (!p) return;
     const c = p.campos;
     const junto: VaiCriar = { canal, empresa, sku: rascunho.sku, variacoes: false, promocao: null };
-    if (modo !== "atualizar") window.dispatchEvent(new CustomEvent(EV_VAI_CRIAR, { detail: junto }));
+    // atualizar também pergunta: a promoção (bloco Minha Promoção) vai junto
+    window.dispatchEvent(new CustomEvent(EV_VAI_CRIAR, { detail: junto }));
+    const promoJunto = canal === "shopee" ? junto.promocao : null;
     // com variações, o anúncio simples nasce fora do ar e só vai ao ar depois que elas existem
     const ativarDepois = modo !== "atualizar" && canal === "shopee" && junto.variacoes && !p.fora_do_ar;
     const aviso = modo === "atualizar" ? [
@@ -385,6 +394,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
       extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})`).join(", ")}.` : "",
       extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
+      promoJunto ? `Em seguida: preço promocional na promoção ${promoJunto} — vale na hora.` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
       `Criar o anúncio ${NO} ${p.loja}?`, "",
@@ -408,6 +418,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       if (ativarDepois) opc.fora_do_ar = true;
       const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: opc, confirmar: true });
       if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
+      // atualizado: a promoção escolhida no bloco Minha Promoção entra agora, com o preço cheio que ficou
+      if (modo === "atualizar" && promoJunto && p.alvo?.item_id) {
+        const pronto: AnuncioPronto = { canal, empresa, sku: rascunho.sku, item_id: String(p.alvo.item_id), precos: alvoPromo.precoCheio != null ? { [rascunho.sku]: alvoPromo.precoCheio } : {} };
+        window.dispatchEvent(new CustomEvent(EV_PRONTO, { detail: pronto }));
+      }
       else toast.success(`Anúncio criado ${NO} ${MK}`, { description: `Código ${r.item_id}${r.fora_do_ar ? (ml ? " · pausado" : " · fora do ar") : ""}${r.titulo_final ? ` · ${r.titulo_final}` : ""}` });
       // produto pai na Shopee: o bloco "Variações deste anúncio" ouve este aviso e cria as opções no anúncio recém-criado
       if (modo !== "atualizar" && r.item_id) {
@@ -548,6 +563,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           <Troca rotulo="Preço" marcado={op.c_preco === true} onMarcar={(v) => trocar({ c_preco: v })}
             antes={p.atual.preco != null ? formatBRL(p.atual.preco) : "—"} depois={p.preco != null ? formatBRL(p.preco) : "—"}
             nota={amz ? "O preço na Amazon ainda não é trocado por aqui." : "Desmarcado por padrão: mexer no preço pode afetar promoção em andamento."} />
+          {canal === "shopee" && alvoPromo.itemId && <EnvioAlvoContext.Provider value={alvoPromo}>{noEnvio}</EnvioAlvoContext.Provider>}
         </div>
       ) : (
         <div className="rounded-md border p-3 space-y-3">
@@ -641,7 +657,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
               </div>
             </div>
           )}
-          {canal === "shopee" && noEnvio}
+          {canal === "shopee" && <EnvioAlvoContext.Provider value={alvoPromo}>{noEnvio}</EnvioAlvoContext.Provider>}
           {/* Shopee: sempre NO AR (13/out, decisão do dono) — a opção de criar sem listar saiu */}
           {canal === "shopee" ? (
             <p className="text-xs text-muted-foreground">O anúncio nasce <b>no ar</b> na Shopee{p.fora_do_ar ? "" : ", visível para os compradores"}.</p>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Loader2, Tag } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +18,18 @@ import { EV_PRONTO, EV_VAI_CRIAR, type AnuncioPronto, type VaiCriar } from "@/li
 // com as variações criadas se for o caso), este bloco cadastra os itens na promoção
 // (`shopee-promocoes?modulo=add-itens`). A escrita não é repetida sozinha: se falhar, fica o
 // botão para tentar de novo.
+// ATUALIZAR (20/out/2026, pedido do dono): o bloco também aparece na conferência de ATUALIZAR um
+// anúncio que já existe. Ele procura em que promoção (em andamento ou programada) o anúncio já
+// está e mostra o preço promocional de hoje; ao terminar a atualização (ou pelo botão "Só trocar
+// agora"), troca o preço na promoção em que o item já está (`atualizar-itens`, mantendo o limite
+// de compra e as outras variações) ou cadastra numa promoção nova (`add-itens`). Vale só para o
+// anúncio principal da conferência — os de "Atualizar também" não entram.
 // ============================================================================
+
+/** O que o envio diz a este bloco: criar (o anúncio ainda não existe) ou atualizar o anúncio `itemId`.
+ *  `precoCheio` = o preço cheio que vai valer depois do envio (o novo, se o preço for trocado). */
+export interface EnvioAlvo { modo: "criar" | "atualizar"; itemId: string | null; precoCheio: number | null; /** preço cheio de HOJE (o "só trocar agora" vale antes da atualização) */ precoAtual?: number | null }
+export const EnvioAlvoContext = createContext<EnvioAlvo>({ modo: "criar", itemId: null, precoCheio: null });
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 export const FAIXAS_PROMO = [0.1, 0.15, 0.1725, 0.2];
@@ -30,6 +41,10 @@ const dia = (t: number) => new Date(t * 1000).toLocaleDateString("pt-BR", { day:
 
 interface Desconto { discount_id: number; discount_name: string; start_time: number; end_time: number; status: string }
 interface Resultado { ok: number; falhas: string[]; nome: string }
+interface ModeloApi { model_id: number; model_promotion_price?: number | string }
+interface ItemApi { item_id: number; purchase_limit?: number | string; item_promotion_price?: number | string; model_list?: ModeloApi[] }
+interface ModeloEspelho { model_id: number; sku: string | null; nome_variacao: string | null; preco: number | null; preco_original: number | null }
+const num = (v: unknown) => (v == null || v === "" ? 0 : Number(v));
 
 /** A margem de contribuição que o SKU dá neste preço promocional (a conta do bloco Preço: `ia_analisar_preco`).
  *  Acompanha o que é digitado, com um pequeno atraso para não consultar a cada tecla. */
@@ -62,6 +77,9 @@ function MargemDoPreco({ sku, empresa, preco }: { sku: string; empresa: string; 
 
 export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: string; nome: string; empresa: string; comVariacoes: boolean }) {
   const shopId = LOJA[empresa] ?? LOJA.ottz;
+  const alvo = useContext(EnvioAlvoContext);
+  const atualizar = alvo.modo === "atualizar" && !!alvo.itemId;
+  const escolheu = useRef(false); // a pessoa mexeu na promoção nesta tela: a detecção não passa por cima
   const guarda = `ia.envio.promo.${empresa}`;
   const [descontoId, setDescontoId] = useState<number | null>(null);
   const [faixa, setFaixa] = useState(FAIXA_PADRAO);
@@ -95,6 +113,46 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   const descontos = descQ.data ?? [];
   const desconto = descontos.find((d) => d.discount_id === descontoId) ?? null;
 
+  // ATUALIZAR: as variações do anúncio (espelho) e em que promoção ele já está (lido na Shopee)
+  const modelosQ = useQuery({
+    queryKey: ["ia-anuncio", "envio-promo-modelos", shopId, alvo.itemId],
+    enabled: atualizar, placeholderData: undefined, gcTime: 0,
+    queryFn: async (): Promise<ModeloEspelho[]> => {
+      const { data, error } = await supabaseExternal.from("shopee_anuncios_variacao").select("model_id, sku, nome_variacao, preco, preco_original")
+        .eq("shop_id", shopId).eq("item_id", String(alvo.itemId));
+      if (error) throw error;
+      return ((data ?? []) as ModeloEspelho[]).filter((m) => Number(m.model_id) > 0).map((m) => ({ ...m, model_id: Number(m.model_id) }));
+    },
+  });
+  const modelos = atualizar ? (modelosQ.data ?? []) : [];
+  const ondeQ = useQuery({
+    queryKey: ["ia-anuncio", "envio-promo-onde", shopId, alvo.itemId, descontos.map((d) => d.discount_id).join(",")],
+    enabled: atualizar && descontos.length > 0, placeholderData: undefined, gcTime: 0, staleTime: 0,
+    queryFn: async (): Promise<{ desconto: Desconto; item: ItemApi }[]> => {
+      const rs = await Promise.all(descontos.map((d) => chamarPromocoes(`modulo=detalhe&shop_id=${shopId}&discount_id=${d.discount_id}`).then((r) => ({ d, r }))));
+      const achados: { desconto: Desconto; item: ItemApi }[] = [];
+      for (const { d, r } of rs) for (const it of (r.itens ?? []) as ItemApi[]) if (String(it.item_id) === String(alvo.itemId)) achados.push({ desconto: d, item: it });
+      return achados;
+    },
+  });
+  const onde = atualizar ? (ondeQ.data ?? []) : [];
+  // o anúncio já está numa promoção: ela vem escolhida (a memória da última escolha não vale aqui)
+  useEffect(() => {
+    if (!atualizar || escolheu.current || !ondeQ.data?.length) return;
+    setDescontoId(ondeQ.data[0].desconto.discount_id);
+  }, [atualizar, ondeQ.data]);
+  const noEscolhido = onde.find((x) => x.desconto.discount_id === descontoId) ?? null;
+  const promoHoje = (s: string): number | null => {
+    if (!noEscolhido) return null;
+    const ml = noEscolhido.item.model_list ?? [];
+    if (ml.length) {
+      const m = modelos.find((x) => x.sku === s);
+      const pm = m ? ml.find((x) => Number(x.model_id) === m.model_id) : null;
+      return pm ? num(pm.model_promotion_price) || null : null;
+    }
+    return num(noEscolhido.item.item_promotion_price) || null;
+  };
+
   const skusQ = useQuery({
     queryKey: ["ia-anuncio", "envio-promo-skus", sku, comVariacoes],
     queryFn: async (): Promise<{ sku: string; nome: string }[]> => {
@@ -107,7 +165,9 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
       return vs.length ? vs : [{ sku, nome }];
     },
   });
-  const skus = skusQ.data ?? [];
+  // atualizar anúncio com variações: as variações DESTE anúncio na Shopee (não as do cadastro)
+  const skusModelos = modelos.filter((m) => m.sku).map((m) => ({ sku: String(m.sku), nome: m.nome_variacao ?? String(m.sku) }));
+  const skus = atualizar && skusModelos.length ? skusModelos : (skusQ.data ?? []);
   const precosQ = useQuery({
     queryKey: ["ia-anuncio", "envio-promo-precos", empresa, faixa, skus.map((s) => s.sku).join(",")],
     enabled: skus.length > 0 && desconto != null,
@@ -127,8 +187,13 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     return calc[s]?.preco ?? null;
   };
 
-  async function cadastrar(d: AnuncioPronto) {
+  async function cadastrar(d0: AnuncioPronto) {
     if (!desconto) return;
+    // atualizar: o envio não sabe as variações nem o preço cheio de cada uma — vêm do espelho
+    const d: AnuncioPronto = atualizar && !d0.modelos?.length && modelos.some((m) => m.sku)
+      ? { ...d0, modelos: modelos.filter((m) => m.sku).map((m) => ({ model_id: m.model_id, sku: String(m.sku) })),
+          precos: { ...Object.fromEntries(modelos.filter((m) => m.sku && (m.preco_original ?? m.preco)).map((m) => [String(m.sku), Number(m.preco_original ?? m.preco)])), ...d0.precos } }
+      : d0;
     const pulados: string[] = [];
     const vale = (s: string): number | null => {
       const promo = promoDe(s); const cheio = d.precos[s];
@@ -136,46 +201,63 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
       if (cheio != null && promo >= cheio) { pulados.push(`${s}: o promocional (${formatBRL(promo)}) não fica abaixo do preço cheio (${formatBRL(cheio)})`); return null; }
       return promo;
     };
-    let item: Record<string, unknown> | null = null; let n = 0;
+    // o item já está NESTA promoção: troca o preço nela (limite de compra e as outras variações ficam)
+    const ja = atualizar ? noEscolhido?.item ?? null : null;
+    const chamadas: { modulo: string; item: Record<string, unknown>; n: number }[] = [];
     if (d.modelos?.length) {
-      const lista = d.modelos.map((m) => ({ model_id: m.model_id, sku: m.sku, promo: vale(m.sku) })).filter((x) => x.promo != null);
-      n = lista.length;
-      if (n) item = { item_id: Number(d.item_id), purchase_limit: 0, model_list: lista.map((x) => ({ model_id: x.model_id, model_promotion_price: x.promo })) };
+      const lista = d.modelos.map((m) => ({ model_id: m.model_id, sku: m.sku, promo: vale(m.sku) }))
+        .filter((x): x is { model_id: number; sku: string; promo: number } => x.promo != null);
+      const naPromo = new Set((ja?.model_list ?? []).map((m) => Number(m.model_id)));
+      const trocar = lista.filter((x) => naPromo.has(x.model_id));
+      const novos = lista.filter((x) => !naPromo.has(x.model_id));
+      if (ja && trocar.length) {
+        const novo = new Map(trocar.map((x) => [x.model_id, x.promo]));
+        chamadas.push({ modulo: "atualizar-itens", n: trocar.length, item: { item_id: Number(d.item_id), purchase_limit: num(ja.purchase_limit),
+          model_list: (ja.model_list ?? []).map((m) => ({ model_id: Number(m.model_id), model_promotion_price: novo.get(Number(m.model_id)) ?? num(m.model_promotion_price) })) } });
+      }
+      if (novos.length) chamadas.push({ modulo: "add-itens", n: novos.length, item: { item_id: Number(d.item_id), purchase_limit: ja ? num(ja.purchase_limit) : 0,
+        model_list: novos.map((x) => ({ model_id: x.model_id, model_promotion_price: x.promo })) } });
     } else {
       const promo = vale(d.sku);
-      if (promo != null) { n = 1; item = { item_id: Number(d.item_id), purchase_limit: 0, item_promotion_price: promo }; }
+      if (promo != null) chamadas.push(ja
+        ? { modulo: "atualizar-itens", n: 1, item: { item_id: Number(d.item_id), purchase_limit: num(ja.purchase_limit), item_promotion_price: promo } }
+        : { modulo: "add-itens", n: 1, item: { item_id: Number(d.item_id), purchase_limit: 0, item_promotion_price: promo } });
     }
-    setUltimo(d);
-    if (!item) { setResultado({ ok: 0, falhas: pulados.length ? pulados : ["nenhum preço promocional para cadastrar"], nome: desconto.discount_name }); return; }
+    setUltimo(d0);
+    if (!chamadas.length) { setResultado({ ok: 0, falhas: pulados.length ? pulados : ["nenhum preço promocional para cadastrar"], nome: desconto.discount_name }); return; }
     setOcupado(true);
+    const falhas = [...pulados]; let ok = 0;
     try {
-      const r = await chamarPromocoes(`modulo=add-itens&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1&propagar=1`, { item_list: [item] });
-      const falhas = [...pulados];
-      if (r.erro) falhas.push(traduzirErroShopee(typeof r.erro === "string" ? r.erro : `${r.erro?.error ?? ""}: ${r.erro?.message ?? ""}`));
-      const errs = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
-      for (const e of errs) {
-        const s = d.modelos?.find((m) => m.model_id === Number(e.model_id))?.sku ?? d.sku;
-        falhas.push(`${s}: ${traduzirErroShopee(e.fail_message || e.fail_error)}`);
+      for (const c of chamadas) {
+        const r = await chamarPromocoes(`modulo=${c.modulo}&shop_id=${shopId}&discount_id=${desconto.discount_id}&confirmar=1&propagar=1`, { item_list: [c.item] });
+        if (r.erro) { falhas.push(traduzirErroShopee(typeof r.erro === "string" ? r.erro : `${r.erro?.error ?? ""}: ${r.erro?.message ?? ""}`)); continue; }
+        const errs = (r.response?.error_list ?? []) as Array<{ item_id: number; model_id?: number; fail_message?: string; fail_error?: string }>;
+        for (const e of errs) {
+          const s = d.modelos?.find((m) => m.model_id === Number(e.model_id))?.sku ?? d.sku;
+          falhas.push(`${s}: ${traduzirErroShopee(e.fail_message || e.fail_error)}`);
+        }
+        ok += Math.max(0, c.n - errs.length);
       }
-      const ok = r.erro ? 0 : Math.max(0, n - errs.length);
       setResultado({ ok, falhas, nome: desconto.discount_name });
-      if (ok > 0 && !falhas.length) toast.success(`Cadastrado na promoção "${desconto.discount_name}"`, { description: `${ok} preço(s) promocional(is) · margem de ${rotulo(faixa)}` });
+      const verbo = chamadas.every((c) => c.modulo === "atualizar-itens") ? "Preço promocional trocado" : "Cadastrado";
+      if (ok > 0 && !falhas.length) toast.success(`${verbo} na promoção "${desconto.discount_name}"`, { description: `${ok} preço(s) promocional(is) · margem de ${rotulo(faixa)}` });
       else toast.warning(`Promoção "${desconto.discount_name}": ${ok} cadastrado(s), ${falhas.length} pendência(s)`, { duration: 20000 });
+      if (atualizar) void ondeQ.refetch();
     } catch (e) {
-      setResultado({ ok: 0, falhas: [...pulados, (e as Error).message], nome: desconto.discount_name });
+      setResultado({ ok, falhas: [...falhas, (e as Error).message], nome: desconto.discount_name });
       toast.error("Não consegui cadastrar na promoção", { description: (e as Error).message, duration: 20000 });
     } finally { setOcupado(false); }
   }
 
   // os avisos do envio leem sempre o estado atual
-  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length });
-  agora.current = { desconto, faixa, cadastrar, skus: skus.length };
+  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length, troca: false });
+  agora.current = { desconto, faixa, cadastrar, skus: skus.length, troca: !!noEscolhido };
   useEffect(() => {
     const eDaqui = (d: { canal?: string; empresa?: string; sku?: string }) => d.canal === "shopee" && d.empresa === empresa && d.sku === sku;
     const vaiCriar = (ev: Event) => {
       const d = (ev as CustomEvent).detail as VaiCriar;
       const a = agora.current;
-      if (eDaqui(d) && a.desconto) d.promocao = `"${a.desconto.discount_name}" com margem de ${rotulo(a.faixa)}`;
+      if (eDaqui(d) && a.desconto) d.promocao = `"${a.desconto.discount_name}" com margem de ${rotulo(a.faixa)}${a.troca ? " (troca o preço promocional de hoje)" : ""}`;
     };
     const pronto = (ev: Event) => {
       const d = (ev as CustomEvent).detail as AnuncioPronto;
@@ -189,14 +271,25 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     <div className="rounded-md border p-3 space-y-2.5">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Tag className="h-4 w-4" /><b>Minha Promoção</b>
-        <span className="text-xs text-muted-foreground">— cadastrar o anúncio numa promoção assim que ele for criado</span>
-        {(descQ.isFetching || precosQ.isFetching || ocupado) && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        <span className="text-xs text-muted-foreground">{atualizar
+          ? `— o preço promocional do anúncio ${alvo.itemId}, enviado junto com a atualização`
+          : "— cadastrar o anúncio numa promoção assim que ele for criado"}</span>
+        {(descQ.isFetching || precosQ.isFetching || ondeQ.isFetching || ocupado) && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
       </div>
+      {atualizar && !ondeQ.isFetching && ondeQ.data && (
+        <p className="text-xs">
+          {onde.length
+            ? <>Hoje o anúncio está {onde.length > 1 ? "nas promoções" : "na promoção"} {onde.map((x) => `"${x.desconto.discount_name}"`).join(", ")}
+                {noEscolhido ? <span className="text-muted-foreground"> — o preço promocional é trocado nela.</span> : null}</>
+            : <span className="text-muted-foreground">Hoje o anúncio não está em nenhuma promoção em andamento ou programada.</span>}
+        </p>
+      )}
+      {ondeQ.isError && <p className="text-xs text-destructive">Não consegui ver em que promoção o anúncio está: {(ondeQ.error as Error).message}</p>}
       {descQ.isError
         ? <p className="text-xs text-destructive">Não consegui ler as promoções da Shopee: {(descQ.error as Error).message}</p>
         : (
           <select className="h-8 w-full max-w-xl rounded-md border bg-background px-2 text-xs" value={descontoId ?? ""}
-            onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; setDescontoId(id); setResultado(null); lembrar(id, faixa); }}>
+            onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; escolheu.current = true; setDescontoId(id); setResultado(null); lembrar(id, faixa); }}>
             <option value="">Não cadastrar em promoção</option>
             {descontos.map((d) => (
               <option key={d.discount_id} value={d.discount_id}>
@@ -206,6 +299,9 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
           </select>
         )}
       {descontoId != null && !desconto && !descQ.isFetching && <p className="text-xs text-amber-600">A promoção escolhida da última vez não está mais ativa: escolha outra.</p>}
+      {atualizar && desconto && !noEscolhido && onde.length > 0 && (
+        <p className="text-xs text-amber-600">O anúncio já está em "{onde[0].desconto.discount_name}": a Shopee costuma recusar o mesmo anúncio em duas promoções ao mesmo tempo.</p>
+      )}
 
       {desconto && (
         <>
@@ -220,9 +316,10 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
             {skus.map((s) => {
               const c = calc[s.sku]; const v = promoDe(s.sku);
               return (
-                <div key={s.sku} className="grid grid-cols-[70px_1fr_110px_170px] gap-2 items-center text-xs">
+                <div key={s.sku} className={`grid ${atualizar ? "grid-cols-[70px_1fr_100px_110px_170px]" : "grid-cols-[70px_1fr_110px_170px]"} gap-2 items-center text-xs`}>
                   <span className="font-mono">{s.sku}</span>
                   <span className="truncate text-muted-foreground" title={s.nome}>{s.nome}{c?.erro ? <span className="text-destructive"> · {c.erro}</span> : null}</span>
+                  {atualizar && (() => { const h = promoHoje(s.sku); return <span className="text-right text-muted-foreground tabular-nums" title="preço promocional de hoje nesta promoção">{h != null ? `hoje ${formatBRL(h)}` : "—"}</span>; })()}
                   <Input className="h-7 text-right tabular-nums text-xs" inputMode="decimal" placeholder={c?.preco != null ? dinheiro(c.preco) : "sem preço"}
                     value={mao[s.sku] ?? (c?.preco != null ? dinheiro(c.preco) : "")} onChange={(e) => setMao({ ...mao, [s.sku]: e.target.value })}
                     title={v != null ? `preço promocional: ${formatBRL(v)}` : "sem preço promocional: fica de fora"} />
@@ -232,8 +329,19 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
             })}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço); se você mudar o preço à mão, a margem ao lado mostra quanto ele rende. Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
+            Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço); se você mudar o preço à mão, a margem ao lado mostra quanto ele rende. Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio{atualizar && alvo.precoCheio != null ? ` (${formatBRL(alvo.precoCheio)} depois desta atualização)` : ""}, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
+            {atualizar ? " Vai junto com o botão de atualizar, depois da troca do anúncio; só este anúncio (os de “Atualizar também” não entram)." : ""}
           </p>
+          {atualizar && (
+            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={ocupado || precosQ.isFetching || ondeQ.isFetching}
+              onClick={() => {
+                const cheio = alvo.precoAtual ?? alvo.precoCheio;
+                if (!window.confirm(`${noEscolhido ? "Trocar o preço promocional do" : "Cadastrar o"} anúncio ${alvo.itemId} na promoção "${desconto.discount_name}" AGORA, sem atualizar o resto do anúncio?\n\nO preço promocional vale para os compradores na hora.`)) return;
+                void cadastrar({ canal: "shopee", empresa, sku, item_id: String(alvo.itemId), precos: cheio != null ? { [sku]: cheio } : {} });
+              }}>
+              {noEscolhido ? "Só trocar o preço promocional agora" : "Só cadastrar na promoção agora"}
+            </Button>
+          )}
         </>
       )}
 
