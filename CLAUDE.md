@@ -1810,6 +1810,32 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   Aplicar na Shopee (com confirmação); Orç. diário passa a ser o valor ao vivo; selo **impulsionado** no anúncio; saldo de ADS por
   loja acima da lista. Só a página visível é lida (`src/components/ads/ShopeeAdsConfig.tsx`).
 
+- **Histórico de configuração (20/out, opção A do dono):** nenhum marketplace dá histórico de alterações de ADS pela API
+  (Shopee: lista oficial das 25 APIs de ADS, nenhuma de log; ML: só a config atual). E a API diária da Shopee
+  (`get_product_campaign_daily_performance`) NÃO traz meta nem orçamento por dia — conferido na resposta crua de 14/10
+  (campanha 74740543: impression, clicks, ctr, expense, broad/direct gmv/order/roi/cir, cr, cpc, cpdc). Por isso nós fotografamos:
+  tabelas **`ads_config_atual`** (PK mkt+shop+campanha; `primeira_vez`, `visto_em`) e **`ads_config_historico`** (campo
+  roas_target|budget|status|bidding_method, de→para, `desde`/`ate` = janela em que mudou, `origem` externo|app, `quem`), RPC
+  **`ads_config_registrar(mkt, shop, lista, origem, quem)`** (só service_role). Shopee: `shopee-ads-gestao` v3 `?modulo=capturar&loja=`
+  (TODAS as campanhas: Ottz 1.109, SVL 569 na 1ª captura), crons **164** `ads-config-capturar-ottz` `11 */2` e **165** `…-svl` `23 */2`
+  (Bearer publicável); `editar` registra com origem `app` + nome. ML: gatilho `ml_ads_campanha_historico` em `ml_ads_campanha` (o
+  ml-sync-ads regrava a cada 6 h; ADS do ML = só Ottz 1107117809). Ponto de partida = 20/out ~16h; antes disso a meta do dia é
+  "sem registro". O orçamento por dia de antes existe aproximado em `shopee_ads_campanha.budget` (os últimos ~4 dias são regravados
+  com o valor atual, então a data da mudança pode sair adiantada) e em `ml_ads_campanha_diario.budget/acos_target`. SQL em
+  `docs/ads-config-historico.sql`. `?modulo=desempenho-cru&loja=&campanha=&de=DD-MM-YYYY` = resposta crua do dia.
+- **Análise por anúncio (20/out):** RPC **`ads_analise_anuncio(shop, campaign, dias)`** (security definer, authenticated; SQL em
+  `docs/ads-analise-anuncio.sql`): por dia investimento, receita e pedidos do ADS (`shopee_ads_campanha`, gmv amplo = a mesma
+  base da tela), ROAS, meta/orçamento VIGENTES no dia (do histórico), uso do orçamento, e venda total + margem pós-ADS do item
+  (`ads_metrica_anuncio_dia`); margem sem ADS de 30 d (`ads_margem_anuncio`) → **ROAS de equilíbrio = 100 ÷ MC%** e meta mínima
+  = equilíbrio × 1,15; efeito de cada mudança (7 d antes × 7 d depois); diagnóstico (regras no banco): sem margem sem ADS · meta
+  abaixo do equilíbrio · prejuízo em 7 d · gasto sem venda (≥ R$ 15) · ROAS < 80% da meta · orçamento esgotando ≥ 3 de 7 dias com
+  ROAS bom · ROAS ≥ 1,3× a meta gastando pouco (baixar a meta) · receita ±30% · sem margem calculada · histórico começando. Tela:
+  clicar no nome do anúncio em `/ads-shopee` abre `src/components/ads/AnaliseAnuncioAds.tsx` (gráfico investimento/receita/ROAS/
+  meta/equilíbrio, alterações, tabela por dia). Só Shopee; ML fica para depois. Ex. 20/out: Kit Adestrador meta 19,5 × ROAS 11,8 em
+  7 d, equilíbrio 5,3 (MC 18,8%) — lucrativo, mas a Shopee não entrega a meta.
+- **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
+  sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
+
 ## 5.9.5 Pesquisa de produtos — Mercado Livre (18/out/2026)
 
 Pedido do dono: DEFESA (categorias em que estamos no top 20, todo dia) e DESCOBERTA (varredura
@@ -3560,7 +3586,7 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
-| `shopee-flashsale-probe` | v16 (= `shopee-ads-gestao` v2) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`) e alteração de meta/orçamento (`editar`, com login) — ver §5.9.4.4 |
+| `shopee-flashsale-probe` | v17 (= `shopee-ads-gestao` v3) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |

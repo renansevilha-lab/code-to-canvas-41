@@ -53,6 +53,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MetaRoasCelula, SeloImpulsionado, textoOrcamento, useShopeeAdsConfig } from "@/components/ads/ShopeeAdsConfig";
+import { AnaliseAnuncioAds } from "@/components/ads/AnaliseAnuncioAds";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -452,6 +453,8 @@ function AdsShopeePage() {
   const { rows: anuncios, total, loading: loadingAds, error: errAds } = useAnuncios(sp);
   // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
   const cfgQ = useShopeeAdsConfig(anuncios);
+  // análise por anúncio (diálogo): clicar no nome do anúncio
+  const [analise, setAnalise] = useState<{ shopId: number | string; campaignId: number | string; nome: string } | null>(null);
 
   // Contadores por classificação (totais dentro do escopo empresa)
   const countsByClassif = useMemo(() => {
@@ -906,7 +909,11 @@ function AdsShopeePage() {
                     <TableRow key={String(a.campaign_id)} className={rowCls}>
                       <TableCell><Thumb src={a.foto} alt={a.anuncio ?? ""} /></TableCell>
                       <TableCell className="max-w-[280px]">
-                        <div className="font-medium text-sm truncate" title={a.anuncio ?? ""}>{a.anuncio}</div>
+                        <button type="button" className="font-medium text-sm truncate block max-w-full text-left hover:underline hover:text-primary"
+                          title={`${a.anuncio ?? ""} — clique para ver a análise por dia`}
+                          onClick={() => a.shop_id != null && setAnalise({ shopId: a.shop_id, campaignId: a.campaign_id, nome: a.anuncio ?? String(a.campaign_id) })}>
+                          {a.anuncio}
+                        </button>
                         <div className="text-[11px] text-muted-foreground truncate">
                           {a.sku_pai && <span className="font-mono mr-2">{a.sku_pai}</span>}
                           {a.tipo_anuncio && <span className="capitalize">{a.tipo_anuncio}</span>}
@@ -962,10 +969,12 @@ function AdsShopeePage() {
           )}
         </Card>
 
+        {analise && <AnaliseAnuncioAds shopId={analise.shopId} campaignId={analise.campaignId} nome={analise.nome} onFechar={() => setAnalise(null)} />}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <p className="text-xs text-muted-foreground">
-              Faixas: excelente ≥ {faixas?.roas_excelente ?? "—"}x · bom ≥ {faixas?.roas_bom ?? "—"}x · ok ≥ {faixas?.roas_ok ?? "—"}x · teto ACOS {formatPercent(acosAlvo)} — configurável em Metas.
+              Clique no nome de um anúncio para ver a análise por dia (meta, orçamento, margem e diagnóstico). Faixas: excelente ≥ {faixas?.roas_excelente ?? "—"}x · bom ≥ {faixas?.roas_bom ?? "—"}x · ok ≥ {faixas?.roas_ok ?? "—"}x · teto ACOS {formatPercent(acosAlvo)} — configurável em Metas.
             </p>
           </TooltipTrigger>
           <TooltipContent>Definido em Metas → Metas de ADS</TooltipContent>

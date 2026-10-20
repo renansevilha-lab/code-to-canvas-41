@@ -1,3 +1,7 @@
+// v3 (20/out/2026, opção A do dono — histórico de configuração): ?modulo=capturar&loja=ottz|svl|todas lê TODAS as
+//   campanhas da loja e grava em ads_config_atual / ads_config_historico (RPC ads_config_registrar; cron a cada 2 h);
+//   `editar` registra a troca com origem 'app' e o nome de quem alterou; ?modulo=desempenho-cru&loja=&campanha=&de=&ate=
+//   devolve get_product_campaign_daily_performance cru (diagnóstico: quais campos vêm por dia).
 // Edge Function: shopee-ads-gestao v2 (20/out/2026) — Shopee Ads: meta de ROAS, orçamento e "impulsionar".
 //
 // ⚠ PUBLICADA NO SLOT `shopee-flashsale-probe` — o projeto chegou ao limite de funções do plano e criar uma
@@ -149,9 +153,40 @@ serve(async (req: Request) => {
   const p = (k: string) => url.searchParams.get(k) ?? (b?.[k] != null ? String(b[k]) : null);
   const modulo = p("modulo") || "sonda";
   const loja = p("loja") || "ottz";
+  const supabase = createClient(SUPABASE_URL, SRK);
+
+  // captura da configuração de todas as campanhas (uma loja ou as duas)
+  if (modulo === "capturar") {
+    const lojas = loja === "todas" ? Object.keys(LOJAS) : [loja];
+    const saida: Record<string, unknown> = {};
+    for (const l of lojas) {
+      const sid = LOJAS[l];
+      if (!sid) { saida[l] = { erro: "loja invalida" }; continue; }
+      try {
+        const c = await pegarCtx(supabase, sid);
+        const ids: string[] = []; let offset = 0; let segue = true; const erros: string[] = [];
+        while (segue && offset < 3000) {
+          const r = await shopeeGet(c, "/api/v2/ads/get_product_level_campaign_id_list", { ad_type: "all", offset, limit: 100 });
+          if (r.error) { erros.push(`lista: ${r.error} ${r.message ?? ""}`); break; }
+          for (const x of (r.response?.campaign_list ?? []) as any[]) ids.push(String(x.campaign_id));
+          segue = !!r.response?.has_next_page; offset += 100;
+          if (segue) await sleep(200);
+        }
+        const { lista, erros: e2 } = await lerConfig(c, ids);
+        erros.push(...e2);
+        // lista vazia por erro de leitura não é gravada (não confunde "não li" com "sumiu")
+        const { data: reg, error: errReg } = lista.length
+          ? await supabase.rpc("ads_config_registrar", { p_mkt: "shopee", p_shop: sid, p_lista: lista, p_origem: "externo", p_quem: null })
+          : { data: null, error: null };
+        if (errReg) erros.push(`registrar: ${errReg.message}`);
+        saida[l] = { campanhas: ids.length, lidas: lista.length, registro: reg, erros };
+      } catch (e) { saida[l] = { erro: (e as Error).message }; }
+    }
+    return json({ ok: true, modulo, lojas: saida });
+  }
+
   const shopId = LOJAS[loja];
   if (!shopId) return json({ ok: false, erro: "loja: ottz | svl" }, { status: 400 });
-  const supabase = createClient(SUPABASE_URL, SRK);
 
   try {
     const ctx = await pegarCtx(supabase, shopId);
@@ -174,6 +209,13 @@ serve(async (req: Request) => {
       await sleep(300);
       const toggle = await shopeeGet(ctx, "/api/v2/ads/get_shop_toggle_info");
       return json({ ok: true, loja, shop_id: shopId, campanhas: ids, setting, boosted, saldo, toggle });
+    }
+
+    if (modulo === "desempenho-cru") {
+      const camp = String(p("campanha") ?? "");
+      const de = String(p("de") ?? ""); const ate = String(p("ate") ?? de); // DD-MM-YYYY
+      const r = await shopeeGet(ctx, "/api/v2/ads/get_product_campaign_daily_performance", { start_date: de, end_date: ate, campaign_id_list: camp });
+      return json({ ok: !r.error, resposta: r });
     }
 
     if (modulo === "config") {
@@ -225,6 +267,8 @@ serve(async (req: Request) => {
       }
       await sleep(800);
       const depois = (await lerConfig(ctx, [campaignId])).lista[0] ?? null;
+      // histórico: a troca feita pelo app fica com origem 'app' e o nome de quem alterou
+      if (depois) await supabase.rpc("ads_config_registrar", { p_mkt: "shopee", p_shop: shopId, p_lista: [depois], p_origem: "app", p_quem: quem });
       return json({ ok: resultados.length > 0 && resultados.every((x) => x.ok), atual, depois, resultados, quem });
     }
 
