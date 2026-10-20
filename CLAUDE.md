@@ -1844,6 +1844,14 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   mai ACZ 0→21.491,34 / SVL 0→9.765,55; jun ACZ 10.645,80→23.058,48 / SVL 5.521,11→9.604,61 (jun só tinha a 2ª quinzena);
   jul em diante igual. Baseline em `_bkp_ads_antes_20out`. As campanhas somam 85–92% do total da loja (o resto é ADS que não é
   anúncio de produto), a mesma proporção de julho.
+- **Período vale para a tela toda (20/out, relato do dono: "os totalizadores não mudam quando mudo a data"):** cartões por
+  classificação, KPIs, tabela e bolhas liam `view_ads_anuncios`/`view_ads_resumo`, FIXAS em 30 dias; só o gráfico de barras seguia o
+  período. Agora RPC **`ads_shopee_painel(de, ate, empresa, classif[], faixas inv/roas/acos, status, tem_gasto, busca, ordem, dir,
+  offset, limit)`** (security definer, authenticated; SQL em `docs/ads-shopee-painel.sql`) devolve `total`, `linhas` (página),
+  `resumo` (por classificação, só com gasto, como a view_ads_resumo) e `bolhas`; status/orçamento = `ads_config_atual` (senão o
+  último registrado no período). Validado: com os últimos 30 dias bate com as views antigas (186 anúncios, resumo idêntico, mesma
+  ordem). 6 meses = 1,2 s. Índice novo `shopee_ads_campanha_data`. Tela: o filtro de data (`DashboardPeriodFilter`, o mesmo do ADS
+  ML; `?period=&from=&to=`, padrão 30 dias) foi para o topo; o "Período (gráfico)" saiu. As views antigas seguem (outras telas).
 - **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
   sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
 

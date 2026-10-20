@@ -54,6 +54,8 @@ import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MetaRoasCelula, SeloImpulsionado, textoOrcamento, useShopeeAdsConfig } from "@/components/ads/ShopeeAdsConfig";
 import { AnaliseAnuncioAds } from "@/components/ads/AnaliseAnuncioAds";
+import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
+import { resolveRange, type PeriodPreset, type PeriodRange } from "@/lib/dashboard/period";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -163,8 +165,11 @@ type SearchParams = {
   sort: SortKey;
   dir: "asc" | "desc";
   pagina: number;
-  periodo: "ontem" | "7d" | "14d" | "30d";
+  period: PeriodPreset;
+  from?: string;
+  to?: string;
 };
+const PERIODOS_VALIDOS: PeriodPreset[] = ["today", "yesterday", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
 
 function optNum(v: unknown): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
@@ -194,9 +199,9 @@ export const Route = createFileRoute("/ads-shopee")({
     sort: SORTABLE.includes(s.sort as SortKey) ? (s.sort as SortKey) : "investimento",
     dir: s.dir === "asc" ? "asc" : "desc",
     pagina: Math.max(1, Math.floor(Number(s.pagina) || 1)),
-    periodo: (["ontem", "7d", "14d", "30d"] as const).includes(s.periodo as never)
-      ? (s.periodo as SearchParams["periodo"])
-      : "7d",
+    period: PERIODOS_VALIDOS.includes(s.period as PeriodPreset) ? (s.period as PeriodPreset) : "last30",
+    from: typeof s.from === "string" ? s.from : undefined,
+    to: typeof s.to === "string" ? s.to : undefined,
   }),
   component: AdsShopeePage,
   errorComponent: ({ error }) => (
@@ -207,21 +212,6 @@ export const Route = createFileRoute("/ads-shopee")({
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-function ontemKey(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-function daysAgoKey(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-function computePeriodo(p: SearchParams["periodo"]): { de: string; ate: string } {
-  const ate = ontemKey();
-  const map = { ontem: ate, "7d": daysAgoKey(7), "14d": daysAgoKey(14), "30d": daysAgoKey(30) } as const;
-  return { de: map[p], ate };
-}
 function fmtDate(iso: string) {
   const [, m, d] = iso.split("-");
   return `${d}/${m}`;
@@ -308,9 +298,13 @@ function SortableHead({
 
 // ─── Data hooks (server-side filters/order/pagination) ────────────────────
 
-function useAnuncios(sp: SearchParams) {
+/** Tudo o que depende do período (20/out/2026): tabela (página, filtros e ordem no banco), resumo por
+ *  classificação e bolhas — RPC ads_shopee_painel. Antes era a view_ads_anuncios, fixa em 30 dias. */
+function usePainel(sp: SearchParams, de: string, ate: string) {
   const [rows, setRows] = useState<AnuncioRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [resumo, setResumo] = useState<ResumoRow[]>([]);
+  const [bolhas, setBolhas] = useState<{ investimento: number; roas: number; vendas: number; classif: Classificacao }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -319,59 +313,35 @@ function useAnuncios(sp: SearchParams) {
     setLoading(true);
     setError(null);
     (async () => {
-      let q = supabaseExternal
-        .from("view_ads_anuncios")
-        .select("*", { count: "exact" })
-        .order(sp.sort, { ascending: sp.dir === "asc", nullsFirst: false });
-
-      if (sp.classif.length && sp.classif.length < CLASSIF_ALL.length) {
-        q = q.in("classificacao_roas", sp.classif);
-      }
-      if (sp.inv_min !== undefined) q = q.gte("investimento", sp.inv_min);
-      if (sp.inv_max !== undefined) q = q.lte("investimento", sp.inv_max);
-      if (sp.roas_min !== undefined) q = q.gte("roas", sp.roas_min);
-      if (sp.roas_max !== undefined) q = q.lte("roas", sp.roas_max);
-      if (sp.acos_min !== undefined) q = q.gte("acos", sp.acos_min);
-      if (sp.acos_max !== undefined) q = q.lte("acos", sp.acos_max);
-      if (sp.empresa !== "all") q = q.eq("empresa", sp.empresa);
-      if (sp.status !== "all") q = q.eq("status", sp.status);
-      if (sp.tem_gasto) q = q.is("teve_gasto", true);
-      if (sp.q.trim()) {
-        const term = sp.q.trim().replace(/[%,]/g, " ");
-        q = q.or(`anuncio.ilike.%${term}%,sku_pai.ilike.%${term}%`);
-      }
-
-      const from = (sp.pagina - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-      const { data, error, count } = await q.range(from, to);
-
+      const { data, error } = await supabaseExternal.rpc("ads_shopee_painel", {
+        p_de: de, p_ate: ate,
+        p_empresa: sp.empresa !== "all" ? sp.empresa : null,
+        p_classif: sp.classif.length && sp.classif.length < CLASSIF_ALL.length ? sp.classif : null,
+        p_inv_min: sp.inv_min ?? null, p_inv_max: sp.inv_max ?? null,
+        p_roas_min: sp.roas_min ?? null, p_roas_max: sp.roas_max ?? null,
+        p_acos_min: sp.acos_min ?? null, p_acos_max: sp.acos_max ?? null,
+        p_status: sp.status !== "all" ? sp.status : null,
+        p_tem_gasto: sp.tem_gasto,
+        p_busca: sp.q.trim() || null,
+        p_ordem: sp.sort, p_dir: sp.dir,
+        p_offset: (sp.pagina - 1) * PAGE_SIZE, p_limit: PAGE_SIZE,
+      });
       if (cancelled) return;
-      if (error) setError(error.message);
-      else {
-        setRows((data ?? []) as AnuncioRow[]);
-        setTotal(count ?? 0);
-      }
+      if (error) { setError(error.message); setLoading(false); return; }
+      const d = (data ?? {}) as { total?: number; linhas?: AnuncioRow[]; resumo?: ResumoRow[]; bolhas?: Record<string, unknown>[] };
+      setRows(d.linhas ?? []);
+      setTotal(Number(d.total ?? 0));
+      setResumo((d.resumo ?? []).map((r) => ({ ...r, empresa: sp.empresa !== "all" ? sp.empresa : null, roas_medio: null, acos_medio: null })));
+      setBolhas((d.bolhas ?? []).map((r) => ({
+        investimento: num(r.investimento), vendas: num(r.vendas), roas: num(r.roas),
+        classif: ((r.classif as string) ?? "sem_dado") as Classificacao,
+      })));
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [sp]);
+  }, [sp, de, ate]);
 
-  return { rows, total, loading, error };
-}
-
-function useResumo(empresa: string) {
-  const [rows, setRows] = useState<ResumoRow[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      let q = supabaseExternal.from("view_ads_resumo").select("*");
-      if (empresa !== "all") q = q.eq("empresa", empresa);
-      const { data } = await q;
-      if (!cancelled) setRows((data ?? []) as ResumoRow[]);
-    })();
-    return () => { cancelled = true; };
-  }, [empresa]);
-  return rows;
+  return { rows, total, resumo, bolhas, loading, error };
 }
 
 function useFaixas() {
@@ -406,14 +376,13 @@ function useEmpresas() {
   return list;
 }
 
-function useDaily(empresa: string, periodo: SearchParams["periodo"]) {
+function useDaily(empresa: string, de: string, ate: string) {
   const [rows, setRows] = useState<DailyRow[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
-      const { de, ate } = computePeriodo(periodo);
       let q = supabaseExternal
         .from("shopee_ads_diario")
         .select("empresa,data,gasto,gmv_direto")
@@ -424,7 +393,7 @@ function useDaily(empresa: string, periodo: SearchParams["periodo"]) {
       if (!cancelled) { setRows((data ?? []) as DailyRow[]); setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [empresa, periodo]);
+  }, [empresa, de, ate]);
   return { rows, loading };
 }
 
@@ -446,11 +415,13 @@ function AdsShopeePage() {
   };
 
   const empresas = useEmpresas();
-  const resumo = useResumo(sp.empresa);
   const faixas = useFaixas();
   const acosAlvo = faixas?.acos_alvo ?? 20;
-  const { rows: daily, loading: loadingDaily } = useDaily(sp.empresa, sp.periodo);
-  const { rows: anuncios, total, loading: loadingAds, error: errAds } = useAnuncios(sp);
+  // período: vale para TUDO na tela (cartões, totais, gráficos e tabela)
+  const range = resolveRange(sp.period, sp.from, sp.to);
+  const setRange = (r: PeriodRange) => update({ period: r.preset, from: r.from, to: r.to });
+  const { rows: daily, loading: loadingDaily } = useDaily(sp.empresa, range.from, range.to);
+  const { rows: anuncios, total, resumo, bolhas: scatterPts, loading: loadingAds, error: errAds } = usePainel(sp, range.from, range.to);
   // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
   const cfgQ = useShopeeAdsConfig(anuncios);
   // análise por anúncio (diálogo): clicar no nome do anúncio
@@ -474,34 +445,6 @@ function AdsShopeePage() {
     }
     return m;
   }, [resumo]);
-
-  // Scatter ROAS×anúncio — todos os anúncios com gasto (223 no total, cabe no
-  // corte do PostgREST). Só as colunas do gráfico; respeita o filtro de loja.
-  const [scatterPts, setScatterPts] = useState<
-    { investimento: number; roas: number; vendas: number; classif: Classificacao }[]
-  >([]);
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      let q = supabaseExternal
-        .from("view_ads_anuncios")
-        .select("investimento, vendas, roas, classificacao_roas, empresa")
-        .eq("teve_gasto", true)
-        .limit(500);
-      if (sp.empresa !== "all") q = q.eq("empresa", sp.empresa);
-      const { data } = await q;
-      if (cancel) return;
-      setScatterPts(
-        (data ?? []).map((r: Record<string, unknown>) => ({
-          investimento: num(r.investimento),
-          vendas: num(r.vendas),
-          roas: num(r.roas),
-          classif: ((r.classificacao_roas as string) ?? "sem_dado") as Classificacao,
-        })),
-      );
-    })();
-    return () => { cancel = true; };
-  }, [sp.empresa]);
 
   // KPIs globais (somando resumo)
   const totais = useMemo(() => {
@@ -595,10 +538,13 @@ function AdsShopeePage() {
   return (
     <TooltipProvider>
       <div className="w-full px-6 md:px-8 py-6 space-y-[18px]">
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Info className="h-3.5 w-3.5" />
-          Últimos 30 dias por anúncio · classificação, ROAS e ACOS vêm do banco.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Info className="h-3.5 w-3.5" />
+            Período {fmtDate(range.from)} a {fmtDate(range.to)} · vale para os cartões, totais, gráficos e tabela abaixo · classificação, ROAS e ACOS vêm do banco.
+          </p>
+          <DashboardPeriodFilter value={range} onChange={setRange} />
+        </div>
 
         {/* Para onde vai o investimento — buckets por ROAS, clicáveis */}
         <Card className="p-5 flex flex-col gap-4">
@@ -669,13 +615,6 @@ function AdsShopeePage() {
             {empresas.map((e) => (
               <Button key={e} size="sm" variant={sp.empresa === e ? "default" : "outline"} onClick={() => update({ empresa: e })}>
                 {e}
-              </Button>
-            ))}
-            <div className="w-px h-6 bg-border mx-1" />
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">Período (gráfico)</span>
-            {(["ontem", "7d", "14d", "30d"] as const).map((p) => (
-              <Button key={p} size="sm" variant={sp.periodo === p ? "default" : "outline"} onClick={() => update({ periodo: p }, false)}>
-                {p === "ontem" ? "Ontem" : p}
               </Button>
             ))}
           </div>
