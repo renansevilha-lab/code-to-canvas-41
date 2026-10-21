@@ -6,8 +6,23 @@
 --   total + linhas (página, filtros e ordem no banco) · resumo por classificação (só quem teve gasto, como a
 --   view_ads_resumo) · bolhas (todos com gasto). Status e orçamento = o de agora (ads_config_atual), senão o último
 --   registrado no período. Com de/ate = últimos 30 dias o resultado bate com a view antiga.
+--
+-- v2 (20/out/2026, noite, pedido do dono — "bom ROAS mas poucos cliques, muitos cliques e baixo ROAS…"):
+--   p_situacao (último parâmetro) filtra por SITUAÇÃO, e cada linha traz `situacoes` (todas as que valem para ela).
+--   "Poucos/muitos" é RELATIVO à loja no período: abaixo/acima da MEDIANA dos anúncios com gasto (o mesmo número
+--   de cliques é muito em 7 dias e pouco em 90). A resposta traz `limiares` (as medianas) e `situacoes` (contagem).
+--     escalar               ROAS excelente/bom e cliques abaixo da mediana → ganhar alcance (orçamento / meta)
+--     clique_sem_conversao  cliques acima da mediana e ROAS ruim → anúncio atrai e não converte (preço, fotos)
+--     ctr_baixo             impressões acima da mediana e CTR < 60% da mediana → aparece e ninguém clica (capa, título)
+--     gasto_sem_venda       investiu ≥ R$ 10 e nenhum pedido
+--     abaixo_meta           ROAS < 80% da meta de ROAS de hoje (ads_config_atual)
+--     prejuizo              ROAS abaixo do equilíbrio (100 ÷ MC% sem ADS de 30 dias, ads_margem_anuncio) ou MC ≤ 0
+--     orcamento_limitando   orçamento esgotado (gasto ≥ 90%) em 3+ dias do período com ROAS excelente/bom
+--   As linhas também trazem `meta` (roas_target de hoje) e `roas_equilibrio`.
 -- ============================================================================
 create index if not exists shopee_ads_campanha_data on public.shopee_ads_campanha (data);
+
+drop function if exists public.ads_shopee_painel(date, date, text, text[], numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, text, text, text, int, int);
 
 create or replace function public.ads_shopee_painel(
   p_de date, p_ate date, p_empresa text default null, p_classif text[] default null,
@@ -15,7 +30,8 @@ create or replace function public.ads_shopee_painel(
   p_roas_min numeric default null, p_roas_max numeric default null,
   p_acos_min numeric default null, p_acos_max numeric default null,
   p_status text default null, p_tem_gasto boolean default true, p_busca text default null,
-  p_ordem text default 'investimento', p_dir text default 'desc', p_offset int default 0, p_limit int default 50)
+  p_ordem text default 'investimento', p_dir text default 'desc', p_offset int default 0, p_limit int default 50,
+  p_situacao text default null)
 returns jsonb language plpgsql stable security definer set search_path = public as $$
 declare v jsonb; v_busca text := nullif(btrim(coalesce(p_busca, '')), '');
 begin
@@ -24,6 +40,7 @@ begin
            max(c.placement) posicionamento, max(c.item_id) item_id,
            sum(c.gasto) investimento, sum(c.gmv_amplo) vendas, sum(c.impressoes) impressoes, sum(c.cliques) cliques,
            sum(c.pedidos_amplo) pedidos, min(c.data) primeiro_dia, max(c.data) ultimo_dia,
+           count(*) filter (where c.budget > 0 and c.gasto >= 0.9 * c.budget) dias_orcamento_esgotado,
            (array_agg(c.budget order by c.data desc) filter (where c.budget is not null))[1] orc_reg,
            (array_agg(c.status order by c.data desc) filter (where c.status is not null))[1] status_reg
       from public.shopee_ads_campanha c
@@ -37,12 +54,32 @@ begin
            case when a.vendas > 0 then round(a.investimento / a.vendas * 100, 2) end acos,
            case when a.impressoes > 0 then round(a.cliques::numeric / a.impressoes * 100, 2) end ctr,
            case when a.cliques > 0 then round(a.investimento / a.cliques, 2) end cpc,
-           a.investimento > 0 teve_gasto, a.primeiro_dia, a.ultimo_dia
+           a.investimento > 0 teve_gasto, a.primeiro_dia, a.ultimo_dia, a.dias_orcamento_esgotado,
+           cf.roas_target meta, mg.margem_contribuicao_pct mc_pct,
+           case when mg.margem_contribuicao_pct > 0 then round(100 / mg.margem_contribuicao_pct, 2) end roas_equilibrio
       from ag a
       left join public.ads_config_atual cf on cf.mkt = 'shopee' and cf.shop_id = a.shop_id and cf.campaign_id = a.campaign_id::text
-      left join public.shopee_anuncios an on an.item_id = a.item_id and an.shop_id = a.shop_id),
+      left join public.shopee_anuncios an on an.item_id = a.item_id and an.shop_id = a.shop_id
+      left join public.ads_margem_anuncio mg on mg.marketplace = 'shopee' and mg.nivel = 'anuncio'
+                                            and mg.shop_id = a.shop_id and mg.anuncio_id = a.item_id::text),
   cl as (select b.*, public.classificar_roas(b.roas) classificacao_roas from base b),
-  escopo as (select * from cl where p_empresa is null or empresa = p_empresa),
+  escopo0 as (select * from cl where p_empresa is null or empresa = p_empresa),
+  lim as (
+    select percentile_cont(0.5) within group (order by cliques) med_cliques,
+           percentile_cont(0.5) within group (order by impressoes) med_impr,
+           percentile_cont(0.5) within group (order by ctr) med_ctr
+      from escopo0 where teve_gasto),
+  escopo as (
+    select e.*, array_remove(array[
+        case when e.teve_gasto and e.classificacao_roas in ('excelente', 'bom') and e.cliques < l.med_cliques then 'escalar' end,
+        case when e.teve_gasto and e.classificacao_roas = 'ruim' and e.cliques >= l.med_cliques then 'clique_sem_conversao' end,
+        case when e.teve_gasto and e.impressoes >= l.med_impr and e.ctr < l.med_ctr * 0.6 then 'ctr_baixo' end,
+        case when e.investimento >= 10 and coalesce(e.pedidos, 0) = 0 then 'gasto_sem_venda' end,
+        case when e.teve_gasto and e.meta > 0 and coalesce(e.roas, 0) < e.meta * 0.8 then 'abaixo_meta' end,
+        case when e.teve_gasto and (e.mc_pct <= 0 or (e.roas_equilibrio is not null and coalesce(e.roas, 0) < e.roas_equilibrio)) then 'prejuizo' end,
+        case when e.teve_gasto and e.dias_orcamento_esgotado >= 3 and e.classificacao_roas in ('excelente', 'bom') then 'orcamento_limitando' end
+      ], null) situacoes
+      from escopo0 e cross join lim l),
   filt as (
     select * from escopo
      where (p_classif is null or cardinality(p_classif) = 0 or classificacao_roas = any (p_classif))
@@ -51,6 +88,7 @@ begin
        and (p_acos_min is null or acos >= p_acos_min) and (p_acos_max is null or acos <= p_acos_max)
        and (p_status is null or status = p_status)
        and (not coalesce(p_tem_gasto, true) or teve_gasto)
+       and (p_situacao is null or p_situacao = any (situacoes))
        and (v_busca is null or anuncio ilike '%' || v_busca || '%' or sku_pai ilike '%' || v_busca || '%')),
   pagina as (
     select f.*, case p_ordem
@@ -78,9 +116,13 @@ begin
         'investimento', round(r.inv, 2), 'vendas', round(r.ven, 2)))
       from (select classificacao_roas, count(*) n, sum(investimento) inv, sum(vendas) ven from escopo where teve_gasto group by 1) r), '[]'::jsonb),
     'bolhas', coalesce((select jsonb_agg(jsonb_build_object('investimento', investimento, 'vendas', vendas, 'roas', roas,
-        'classif', classificacao_roas)) from escopo where teve_gasto), '[]'::jsonb)
+        'classif', classificacao_roas)) from escopo where teve_gasto), '[]'::jsonb),
+    'situacoes', coalesce((select jsonb_object_agg(s.k, s.n) from (
+        select k, count(*) n from escopo, unnest(situacoes) k group by k) s), '{}'::jsonb),
+    'limiares', (select jsonb_build_object('cliques', round(med_cliques::numeric, 0), 'impressoes', round(med_impr::numeric, 0),
+        'ctr', round(med_ctr::numeric, 2)) from lim)
   ) into v;
   return v;
 end $$;
-revoke all on function public.ads_shopee_painel(date, date, text, text[], numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, text, text, text, int, int) from public, anon;
-grant execute on function public.ads_shopee_painel(date, date, text, text[], numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, text, text, text, int, int) to authenticated, service_role;
+revoke all on function public.ads_shopee_painel(date, date, text, text[], numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, text, text, text, int, int, text) from public, anon;
+grant execute on function public.ads_shopee_painel(date, date, text, text[], numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, text, text, text, int, int, text) to authenticated, service_role;

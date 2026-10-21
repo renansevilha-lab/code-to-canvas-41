@@ -1863,6 +1863,21 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   recusa escrita) + orçamento esgotando pelo gasto da CAMPANHA. Tela: em /ads-ml, campanha aberta → "Análise da campanha" ou clique
   no nome do produto; componente `AnaliseAnuncioAds` com prop `ml`. Achados em 20/out: MLB4908814821 (Areia Bumi 4kg, SKU 15984) margem
   10,2% → equilíbrio 9,8 × objetivo 7,2 e ROAS 6,15 em 7 d (R$ 1.079 investidos, no prejuízo); DILICAT (15919) margem 1,3%.
+- **Filtro de período acima da lista + situações (20/out, noite, pedido do dono):** o filtro de data saiu do topo e foi
+  para o cartão "Período e situação", logo acima da lista (onde ficava o aviso de ACOS, que virou uma linha dentro dele).
+  `ads_shopee_painel` ganhou `p_situacao` (18º parâmetro; a de 17 foi removida — sem ele o resultado é idêntico ao de antes,
+  conferido por md5 em 30 dias) e devolve `situacoes` (contagem), `limiares` (medianas) e, por linha, `situacoes[]`, `meta`,
+  `roas_equilibrio`. Situações: `escalar` (ROAS excelente/bom e cliques abaixo da mediana), `clique_sem_conversao` (cliques acima da
+  mediana e ROAS ruim), `ctr_baixo` (impressões acima da mediana e CTR < 60% da mediana), `gasto_sem_venda` (≥ R$ 10 sem pedido),
+  `abaixo_meta` (ROAS < 80% da meta de hoje), `prejuizo` (abaixo do equilíbrio da `ads_margem_anuncio`), `orcamento_limitando` (≥ 3 dias
+  com gasto ≥ 90% do orçamento e ROAS bom). "Poucos/muitos" é RELATIVO à loja no período (mediana dos anúncios com gasto), não
+  número fixo. Na tela: chips com contagem e a regra no tooltip; selos de situação na linha (clique filtra). SQL em
+  `docs/ads-shopee-painel.sql`. 30 dias até ontem: 20 escalar, 36 clique sem conversão, 6 CTR baixo, 3 gasto sem venda, 44 prejuízo,
+  160 abaixo da meta (de 185).
+- **"Impulsionando" das campanhas de ADS NÃO vem pela API (conferido 20/out):** o selo da Shopee na campanha 116316230 (Areia Bumi Pet
+  8kg a 20kg [2], Ottz) não aparece em nenhum campo de `get_product_level_campaign_setting_info` (info 1–4, idêntico ao de uma campanha
+  sem o selo) e `product/get_boosted_list` veio vazio. É o impulso de produto NOVO do GMV Max ("New Product Boost"), que não tem
+  endpoint na API v2 de ADS. O selo "impulsionado" da tela é só o "Impulsionar" de Meus Produtos (5 vagas, 4 h).
 - **Funções apagadas pelo dono (20/out):** `tiny-test-produto`, `ml-test-wallet`, `fulfillment-teste`, `svl-probe`. O código de 15
   sondas antigas sem uso ficou em `docs/funcoes-apagadas/` (as outras 11 seguiam no ar na conferência).
 

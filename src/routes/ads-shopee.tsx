@@ -120,7 +120,39 @@ interface AnuncioRow {
   cpc: number | null;
   classificacao_roas: Classificacao | string | null;
   teve_gasto: boolean | null;
+  situacoes?: string[] | null;
+  meta?: number | null;
+  roas_equilibrio?: number | null;
 }
+
+/** Situações (20/out/2026, pedido do dono: "bom ROAS mas poucos cliques, muitos cliques e baixo ROAS…").
+ *  A regra mora no banco (ads_shopee_painel, p_situacao); "poucos/muitos" = abaixo/acima da MEDIANA dos
+ *  anúncios com gasto no período (o banco devolve as medianas em `limiares`). */
+type Limiares = { cliques: number | null; impressoes: number | null; ctr: number | null };
+const SITUACOES: { k: string; label: string; dica: string; cor: string; regra: (l: Limiares | null, f: ConfigFaixas | null) => string }[] = [
+  { k: "escalar", label: "Bom ROAS, poucos cliques", cor: "#0E8A5F",
+    dica: "Converte bem, mas aparece pouco: dá para ganhar alcance subindo o orçamento ou baixando um pouco a meta.",
+    regra: (l, f) => `ROAS ≥ ${f?.roas_bom ?? "bom"}x e menos de ${l?.cliques ?? "—"} cliques (mediana da loja no período)` },
+  { k: "orcamento_limitando", label: "Orçamento travando ROAS bom", cor: "#0E8A5F",
+    dica: "O orçamento acabou em 3 ou mais dias do período com ROAS bom: aumentar o orçamento.",
+    regra: () => "gastou 90% ou mais do orçamento em 3+ dias, com ROAS excelente ou bom" },
+  { k: "clique_sem_conversao", label: "Muitos cliques, ROAS baixo", cor: "#C9432F",
+    dica: "Atrai clique e não vende: rever preço, fotos, avaliações e descrição antes de investir mais.",
+    regra: (l, f) => `${l?.cliques ?? "—"} cliques ou mais (mediana) e ROAS abaixo de ${f?.roas_ok ?? "ok"}x` },
+  { k: "ctr_baixo", label: "Muitas impressões, poucos cliques", cor: "#E0A72E",
+    dica: "Aparece e ninguém clica: capa, título e preço na busca.",
+    regra: (l) => `${l?.impressoes != null ? formatNumber(l.impressoes) : "—"} impressões ou mais (mediana) e CTR abaixo de 60% da mediana (${l?.ctr ?? "—"}%)` },
+  { k: "gasto_sem_venda", label: "Gasto sem venda", cor: "#C9432F",
+    dica: "Investiu e não vendeu nada no período.",
+    regra: () => "R$ 10 ou mais investidos e nenhum pedido" },
+  { k: "prejuizo", label: "Abaixo do equilíbrio (prejuízo)", cor: "#C9432F",
+    dica: "O ADS custa mais do que a margem paga: subir a meta, pausar ou rever o preço.",
+    regra: () => "ROAS abaixo de 100 ÷ margem de contribuição sem ADS (30 dias) do anúncio" },
+  { k: "abaixo_meta", label: "ROAS abaixo da meta", cor: "#E0A72E",
+    dica: "A Shopee não está entregando a meta de ROAS: rever competitividade do anúncio ou ajustar a meta ao realizado.",
+    regra: () => "ROAS do período abaixo de 80% da meta de ROAS de hoje" },
+];
+const SIT_POR_K = new Map(SITUACOES.map((s) => [s.k, s]));
 
 interface ResumoRow {
   empresa: string | null;
@@ -168,6 +200,7 @@ type SearchParams = {
   period: PeriodPreset;
   from?: string;
   to?: string;
+  sit?: string;
 };
 const PERIODOS_VALIDOS: PeriodPreset[] = ["today", "yesterday", "last7", "last30", "mtd", "prev_month", "last90", "custom"];
 
@@ -202,6 +235,7 @@ export const Route = createFileRoute("/ads-shopee")({
     period: PERIODOS_VALIDOS.includes(s.period as PeriodPreset) ? (s.period as PeriodPreset) : "last30",
     from: typeof s.from === "string" ? s.from : undefined,
     to: typeof s.to === "string" ? s.to : undefined,
+    sit: typeof s.sit === "string" && SIT_POR_K.has(s.sit) ? s.sit : undefined,
   }),
   component: AdsShopeePage,
   errorComponent: ({ error }) => (
@@ -305,6 +339,8 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
   const [total, setTotal] = useState(0);
   const [resumo, setResumo] = useState<ResumoRow[]>([]);
   const [bolhas, setBolhas] = useState<{ investimento: number; roas: number; vendas: number; classif: Classificacao }[]>([]);
+  const [situacoes, setSituacoes] = useState<Record<string, number>>({});
+  const [limiares, setLimiares] = useState<Limiares | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -325,10 +361,14 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
         p_busca: sp.q.trim() || null,
         p_ordem: sp.sort, p_dir: sp.dir,
         p_offset: (sp.pagina - 1) * PAGE_SIZE, p_limit: PAGE_SIZE,
+        p_situacao: sp.sit ?? null,
       });
       if (cancelled) return;
       if (error) { setError(error.message); setLoading(false); return; }
-      const d = (data ?? {}) as { total?: number; linhas?: AnuncioRow[]; resumo?: ResumoRow[]; bolhas?: Record<string, unknown>[] };
+      const d = (data ?? {}) as { total?: number; linhas?: AnuncioRow[]; resumo?: ResumoRow[]; bolhas?: Record<string, unknown>[];
+        situacoes?: Record<string, number>; limiares?: Limiares };
+      setSituacoes(d.situacoes ?? {});
+      setLimiares(d.limiares ?? null);
       setRows(d.linhas ?? []);
       setTotal(Number(d.total ?? 0));
       setResumo((d.resumo ?? []).map((r) => ({ ...r, empresa: sp.empresa !== "all" ? sp.empresa : null, roas_medio: null, acos_medio: null })));
@@ -341,7 +381,7 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
     return () => { cancelled = true; };
   }, [sp, de, ate]);
 
-  return { rows, total, resumo, bolhas, loading, error };
+  return { rows, total, resumo, bolhas, situacoes, limiares, loading, error };
 }
 
 function useFaixas() {
@@ -421,7 +461,7 @@ function AdsShopeePage() {
   const range = resolveRange(sp.period, sp.from, sp.to);
   const setRange = (r: PeriodRange) => update({ period: r.preset, from: r.from, to: r.to });
   const { rows: daily, loading: loadingDaily } = useDaily(sp.empresa, range.from, range.to);
-  const { rows: anuncios, total, resumo, bolhas: scatterPts, loading: loadingAds, error: errAds } = usePainel(sp, range.from, range.to);
+  const { rows: anuncios, total, resumo, bolhas: scatterPts, situacoes, limiares, loading: loadingAds, error: errAds } = usePainel(sp, range.from, range.to);
   // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
   const cfgQ = useShopeeAdsConfig(anuncios);
   // análise por anúncio (diálogo): clicar no nome do anúncio
@@ -528,11 +568,12 @@ function AdsShopeePage() {
   });
   if (!sp.tem_gasto) chips.push({ label: "Incluindo sem gasto", onRemove: () => update({ tem_gasto: true }) });
   if (sp.q.trim()) chips.push({ label: `Busca: "${sp.q}"`, onRemove: () => update({ q: "" }) });
+  if (sp.sit) chips.push({ label: `Situação: ${SIT_POR_K.get(sp.sit)?.label ?? sp.sit}`, onRemove: () => update({ sit: undefined }) });
 
   const limparTudo = () => update({
     classif: [], inv_min: undefined, inv_max: undefined,
     roas_min: undefined, roas_max: undefined, acos_min: undefined, acos_max: undefined,
-    empresa: "all", status: "all", tem_gasto: true, q: "",
+    empresa: "all", status: "all", tem_gasto: true, q: "", sit: undefined,
   });
 
   return (
@@ -541,9 +582,8 @@ function AdsShopeePage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Info className="h-3.5 w-3.5" />
-            Período {fmtDate(range.from)} a {fmtDate(range.to)} · vale para os cartões, totais, gráficos e tabela abaixo · classificação, ROAS e ACOS vêm do banco.
+            Período {fmtDate(range.from)} a {fmtDate(range.to)} · vale para os cartões, totais, gráficos e tabela · troque no filtro acima da lista de anúncios.
           </p>
-          <DashboardPeriodFilter value={range} onChange={setRange} />
         </div>
 
         {/* Para onde vai o investimento — buckets por ROAS, clicáveis */}
@@ -777,13 +817,56 @@ function AdsShopeePage() {
         </Card>
         </div>
 
-        {/* Alerta ACOS alto usa acos_alvo */}
-        {altoAcos > 0 && (
-          <div className="p-3 border border-amber-200 bg-amber-50 text-amber-900 rounded text-sm flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            {altoAcos} {altoAcos === 1 ? "anúncio" : "anúncios"} com ACOS acima de {formatPercent(acosAlvo)} (nesta página).
+        {/* Período e situação (20/out/2026, pedido do dono): o filtro de data fica aqui, logo acima da lista */}
+        <Card className="p-3 md:p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-[14.5px] font-semibold tracking-[-0.015em]">Período e situação</span>
+              <span className="text-[12px] text-muted-foreground">
+                {fmtDate(range.from)} a {fmtDate(range.to)} · vale para a tela toda · "poucos/muitos" = comparado à mediana dos anúncios com gasto no período
+              </span>
+            </div>
+            <DashboardPeriodFilter value={range} onChange={setRange} />
           </div>
-        )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant={!sp.sit ? "default" : "outline"} className="h-7 text-xs" onClick={() => update({ sit: undefined })}>
+              Todas as situações
+            </Button>
+            {SITUACOES.map((s) => {
+              const n = situacoes[s.k] ?? 0;
+              const ativo = sp.sit === s.k;
+              return (
+                <Tooltip key={s.k}>
+                  <TooltipTrigger asChild>
+                    <button type="button" onClick={() => update({ sit: ativo ? undefined : s.k })}
+                      className={cn("inline-flex items-center gap-1.5 rounded-md border px-2.5 h-7 text-xs transition-colors",
+                        ativo ? "border-primary bg-primary/10 font-medium" : "bg-card hover:border-[#C9CFD8]",
+                        n === 0 && !ativo && "opacity-60")}>
+                      <span className="h-2 w-2 rounded-[3px]" style={{ background: s.cor }} />
+                      {s.label}
+                      <span className="tabular-nums text-muted-foreground">{formatNumber(n)}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[320px]">
+                    <div className="font-medium">{s.dica}</div>
+                    <div className="text-[11px] opacity-80 mt-1">Regra: {s.regra(limiares, faixas)}</div>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+          {sp.sit && (
+            <div className="text-xs text-muted-foreground">
+              <b className="text-foreground">{SIT_POR_K.get(sp.sit)?.label}:</b> {SIT_POR_K.get(sp.sit)?.dica} <span className="opacity-80">({SIT_POR_K.get(sp.sit)?.regra(limiares, faixas)})</span>
+            </div>
+          )}
+          {altoAcos > 0 && (
+            <div className="text-xs text-amber-800 flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {altoAcos} {altoAcos === 1 ? "anúncio" : "anúncios"} com ACOS acima de {formatPercent(acosAlvo)} nesta página.
+            </div>
+          )}
+        </Card>
 
         {cfgQ.data && cfgQ.data.lojas.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
@@ -858,6 +941,20 @@ function AdsShopeePage() {
                           {a.tipo_anuncio && <span className="capitalize">{a.tipo_anuncio}</span>}
                           {impulsionado && <span className="ml-2"><SeloImpulsionado /></span>}
                         </div>
+                        {(a.situacoes?.length ?? 0) > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {a.situacoes!.map((k) => {
+                              const s = SIT_POR_K.get(k);
+                              if (!s) return null;
+                              return (
+                                <button key={k} type="button" title={`${s.dica} — clique para filtrar`} onClick={() => update({ sit: k })}
+                                  className="rounded px-1 text-[10px] leading-4 border" style={{ color: s.cor, borderColor: s.cor + "55" }}>
+                                  {s.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell><LojaBadge empresa={a.empresa} /></TableCell>
                       <TableCell className="text-right text-sm">

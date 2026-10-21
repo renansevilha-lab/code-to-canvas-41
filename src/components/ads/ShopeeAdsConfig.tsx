@@ -77,7 +77,7 @@ export function useShopeeAdsConfig(rows: { campaign_id: number | string; shop_id
 export function SeloImpulsionado() {
   return (
     <span className="inline-flex items-center gap-0.5 rounded-full bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-300 px-1.5 py-0 text-[10px] font-medium"
-      title="Anúncio impulsionado agora na Shopee (Impulsionar produto)">
+      title="Impulsionado agora pelo “Impulsionar” de Meus Produtos (5 vagas, 4 horas). O “Impulsionando” das campanhas de ADS (impulso de produto novo do GMV Max) a API da Shopee não informa.">
       <Rocket className="h-3 w-3" /> impulsionado
     </span>
   );
