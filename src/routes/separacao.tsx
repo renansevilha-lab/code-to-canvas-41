@@ -74,6 +74,8 @@ import {
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { rotuloCanal } from "@/lib/canais";
+import { useObsSeparacao, editarObsSeparacao, ObsLinha } from "@/lib/separacaoObs";
+import { buscarMlFlex } from "@/lib/mlFlex";
 
 // ============ Edge function helpers ============
 
@@ -402,6 +404,48 @@ function useTagsPorLinha() {
   });
 }
 
+// Mercado Livre Flex na fila: a fila só diz "ML"; quem é Flex (logistica_tipo
+// self_service no espelho do ML) vem de src/lib/mlFlex.ts. Contagem por linha
+// (mesma chave da priorizada) + o conjunto de separacao_id Flex.
+interface FlexFila { porLinha: Map<string, number>; seps: Set<number>; total: number }
+function useFlexPorLinha() {
+  return useQuery({
+    queryKey: ["separacao", "ml_flex"],
+    refetchInterval: 120_000,
+    queryFn: async (): Promise<FlexFila> => {
+      const { data, error } = await supabaseExternal
+        .from("view_separacao_pedidos")
+        .select("separacao_id, numero_ecommerce, tag_sugerida, sku_unico, tipo_envio")
+        .eq("tipo_envio", "ML")
+        .limit(2000);
+      if (error) throw error;
+      const linhas = (data ?? []) as { separacao_id: number | null; numero_ecommerce: string | null; tag_sugerida: string | null; sku_unico: string | null; tipo_envio: string | null }[];
+      const flex = await buscarMlFlex(linhas.map((p) => p.numero_ecommerce));
+      const porLinha = new Map<string, number>();
+      const seps = new Set<number>();
+      for (const p of linhas) {
+        if (!p.numero_ecommerce || !flex.has(p.numero_ecommerce)) continue;
+        const k = linhaKeyDe(p);
+        porLinha.set(k, (porLinha.get(k) ?? 0) + 1);
+        if (p.separacao_id != null) seps.add(p.separacao_id);
+      }
+      return { porLinha, seps, total: seps.size };
+    },
+  });
+}
+
+function FlexBadge({ n }: { n: number | undefined }) {
+  if (!n) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-sans font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300"
+      title="Pedidos do Mercado Livre Flex nesta linha (entrega no mesmo dia pelo entregador do Flex)"
+    >
+      <Zap className="h-3 w-3" /> Flex ({n})
+    </span>
+  );
+}
+
 interface RiscoLinha { hoje: number; amanha: number }
 
 // Pedidos ainda na fila que a Shopee cancela automaticamente hoje/amanhã,
@@ -481,71 +525,6 @@ function usePrazosPorLinha() {
 
 export type EstadoImpressao = "done" | "forcado" | "sent" | "error" | "ausente";
 
-// ============ Observações da equipe (pedido / linha / lote) ============
-// Anotação de resolução de problema (ex.: falta de estoque — "comprado,
-// chega amanhã"), visível na fila. Uma ativa por alvo; vazio remove.
-interface ObsSep { texto: string; autor: string | null; em: string }
-function useObsSeparacao() {
-  return useQuery({
-    queryKey: ["separacao", "obs"],
-    queryFn: async (): Promise<Map<string, ObsSep>> => {
-      const { data, error } = await supabaseExternal
-        .from("separacao_obs")
-        .select("escopo, chave, texto, autor, criado_em")
-        .limit(2000);
-      if (error) throw error;
-      const map = new Map<string, ObsSep>();
-      for (const r of (data ?? []) as { escopo: string; chave: string; texto: string; autor: string | null; criado_em: string }[]) {
-        map.set(`${r.escopo}|${r.chave}`, { texto: r.texto, autor: r.autor, em: r.criado_em });
-      }
-      return map;
-    },
-  });
-}
-
-/** prompt() com o texto atual; vazio remove. Devolve true se algo mudou. */
-async function editarObsSeparacao(
-  escopo: "pedido" | "linha" | "lote", chave: string,
-  atual: string | undefined, autor: string | null,
-): Promise<boolean> {
-  const texto = window.prompt(
-    "Observação — visível para toda a equipe na fila. Deixe vazio para remover.",
-    atual ?? "",
-  );
-  if (texto === null) return false;
-  const t = texto.trim();
-  if (!t) {
-    if (!atual) return false;
-    const { error } = await supabaseExternal
-      .from("separacao_obs").delete().eq("escopo", escopo).eq("chave", chave);
-    if (error) { toast.error("Falha ao remover observação", { description: error.message }); return false; }
-    toast.success("Observação removida");
-    return true;
-  }
-  const { error } = await supabaseExternal.from("separacao_obs").upsert(
-    { escopo, chave, texto: t, autor, criado_em: new Date().toISOString() },
-    { onConflict: "escopo,chave" },
-  );
-  if (error) { toast.error("Falha ao salvar observação", { description: error.message }); return false; }
-  toast.success("Observação salva");
-  return true;
-}
-
-/** Linha visual padrão da observação (fila, pedidos e lotes). */
-function ObsLinha({ obs }: { obs: ObsSep | undefined }) {
-  if (!obs) return null;
-  return (
-    <span
-      className="inline-flex items-start gap-1 text-[11.5px] leading-tight"
-      style={{ color: "#7A5CC7" }}
-      title={`${obs.autor ?? "equipe"} · ${new Date(obs.em).toLocaleString("pt-BR")}`}
-    >
-      <StickyNote className="h-3 w-3 mt-[1px] shrink-0" />
-      <span className="font-medium">{obs.texto}</span>
-      {obs.autor && <span className="text-muted-foreground">— {obs.autor}</span>}
-    </span>
-  );
-}
 
 function rankEstado(e: EstadoImpressao): number {
   return e === "done" ? 4 : e === "forcado" ? 3 : e === "sent" ? 2 : e === "error" ? 1 : 0;
@@ -1542,6 +1521,10 @@ interface PedidosDoSkuProps {
   onImprimir: (p: PedidoSepRow) => void;
   onEmbalar: (p: PedidoSepRow, forcado?: { nome: string; motivo: string }) => void;
   estadosPorSep?: Map<number, EstadoImpressao>;
+  /** separacao_id dos pedidos ML Flex (selo na linha do pedido). */
+  flexSeps?: Set<number>;
+  /** filtro ML Flex ligado: mostra só os pedidos Flex da linha. */
+  soFlex?: boolean;
 }
 
 function PedidosDoSku({
@@ -1553,6 +1536,8 @@ function PedidosDoSku({
   onImprimir,
   onEmbalar,
   estadosPorSep,
+  flexSeps,
+  soFlex,
 }: PedidosDoSkuProps) {
   const qc = useQueryClient();
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
@@ -1611,7 +1596,7 @@ function PedidosDoSku({
       </div>
     );
   }
-  const pedidos = data ?? [];
+  const pedidos = (data ?? []).filter((p) => !soFlex || (p.separacao_id != null && !!flexSeps?.has(p.separacao_id)));
   if (pedidos.length === 0) {
     return (
       <div className="pl-8 py-2 text-xs text-muted-foreground">
@@ -1753,6 +1738,14 @@ function PedidosDoSku({
                   <div className="flex flex-col gap-0.5">
                   <span className="inline-flex items-center gap-1.5">
                     {p.numero_ecommerce ?? "—"}
+                    {p.separacao_id != null && flexSeps?.has(p.separacao_id) && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300 font-sans font-semibold"
+                        title="Mercado Livre Flex — sai no mesmo dia pelo entregador do Flex"
+                      >
+                        <Zap className="h-2.5 w-2.5" /> Flex
+                      </span>
+                    )}
                     {p.falta_estoque_em && (
                       <span
                         className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-sans"
@@ -2697,6 +2690,10 @@ function FilaPriorizada() {
   // Filtro "risco de cancelamento": "hoje" = só linhas com pedido que a Shopee
   // cancela HOJE; "amanha" = amanhã. Null = sem filtro.
   const [riscoFiltro, setRiscoFiltro] = useState<null | "hoje" | "amanha">(null);
+  // Filtro "ML Flex": só linhas com pedido do Mercado Livre Flex (e, no
+  // drill-down, só os pedidos Flex da linha).
+  const [soFlex, setSoFlex] = useState(false);
+  const { data: flexFila } = useFlexPorLinha();
   // Filtro por empresa (Ottz / Bumi): linha entra se tem pedido da empresa.
   // Combinações multi-SKU não têm empresa mapeada (chave genérica) e passam.
   const [empresaFiltro, setEmpresaFiltro] = useState<null | "ottz" | "bumi">(null);
@@ -3475,6 +3472,7 @@ function FilaPriorizada() {
     return (rows ?? []).filter((r) => {
       if (r.tipo_envio && !enviosAtivosSet.has(r.tipo_envio)) return false;
       if (soSemEstoque && (tagsPorLinha?.get(linhaKeyDe(r))?.falta ?? 0) === 0) return false;
+      if (soFlex && (flexFila?.porLinha.get(linhaKeyDe(r)) ?? 0) === 0) return false;
       if (riscoFiltro) {
         const ri = riscoPorLinha?.get(linhaKeyDe(r));
         if (!ri || (riscoFiltro === "hoje" ? ri.hoje : ri.amanha) === 0) return false;
@@ -3500,7 +3498,7 @@ function FilaPriorizada() {
       }
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, bandasPeso, pesoPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, soFlex, flexFila, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, bandasPeso, pesoPorLinha]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3761,6 +3759,25 @@ function FilaPriorizada() {
             </>
           );
         })()}
+        {(flexFila?.total ?? 0) > 0 || soFlex ? (
+          <button
+            type="button"
+            onClick={() => setSoFlex((v) => !v)}
+            className={cn(
+              "flex items-center gap-2 rounded-[9px] border pl-3 pr-2 py-[7px] text-[12.5px] font-semibold transition-colors",
+              soFlex
+                ? "bg-yellow-400 border-yellow-400 text-yellow-950"
+                : "bg-yellow-50 border-yellow-300 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300 dark:border-yellow-800",
+            )}
+            title="Só pedidos do Mercado Livre Flex (entrega no mesmo dia pelo entregador do Flex)"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            ML FLEX
+            <span className={cn("rounded-md px-1.5 py-0.5 text-[11.5px] font-mono tabular-nums", soFlex ? "bg-white/40" : "bg-yellow-100 dark:bg-yellow-900/50")}>
+              {formatNumber(flexFila?.total ?? 0)}
+            </span>
+          </button>
+        ) : null}
         {/* filtro por empresa: linha entra se tem pedido da empresa */}
         <div className="inline-flex rounded-[9px] border bg-card p-0.5">
           {([["ottz", "Ottz"], ["bumi", "Bumi"]] as const).map(([id, rot]) => (
@@ -4128,6 +4145,7 @@ function FilaPriorizada() {
                           );
                         })()}
                         <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />
+                        <FlexBadge n={flexFila?.porLinha.get(linhaKeyDe(item))} />
                         <PesoBadge info={pesoPorLinha?.get(linhaKeyDe(item))} />
                       </div>
                       <div
@@ -4392,6 +4410,8 @@ function FilaPriorizada() {
                       onImprimir={imprimirPedido}
                       onEmbalar={embalarPedido}
                       estadosPorSep={impressaoEstados?.porSep}
+                      flexSeps={flexFila?.seps}
+                      soFlex={soFlex}
                     />
                   )}
                   </div>
@@ -4450,6 +4470,7 @@ function FilaPriorizada() {
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <RiscoBadge info={riscoPorLinha?.get(linhaKeyDe(item))} />
+                  <FlexBadge n={flexFila?.porLinha.get(linhaKeyDe(item))} />
                   <div className="px-4 py-2 rounded-lg font-bold text-lg md:text-xl tabular-nums bg-purple-600 text-white">
                     {formatNumber(item.qtd_pedidos ?? 0)} pedidos
                   </div>

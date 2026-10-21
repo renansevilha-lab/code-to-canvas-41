@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Boxes, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Loader2, MapPin,
-  Package as PackageIcon, Printer, RotateCcw, Search,
+  MoreVertical, Package as PackageIcon, Printer, RotateCcw, Search, StickyNote,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,11 @@ import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
 import { aplicarApelidos } from "@/lib/impressoras";
 import { FAIXAS_PRAZO, faixaPrazo, nivelPrazo, PRAZO_ESTILO } from "@/lib/prazo";
+import { useObsSeparacao, editarObsSeparacao, ObsLinha } from "@/lib/separacaoObs";
+import { buscarMlFlex } from "@/lib/mlFlex";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ============================================================================
 // Separação de pedidos MULTI SKU (aba própria em /separacao, 16/set/2026).
@@ -225,9 +230,21 @@ export function MultiSkuPanel() {
     queryFn: async (): Promise<PedidoMulti[]> => {
       const { data, error } = await supabaseExternal.from("view_separacao_multi_pedidos").select("*").limit(2000);
       if (error) throw error;
-      return ((data ?? []) as PedidoMulti[]).map((p) => ({ ...p, itens: (p.itens ?? []) as ItemMulti[] })).sort(porPrioridade);
+      const lista = ((data ?? []) as PedidoMulti[]).map((p) => ({ ...p, itens: (p.itens ?? []) as ItemMulti[] }));
+      // ML Flex vira um envio próprio ("ML Flex") para dar filtro e selo; se a
+      // consulta falhar, segue como "ML" (não trava a aba).
+      try {
+        const flex = await buscarMlFlex(lista.filter((p) => ehMl(p.marca_canal)).map((p) => p.numero_ecommerce));
+        for (const p of lista) if (p.numero_ecommerce && flex.has(p.numero_ecommerce)) p.tipo_envio = "ML Flex";
+      } catch { /* sem Flex */ }
+      return lista.sort(porPrioridade);
     },
   });
+  const obsQ = useObsSeparacao();
+  const recarregarObs = (mudou: boolean) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); };
+  // chave da linha multi na fila (mesma da priorizada: 'MULTI: ' + SKUs ordenados com '+'),
+  // para a observação do grupo aparecer também na fila principal
+  const chaveLinhaMulti = (itens: ItemMulti[]) => `MULTI: ${itens.map((i) => i.sku).sort().join("+")}`;
   const pickingQ = useQuery({
     queryKey: ["separacao", "multi", "picking"],
     refetchInterval: 60_000,
@@ -245,7 +262,7 @@ export function MultiSkuPanel() {
   };
 
   const enviosDisponiveis = useMemo(() => Array.from(new Set(pedidos.map((p) => p.tipo_envio ?? "?"))).sort((a, b) => {
-    const o = (e: string) => (e === "ER" ? 1 : e === "SPX" ? 2 : e === "ML" ? 3 : 4); return o(a) - o(b) || a.localeCompare(b);
+    const o = (e: string) => (e === "ER" ? 1 : e === "SPX" ? 2 : e === "ML Flex" ? 3 : e === "ML" ? 4 : 5); return o(a) - o(b) || a.localeCompare(b);
   }), [pedidos]);
   const faixasDisponiveis = useMemo(() => new Set(pedidos.map((p) => faixaPrazo(p.dias_para_prazo))), [pedidos]);
 
@@ -528,7 +545,7 @@ export function MultiSkuPanel() {
                     if (ev.ctrlKey || ev.metaKey) { const base = envios ?? enviosDisponiveis; setEnvios(base.includes(e) ? base.filter((x) => x !== e) : [...base, e]); }
                     else setEnvios(envios && envios.length === 1 && envios[0] === e ? null : [e]);
                   }}
-                  className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", on ? (e === "ER" ? "bg-red-600 text-white" : "bg-accent text-accent-foreground") : "text-muted-foreground hover:text-foreground")}>
+                  className={cn("px-2.5 py-1.5 text-xs font-semibold rounded-md transition", on ? (e === "ER" ? "bg-red-600 text-white" : e === "ML Flex" ? "bg-yellow-400 text-yellow-950" : "bg-accent text-accent-foreground") : "text-muted-foreground hover:text-foreground")}>
                   {e} <span className="opacity-70">{n}</span>
                 </button>
               );
@@ -591,6 +608,11 @@ export function MultiSkuPanel() {
                       <div className="text-[11.5px] text-muted-foreground truncate">
                         {g.itens.map((i) => i.nome ?? i.sku).join(" + ")}
                       </div>
+                      <ObsLinha obs={obsQ.data?.get(`linha|${chaveLinhaMulti(g.itens)}`)} />
+                      {(() => {
+                        const n = g.peds.filter((p) => obsQ.data?.has(`pedido|${p.separacao_id}`)).length;
+                        return n > 0 ? <div className="text-[11px] text-[#7A5CC7] flex items-center gap-1"><StickyNote className="h-3 w-3" /> {n} pedido(s) com observação</div> : null;
+                      })()}
                     </div>
                   </button>
                   <div className="flex items-center gap-2 shrink-0 text-[11.5px]">
@@ -614,6 +636,20 @@ export function MultiSkuPanel() {
                       onClick={() => void marcarEmbalado(g.peds)}>
                       <PackageIcon className="h-3.5 w-3.5" /> Embalar ({nImp})
                     </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0" title="Mais ações do grupo"><MoreVertical className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuItem onClick={() => {
+                          const chave = chaveLinhaMulti(g.itens);
+                          void editarObsSeparacao("linha", chave, obsQ.data?.get(`linha|${chave}`)?.texto, perfil?.nome ?? null).then(recarregarObs);
+                        }}>
+                          <StickyNote className="h-4 w-4 mr-2" />
+                          {obsQ.data?.has(`linha|${chaveLinhaMulti(g.itens)}`) ? "Editar observação do grupo…" : "Adicionar observação do grupo…"}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
                 {aberto && (
@@ -640,9 +676,12 @@ export function MultiSkuPanel() {
                             <td className="py-1.5">
                               <button className="font-mono font-semibold hover:underline" onClick={() => togglePedido(p.separacao_id)} title={p.numero_ecommerce ?? ""}>#{p.venda_numero}</button>
                               {pedidosAbertos.has(p.separacao_id) && <div className="text-[11px] text-muted-foreground font-mono">{p.numero_ecommerce}</div>}
+                              <div><ObsLinha obs={obsQ.data?.get(`pedido|${p.separacao_id}`)} /></div>
                             </td>
                             <td>{p.loja}</td>
-                            <td>{p.tipo_envio ?? "—"}</td>
+                            <td>{p.tipo_envio === "ML Flex"
+                              ? <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300 font-semibold">ML Flex</span>
+                              : (p.tipo_envio ?? "—")}</td>
                             <td><PrazoBadge dias={p.dias_para_prazo} iso={p.ship_by_date} /></td>
                             <td className="font-mono">{p.tag_lote ?? "—"}</td>
                             <td>
@@ -657,6 +696,27 @@ export function MultiSkuPanel() {
                               <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={ocupado || !impressa(p)} onClick={() => void marcarEmbalado([p])}>
                                 <PackageIcon className="h-3 w-3" /> Embalado
                               </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Mais ações do pedido"><MoreVertical className="h-3.5 w-3.5" /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-60">
+                                  <DropdownMenuItem disabled={ocupado} onClick={() => void imprimirUmPedido(p)}>
+                                    <Printer className="h-3.5 w-3.5 mr-2" /> {impressa(p) ? "Reimprimir etiqueta" : "Imprimir etiqueta"}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem disabled={ocupado || !impressa(p)} onClick={() => void marcarEmbalado([p])}>
+                                    <PackageIcon className="h-3.5 w-3.5 mr-2" /> Marcar embalado
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => {
+                                    const chave = String(p.separacao_id);
+                                    void editarObsSeparacao("pedido", chave, obsQ.data?.get(`pedido|${chave}`)?.texto, perfil?.nome ?? null).then(recarregarObs);
+                                  }}>
+                                    <StickyNote className="h-3.5 w-3.5 mr-2" />
+                                    {obsQ.data?.has(`pedido|${p.separacao_id}`) ? "Editar observação…" : "Adicionar observação…"}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </td>
                           </tr>
                         ))}
