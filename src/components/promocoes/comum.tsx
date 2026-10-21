@@ -125,11 +125,14 @@ export function Foto({ url, size = 44 }: { url: string | null | undefined; size?
   );
 }
 
-/** shopee-flashsale (relâmpago) — mesma chamada de sempre. */
+/** shopee-flashsale (relâmpago). Leva a sessão do usuário quando há: desde a v11 (21/out/2026)
+ *  toda escrita com confirmar=1 exige login (a chave pública só lê e faz prévia). */
 export async function chamarFlashsale(qs: string, init?: RequestInit): Promise<any> {
+  const { data } = await supabaseExternal.auth.getSession();
+  const token = data.session?.access_token ?? EXTERNAL_PUBLISHABLE_KEY;
   const r = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-flashsale?${qs}`, {
     ...init,
-    headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}`, "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();

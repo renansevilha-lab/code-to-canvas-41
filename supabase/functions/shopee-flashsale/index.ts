@@ -1,6 +1,13 @@
 // ============================================================================
-// Edge Function: shopee-flashsale v10
+// Edge Function: shopee-flashsale v11
 // ----------------------------------------------------------------------------
+// v11 (21/out): ESCRITA SÓ COM LOGIN. A chave pública do site (que vai no código
+//   do navegador) bastava para criar/adicionar/ativar/remover/excluir relâmpagos e
+//   para programar com confirmar=1. Agora, com confirmar=1, exige sessão de usuário
+//   (role authenticated) ou service role. Única exceção: a rodada do robô
+//   (programar&auto=1, cron 87) — sem `dia` (sempre amanhã) e só nas lojas com
+//   flashsale_config.automacao_ativa, igual à regra do ml-promocoes modulo=auto.
+//   Leitura e prévia (sem confirmar) seguem abertas.
 // Promocao Relampago da Loja (Shop Flash Sale) nas 2 lojas.
 // LEITURA (seguro):
 //   ?modulo=slots&shop_id=X[&dias=7]      - horarios disponiveis (slots DIARIOS)
@@ -556,6 +563,16 @@ serve(async (req: Request) => {
 
   const modulo = p("modulo") || "list";
   const shopId = parseInt(p("shop_id") || "0", 10);
+
+  // v11: escrita na Shopee só com sessão de usuário ou service role (ver cabeçalho)
+  if (p("confirmar") === "1") {
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    let role = "";
+    try { role = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).role || ""; } catch { role = ""; }
+    const logado = bearer === SRK || role === "authenticated" || role === "service_role";
+    const rodadaRobo = modulo === "programar" && p("auto") === "1" && !p("dia");
+    if (!logado && !rodadaRobo) return json({ erro: "faça login no app (sessão de usuário exigida para alterar a relâmpago)" }, { status: 401 });
+  }
 
   if (modulo === "programar") {
     const confirmar = p("confirmar") === "1";
