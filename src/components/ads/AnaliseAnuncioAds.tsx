@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Info, Loader2, Lightbulb, TrendingDown } from "lucide-react";
+import { AlertTriangle, ExternalLink, Info, Loader2, Lightbulb, Sparkles, TrendingDown } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -77,6 +78,23 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, peri
   });
   const MK = ehMl ? "Mercado Livre" : "Shopee";
   const a = q.data;
+  // atalhos (21/out, pedido do dono): abrir o produto em IA · Anúncios e o anúncio no marketplace
+  const itemId = ehMl ? (ml?.item ?? null) : (a?.item_id ?? null);
+  const linkQ = useQuery({
+    queryKey: ["ads-analise-link", ehMl ? "ml" : "shopee", String(shopId ?? ""), itemId ?? ""],
+    enabled: !!itemId, staleTime: 30 * 60_000,
+    queryFn: async (): Promise<{ sku: string | null; url: string | null }> => {
+      if (ehMl) {
+        const { data } = await supabaseExternal.from("ml_anuncios").select("sku, permalink").eq("mlb", itemId!).maybeSingle();
+        const d = data as { sku: string | null; permalink: string | null } | null;
+        return { sku: d?.sku ?? null, url: d?.permalink ?? `https://produto.mercadolivre.com.br/${itemId!.replace(/^MLB/, "MLB-")}` };
+      }
+      const { data } = await supabaseExternal.from("shopee_anuncios").select("sku_pai").eq("shop_id", Number(shopId)).eq("item_id", Number(itemId)).maybeSingle();
+      return { sku: (data as { sku_pai: string | null } | null)?.sku_pai ?? null, url: `https://shopee.com.br/product/${shopId}/${itemId}` };
+    },
+  });
+  const skuIa = linkQ.data?.sku ?? (a?.skus?.length === 1 ? a.skus[0] : null);
+  const empresaIa = ehMl ? "ottz" : Number(shopId) === 759046323 ? "svl" : "ottz";
   const u7 = a?.resumo.u7; const per = a?.resumo.periodo; const ant = a?.resumo.anterior;
   const textoAnt = ant ? `vs ${dm(ant.de)}–${dm(ant.ate)}` : "";
   const eq = a?.margem.roas_equilibrio ?? null;
@@ -91,6 +109,21 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, peri
           <DialogDescription className="line-clamp-2">
             {a?.nome ?? nome}{a?.item_id ? ` · ${ehMl ? "" : "item "}${a.item_id}` : ""}{a?.skus?.length ? ` · SKU ${a.skus.join(", ")}` : ""} · campanha {String(campaignId)}
           </DialogDescription>
+          {(skuIa || linkQ.data?.url) && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+              {skuIa && (
+                <Link to="/ia/gerar" search={{ sku: skuIa, canal: ehMl ? "mercado_livre" : "shopee", empresa: empresaIa }}
+                  className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted" onClick={onFechar}>
+                  <Sparkles className="h-3.5 w-3.5 text-primary" /> Abrir em IA · Anúncios (SKU {skuIa})
+                </Link>
+              )}
+              {linkQ.data?.url && (
+                <a href={linkQ.data.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted">
+                  <ExternalLink className="h-3.5 w-3.5" /> Ver o anúncio {ehMl ? "no Mercado Livre" : "na Shopee"}
+                </a>
+              )}
+            </div>
+          )}
         </DialogHeader>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
