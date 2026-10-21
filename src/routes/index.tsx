@@ -1,56 +1,22 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import {
-  TrendingUp,
-  AlertTriangle,
-  Package,
-  Wallet,
-  ArrowRight,
-  ArrowUp,
-  ArrowDown,
-  Target,
-  Megaphone,
-  CheckCircle2,
-  Info,
-  RefreshCw,
-} from "lucide-react";
-import {
-  format,
-  parseISO,
-  startOfMonth,
-  endOfMonth,
-  subMonths,
-  subDays,
-  differenceInCalendarDays,
-} from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip as UITooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
   DropdownMenuTrigger,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
-import { RelatoriosSection } from "@/components/relatorios/RelatoriosSection";
+import { formatBRL } from "@/lib/format";
 import { PosicaoEmpresa } from "@/components/dashboard/PosicaoEmpresa";
+import { DesempenhoPeriodo, type Anomalia, type Kpis } from "@/components/dashboard/DesempenhoPeriodo";
 import { periodoAnterior as periodoAnteriorComum, type PeriodPreset } from "@/lib/dashboard/period";
 
 export const Route = createFileRoute("/")({
-  // ?rel= = aba da seção Relatórios (financeiro | compras | marketing)
+  // ?rel= era a aba da seção Relatórios (hoje em /relatorios); aceito para não quebrar links antigos
   validateSearch: (s: Record<string, unknown>): { rel?: string } => ({
     rel: typeof s.rel === "string" && s.rel ? s.rel : undefined,
   }),
@@ -103,19 +69,6 @@ type MetaRealizado = {
   projecao_pct_meta: number | null;
   dias_decorridos: number | null;
   dias_no_mes: number | null;
-};
-
-type ProdutoRow = {
-  marketplace: string;
-  sku: string;
-  produto: string | null;
-  foto: string | null;
-  receita: number | null;
-  gasto_ads: number | null;
-  margem_liquida: number | null;
-  margem_liquida_pct: number | null;
-  vira_prejuizo_com_ads: boolean | null;
-  confiavel: boolean | null;
 };
 
 type VisaoGeralRow = {
@@ -217,24 +170,15 @@ function rotuloComparacao(p: { from: string; to: string }): string {
   return `vs ${df}/${mes(mf)}–${dt}/${mes(mt)}`;
 }
 
-const PRESET_LABEL: Record<PresetKey, string> = {
-  hoje: "Hoje",
-  ontem: "Ontem",
-  mes_atual: "Mês atual",
-  ult_7: "Últimos 7 dias",
-  ult_30: "Últimos 30 dias",
-  mes_anterior: "Mês anterior",
-  custom: "Personalizado",
-};
-
-const PRESET_CURTO: Partial<Record<PresetKey, string>> = {
-  hoje: "Hoje",
-  ontem: "Ontem",
-  mes_atual: "Mês",
-  ult_7: "7 dias",
-  ult_30: "30 dias",
-};
-const QUICK_PRESETS: PresetKey[] = ["hoje", "ontem", "mes_atual", "ult_7", "ult_30"];
+// Atalhos de período do bloco "Desempenho do período" (o personalizado fica no próprio bloco)
+const PRESETS: { id: PresetKey; nome: string }[] = [
+  { id: "hoje", nome: "Hoje" },
+  { id: "ontem", nome: "Ontem" },
+  { id: "mes_atual", nome: "Mês" },
+  { id: "ult_7", nome: "7 dias" },
+  { id: "ult_30", nome: "30 dias" },
+  { id: "mes_anterior", nome: "Mês anterior" },
+];
 
 // ============================================================
 // Canal colors
@@ -250,25 +194,10 @@ function colorForCanal(canal: string): string {
   return "hsl(215 15% 55%)";
 }
 
-// Pontos de uma sparkline (viewBox 0 0 120 30) a partir de uma série numérica.
-function sparkPoints(vals: number[]): string {
-  const v = vals.filter((n) => Number.isFinite(n));
-  if (v.length < 2) return "";
-  const mn = Math.min(...v);
-  const mx = Math.max(...v);
-  const r = mx - mn || 1;
-  const stepX = 120 / (v.length - 1);
-  return v
-    .map((n, i) => `${(i * stepX).toFixed(1)},${(28 - ((n - mn) / r) * 26).toFixed(1)}`)
-    .join(" ");
-}
-
 // ============================================================
 // Component
 // ============================================================
 function Dashboard() {
-  const { rel: relSlug } = Route.useSearch();
-  const navigate = useNavigate({ from: Route.fullPath });
   // Definição do dono (20/ago/2026): a Dashboard SEMPRE abre no dia de hoje.
   const [preset, setPreset] = useState<PresetKey>("hoje");
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
@@ -281,7 +210,6 @@ function Dashboard() {
   const [kpisCanal, setKpisCanal] = useState<KpiCanal[]>([]);
   const [serieDiaria, setSerieDiaria] = useState<DiaSerie[]>([]);
   const [metas, setMetas] = useState<MetaRealizado[]>([]);
-  const [topProdutos, setTopProdutos] = useState<ProdutoRow[]>([]);
   const [vendasSku, setVendasSku] = useState<VendaSkuRow[]>([]);
   const [vendasMarca, setVendasMarca] = useState<VendaMarcaRow[]>([]);
   const [alertaAcos, setAlertaAcos] = useState(0);
@@ -294,7 +222,8 @@ function Dashboard() {
   const [canaisSemDados, setCanaisSemDados] = useState<CanalSemDados[]>([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  // quantas levas de consultas já chegaram (cada bloco mostra o esqueleto até a sua)
+  const [levas, setLevas] = useState(0);
   const [tick, setTick] = useState(0);
 
   const compAtual = useMemo(() => spKey(startOfMonth(spToday())), []);
@@ -302,6 +231,7 @@ function Dashboard() {
   useEffect(() => {
     let cancel = false;
     setLoading(true);
+    setLevas(0);
     setErro(null);
 
     (async () => {
@@ -328,8 +258,8 @@ function Dashboard() {
 
         const produtosQ = supabaseExternal
           .from("view_produtos_dashboard")
-          .select("marketplace,sku,produto,foto,receita,gasto_ads,margem_liquida,margem_liquida_pct,vira_prejuizo_com_ads,confiavel")
-          .limit(2000);
+          .select("sku", { count: "exact", head: true })
+          .eq("vira_prejuizo_com_ads", true);
 
         // Alerta ACOS: view_ads_resumo já classifica cada anúncio por ROAS
         // (agregado no servidor). Contamos os anúncios classificados como "ruim"
@@ -496,8 +426,8 @@ function Dashboard() {
         }
 
         setKpisCanal(kpiRows);
-        setAtualizadoEm(new Date());
         setLoading(false);
+        setLevas(1);
 
         // 2ª leva — metas/ACOS e alertas
         const [met, acos, anoms] = await Promise.all([metasQ, acosQ, anomsQ]);
@@ -526,6 +456,7 @@ function Dashboard() {
           setAnomCmvMaior(acc.cmv_maior_que_receita);
           setAnomSemRecebido({ count: acc.sem_recebido.count });
         }
+        setLevas(2);
 
         // 3ª leva — vendas por SKU e por marca (kit destrinchado)
         const [vsku, vmarca] = await Promise.all([vendasSkuQ, vendasMarcaQ]);
@@ -534,20 +465,14 @@ function Dashboard() {
         else console.warn("vendas_por_sku →", vsku.error);
         if (!vmarca.error) setVendasMarca((vmarca.data ?? []) as VendaMarcaRow[]);
         else console.warn("vendas_por_marca →", vmarca.error);
+        setLevas(3);
 
-        // 4ª leva — produtos (top margem / prejuízo com ADS) e SKUs Amazon sem cadastro
+        // 4ª leva — produtos que viram prejuízo com o ADS e SKUs Amazon sem cadastro
         const [prod, am] = await Promise.all([produtosQ, amazonQ]);
         if (cancel) return;
 
         if (!prod.error) {
-          const produtos = (prod.data ?? []) as ProdutoRow[];
-          const confiaveis = produtos.filter((p) => p.confiavel !== false);
-          setTopProdutos(
-            confiaveis
-              .sort((a, b) => Number(b.margem_liquida ?? 0) - Number(a.margem_liquida ?? 0))
-              .slice(0, 6),
-          );
-          setAlertaPrejuizo(produtos.filter((p) => p.vira_prejuizo_com_ads).length);
+          setAlertaPrejuizo(prod.count ?? 0);
         }
 
         if (!am.error) {
@@ -557,7 +482,7 @@ function Dashboard() {
       } catch (e) {
         if (!cancel) setErro((e as Error).message);
       } finally {
-        if (!cancel) setLoading(false);
+        if (!cancel) { setLoading(false); setLevas(4); }
       }
     })();
     return () => { cancel = true; };
@@ -600,8 +525,6 @@ function Dashboard() {
     };
   }, [kpisCanal]);
 
-  const diasPeriodo = differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
-
   // Metas
   const metaTodos = metas.find((m) => m.marketplace === "todos" && m.competencia === compAtual) ?? null;
   // Serie mensal de ACOS (todos os canais), base do painel ACOS mês a mês.
@@ -610,81 +533,24 @@ function Dashboard() {
     [metas],
   );
 
-  // Hero KPIs — valor da RPC (fonte única) + delta/sparkline da série diária.
-  const vendas = Number(visaoGeral?.vendas ?? 0);
-  const margemContrib = Number(visaoGeral?.margem_contrib ?? 0);
-  const mcPct = visaoGeral?.margem_pct != null ? Number(visaoGeral.margem_pct) : null;
-  const pedidosTot = Number(visaoGeral?.pedidos ?? 0);
-  const ticket = Number(visaoGeral?.ticket_medio ?? 0);
-  const cobertura = visaoGeral?.cobertura_pct != null ? Number(visaoGeral.cobertura_pct) : null;
-  const projecao = visaoGeral?.projecao_vendas != null ? Number(visaoGeral.projecao_vendas) : null;
-  // ADS e lucro pós ADS vêm da MESMA RPC (shopee_ads_diario + ml_ads_diario,
-  // idêntico ao DRE). A Amazon não tem ADS integrado e fica de fora.
-  const adsTot = Number(visaoGeral?.ads ?? 0);
-  const lucroPosAds = Number(visaoGeral?.lucro_pos_ads ?? 0);
-  const lucroPosAdsPct = visaoGeral?.lucro_pos_ads_pct != null ? Number(visaoGeral.lucro_pos_ads_pct) : null;
-  const acosGeral = vendas > 0 ? (adsTot / vendas) * 100 : null;
-
+  // Cartões — valores da RPC dashboard_visao_geral (fonte única: receita, margem, ADS e lucro pós
+  // ADS iguais ao DRE; a Amazon não tem ADS integrado). Delta e sparkline vêm da série diária.
+  const kpis: Kpis | null = loading && !visaoGeral ? null : {
+    vendas: Number(visaoGeral?.vendas ?? 0),
+    margem: Number(visaoGeral?.margem_contrib ?? 0),
+    mcPct: visaoGeral?.margem_pct != null ? Number(visaoGeral.margem_pct) : null,
+    pedidos: Number(visaoGeral?.pedidos ?? 0),
+    ticket: Number(visaoGeral?.ticket_medio ?? 0),
+    ads: Number(visaoGeral?.ads ?? 0),
+    lucro: Number(visaoGeral?.lucro_pos_ads ?? 0),
+    lucroPct: visaoGeral?.lucro_pos_ads_pct != null ? Number(visaoGeral.lucro_pos_ads_pct) : null,
+    projecao: visaoGeral?.projecao_vendas != null ? Number(visaoGeral.projecao_vendas) : null,
+    cobertura: visaoGeral?.cobertura_pct != null ? Number(visaoGeral.cobertura_pct) : null,
+  };
   const comparado = rotuloComparacao(periodoAnterior(preset, range));
-  const heroKpis: HeroKpiData[] = [
-    {
-      label: "Receita líquida",
-      value: formatBRL(vendas, { compact: true }),
-      delta: deltas.receita, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-primary)",
-      sub: preset === "mes_atual" && projecao != null
-        ? `Projeção ${formatBRL(projecao, { compact: true })}`
-        : `Ticket ${formatBRL(ticket, { compact: true })}`,
-      spark: sparkPoints(serieDiaria.map((s) => s.receita)),
-    },
-    {
-      label: "Margem de contribuição",
-      value: formatBRL(margemContrib, { compact: true }),
-      delta: deltas.margem, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-success)",
-      sub: mcPct != null ? `MC ${formatPercent(mcPct)}` : "Após CMV, taxas e frete",
-      spark: sparkPoints(serieDiaria.map((s) => s.margem)),
-    },
-    {
-      label: "MC% média",
-      value: mcPct != null ? formatPercent(mcPct) : "—",
-      delta: deltas.mcPp, deltaKind: "pp", temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-warning)",
-      sub: cobertura != null ? `Cobertura ${cobertura.toFixed(0)}%` : "Sobre a base coberta",
-      subAlerta: cobertura != null && cobertura < 90,
-      spark: sparkPoints(serieDiaria.map((s) => (s.receita > 0 ? (s.margem / s.receita) * 100 : 0))),
-    },
-    {
-      label: "Pedidos",
-      value: formatNumber(pedidosTot),
-      delta: deltas.pedidos, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-chart-4)",
-      sub: `Ticket ${formatBRL(ticket, { compact: true })}`,
-      spark: sparkPoints(serieDiaria.map((s) => s.pedidos)),
-    },
-    {
-      label: "Gastos com ADS",
-      value: formatBRL(adsTot, { compact: true }),
-      // gastar MAIS não é bom por si só: o delta verde/vermelho sai invertido
-      delta: deltas.ads, deltaKind: "rel", deltaInverso: true, temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-chart-5)",
-      sub: acosGeral != null ? `ACOS geral ${formatPercent(acosGeral)}` : "Shopee + Mercado Livre",
-      spark: sparkPoints(serieDiaria.map((s) => s.ads)),
-    },
-    {
-      label: "Lucro pós ADS",
-      value: formatBRL(lucroPosAds, { compact: true }),
-      delta: deltas.lucroPosAds, deltaKind: "rel", temHistorico: deltas.temHistorico, comparado,
-      color: "var(--color-chart-2)",
-      sub: lucroPosAdsPct != null
-        ? `${formatPercent(lucroPosAdsPct)} da receita · sem ADS da Amazon`
-        : "Margem de contribuição − ADS",
-      spark: sparkPoints(serieDiaria.map((s) => s.margem - s.ads)),
-    },
-  ];
 
-  // Anomalias (para o painel) — derivadas dos alertas existentes.
-  const anomalias: AnomaliaData[] = [];
+  // Anomalias (bloco recolhível) — derivadas dos alertas existentes.
+  const anomalias: Anomalia[] = [];
   if (anomSemCusto.count > 0)
     anomalias.push({ cor: "destructive", to: "/anomalias", titulo: `${anomSemCusto.count} SKUs sem custo cadastrado`, detalhe: `${formatBRL(anomSemCusto.receita, { compact: true })} de receita sem CMV apurado` });
   if (anomCmvMaior.count > 0)
@@ -700,796 +566,44 @@ function Dashboard() {
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
-      {/* Posição da empresa — retrato de agora, não muda com o período (design "Visão geral", 21/out/2026) */}
-      <PosicaoEmpresa tick={tick} />
-
-      {/* Barra de filtros */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-[13px] text-muted-foreground font-medium tabular-nums">
-          {format(parseISO(range.from), "dd MMM", { locale: ptBR })} – {format(parseISO(range.to), "dd MMM yyyy", { locale: ptBR })}
-          <span className="opacity-60"> · {diasPeriodo} {diasPeriodo === 1 ? "dia" : "dias"}</span>
-        </div>
-        <div className="flex-1" />
-        {/* Segmentado de período (atalhos) */}
-        <div className="flex items-center gap-1 bg-card border border-border rounded-[10px] p-[3px]">
-          {QUICK_PRESETS.map((p) => (
-            <button
-              key={p}
-              onClick={() => { setPreset(p); setCustomRange(null); }}
-              className={cn(
-                "text-[12.5px] font-medium px-3 py-1.5 rounded-[7px] transition-colors",
-                preset === p ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {PRESET_CURTO[p]}
-            </button>
-          ))}
-          <PeriodoPicker
-            preset={preset}
-            onPreset={(p) => { setPreset(p); if (p !== "custom") setCustomRange(null); }}
-            customRange={customRange}
-            onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
-          />
-        </div>
-        <CanalFilter canais={canaisDisponiveis} selecionados={canaisFiltro} onChange={setCanaisFiltro} />
-        <Button variant="outline" size="sm" onClick={() => setTick((x) => x + 1)} disabled={loading} className="gap-2">
-          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          Atualizar
-        </Button>
-      </div>
-
-      {erro && (
-        <Card className="p-4 border-destructive/30 bg-destructive/5">
-          <p className="text-sm text-destructive font-medium">Erro ao carregar dashboard</p>
-          <p className="text-xs text-muted-foreground mt-1">{erro}</p>
-        </Card>
-      )}
-
-      {/* Hero KPIs */}
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-[14px]">
-        {heroKpis.map((k) => (
-          <HeroKpi key={k.label} data={k} loading={loading && !visaoGeral} />
-        ))}
-      </div>
-
-      {/* Gráfico + Contribuição por canal */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1.75fr_1fr] gap-4 items-start">
-        <VendasMargemChart range={range} isMesAtual={preset === "mes_atual"} />
-        <ContribuicaoCanalPanel canais={kpisVisiveis} loading={loading && kpisVisiveis.length === 0} />
-      </div>
-
-      {/* Top SKUs · Anomalias · Metas */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <TopSkusPanel produtos={topProdutos} />
-        <AnomaliasPanel anomalias={anomalias} />
-        <MetasPanel data={metaTodos} competencia={compAtual} />
-      </div>
-
-      {/* ACOS mês a mês (realizado × meta) */}
-      <AcosMensalPanel meses={acosMeses} loading={loading && acosMeses.length === 0} />
-
-      {/* Vendas por produto (kit destrinchado) */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 items-start">
-        <VendasSkuPanel rows={vendasSku} loading={loading && vendasSku.length === 0} range={range} />
-        <VendasMarcaPanel rows={vendasMarca} loading={loading && vendasMarca.length === 0} range={range} />
-      </div>
-
-      {/* Desempenho por canal (detalhado) */}
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">Desempenho por canal</h2>
-        </div>
-        {loading && kpisVisiveis.length === 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-56 rounded-[14px] bg-muted/40 animate-pulse" />
-            ))}
-          </div>
-        ) : kpisVisiveis.length === 0 ? (
-          <Card className="p-6 text-sm text-muted-foreground">Nenhum canal no período selecionado.</Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {[...kpisVisiveis]
-              .sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0))
-              .map((c) => (
-                <CanalCard key={c.canal} data={c} />
-              ))}
-          </div>
-        )}
-      </section>
-
-      {/* Canais sem dados integrados (Temu, TikTok, ML avulso) — fora do total geral */}
-      {canaisSemDados.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-col gap-0.5">
-            <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Canais sem dados integrados
-            </h2>
-            <p className="text-[12px] text-muted-foreground">
-              Vendas informadas pelo Tiny, sem custo/margem/ADS no sistema — não entram no total acima.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-            {canaisSemDados.map((c) => (
-              <Card key={c.canal} className="p-5 flex flex-col gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="inline-block h-3 w-3 rounded-sm shrink-0 bg-muted-foreground/40" />
-                  <p className="font-medium truncate" title={c.canal}>{c.canal}</p>
-                </div>
-                <p className="text-2xl font-semibold tabular-nums">{formatBRL(c.receita, { compact: true })}</p>
-                <p className="text-sm text-muted-foreground tabular-nums">{formatNumber(c.pedidos)} pedidos</p>
-                <Badge variant="outline" className="w-fit text-muted-foreground gap-1 mt-1">
-                  <Info className="h-3 w-3" /> Sem margem
-                </Badge>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Relatórios dos agentes (financeiro, compras, marketing) */}
-      <RelatoriosSection
-        relSlug={relSlug}
-        onRelChange={(slug) => navigate({ search: (prev) => ({ ...prev, rel: slug }), hash: "relatorios", replace: true, resetScroll: false })}
+      {/* Desempenho do período em cima, Posição da empresa (retrato de agora) embaixo — pedido do dono, 21/out/2026 */}
+      <DesempenhoPeriodo
+        tick={tick}
+        range={range}
+        presets={PRESETS}
+        preset={preset}
+        onPreset={(id) => { setPreset(id as PresetKey); setCustomRange(null); }}
+        custom={customRange}
+        onCustom={(r) => { setCustomRange(r); setPreset("custom"); }}
+        comparado={comparado}
+        isMes={preset === "mes_atual"}
+        onAtualizar={() => setTick((x) => x + 1)}
+        atualizando={loading}
+        erro={erro}
+        kpis={kpis}
+        deltas={deltas}
+        serie={serieDiaria}
+        meta={metaTodos}
+        acosMeses={acosMeses}
+        canais={kpisVisiveis.map((c) => ({ canal: c.canal, marketplace: c.marketplace, shop_id: c.shop_id == null ? null : String(c.shop_id), pedidos: c.pedidos, receita: c.receita, margem: c.margem, mc_pct: c.mc_pct, ads: c.ads }))}
+        carregandoCanais={levas < 1}
+        filtroCanal={<CanalFilter canais={canaisDisponiveis} selecionados={canaisFiltro} onChange={setCanaisFiltro} />}
+        semIntegracao={canaisSemDados}
+        vendasSku={vendasSku}
+        vendasMarca={vendasMarca}
+        carregandoProdutos={levas < 3}
+        anomalias={anomalias}
       />
+
+      {/* Posição da empresa — retrato de agora, não muda com o período */}
+      <PosicaoEmpresa tick={tick} />
     </div>
   );
 }
 
 // ============================================================
-// Hero KPI
+// Filtro de canais (bloco Canais)
 // ============================================================
-type HeroKpiData = {
-  label: string;
-  value: string;
-  delta: number | null;
-  deltaKind: "rel" | "pp";
-  /** true = subir é ruim (ex.: gasto com ADS) — inverte a cor do delta */
-  deltaInverso?: boolean;
-  temHistorico: boolean;
-  /** período comparado no delta ("vs 01–06/set") */
-  comparado?: string;
-  color: string;
-  sub: string;
-  subAlerta?: boolean;
-  spark: string;
-};
-
-function HeroKpi({ data, loading }: { data: HeroKpiData; loading: boolean }) {
-  const { label, value, delta, deltaKind, deltaInverso, temHistorico, comparado, color, sub, subAlerta, spark } = data;
-  const subiu = delta != null && delta >= 0.05;
-  const caiu = delta != null && delta <= -0.05;
-  const bom = deltaInverso ? caiu : subiu;
-  const ruim = deltaInverso ? subiu : caiu;
-  const deltaCls = bom ? "text-success" : ruim ? "text-destructive" : "text-muted-foreground";
-  const deltaTxt =
-    !temHistorico || delta == null
-      ? "—"
-      : `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(1).replace(".", ",")}${deltaKind === "pp" ? " pp" : "%"}`;
-
-  return (
-    <Card className="relative overflow-hidden p-0">
-      <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />
-      <div className="p-5 pl-6 flex flex-col gap-3">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
-          <span className="flex flex-col items-end leading-tight" title={comparado ? `Comparado com ${comparado.replace(/^vs /, "")}` : undefined}>
-            <span className={cn("text-[11.5px] font-semibold font-mono", deltaCls)}>{deltaTxt}</span>
-            {comparado && <span className="text-[10.5px] text-muted-foreground font-medium">{comparado}</span>}
-          </span>
-        </div>
-        {loading ? (
-          <div className="h-8 w-28 rounded bg-muted/50 animate-pulse" />
-        ) : (
-          <div className="text-[30px] font-semibold tracking-[-0.035em] tabular-nums leading-none">{value}</div>
-        )}
-        <div className="flex items-end justify-between gap-3">
-          <span className={cn("text-[11.5px] font-medium", subAlerta ? "text-warning" : "text-muted-foreground")}>{sub}</span>
-          {spark && (
-            <svg viewBox="0 0 120 30" preserveAspectRatio="none" className="w-[110px] h-[30px] overflow-visible shrink-0">
-              <polyline
-                points={spark}
-                fill="none"
-                stroke={color}
-                strokeWidth={1.8}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                vectorEffect="non-scaling-stroke"
-              />
-            </svg>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ============================================================
-// Contribuição por canal
-// ============================================================
-function ContribuicaoCanalPanel({ canais, loading }: { canais: KpiCanal[]; loading: boolean }) {
-  const ordenados = useMemo(
-    () => [...canais].sort((a, b) => Number(b.margem ?? 0) - Number(a.margem ?? 0)),
-    [canais],
-  );
-  const totalMargemPos = ordenados.reduce((s, c) => s + Math.max(0, Number(c.margem ?? 0)), 0);
-
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex flex-col gap-0.5">
-        <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Contribuição por canal</div>
-        <div className="text-[12px] text-muted-foreground">Participação na margem do período</div>
-      </div>
-
-      {loading ? (
-        <div className="h-40 rounded bg-muted/40 animate-pulse" />
-      ) : ordenados.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Sem canais no período.</p>
-      ) : (
-        <>
-          <div className="flex h-2.5 rounded-md overflow-hidden gap-0.5">
-            {ordenados.map((c) => {
-              const w = totalMargemPos > 0 ? (Math.max(0, Number(c.margem ?? 0)) / totalMargemPos) * 100 : 0;
-              if (w <= 0) return null;
-              return <div key={c.canal} style={{ width: `${w}%`, background: colorForCanal(c.canal) }} />;
-            })}
-          </div>
-          <div className="flex flex-col">
-            {ordenados.map((c) => {
-              const mc = Number(c.mc_pct ?? 0);
-              const mcCls = mc >= 16 ? "text-success" : mc >= 12 ? "text-warning" : "text-destructive";
-              return (
-                <div
-                  key={c.canal}
-                  className="grid grid-cols-[10px_1fr_auto_52px] items-center gap-2.5 py-[11px] border-b border-border last:border-0"
-                >
-                  <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: colorForCanal(c.canal) }} />
-                  <span className="text-[13px] font-medium truncate" title={c.canal}>{c.canal}</span>
-                  <span className="text-[12.5px] text-muted-foreground font-mono tabular-nums">
-                    {formatBRL(Number(c.receita ?? 0), { compact: true })}
-                  </span>
-                  <span className={cn("text-[12.5px] font-semibold font-mono tabular-nums text-right", mcCls)}>
-                    {formatPercent(mc)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Top SKUs por margem
-// ============================================================
-function TopSkusPanel({ produtos }: { produtos: ProdutoRow[] }) {
-  const maxMargem = produtos.reduce((m, p) => Math.max(m, Number(p.margem_liquida ?? 0)), 0) || 1;
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Top SKUs por margem</div>
-          <div className="text-[12px] text-muted-foreground">Lucro líquido no período</div>
-        </div>
-        <Link to="/produtos-margem" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0">
-          Ver todos <ArrowRight className="h-3 w-3" />
-        </Link>
-      </div>
-      {produtos.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Sem dados.</p>
-      ) : (
-        <div className="flex flex-col gap-3.5">
-          {produtos.map((p, i) => {
-            const margem = Number(p.margem_liquida ?? 0);
-            const w = Math.max(2, (margem / maxMargem) * 100);
-            return (
-              <div key={`${p.marketplace}-${p.sku}-${i}`} className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-[12.5px] font-medium truncate" title={p.produto ?? p.sku}>{p.produto ?? p.sku}</span>
-                  <span className="text-[12.5px] font-semibold font-mono tabular-nums shrink-0">
-                    {formatBRL(margem, { compact: true })}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <div className="flex-1 h-1.5 rounded bg-muted overflow-hidden">
-                    <div className="h-full rounded bg-primary" style={{ width: `${w}%` }} />
-                  </div>
-                  <span className="text-[11px] text-muted-foreground font-mono w-11 text-right tabular-nums">
-                    {formatPercent(Number(p.margem_liquida_pct ?? 0))}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Vendas por SKU (kit destrinchado)
-// ============================================================
-function QtdDelta({ atual, anterior }: { atual: number; anterior: number }) {
-  const up = anterior > 0 && atual > anterior;
-  const down = anterior > 0 && atual < anterior;
-  return (
-    <span className="inline-flex items-center gap-0.5 justify-end">
-      {up && <ArrowUp className="h-3 w-3 text-success" />}
-      {down && <ArrowDown className="h-3 w-3 text-destructive" />}
-      {formatNumber(atual)}
-    </span>
-  );
-}
-
-function VendasSkuPanel({ rows, loading, range }: { rows: VendaSkuRow[]; loading: boolean; range: { from: string; to: string } }) {
-  const top = rows.slice(0, 10);
-  const totalValor = rows.reduce((s, r) => s + Number(r.valor_atual ?? 0), 0);
-  const totalUnid = rows.reduce((s, r) => s + Number(r.qtd_atual ?? 0), 0);
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Vendas por SKU</div>
-          <div className="text-[12px] text-muted-foreground">Unidades reais, com kits destrinchados</div>
-        </div>
-        {!loading && rows.length > 0 && (
-          <div className="text-right shrink-0">
-            <div className="text-[13px] font-semibold font-mono tabular-nums">{formatBRL(totalValor, { compact: true })}</div>
-            <div className="text-[11px] text-muted-foreground font-mono tabular-nums">
-              {formatNumber(totalUnid)} un · {rows.length} SKUs
-            </div>
-          </div>
-        )}
-      </div>
-      {loading ? (
-        <div className="h-64 rounded bg-muted/40 animate-pulse" />
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
-      ) : (
-        <>
-          <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-sm">
-              <thead className="text-[11px] text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="text-left font-medium pb-2 px-1">Produto</th>
-                  <th className="text-right font-medium pb-2 px-1 w-14">Ant.</th>
-                  <th className="text-right font-medium pb-2 px-1 w-16">Atual</th>
-                  <th className="text-right font-medium pb-2 px-1 w-24">Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {top.map((r) => (
-                  <tr key={r.sku} className="border-b border-border last:border-0">
-                    <td className="py-2 px-1 min-w-0">
-                      <div className="truncate max-w-[300px] text-[12.5px] font-medium" title={r.nome ?? r.sku}>
-                        {r.nome ?? r.sku}
-                      </div>
-                      <div className="text-[10.5px] text-muted-foreground font-mono">
-                        {r.sku}{r.marca && r.marca !== "(sem marca)" ? ` · ${r.marca}` : ""}
-                      </div>
-                    </td>
-                    <td className="py-2 px-1 text-right tabular-nums text-muted-foreground font-mono">
-                      {formatNumber(Number(r.qtd_anterior ?? 0))}
-                    </td>
-                    <td className="py-2 px-1 text-right tabular-nums font-mono font-medium">
-                      <QtdDelta atual={Number(r.qtd_atual ?? 0)} anterior={Number(r.qtd_anterior ?? 0)} />
-                    </td>
-                    <td className="py-2 px-1 text-right tabular-nums font-mono font-semibold">
-                      {formatBRL(Number(r.valor_atual ?? 0), { compact: true })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <Link
-            to="/vendas"
-            search={{ period: "custom", from: range.from, to: range.to, view: "sku", sort: "receita" }}
-            className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
-          >
-            Ver todos ({rows.length}) <ArrowRight className="h-3 w-3" />
-          </Link>
-        </>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Vendas por Marca (kit destrinchado)
-// ============================================================
-function VendasMarcaPanel({ rows, loading, range }: { rows: VendaMarcaRow[]; loading: boolean; range: { from: string; to: string } }) {
-  const top = rows.slice(0, 10);
-  const maxValor = rows.reduce((m, r) => Math.max(m, Number(r.valor_atual ?? 0)), 0) || 1;
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Vendas por marca</div>
-          <div className="text-[12px] text-muted-foreground">Receita do período (kits destrinchados)</div>
-        </div>
-        {!loading && rows.length > 0 && (
-          <div className="text-[11px] text-muted-foreground font-mono tabular-nums shrink-0">{rows.length} marcas</div>
-        )}
-      </div>
-      {loading ? (
-        <div className="h-64 rounded bg-muted/40 animate-pulse" />
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
-      ) : (
-        <>
-          <div className="flex flex-col gap-3">
-            {top.map((r) => {
-              const w = Math.max(2, (Number(r.valor_atual ?? 0) / maxValor) * 100);
-              return (
-                <div key={r.marca} className="flex flex-col gap-1.5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[12.5px] font-medium truncate" title={r.marca}>{r.marca}</span>
-                    <span className="text-[12.5px] font-semibold font-mono tabular-nums shrink-0">
-                      {formatBRL(Number(r.valor_atual ?? 0), { compact: true })}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex-1 h-1.5 rounded bg-muted overflow-hidden">
-                      <div className="h-full rounded bg-primary" style={{ width: `${w}%` }} />
-                    </div>
-                    <span className="text-[11px] text-muted-foreground font-mono w-20 text-right tabular-nums">
-                      <QtdDelta atual={Number(r.qtd_atual ?? 0)} anterior={Number(r.qtd_anterior ?? 0)} /> un
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <Link
-            to="/vendas"
-            search={{ period: "custom", from: range.from, to: range.to, view: "marca", sort: "receita" }}
-            className="text-[12px] text-primary hover:underline font-medium inline-flex items-center gap-1 self-start"
-          >
-            Ver todas ({rows.length}) <ArrowRight className="h-3 w-3" />
-          </Link>
-        </>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Anomalias detectadas
-// ============================================================
-type AnomaliaData = { cor: "destructive" | "warning" | "amber"; to: string; titulo: string; detalhe: string };
-
-function AnomaliasPanel({ anomalias }: { anomalias: AnomaliaData[] }) {
-  const dotCls = { destructive: "bg-destructive", warning: "bg-warning", amber: "bg-yellow-500" };
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">Anomalias detectadas</div>
-          <div className="text-[12px] text-muted-foreground">Pendências que afetam a margem</div>
-        </div>
-        {anomalias.length > 0 && (
-          <span className="bg-destructive/10 text-destructive text-[11px] font-semibold px-2.5 py-1 rounded-full tabular-nums">
-            {anomalias.length}
-          </span>
-        )}
-      </div>
-      {anomalias.length === 0 ? (
-        <div className="flex items-center gap-2 text-sm text-success py-2">
-          <CheckCircle2 className="h-4 w-4" /> Nenhuma pendência.
-        </div>
-      ) : (
-        <div className="flex flex-col">
-          {anomalias.map((a, i) => (
-            <Link
-              key={i}
-              to={a.to}
-              className="flex gap-3 py-[11px] border-b border-border last:border-0 group"
-            >
-              <span className={cn("h-[7px] w-[7px] rounded-full mt-[5px] shrink-0", dotCls[a.cor])} />
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-[12.5px] font-medium leading-snug group-hover:text-primary transition-colors">{a.titulo}</span>
-                <span className="text-[11.5px] text-muted-foreground leading-snug">{a.detalhe}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-// ============================================================
-// Metas do mês
-// ============================================================
-const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-
-/** "2026-09-01" → "set/26". Sem new Date(): a competência é data pura e o
- *  parse com fuso jogaria o mês para trás. */
-function rotuloMes(competencia: string): string {
-  const [ano, mes] = competencia.split("-");
-  const i = Number(mes) - 1;
-  return `${MES_CURTO[i] ?? mes}/${ano.slice(2)}`;
-}
-
-/**
- * ACOS do mês × meta × mês a mês (pedido do dono, 19/set/2026).
- * Fonte: view_metas_realizado (marketplace 'todos') — ACOS = ADS ÷ receita do
- * mês, e a meta sai da tabela `metas` (tipo 'acos'), que muda de mês para mês
- * (jul = 5%, ago/set = 6%). Por isso a meta é uma marca por barra, e não uma
- * linha única no gráfico.
- */
-function AcosMensalPanel({ meses, loading }: { meses: MetaRealizado[]; loading: boolean }) {
-  const dados = meses.slice(-12);
-  const atual = dados.length > 0 ? dados[dados.length - 1] : null;
-  const acosAtual = atual?.acos_realizado != null ? Number(atual.acos_realizado) : null;
-  const metaAtual = atual?.meta_acos != null ? Number(atual.meta_acos) : null;
-  const deltaPp = acosAtual != null && metaAtual != null ? acosAtual - metaAtual : null;
-  const estourouAtual = deltaPp != null && deltaPp > 0;
-  const maxEscala =
-    Math.max(1, ...dados.map((m) => Math.max(Number(m.acos_realizado ?? 0), Number(m.meta_acos ?? 0)))) * 1.18;
-
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">ACOS mês a mês</div>
-          <p className="text-[11.5px] text-muted-foreground">
-            Gasto com ADS sobre a receita · traço = meta do mês · Shopee e Mercado Livre
-          </p>
-        </div>
-        <div className="flex items-baseline gap-2.5">
-          <span
-            className="text-[30px] font-semibold tabular-nums leading-none"
-            style={{ color: estourouAtual ? "var(--color-destructive)" : "var(--color-chart-2)" }}
-          >
-            {acosAtual != null ? formatPercent(acosAtual) : "—"}
-          </span>
-          <span className="text-[11.5px] font-medium text-muted-foreground">
-            {metaAtual != null ? `meta ${formatPercent(metaAtual)}` : "sem meta no mês"}
-            {deltaPp != null && (
-              <span className={cn("ml-1.5 font-semibold", estourouAtual ? "text-destructive" : "text-success")}>
-                {deltaPp >= 0 ? "+" : "−"}
-                {Math.abs(deltaPp).toFixed(1).replace(".", ",")} pp
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="h-[150px] rounded-[10px] bg-muted/40 animate-pulse" />
-      ) : dados.length === 0 ? (
-        <p className="text-[12px] text-muted-foreground py-6 text-center">Sem histórico de ADS no período.</p>
-      ) : (
-        <div className="flex items-stretch gap-2 h-[150px]">
-          {dados.map((m) => {
-            const v = Number(m.acos_realizado ?? 0);
-            const meta = m.meta_acos != null ? Number(m.meta_acos) : null;
-            const estourou = meta != null && v > meta;
-            const alturaPct = Math.max(2, (v / maxEscala) * 100);
-            const metaPct = meta != null ? (meta / maxEscala) * 100 : null;
-            const ehAtual = atual != null && m.competencia === atual.competencia;
-            return (
-              <div key={m.competencia} className="flex-1 min-w-0 flex flex-col items-center gap-1.5">
-                <span className="text-[10.5px] font-mono tabular-nums text-muted-foreground">
-                  {v > 0 ? formatPercent(v) : "—"}
-                </span>
-                <div
-                  className="relative w-full flex-1 min-h-0 rounded-[5px] bg-muted/40"
-                  title={
-                    `${rotuloMes(m.competencia)} · ACOS ${formatPercent(v)}` +
-                    (meta != null ? ` · meta ${formatPercent(meta)}` : " · sem meta") +
-                    ` · ADS ${formatBRL(Number(m.ads_realizado ?? 0), { compact: true })}` +
-                    ` · receita ${formatBRL(Number(m.receita_realizada ?? 0), { compact: true })}`
-                  }
-                >
-                  <div
-                    className="absolute bottom-0 left-0 right-0 rounded-[5px] transition-[height]"
-                    style={{
-                      height: `${alturaPct}%`,
-                      background: estourou ? "var(--color-destructive)" : "var(--color-chart-2)",
-                      opacity: ehAtual ? 1 : 0.72,
-                    }}
-                  />
-                  {metaPct != null && (
-                    <div
-                      className="absolute left-0 right-0 border-t-[1.5px] border-dashed border-foreground/50"
-                      style={{ bottom: `${metaPct}%` }}
-                    />
-                  )}
-                </div>
-                <span className={cn("text-[10.5px]", ehAtual ? "font-semibold text-foreground" : "text-muted-foreground")}>
-                  {rotuloMes(m.competencia)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function MetasPanel({ data, competencia }: { data: MetaRealizado | null; competencia: string }) {
-  const linhas: MetaLinhaData[] = [];
-
-  const recReal = Number(data?.receita_realizada ?? 0);
-  const recMeta = data?.meta_receita != null ? Number(data.meta_receita) : null;
-  if (recMeta && recMeta > 0) {
-    const pct = Number(data?.receita_pct_meta ?? (recReal / recMeta) * 100);
-    const noRitmo =
-      data?.meta_receita_diaria != null && data?.receita_media_diaria != null
-        ? Number(data.receita_media_diaria) >= Number(data.meta_receita_diaria)
-        : null;
-    linhas.push({
-      nome: "Receita",
-      atual: formatBRL(recReal, { compact: true }),
-      alvo: formatBRL(recMeta, { compact: true }),
-      pct,
-      ritmo: noRitmo == null ? "" : noRitmo ? "No ritmo" : "Atrás do plano",
-      ritmoBom: noRitmo,
-      color: "var(--color-primary)",
-    });
-  }
-
-  const mgReal = Number(data?.margem_realizada ?? 0);
-  const mgMeta = data?.meta_margem != null ? Number(data.meta_margem) : null;
-  if (mgMeta && mgMeta > 0) {
-    const pct = Number(data?.margem_pct_meta ?? (mgReal / mgMeta) * 100);
-    linhas.push({
-      nome: "Margem de contribuição",
-      atual: formatBRL(mgReal, { compact: true }),
-      alvo: formatBRL(mgMeta, { compact: true }),
-      pct,
-      ritmo: pct >= 100 ? "Acima do plano" : "",
-      ritmoBom: pct >= 100 ? true : null,
-      color: "var(--color-success)",
-    });
-  }
-
-  const acos = Number(data?.acos_realizado ?? 0);
-  const teto = data?.meta_acos != null ? Number(data.meta_acos) : null;
-  if (teto && teto > 0) {
-    const pct = (acos / teto) * 100;
-    const estourou = data?.acos_estourou === true || acos > teto;
-    linhas.push({
-      nome: "ACOS (teto)",
-      atual: formatPercent(acos),
-      alvo: formatPercent(teto),
-      pct,
-      ritmo: estourou ? "Estourou" : "Dentro do teto",
-      ritmoBom: !estourou,
-      color: estourou ? "var(--color-destructive)" : "var(--color-warning)",
-      invertido: true,
-    });
-  }
-
-  return (
-    <Card className="p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[14.5px] font-semibold tracking-[-0.015em]">
-            Metas · {format(parseISO(competencia), "MMMM", { locale: ptBR })}
-          </div>
-          <div className="text-[12px] text-muted-foreground">Progresso vs. objetivo</div>
-        </div>
-        <Link to="/metas" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0">
-          Configurar <ArrowRight className="h-3 w-3" />
-        </Link>
-      </div>
-
-      {linhas.length === 0 ? (
-        <Link to="/metas" className="text-sm text-primary hover:underline inline-flex items-center gap-1.5">
-          <Target className="h-4 w-4" /> Definir metas do mês
-        </Link>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {linhas.map((l) => (
-            <MetaLinha key={l.nome} data={l} />
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-type MetaLinhaData = {
-  nome: string;
-  atual: string;
-  alvo: string;
-  pct: number;
-  ritmo: string;
-  ritmoBom: boolean | null;
-  color: string;
-  invertido?: boolean;
-};
-
-function MetaLinha({ data }: { data: MetaLinhaData }) {
-  const { nome, atual, alvo, pct, ritmo, ritmoBom, color, invertido } = data;
-  const w = Math.min(100, Math.max(0, pct));
-  const ritmoCls = ritmoBom == null ? "text-muted-foreground" : ritmoBom ? "text-success" : "text-destructive";
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between gap-2.5">
-        <span className="text-[12.5px] font-medium">{nome}</span>
-        <span className="text-[12px] text-muted-foreground font-mono tabular-nums">
-          {atual} / {alvo}
-        </span>
-      </div>
-      <div className="h-2 rounded-md bg-muted overflow-hidden">
-        <div className="h-full rounded-md" style={{ width: `${w}%`, background: color }} />
-      </div>
-      <div className="flex justify-between text-[11px] text-muted-foreground">
-        <span>
-          {pct.toFixed(0).replace(".", ",")}% {invertido ? "do teto" : "atingido"}
-        </span>
-        {ritmo && <span className={cn("font-medium", ritmoCls)}>{ritmo}</span>}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Filtros
-// ============================================================
-function PeriodoPicker({
-  preset,
-  onPreset,
-  customRange,
-  onCustom,
-}: {
-  preset: PresetKey;
-  onPreset: (p: PresetKey) => void;
-  customRange: { from: string; to: string } | null;
-  onCustom: (r: { from: string; to: string }) => void;
-}) {
-  const [from, setFrom] = useState(customRange?.from ?? "");
-  const [to, setTo] = useState(customRange?.to ?? "");
-  const especial = preset === "mes_anterior" || preset === "custom";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className={cn(
-            "text-[12.5px] font-medium px-3 py-1.5 rounded-[7px] transition-colors",
-            especial ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {especial ? PRESET_LABEL[preset] : "Mais"}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="text-xs">Período</DropdownMenuLabel>
-        {(["mes_anterior"] as PresetKey[]).map((p) => (
-          <DropdownMenuCheckboxItem
-            key={p}
-            checked={preset === p}
-            onSelect={(e) => { e.preventDefault(); onPreset(p); }}
-          >
-            {PRESET_LABEL[p]}
-          </DropdownMenuCheckboxItem>
-        ))}
-        <DropdownMenuSeparator />
-        <div className="p-2 space-y-2">
-          <p className="text-xs text-muted-foreground">Personalizado</p>
-          <div className="flex gap-1">
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 min-w-0" />
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="text-xs border rounded px-2 py-1 flex-1 min-w-0" />
-          </div>
-          <Button size="sm" className="w-full" disabled={!from || !to || from > to} onClick={() => onCustom({ from, to })}>
-            Aplicar
-          </Button>
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 function CanalFilter({
   canais,
   selecionados,
@@ -1533,138 +647,5 @@ function CanalFilter({
         })}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-// ============================================================
-// Canal card (detalhado)
-// ============================================================
-function CanalCard({ data }: { data: KpiCanal }) {
-  const cor = colorForCanal(data.canal);
-  const receita = Number(data.receita ?? 0);
-  const pedidos = Number(data.pedidos ?? 0);
-  const margem = Number(data.margem ?? 0);
-  const mcPct = Number(data.mc_pct ?? 0);
-  const ads = data.ads == null ? null : Number(data.ads);
-  const acos = data.acos == null ? null : Number(data.acos);
-  const ticket = Number(data.ticket_medio ?? 0);
-  const cobertura = data.cobertura_pct == null ? null : Number(data.cobertura_pct);
-  const temHistorico = data.receita_ant != null;
-
-  const margemAposAds = ads == null ? margem : margem - ads;
-  const margemAposAdsPct = receita > 0 ? (margemAposAds / receita) * 100 : 0;
-
-  return (
-    <Card className="p-5 space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="inline-block h-3 w-3 rounded-sm shrink-0" style={{ background: cor }} />
-          <p className="font-medium truncate">{data.canal}</p>
-        </div>
-        {cobertura != null && cobertura < 95 && (
-          <TooltipProvider>
-            <UITooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="outline" className="text-warning border-warning/30 bg-warning/5 gap-1">
-                  <Info className="h-3 w-3" /> {cobertura.toFixed(0)}%
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                {cobertura.toFixed(0)}% da receita tem custo conhecido — a margem deste canal é parcial.
-              </TooltipContent>
-            </UITooltip>
-          </TooltipProvider>
-        )}
-      </div>
-
-      <div>
-        <div className="flex items-baseline gap-3">
-          <p className="text-2xl font-semibold tabular-nums">{formatBRL(receita, { compact: true })}</p>
-          <VariacaoInline valor={data.var_receita_pct} temHistorico={temHistorico} altaBoa />
-        </div>
-        <div className="flex items-baseline gap-3 mt-1">
-          <p className="text-sm text-muted-foreground tabular-nums">{formatNumber(pedidos)} pedidos</p>
-          <VariacaoInline valor={data.var_pedidos_pct} temHistorico={temHistorico} altaBoa small />
-        </div>
-      </div>
-
-      <div className="space-y-1.5 text-sm">
-        <Linha label="Margem contrib." valor={formatBRL(margem, { compact: true })} extra={formatPercent(mcPct)} />
-        <Linha label="ADS" valor={ads == null ? "—" : formatBRL(ads, { compact: true })} extra={acos == null ? "—" : `ACOS ${formatPercent(acos)}`} />
-        <div className="border-t pt-2 mt-2">
-          <Linha
-            label="Margem após ADS"
-            valor={formatBRL(margemAposAds, { compact: true })}
-            extra={formatPercent(margemAposAdsPct)}
-            destaque
-            corValor={margemAposAds < 0 ? "text-destructive" : undefined}
-          />
-        </div>
-        <div className="pt-1 space-y-1">
-          <Linha label="Ticket médio" valor={formatBRL(ticket)} muted />
-          {cobertura != null && (
-            <Linha label="Cobertura" valor={`${cobertura.toFixed(0)}%`} muted corValor={cobertura < 95 ? "text-warning" : undefined} />
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function Linha({
-  label,
-  valor,
-  extra,
-  destaque,
-  muted,
-  corValor,
-}: {
-  label: string;
-  valor: string;
-  extra?: string;
-  destaque?: boolean;
-  muted?: boolean;
-  corValor?: string;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className={cn("text-xs text-muted-foreground", destaque && "font-medium text-foreground")}>{label}</span>
-      <span className={cn("tabular-nums", destaque ? "font-semibold text-base" : "text-sm", corValor)}>
-        {valor}
-        {extra && <span className={cn("ml-2 text-xs text-muted-foreground", destaque && "font-normal")}>{extra}</span>}
-      </span>
-    </div>
-  );
-}
-
-// ============================================================
-// Variação inline
-// ============================================================
-function VariacaoInline({
-  valor,
-  temHistorico,
-  altaBoa,
-  small,
-}: {
-  valor: number | null;
-  temHistorico: boolean;
-  altaBoa: boolean;
-  small?: boolean;
-}) {
-  if (!temHistorico || valor == null) {
-    return <span className={cn("text-muted-foreground", small ? "text-[11px]" : "text-xs")}>—</span>;
-  }
-  const v = Number(valor);
-  const subiu = v > 0.05;
-  const desceu = v < -0.05;
-  const bom = altaBoa ? subiu : desceu;
-  const ruim = altaBoa ? desceu : subiu;
-  const cls = bom ? "text-success" : ruim ? "text-destructive" : "text-muted-foreground";
-  const Icon = subiu ? ArrowUp : desceu ? ArrowDown : null;
-  return (
-    <span className={cn("inline-flex items-center gap-0.5 font-medium", cls, small ? "text-[11px]" : "text-xs")}>
-      {Icon && <Icon className={small ? "h-2.5 w-2.5" : "h-3 w-3"} />}
-      {`${v > 0 ? "+" : ""}${v.toFixed(1).replace(".", ",")}%`}
-    </span>
   );
 }
