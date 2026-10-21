@@ -1,12 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Tag } from "lucide-react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LOJAS } from "@/components/promocoes/comum";
-import { PromocoesShopee, type AbaShopee } from "@/components/promocoes/PromocoesShopee";
+import { type AbaShopee } from "@/components/promocoes/PromocoesShopee";
+import { Relampago } from "@/components/promocoes/Relampago";
+import { ShopeeMinha, type CabBase } from "@/components/promocoes/ShopeeMinha";
 import { PromocoesML } from "@/components/promocoes/PromocoesML";
 import { PromocoesTikTok } from "@/components/promocoes/PromocoesTikTok";
 import { PromocoesAmazon } from "@/components/promocoes/PromocoesAmazon";
+import { CabecalhoMkt } from "@/components/promocoes/ui/kit";
 
 // ============================================================================
 // Promoções — todas as promoções num lugar só (07/out/2026, pedido do dono),
@@ -17,16 +19,20 @@ import { PromocoesAmazon } from "@/components/promocoes/PromocoesAmazon";
 //   · TikTok: promoções da loja ACZ.
 // /promocoes-shopee, /promocoes-ml e /flash-sale redirecionam para cá.
 // Sub-aba, aba da Shopee e loja ficam na URL (sobrevivem à remontagem).
+// 21/out/2026 — design novo do Claude Design ("Promoções"): cabeçalho único com o
+// marketplace (logo), loja e sincronização; tokens --pm-* em .pm-ui. Migrado por partes:
+// fase 1 = Shopee › Minha Promoção (ShopeeMinha). Relâmpago, Mercado Livre, Amazon e
+// TikTok ainda são as telas de antes, abaixo do cabeçalho novo.
 // ============================================================================
 
 type Mkt = "shopee" | "ml" | "amazon" | "tiktok";
 interface SearchParams { mkt: Mkt; aba: AbaShopee; loja: number }
 
-const MKTS: Array<{ id: Mkt; nome: string; cor: string }> = [
-  { id: "shopee", nome: "Shopee", cor: "#EE4D2D" },
-  { id: "ml", nome: "Mercado Livre", cor: "#E8B500" },
-  { id: "amazon", nome: "Amazon", cor: "#FF9900" },
-  { id: "tiktok", nome: "TikTok Shop", cor: "#111111" },
+const MKTS: Array<{ id: Mkt; nome: string; logo: string }> = [
+  { id: "shopee", nome: "Shopee", logo: "/logos/shopee-icon.png" },
+  { id: "ml", nome: "Mercado Livre", logo: "/logos/ml-icon.png" },
+  { id: "amazon", nome: "Amazon", logo: "/logos/amazon-icon.png" },
+  { id: "tiktok", nome: "TikTok Shop", logo: "/logos/tiktok-icon.png" },
 ];
 
 export const Route = createFileRoute("/promocoes")({
@@ -43,41 +49,39 @@ function PromocoesPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const set = (patch: Partial<SearchParams>) =>
-    navigate({ search: (s: SearchParams) => ({ ...s, ...patch }), replace: true });
+    navigate({ search: (s: SearchParams) => ({ ...s, ...patch }), replace: true, resetScroll: false });
+
+  const ehShopee = search.mkt === "shopee";
+  const cab: CabBase = {
+    mkts: MKTS, mkt: search.mkt, onMkt: (id) => set({ mkt: id as Mkt }),
+    lojaRot: "Loja", lojas: ehShopee ? LOJAS.map((l) => ({ id: l.shop_id, nome: l.nome })) : [], loja: search.loja,
+    onLoja: (id) => set({ loja: Number(id) }),
+    subtabs: ehShopee ? [{ id: "minha", nome: "Minha Promoção" }, { id: "relampago", nome: "Relâmpago" }] : [],
+    sub: search.aba, onSub: (id) => set({ aba: id as AbaShopee }),
+  };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 w-full">
-      <div>
-        <h1 className="text-[19px] font-semibold tracking-[-0.02em] flex items-center gap-2">
-          <Tag className="h-5 w-5 text-primary" /> Promoções
+    <div className="pm-ui p-4 md:p-6 w-full" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <header style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 8 }}>
+          <Tag style={{ width: 20, height: 20, color: "var(--pm-a)" }} strokeWidth={1.75} />Promoções
         </h1>
-        <p className="text-[12.5px] text-muted-foreground mt-0.5">
-          Promoções e campanhas de cada marketplace, com custo e margem de contribuição por produto.
-        </p>
-      </div>
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--pm-t3)" }}>Promoções e campanhas de cada marketplace, com custo e margem de contribuição por produto.</p>
+      </header>
 
-      <Tabs value={search.mkt} onValueChange={(v) => set({ mkt: v as Mkt })}>
-        <TabsList className="h-10">
-          {MKTS.map((m) => (
-            <TabsTrigger key={m.id} value={m.id} className="gap-2 px-4">
-              <i className="h-2.5 w-2.5 rounded-full" style={{ background: m.cor }} />
-              {m.nome}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <TabsContent value="shopee" className="mt-5">
-          <PromocoesShopee aba={search.aba} loja={search.loja} onChange={(p) => set(p)} />
-        </TabsContent>
-        <TabsContent value="ml" className="mt-5">
-          <PromocoesML />
-        </TabsContent>
-        <TabsContent value="amazon" className="mt-5">
-          <PromocoesAmazon />
-        </TabsContent>
-        <TabsContent value="tiktok" className="mt-5">
-          <PromocoesTikTok />
-        </TabsContent>
-      </Tabs>
+      {ehShopee && search.aba === "minha" ? (
+        <ShopeeMinha key={search.loja} shopId={search.loja} cab={cab} onIrRelampago={() => set({ aba: "relampago" })} />
+      ) : (
+        <>
+          <CabecalhoMkt {...cab} />
+          <div style={{ fontSize: 13 }}>
+            {ehShopee && <Relampago key={search.loja} shopId={search.loja} />}
+            {search.mkt === "ml" && <PromocoesML />}
+            {search.mkt === "amazon" && <PromocoesAmazon />}
+            {search.mkt === "tiktok" && <PromocoesTikTok />}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1355,6 +1355,16 @@ sub-aba por marketplace (`?mkt=shopee|ml|amazon|tiktok`): **Shopee** = Minha Pro
 página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Livre** = Central de Promoções
 (`PromocoesML`, antes a rota `/promocoes-ml`), **Amazon** = `PromocoesEmBreve` (estudo) e **TikTok** =
 `PromocoesTikTok` + `TikTokAcoes` (abaixo).
+- **Design novo do Claude Design (21/out/2026, fase 1 = Shopee › Minha Promoção):** pacote "Promoções" (Promocoes.dc.html)
+  aplicado por partes. Kit em `src/components/promocoes/ui/kit.tsx` (CabecalhoMkt com logos em `public/logos/*-icon.png`, FaixaDecisao,
+  ListaPromos, CartaoRobo, TabelaPromo com preço editável/balão da conta da MC/menu "preço para MC x%"/barra de lote, PreviaAplicar com
+  resultado por linha, ErroLeitura); cores = tokens **`--pm-*` em `.pm-ui`** (styles.css, claro/escuro pela classe .dark). A Minha
+  Promoção virou `ShopeeMinha.tsx` (MESMAS leituras e escritas da `MinhaPromocao.tsx`, que fica no repositório sem uso): lê o detalhe de
+  todas as promoções vivas (em andamento + programadas, até 15) para os contadores "Pede decisão" (MC negativa, < 10%, acabam hoje/amanhã,
+  vagas da relâmpago de amanhã = `flashsale_programacao` ativas /50, fora de promoção = 20+ vendas em 30 d e fora de campanha via
+  `modulo=em-campanha` + `shopee_anuncios_busca`, recusados na sessão, sem custo); "Fora de promoção" é um item da lista; tirar da promoção
+  e aplicar preço passam pela prévia; "Adicionar produtos" ainda é o diálogo antigo (AdicionarAoDesconto). Relâmpago, Mercado Livre,
+  Amazon e TikTok seguem com a tela antiga abaixo do cabeçalho novo — próximas fases.
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +
