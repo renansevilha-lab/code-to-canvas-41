@@ -439,7 +439,7 @@ interface VariacaoRow { item_id: number; model_id: number; sku: string | null; n
 
 const POR_PAGINA = 20;
 
-function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, onAdicionou }: {
+export function AdicionarProduto({ aberto, onFechar, shopId, jaProgramados, criadoPor, onAdicionou }: {
   aberto: boolean; onFechar: () => void; shopId: number;
   jaProgramados: Set<string>; criadoPor: string | null; onAdicionou: () => void;
 }) {

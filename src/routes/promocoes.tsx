@@ -3,7 +3,7 @@ import { Tag } from "lucide-react";
 
 import { LOJAS } from "@/components/promocoes/comum";
 import { type AbaShopee } from "@/components/promocoes/PromocoesShopee";
-import { Relampago } from "@/components/promocoes/Relampago";
+import { ShopeeRelampago } from "@/components/promocoes/ShopeeRelampago";
 import { ShopeeMinha, type CabBase } from "@/components/promocoes/ShopeeMinha";
 import { PromocoesML } from "@/components/promocoes/PromocoesML";
 import { PromocoesTikTok } from "@/components/promocoes/PromocoesTikTok";
@@ -21,8 +21,8 @@ import { CabecalhoMkt } from "@/components/promocoes/ui/kit";
 // Sub-aba, aba da Shopee e loja ficam na URL (sobrevivem à remontagem).
 // 21/out/2026 — design novo do Claude Design ("Promoções"): cabeçalho único com o
 // marketplace (logo), loja e sincronização; tokens --pm-* em .pm-ui. Migrado por partes:
-// fase 1 = Shopee › Minha Promoção (ShopeeMinha). Relâmpago, Mercado Livre, Amazon e
-// TikTok ainda são as telas de antes, abaixo do cabeçalho novo.
+// fase 1 = Shopee › Minha Promoção (ShopeeMinha); fase 2 = Relâmpago (ShopeeRelampago).
+// Mercado Livre, Amazon e TikTok ainda são as telas de antes, abaixo do cabeçalho novo.
 // ============================================================================
 
 type Mkt = "shopee" | "ml" | "amazon" | "tiktok";
@@ -71,11 +71,12 @@ function PromocoesPage() {
 
       {ehShopee && search.aba === "minha" ? (
         <ShopeeMinha key={search.loja} shopId={search.loja} cab={cab} onIrRelampago={() => set({ aba: "relampago" })} />
+      ) : ehShopee ? (
+        <ShopeeRelampago key={search.loja} shopId={search.loja} cab={cab} />
       ) : (
         <>
           <CabecalhoMkt {...cab} />
           <div style={{ fontSize: 13 }}>
-            {ehShopee && <Relampago key={search.loja} shopId={search.loja} />}
             {search.mkt === "ml" && <PromocoesML />}
             {search.mkt === "amazon" && <PromocoesAmazon />}
             {search.mkt === "tiktok" && <PromocoesTikTok />}

@@ -36,14 +36,14 @@ export const seg = (on: boolean): CSSProperties => ({
 const MONO = "pm-mono";
 
 // ---------------------------------------------------------------- estados
-export type EstadoLinha = "na" | "programado" | "aguardando" | "recusado" | "fora" | "auto" | "melhor" | "troca" | "encerrada" | "aplicado" | "pulado";
+export type EstadoLinha = "na" | "programado" | "aguardando" | "recusado" | "fora" | "auto" | "melhor" | "troca" | "encerrada" | "aplicado" | "pulado" | "pausado";
 export const EST: Record<EstadoLinha, [string, string, string]> = {
   na: ["Na promoção", "var(--pm-gs)", "var(--pm-g)"], programado: ["Programado", "var(--pm-as)", "var(--pm-at)"],
   aguardando: ["Aguardando", "var(--pm-ams)", "var(--pm-am)"], recusado: ["Recusado", "var(--pm-rs)", "var(--pm-r)"],
   fora: ["Fora de promoção", "var(--pm-gr)", "var(--pm-t2)"], auto: ["Entra automático", "var(--pm-gs)", "var(--pm-g)"],
   melhor: ["Há promoção melhor", "var(--pm-ams)", "var(--pm-am)"], troca: ["Sugestão de troca", "var(--pm-as)", "var(--pm-at)"],
   encerrada: ["Encerrada", "var(--pm-gr)", "var(--pm-t3)"], aplicado: ["Aplicado agora", "var(--pm-gs)", "var(--pm-g)"],
-  pulado: ["Pulado", "var(--pm-gr)", "var(--pm-t2)"],
+  pulado: ["Pulado", "var(--pm-gr)", "var(--pm-t2)"], pausado: ["Pausado", "var(--pm-gr)", "var(--pm-t3)"],
 };
 export type StatusPromo = "andamento" | "programada" | "encerrada" | "adesao" | "aguardando" | "fora";
 export const PST: Record<StatusPromo, [string, string, string]> = {
@@ -268,6 +268,10 @@ export interface LinhaPromo {
   conta: (preco: number) => ContaMc | null;
   semCusto: boolean; mcNota?: string | null;
   precoPara?: (alvo: number) => number | null;
+  /** Conteúdo a mais embaixo do estado (ex.: estoque/limite da relâmpago). */
+  estadoExtra?: ReactNode;
+  /** Linha esmaecida (ex.: item pausado). */
+  apagada?: boolean;
 }
 export interface Faixa { id: string; nome: string; t: (p: number) => boolean }
 export const FAIXAS: Faixa[] = [
@@ -412,7 +416,7 @@ export function TabelaPromo({
                 const st = EST[l.estado] ?? EST.na;
                 const desc = l.cheio > 0 ? 1 - p / l.cheio : 0;
                 return (
-                  <div key={l.key} style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", minHeight: 62, padding: "6px 0", borderTop: "1px solid var(--pm-b)", background: l.estado === "recusado" ? "var(--pm-rs)" : chk ? "var(--pm-as)" : "transparent" }}>
+                  <div key={l.key} style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", minHeight: 62, padding: "6px 0", borderTop: "1px solid var(--pm-b)", background: l.estado === "recusado" ? "var(--pm-rs)" : chk ? "var(--pm-as)" : "transparent", opacity: l.apagada ? 0.55 : 1 }}>
                     <div style={{ display: "flex", justifyContent: "center" }}>
                       <Check on={chk} onClick={() => { const n = new Set(sel); if (chk) n.delete(l.key); else n.add(l.key); setSel(n); }} />
                     </div>
@@ -473,6 +477,7 @@ export function TabelaPromo({
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "0 8px", minWidth: 0 }}>
                       <Chip bg={st[1]} cor={st[2]}>{st[0]}</Chip>
                       {l.motivo && <span style={{ fontSize: 11, color: "var(--pm-t2)", lineHeight: 1.3, textWrap: "pretty" }}>{l.motivo}</span>}
+                      {l.estadoExtra}
                     </div>
                     <div style={{ display: "flex", gap: 2, justifyContent: "flex-end", paddingRight: 8 }}>{acoes?.(l, p)}</div>
                   </div>
@@ -575,15 +580,17 @@ export interface ItemPrevia {
 }
 const TOM: Record<TomAviso, [string, string]> = { r: ["var(--pm-rs)", "var(--pm-r)"], am: ["var(--pm-ams)", "var(--pm-am)"], at: ["var(--pm-as)", "var(--pm-at)"] };
 
-export function PreviaAplicar({ fase, mktNa, promoNome, itens, botao, onAplicar, onFechar }: {
+export function PreviaAplicar({ fase, mktNa, promoNome, itens, botao, onAplicar, onFechar, descRevisar }: {
   fase: "revisar" | "aplicando" | "resultado"; mktNa: string; promoNome: string; itens: ItemPrevia[];
   botao?: string; onAplicar: () => void; onFechar: () => void;
+  /** Texto do subtítulo na revisão (padrão: o preço público muda na hora). */
+  descRevisar?: string;
 }) {
   const n = itens.length;
   const nAv = itens.filter((x) => x.avisos.some((g) => g.tom !== "at")).length;
   const cnt = (t: string) => itens.filter((x) => x.res?.tipo === t).length;
   const titulo = fase === "resultado" ? `Resultado ${mktNa}` : fase === "aplicando" ? `Aplicando ${mktNa}…` : `Revisar antes de aplicar ${mktNa}`;
-  const desc = fase === "resultado" ? `“${promoNome}”: o que o marketplace aceitou, recusou ou ficou de fora.` : `“${promoNome}”: o preço público muda na hora. Nada foi enviado ainda.`;
+  const desc = fase === "resultado" ? `“${promoNome}”: o que o marketplace aceitou, recusou ou ficou de fora.` : `“${promoNome}”: ${descRevisar ?? "o preço público muda na hora. Nada foi enviado ainda."}`;
   const COLP = "minmax(220px,1.4fr) 150px 130px minmax(180px,1.2fr)";
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "oklch(0.15 0.01 285 / 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}

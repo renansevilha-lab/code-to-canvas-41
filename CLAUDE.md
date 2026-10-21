@@ -1365,6 +1365,12 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   `modulo=em-campanha` + `shopee_anuncios_busca`, recusados na sessão, sem custo); "Fora de promoção" é um item da lista; tirar da promoção
   e aplicar preço passam pela prévia; "Adicionar produtos" ainda é o diálogo antigo (AdicionarAoDesconto). Relâmpago, Mercado Livre,
   Amazon e TikTok seguem com a tela antiga abaixo do cabeçalho novo — próximas fases.
+  **Fase 2 (21/out) = Relâmpago** (`ShopeeRelampago.tsx`): "Amanhã" = `flashsale_programacao` (editar preço vai pela prévia e grava SÓ na
+  programação; estoque/limite/pausar gravam direto; teto = `tetoRelampago` e preço acima dele fica "Aguardando · a Shopee deve recusar";
+  motivo da última rodada por SKU vem de `flashsale_criadas.detalhe.problemas`); dias anteriores = `flashsale_criadas` + itens ao vivo
+  (`shopee-flashsale?modulo=sale`, só leitura; relâmpago encerrada zera o status de todos os modelos — vale quem tinha preço menor que o
+  original). "Programar amanhã agora" e o robô (flashsale_config.automacao_ativa) iguais à tela antiga (Relampago.tsx fica no repo; o
+  diálogo AdicionarProduto é exportado de lá).
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +

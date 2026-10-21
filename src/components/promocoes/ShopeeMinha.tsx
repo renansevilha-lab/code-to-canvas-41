@@ -102,7 +102,7 @@ async function lerDesconto(shopId: number, discountId: number): Promise<Linha[]>
 }
 
 /** Conta da MC por unidade (para o balão) — mesma regra do calcMc. */
-function contaShopee(base: McBase | undefined, preco: number, tarifa: Tarifa[] | undefined): ContaMc | null {
+export function contaShopee(base: McBase | undefined, preco: number, tarifa: Tarifa[] | undefined): ContaMc | null {
   const mc = calcMc(base, preco, tarifa);
   if (!mc || !base) return null;
   const tab = comissaoShopee(preco, tarifa);
@@ -116,7 +116,7 @@ function contaShopee(base: McBase | undefined, preco: number, tarifa: Tarifa[] |
   };
 }
 /** Menor preço que dá a MC alvo (iterando a faixa da tabela de comissão). */
-function precoParaShopee(base: McBase | undefined, tarifa: Tarifa[] | undefined, alvo: number, cheio: number): number | null {
+export function precoParaShopee(base: McBase | undefined, tarifa: Tarifa[] | undefined, alvo: number, cheio: number): number | null {
   if (!base || base.cmv == null || base.imp_pct == null) return null;
   let p = cheio > 0 ? cheio : 50;
   for (let i = 0; i < 8; i++) {
