@@ -46,6 +46,7 @@ import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { VendasMargemChart } from "@/components/dashboard/VendasMargemChart";
 import { RelatoriosSection } from "@/components/relatorios/RelatoriosSection";
+import { PosicaoEmpresa } from "@/components/dashboard/PosicaoEmpresa";
 import { periodoAnterior as periodoAnteriorComum, type PeriodPreset } from "@/lib/dashboard/period";
 
 export const Route = createFileRoute("/")({
@@ -699,6 +700,9 @@ function Dashboard() {
 
   return (
     <div className="w-full px-6 md:px-8 py-6 flex flex-col gap-[18px]">
+      {/* Posição da empresa — retrato de agora, não muda com o período (design "Visão geral", 21/out/2026) */}
+      <PosicaoEmpresa tick={tick} />
+
       {/* Barra de filtros */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-[13px] text-muted-foreground font-medium tabular-nums">
