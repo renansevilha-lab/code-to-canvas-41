@@ -44,6 +44,9 @@
 //                      SHIPPED + listInboundPlanBoxes) e cria em amazon_modelo_caixa um modelo por anúncio (msku) com a
 //                      caixa mais usada (só caixas de um anúncio só; validade = a mais recente vista). NÃO mexe em modelo
 //                      que já existe (o cadastrado à mão vale mais). dry = só mostra o que criaria.
+// v8.1 (21/out/2026): o items/prepDetails só lia o 1º anúncio — `mskus=a&mskus=b` a Amazon ignora o resto; o certo é
+//   `mskus=a,b` (até 100). Os demais iam com prepOwner NONE e o plano da ACZ com o Xô Gatinho (DF-CLWD-07BZ, LIQUID,
+//   prep SELLER_ONLY: saco plástico) foi recusado. Prep "AMAZON_OR_SELLER" com categoria ≠ NONE vai como SELLER.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -307,13 +310,21 @@ async function mapaSkus(shopId: number) {
 
 // ---------------------------------------------------------------- passos
 async function prepConstraints(token: string, mskus: string[]) {
-  const q = mskus.map((m) => `mskus=${encodeURIComponent(m)}`).join("&");
-  const r = await sp(token, "GET", `${API}/items/prepDetails?marketplaceId=${MKT}&${q}`);
   const m = new Map<string, { labelOwner: string; prepOwner: string }>();
-  for (const d of ((r.body?.mskuPrepDetails ?? []) as any[])) {
-    const label = d.labelOwnerConstraint === "AMAZON_ONLY" ? "AMAZON" : d.labelOwnerConstraint === "NONE_ONLY" ? "NONE" : "SELLER";
-    const prep = d.prepOwnerConstraint === "AMAZON_ONLY" ? "AMAZON" : d.prepOwnerConstraint === "SELLER_ONLY" ? "SELLER" : "NONE";
-    m.set(String(d.msku), { labelOwner: label, prepOwner: prep });
+  const unicos = [...new Set(mskus)];
+  // a lista vai separada por vírgula: com `mskus=a&mskus=b` a Amazon devolve só o primeiro
+  for (let i = 0; i < unicos.length; i += 100) {
+    const q = unicos.slice(i, i + 100).map((x) => encodeURIComponent(x)).join(",");
+    const r = await sp(token, "GET", `${API}/items/prepDetails?marketplaceId=${MKT}&mskus=${q}`);
+    for (const d of ((r.body?.mskuPrepDetails ?? []) as any[])) {
+      const label = d.labelOwnerConstraint === "AMAZON_ONLY" ? "AMAZON" : d.labelOwnerConstraint === "NONE_ONLY" ? "NONE" : "SELLER";
+      const precisaPrep = !!d.prepCategory && d.prepCategory !== "NONE";
+      const prep = d.prepOwnerConstraint === "AMAZON_ONLY" ? "AMAZON"
+        : d.prepOwnerConstraint === "SELLER_ONLY" ? "SELLER"
+        : d.prepOwnerConstraint === "NONE_ONLY" ? "NONE"
+        : precisaPrep ? "SELLER" : "NONE";
+      m.set(String(d.msku), { labelOwner: label, prepOwner: prep });
+    }
   }
   return m;
 }

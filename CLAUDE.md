@@ -1740,6 +1740,12 @@ concluir.
   validade (15742_FBA, 15627, 15825…) — preencher antes de criar plano, a Amazon recusa areia sem validade. Ensaio sem login até
   22/out 03:00 UTC só em `previa`, `amazon-envios`, `recebimento` e `modelos-importar` dry (o `transporte`/`envios-app` saíram do ensaio).
   Prévia de envio ACZ (15987 ×10 + 15820 ×24) sem pendência. **Nenhum plano real da ACZ criado ainda.**
+- **1º plano da ACZ recusado (20/out, 23h32 BRT, 12 SKU):** "DF-CLWD-07BZ requires prepOwner but NONE was assigned". Causa: o
+  `items/prepDetails` era chamado com `mskus=a&mskus=b…` e a **Amazon só lê o 1º** — os outros 11 iam com o padrão prepOwner NONE.
+  O certo é **`mskus=a,b,c`** (até 100 por chamada). `amazon-inbound` **v8.1** (deploy 11, conferido por sha256). Nenhum plano foi
+  criado na Amazon (a recusa foi na criação). O Xô Gatinho 500 ml (DF-CLWD-07BZ) é **LIQUID** com prep **SELLER_ONLY**
+  (etiqueta + **saco plástico** por unidade): no envio, cada frasco vai ensacado. Os outros 11 do plano: só etiqueta (prep NONE).
+  No SVL a falha não apareceu porque nenhum item precisava de prep.
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
