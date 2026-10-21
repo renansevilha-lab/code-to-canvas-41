@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v13 (19/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v14 (20/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -71,6 +71,10 @@
 //   ncm_code = NCM do Tiny (8 dígitos), import_designation = 0 sempre, contributor_supply_chain_role e regime por conta
 //   (FISCAL_AMZ), tax_classification_code = CEST do Tiny (API v2; a v3 não traz). Campos do formulário: dá para corrigir.
 //   Sem NCM = pendência. Origem diferente de 0 no Tiny = aviso (a NF sai diferente do declarado).
+// v14 (20/out/2026, pedido do dono): TERMOS REAIS DE BUSCA (RPC ia_termos_busca) no envio. Amazon: palavras-chave
+//   escondidas (generic_keyword) = palavras dos termos confirmados que o título NÃO cobre — na ficha nova vêm no
+//   formulário; no atualizar, campos.palavras (ligado por padrão; opcoes.palavras troca o texto). Mercado Livre
+//   (criar): o MODELO entra sempre que a categoria tem, preenchido com essas palavras (a pessoa pode editar).
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -444,6 +448,18 @@ async function medidasDoAnuncio(d: Dados, op: Opcoes, tiny: Record<string, any>)
   // o que fica salvo para o próximo anúncio do produto: o padrão NÃO é gravado como medida conferida
   const salvar = { peso_kg: peso, comprimento_cm: lidas.comprimento_cm, largura_cm: lidas.largura_cm, altura_cm: lidas.altura_cm };
   return { medidas, salvar, avisos, faltaPeso: !peso };
+}
+
+/**
+ * v14: termos reais de busca (RPC ia_termos_busca) já cruzados com o título que vai: `palavras_ocultas` = palavras
+ * dos termos confirmados que o título NÃO cobre (até 249 bytes, campo generic_keyword da Amazon) e
+ * `modelo_sugerido` = as mesmas, na ordem dos termos em alta do Mercado Livre (até 60 caracteres, campo MODEL).
+ * Falha = vazio: o envio nunca para por isso.
+ */
+async function termosDoAnuncio(sku: string, titulo: string): Promise<{ palavras: string; modelo: string }> {
+  const { data, error } = await db.rpc("ia_termos_busca", { p_sku: sku, p_titulo: titulo || null });
+  if (error || !data || data.erro) return { palavras: "", modelo: "" };
+  return { palavras: String(data.palavras_ocultas ?? "").trim(), modelo: String(data.modelo_sugerido ?? "").trim() };
 }
 
 function montarDescricao(r: Record<string, any>): string {
@@ -828,7 +844,9 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
   avisos.push(...med.avisos);
   if (med.faltaPeso) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
 
-  // características da categoria: obrigatórias (*) e as que o ML pede para a ficha
+  // características da categoria: obrigatórias (*) e as que o ML pede para a ficha. v14: o MODELO entra sempre que
+  // a categoria tem (os vendedores usam o campo para as palavras que o comprador busca e o título não cobre).
+  const termos = await termosDoAnuncio(String(d.r.sku), b.titulo);
   const previstos = new Map<string, string>();
   for (const a of ((palpites.find((x) => String(x.category_id) === categoriaId)?.attributes ?? []) as any[])) {
     if (a?.id && a?.value_name) previstos.set(String(a.id), String(a.value_name));
@@ -837,21 +855,25 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
   const listaAtr = (Array.isArray(atrR?.body) ? atrR!.body : []) as any[];
   const atributos = listaAtr
     .filter((a) => a?.id && !ATRIB_AUTO_ML.has(String(a.id)) && !a.tags?.hidden && !a.tags?.read_only && !a.tags?.fixed
-      && (a.tags?.required || a.tags?.catalog_required || a.tags?.conditional_required))
+      && (a.tags?.required || a.tags?.catalog_required || a.tags?.conditional_required || String(a.id) === "MODEL"))
     .map((a) => {
       const id = String(a.id);
       const digitado = typeof digitados[id] === "string" ? String(digitados[id]).trim() : "";
       const unidades = ((a.allowed_units ?? []) as any[]).map((u) => String(u.name)).slice(0, 5);
+      const modelo = id === "MODEL" ? termos.modelo : "";
       return {
         id, nome: String(a.name ?? id), obrigatorio: a.tags?.required === true,
-        valor: digitado || (id === "BRAND" ? String(d.produto?.marca ?? "").trim() : "") || previstos.get(id) || "",
+        valor: digitado || (id === "BRAND" ? String(d.produto?.marca ?? "").trim() : "") || modelo || previstos.get(id) || "",
         opcoes: ((a.values ?? []) as any[]).slice(0, 80).map((v) => String(v.name)),
         ids: ((a.values ?? []) as any[]).slice(0, 80).map((v) => String(v.id)),
-        dica: a.hint ? String(a.hint).slice(0, 80) : (unidades.length ? `número + unidade (${unidades.join(", ")})` : null),
+        dica: id === "MODEL" && modelo ? "palavras mais buscadas que o título não cobre (pode editar)"
+          : a.hint ? String(a.hint).slice(0, 80) : (unidades.length ? `número + unidade (${unidades.join(", ")})` : null),
       };
     })
     .sort((x, y) => Number(y.obrigatorio) - Number(x.obrigatorio));
   for (const a of atributos) if (a.obrigatorio && !a.valor) pendencias.push(`preencha "${a.nome}" (obrigatório nesta categoria)`);
+  const modeloAtr = atributos.find((a) => a.id === "MODEL");
+  if (modeloAtr && termos.modelo && modeloAtr.valor === termos.modelo) avisos.push(`Modelo preenchido com os termos de busca que o título não cobre: "${termos.modelo}"`);
 
   const gtin = String(op.gtin ?? d.extra?.gtin ?? tiny.gtin ?? "").replace(/\D/g, "") || null;
   const total = (r: RespMl) => Number(r.body?.paging?.total) || 0;
@@ -1168,9 +1190,15 @@ async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Exist
   const campos = {
     titulo: op.campos?.titulo !== false, descricao: op.campos?.descricao !== false,
     fotos: op.campos?.fotos !== false, preco: op.campos?.preco === true,
+    palavras: op.campos?.palavras !== false,
   };
   const pendencias: string[] = []; const avisos: string[] = [...d.avisosCapa];
-  if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco) pendencias.push("marque ao menos um item para atualizar");
+  // v14: palavras-chave escondidas (generic_keyword) = termos de busca que o título que vai ficar NÃO cobre
+  const tituloFica = campos.titulo ? b.titulo : String(at.item_name?.[0]?.value ?? sm.itemName ?? "");
+  const palavrasAtuais = String(at.generic_keyword?.[0]?.value ?? "").trim();
+  const palavras = typeof op.palavras === "string" ? op.palavras.trim().slice(0, 249) : (await termosDoAnuncio(String(d.r.sku), tituloFica)).palavras;
+  if (campos.palavras && (!palavras || palavras === palavrasAtuais)) campos.palavras = false;
+  if (!campos.titulo && !campos.descricao && !campos.fotos && !campos.preco && !campos.palavras) pendencias.push("marque ao menos um item para atualizar");
   if (campos.titulo) pendencias.push(...b.problemas.titulo);
   if (campos.descricao) {
     if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
@@ -1211,6 +1239,7 @@ async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Exist
       p.push({ op: "replace", path: "/attributes/product_description", value: [val(descricao)] });
       if (bullets.length) p.push({ op: "replace", path: "/attributes/bullet_point", value: bullets.map(val) });
     }
+    if (campos.palavras) p.push({ op: "replace", path: "/attributes/generic_keyword", value: [val(palavras)] });
     if (campos.fotos) {
       const urlAtual = new Map(atuais.map((f) => [f.id, f.url]));
       const finais = ordemFinal(op, { manter, novas, posicao, atuais: idsAtuais }, urlsNovas).map((x) => urlAtual.get(x) ?? x).slice(0, LIM_AMZ.fotos);
@@ -1232,12 +1261,13 @@ async function montarAtualizarAmz(d: Dados, op: Opcoes, c: ContaAmz, alvo: Exist
   const antes = {
     titulo: String(at.item_name?.[0]?.value ?? sm.itemName ?? ""),
     descricao: junto(String(at.product_description?.[0]?.value ?? ""), ((at.bullet_point ?? []) as any[]).map((x) => String(x?.value ?? "")).filter(Boolean)),
-    fotos: atuais.map((f) => f.url), preco: null as number | null,
+    fotos: atuais.map((f) => f.url), preco: null as number | null, palavras: palavrasAtuais,
   };
   return {
     pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], campos, antes, patches, assinar, tipo: String(sm.productType),
     previa: {
       loja: c.nome, sku: String(d.r.sku), titulo: b.titulo, descricao: junto(descricao, bullets), preco: null, fotos: todasNovas,
+      palavras: { atual: palavrasAtuais, nova: palavras, vai: campos.palavras },
       fotos_plano: { manter, novas: novas.map((f) => f.path), posicao },
       alvo: { ...alvo, n_variacoes: 0, situacao: alvo.status }, campos,
       atual: { titulo: antes.titulo, descricao: antes.descricao, fotos: atuais, preco: null },
@@ -1460,6 +1490,8 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   // Genérico + EAN do fabricante = 8572 (a GS1 diz que o código é de outra marca): na ficha nova, o EAN
   // do cadastro só vai para a Bumi; para Genérico, só se for digitado. "sem_gtin" tira o código de vez.
   const eanFicha = op.sem_gtin ? null : (ehBumi || digitado ? ean : null);
+  // v14: palavras-chave escondidas (generic_keyword) = termos de busca que o título NÃO cobre
+  const palavrasFicha = caminho === "ficha" ? (await termosDoAnuncio(sku, b.titulo)).palavras : "";
   const liquido = /\b\d+\s*ml\b|spray|l[ií]quid|shampoo|lo[cç][aã]o|perfume|col[oô]nia/i.test(nomeProd);
   const uso = /gat/i.test(nomeProd) && /c[aã]es|cachorr/i.test(nomeProd) ? "Cães e gatos" : /gat/i.test(nomeProd) ? "Gatos" : /c[aã]es|cachorr/i.test(nomeProd) ? "Cães" : "Animais de estimação";
   const sugestoes: Record<string, string> = caminho === "ficha" ? {
@@ -1468,6 +1500,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
     warranty_description: "Garantia legal de 30 dias", included_components: unidades > 1 ? `${unidades} unidades` : "1 unidade",
     contains_liquid_contents: liquido ? "true" : "false", is_expiration_dated_product: "false",
     country_of_origin: "BR", batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable",
+    ...(palavrasFicha ? { generic_keyword: palavrasFicha } : {}),
   } : { batteries_required: "false", supplier_declared_dg_hz_regulation: "not_applicable" };
   // v13: DADOS FISCAIS do Faturador (no lugar da planilha do Invoicer). Fonte = Tiny: NCM da "Classificação fiscal"
   // (8 dígitos, sem ponto) e CEST; origem SEMPRE 0 (decisão do dono, mesmo quando o Tiny diz outra coisa);
@@ -1686,7 +1719,7 @@ async function fluxoAmazon(d: Dados, op: Opcoes, modulo: string, body: Record<st
   const pv = problemasAmz(r.body);
   resposta = { status: r.status, situacao: r.body?.status ?? null, submissionId: r.body?.submissionId ?? null, issues: r.body?.issues ?? null, errors: r.body?.errors ?? null };
   if (!mlOk(r) || String(r.body?.status ?? "") !== "ACCEPTED") return await falhar(`a Amazon recusou a atualização: ${pv.erros.join(" · ") || r.body?.status || r.status}`);
-  const feitos = [a.campos.titulo ? "título" : "", a.campos.descricao ? "descrição e bullets" : "", a.campos.fotos ? "fotos" : ""].filter(Boolean);
+  const feitos = [a.campos.titulo ? "título" : "", a.campos.descricao ? "descrição e bullets" : "", a.campos.fotos ? "fotos" : "", a.campos.palavras ? "palavras de busca" : ""].filter(Boolean);
   await db.from("ia_publicacao").update({ estado: "publicado", url: alvo.url, enviado: { campos: a.campos, antes: a.antes, patches: lista }, resposta }).eq("id", pub.id);
   await db.from("ia_rascunho").update({ status: "publicado" }).eq("id", d.r.id);
   return json({ ok: true, modo: "atualizar", item_id: alvo.item_id, url: alvo.url, atualizados: feitos, avisos: [...a.avisos, ...pv.avisos.map((e) => `Amazon: ${e}`)] });

@@ -1,5 +1,5 @@
 // =============================================================================
-// Edge Function: ia-anuncio v4 — IA · Anúncios, Fase 2 (09/out/2026; v4 em 14/out)
+// Edge Function: ia-anuncio v5 — IA · Anúncios, Fase 2 (09/out/2026; v4 em 14/out; v5 em 20/out)
 // -----------------------------------------------------------------------------
 // Geração de anúncio DENTRO da gestão (porte do gerador pcobdzlpnaoqdbsdzhlq).
 // POST ?modulo=... com body JSON. Exige usuário com módulo `ia` (ou service role).
@@ -19,6 +19,10 @@
 // a principal + até 3 extras: outras cores, ângulos, o conteúdo) vão para briefing, texto e prompts;
 // e as INSTRUÇÕES do produto (contexto sku/diretriz, ex.: "tem 3 cores; a capa mostra as três") entram
 // nos prompts de imagem como bloco OBRIGATÓRIO, com o tipo da foto (a instrução diz a qual se aplica).
+// v5 (20/out/2026, pedido do dono): o texto recebe os TERMOS REAIS de busca (RPC ia_termos_busca:
+// Shopee com volume da API de ADS, Amazon Brand Analytics, termos em alta do Mercado Livre), o canal
+// do anúncio primeiro. Só os "confirmados" (todas as palavras já são do vocabulário do produto) vão
+// como termos a usar; os "a conferir" só se a foto/rótulo confirmar. Marca de concorrente nunca.
 // =============================================================================
 import {
   CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, fotosReaisExtras, blocosFotosReais, templatesAtivos, escolherTemplate,
@@ -67,6 +71,47 @@ async function gerarBriefing(db: DB, p: Produto, forcar: boolean) {
   return { ok: true, cache: false, briefing: salvo, contextos_usados: ctx.usados };
 }
 
+// ---------------------------------------------------------------- termos de busca (v5)
+type Termo = { termo: string; volume?: number | null; rank?: number | null; posicao?: number | null; concorrente?: boolean; confirmado?: boolean };
+type Termos = { shopee?: Termo[]; amazon?: Termo[]; ml?: Termo[] };
+
+/** Termos reais de busca do produto (ia_termos_busca). Falha = sem bloco: a geração nunca para por isso. */
+async function termosBusca(db: DB, sku: string): Promise<Termos | null> {
+  const { data, error } = await db.rpc("ia_termos_busca", { p_sku: sku });
+  if (error || !data || (data as Record<string, unknown>).erro) return null;
+  return data as Termos;
+}
+
+const CANAL_FONTE: Record<string, keyof Termos> = { shopee: "shopee", amazon: "amazon", mercado_livre: "ml" };
+
+function blocoTermos(t: Termos | null, canal: string, tipo: string): string {
+  if (!t) return "";
+  const fontes: { k: keyof Termos; rotulo: string; fmt: (x: Termo) => string }[] = [
+    { k: "shopee", rotulo: "Shopee (volume de buscas/mês)", fmt: (x) => `${x.termo}${x.volume ? ` (${Number(x.volume).toLocaleString("pt-BR")})` : ""}` },
+    { k: "amazon", rotulo: "Amazon (posição no ranking de buscas)", fmt: (x) => `${x.termo}${x.rank ? ` (#${x.rank})` : ""}` },
+    { k: "ml", rotulo: "Mercado Livre (termos em alta)", fmt: (x) => x.termo },
+  ];
+  const doCanal = CANAL_FONTE[canal];
+  if (doCanal) fontes.sort((a, b) => (a.k === doCanal ? -1 : b.k === doCanal ? 1 : 0));
+  const usar: string[] = [], conferir: string[] = [];
+  for (const f of fontes) {
+    const lista = (t[f.k] ?? []).filter((x) => !x.concorrente);
+    const ok = lista.filter((x) => x.confirmado).slice(0, 12).map(f.fmt);
+    const conf = lista.filter((x) => !x.confirmado).slice(0, 8).map((x) => x.termo);
+    if (ok.length) usar.push(`- ${f.rotulo}: ${ok.join("; ")}`);
+    conferir.push(...conf);
+  }
+  if (!usar.length && !conferir.length) return "";
+  const como = tipo === "titulo"
+    ? "No TITULO, use as palavras dos termos mais buscados (os primeiros da lista do canal) que descrevem este produto, de forma natural, sem repetir palavra e sem passar do limite de caracteres. Prefira o termo exato que o comprador digita."
+    : "Use os termos mais buscados ao longo do texto, de forma natural (sem lista de palavras-chave e sem repetir o mesmo termo à exaustão).";
+  const partes = [`TERMOS QUE OS COMPRADORES REALMENTE BUSCAM (dados dos marketplaces; o canal deste anuncio primeiro):`, ...usar, como,
+    "Nunca escreva marca de outro fabricante, mesmo que apareça numa busca."];
+  const unicos = [...new Set(conferir)].slice(0, 15);
+  if (unicos.length) partes.push(`A CONFERIR (use SÓ se a foto, o rotulo ou o nome confirmarem que vale para ESTE produto; na duvida, ignore): ${unicos.join("; ")}`);
+  return partes.join("\n");
+}
+
 // ---------------------------------------------------------------- texto
 async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Quem) {
   const canal = String(body.canal ?? "shopee");
@@ -98,6 +143,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
   };
   const modelo = await resolverModeloTexto(tD);
   const { porAplica, anexos } = await carregarContextos(db, p.sku, ["titulo", "descricao", "bullet_points"]);
+  const termos = await termosBusca(db, p.sku);
 
   async function rodar(tpl: { conteudo: string }, tipo: string, maxTokens: number) {
     const ctx = blocosContexto(porAplica[tipo] ?? [], anexos);
@@ -106,7 +152,9 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
       briefing: resumoBrief, titulo_max_chars: c!.titulo_max_chars, descricao_max_chars: c!.descricao_max_chars,
       guardrails: blocoInstrucoes(gs),
     });
-    const comObs = obs ? `${prompt}\n\nOBSERVACAO DO OPERADOR (prioridade nesta nova versao; nao contrarie as regras obrigatorias): ${obs}` : prompt;
+    const bt = blocoTermos(termos, canal, tipo);
+    const comTermos = bt ? `${prompt}\n\n${bt}` : prompt;
+    const comObs = obs ? `${comTermos}\n\nOBSERVACAO DO OPERADOR (prioridade nesta nova versao; nao contrarie as regras obrigatorias): ${obs}` : comTermos;
     const blocos: Bloco[] = [
       ...blocosFotosReais(foto!, extras, "Leia o rotulo."),
       ...ctx.blocos,
@@ -131,7 +179,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
     const upd = {
       status, titulo: vT.texto, descricao: vD.texto, bullet_points: bullets, briefing_id: brief.id,
       modelo_texto: modelo, prompt_template_id: tD.id, erro,
-      memoria_calculo: { ...(atual?.memoria_calculo ?? {}), avisos, bloqueios, contextos_usados: contextos, foto_lida: foto.origem, observacao_texto: obs },
+      memoria_calculo: { ...(atual?.memoria_calculo ?? {}), avisos, bloqueios, contextos_usados: contextos, foto_lida: foto.origem, observacao_texto: obs, termos_busca: termos ? { shopee: termos.shopee?.length ?? 0, amazon: termos.amazon?.length ?? 0, ml: termos.ml?.length ?? 0 } : null },
     };
     const { error } = await db.from("ia_rascunho").update(upd).eq("id", rascunhoId);
     if (error) throw new Error(error.message);
@@ -145,7 +193,7 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
     sku: p.sku, canal, empresa, status, titulo: vT.texto, descricao: vD.texto, bullet_points: bullets,
     briefing_id: brief.id, custo_snapshot: p.custo, preco_sugerido: pr.preco_sugerido ?? null,
     margem_estimada_pct: pr.margem_estimada_pct ?? null, prompt_template_id: tD.id, modelo_texto: modelo, erro,
-    memoria_calculo: { ...(pr.memoria_calculo ?? {}), avisos, bloqueios, contextos_usados: contextos, foto_lida: foto.origem, observacao_texto: obs },
+    memoria_calculo: { ...(pr.memoria_calculo ?? {}), avisos, bloqueios, contextos_usados: contextos, foto_lida: foto.origem, observacao_texto: obs, termos_busca: termos ? { shopee: termos.shopee?.length ?? 0, amazon: termos.amazon?.length ?? 0, ml: termos.ml?.length ?? 0 } : null },
     criado_por: quem.id, criado_por_nome: quem.email,
   };
   const { data: salvo, error } = await db.from("ia_rascunho").insert(linha).select("id").single();

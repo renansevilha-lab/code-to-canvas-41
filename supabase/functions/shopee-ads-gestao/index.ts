@@ -1,3 +1,7 @@
+// v5 (20/out/2026, pedido do dono): ?modulo=palavras&loja=&item_id=[&termo=] — palavras-chave que a Shopee Ads sugere
+//   para o anúncio (ads/get_recommended_keyword_list: termo, volume de busca, qualidade, lance sugerido). Só leitura.
+//   ?modulo=palavras-sku&loja=&sku= — o mesmo para todos os anúncios do produto na loja (até 4), gravado em
+//   shopee_palavras (base de ia_termos_busca, os termos de busca do gerador de títulos).
 // v4 (20/out/2026): ?modulo=historico-desempenho&loja=&de=YYYY-MM-DD&ate=YYYY-MM-DD[&loja_total=1] — busca para trás (até 6 meses, 1 mês por vez).
 // v3 (20/out/2026, opção A do dono — histórico de configuração): ?modulo=capturar&loja=ottz|svl|todas lê TODAS as
 //   campanhas da loja e grava em ads_config_atual / ads_config_historico (RPC ads_config_registrar; cron a cada 2 h);
@@ -291,6 +295,52 @@ serve(async (req: Request) => {
       const datas = registros.map((x) => String(x.data)).sort();
       return json({ ok: !erros.length, loja, de, ate, campanhas_consultadas: ids.length, linhas: registros.length, enviados: gravados,
         primeiro_dia: datas[0] ?? null, ultimo_dia: datas[datas.length - 1] ?? null, loja_dias, erros });
+    }
+
+    // v5: palavras-chave sugeridas pela Shopee Ads para um anúncio (com volume de busca). Só leitura.
+    if (modulo === "palavras") {
+      const itemId = String(p("item_id") ?? "");
+      if (!/^\d+$/.test(itemId)) return json({ ok: false, erro: "informe item_id" }, { status: 400 });
+      const termo = (p("termo") ?? "").trim();
+      const r = await shopeeGet(ctx, "/api/v2/ads/get_recommended_keyword_list", { item_id: itemId, input_keyword: termo || undefined });
+      if (r.error) return json({ ok: false, erro: `${r.error}: ${r.message ?? ""}`, resposta: r });
+      const lista = ((r.response?.suggested_keyword_list ?? r.response?.suggested_keywords ?? []) as any[]).map((k) => ({
+        termo: String(k.keyword ?? ""), volume: k.search_volume ?? null, qualidade: k.quality_score ?? null, lance: k.suggested_bid ?? null,
+      })).sort((a, z) => Number(z.volume ?? 0) - Number(a.volume ?? 0));
+      return json({ ok: true, loja, item_id: itemId, termo: termo || null, total: lista.length, palavras: lista, cru: p("cru") === "1" ? r : undefined });
+    }
+
+    // v5: palavras de TODOS os anúncios de um produto nesta loja (o próprio SKU, as variações e o componente do kit),
+    // gravadas em shopee_palavras — base dos termos de busca do gerador de títulos (ia_termos_busca). Só lê a Shopee.
+    if (modulo === "palavras-sku") {
+      const sku = String(p("sku") ?? "").trim();
+      if (!sku) return json({ ok: false, erro: "informe sku" }, { status: 400 });
+      const [{ data: filhos }, { data: comps }] = await Promise.all([
+        supabase.from("produtos").select("sku").eq("sku_pai", sku).eq("ativo", true),
+        supabase.from("produto_kits").select("sku_componente").eq("sku_kit", sku),
+      ]);
+      const skus = [...new Set([sku, ...((filhos ?? []) as any[]).map((x) => String(x.sku)), ...((comps ?? []) as any[]).map((x) => String(x.sku_componente))])];
+      const [{ data: a1 }, { data: a2 }] = await Promise.all([
+        supabase.from("shopee_anuncios").select("item_id").eq("shop_id", shopId).eq("status", "NORMAL").in("sku_pai", skus).limit(20),
+        supabase.from("shopee_anuncios_variacao").select("item_id").eq("shop_id", shopId).in("sku", skus).limit(50),
+      ]);
+      const itens = [...new Set([...((a1 ?? []) as any[]), ...((a2 ?? []) as any[])].map((x) => String(x.item_id)))].slice(0, 4);
+      const erros: string[] = []; let gravadas = 0;
+      for (const it of itens) {
+        const r = await shopeeGet(ctx, "/api/v2/ads/get_recommended_keyword_list", { item_id: it });
+        if (r.error) { erros.push(`${it}: ${r.error} ${r.message ?? ""}`); continue; }
+        const vistos = new Set<string>();
+        const linhas = ((r.response?.suggested_keyword_list ?? []) as any[])
+          .map((k) => ({ shop_id: shopId, item_id: Number(it), termo: String(k.keyword ?? "").trim().toLowerCase(), volume: k.search_volume ?? null,
+            qualidade: k.quality_score ?? null, lance: k.suggested_bid ?? null, coletado_em: new Date().toISOString() }))
+          .filter((x) => x.termo && !vistos.has(x.termo) && vistos.add(x.termo));
+        if (linhas.length) {
+          const { error } = await supabase.from("shopee_palavras").upsert(linhas, { onConflict: "shop_id,item_id,termo" });
+          if (error) erros.push(`${it}: gravar ${error.message}`); else gravadas += linhas.length;
+        }
+        await sleep(300);
+      }
+      return json({ ok: !erros.length, loja, sku, skus, anuncios: itens, gravadas, erros });
     }
 
     if (modulo === "desempenho-cru") {

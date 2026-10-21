@@ -20,6 +20,8 @@
 // PRODUCT (catálogo) sai com nome (/products/{id}) e a 1ª oferta (/products/{id}/items).
 // v2 (19/out): e_meu separado em anuncio_proprio (o ITEM/USER_PRODUCT do ranking é nosso) e participo_catalogo
 //   (PRODUCT em que anunciamos ou cuja 1ª oferta é nossa); a defesa olha anuncio_proprio.
+// v3 (20/out): tendências também das categorias em que temos anúncio (atuo) — base dos termos do gerador de
+//   títulos; ?modo=tendencias roda só essa etapa.
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -315,8 +317,14 @@ async function semanal(t0: number, erros: string[]) {
   });
   if (faltaramR > 0) return { etapa: "ranking", folhas: folhas.length, coletadas_agora: coletadas, pendentes: faltaramR };
 
-  // etapa 3: tendências — geral (MLB) + Pet Shop e níveis 1 e 2
-  const { data: niv } = await db.from("pesquisa_ml_categorias").select("category_id").eq("ativa", true).lte("nivel", 2).not("nivel", "is", null);
+  const t = await etapaTendencias(t0, erros, data);
+  return { etapa: t.pendentes > 0 ? "tendencias" : "concluido", folhas: folhas.length, ...t };
+}
+
+/** Etapa 3: tendências — geral (MLB) + Pet Shop e níveis 1 e 2 + (v3, 20/out) as categorias em que temos anúncio
+ *  (atuo = true), que são as que o gerador de títulos usa. Também roda sozinha: ?modo=tendencias. */
+async function etapaTendencias(t0: number, erros: string[], data: string) {
+  const { data: niv } = await db.from("pesquisa_ml_categorias").select("category_id").or("and(ativa.eq.true,nivel.lte.2),atuo.eq.true");
   const alvos = ["MLB", ...((niv ?? []) as any[]).map((c) => String(c.category_id))];
   const pendT = await pendentesDoDia(alvos, "tendencias", data);
   let termos = 0;
@@ -335,7 +343,7 @@ async function semanal(t0: number, erros: string[]) {
     } else if (r.status !== 404) erros.push(`tendências ${cat}: ${r.status}`);
     await db.from("pesquisa_ml_coleta").upsert({ data_coleta: data, modo: "tendencias", category_id: cat, http_status: r.status, n_itens: lista.length, erro: r.status === 200 || r.status === 404 ? null : String(r.status), coletado_em: new Date().toISOString() }, { onConflict: "data_coleta,modo,category_id" });
   });
-  return { etapa: faltaramT > 0 ? "tendencias" : "concluido", folhas: folhas.length, alvos_tendencias: alvos.length, termos_agora: termos, pendentes: faltaramT };
+  return { alvos_tendencias: alvos.length, termos_agora: termos, pendentes: faltaramT };
 }
 
 // ---------------------------------------------------------------- handler
@@ -349,7 +357,7 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const modo = url.searchParams.get("modo") ?? "";
-  if (!["descobrir_lideranca", "diario", "semanal"].includes(modo)) return json({ erro: "use ?modo=descobrir_lideranca, diario ou semanal" }, 400);
+  if (!["descobrir_lideranca", "diario", "semanal", "tendencias"].includes(modo)) return json({ erro: "use ?modo=descobrir_lideranca, diario, semanal ou tendencias" }, 400);
   const t0 = Date.now();
   const erros: string[] = [];
   const { data: ex } = await db.from("pesquisa_ml_execucoes").insert({ modo }).select("id").single();
@@ -357,6 +365,7 @@ Deno.serve(async (req) => {
   try {
     resumo = modo === "descobrir_lideranca" ? await descobrirLideranca(t0, url.searchParams.get("forcar") === "1", erros)
       : modo === "diario" ? await diario(t0, erros)
+      : modo === "tendencias" ? await etapaTendencias(t0, erros, hojeBRT())
       : await semanal(t0, erros);
   } catch (e) {
     erros.push(`falha geral: ${String(e instanceof Error ? e.message : e)}`);

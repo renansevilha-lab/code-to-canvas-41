@@ -22,6 +22,7 @@ import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
 import { Publicar } from "@/components/ia/anuncio/Publicar";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
+import { TermosBusca } from "@/components/ia/anuncio/TermosBusca";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
@@ -228,6 +229,9 @@ function GerarAnuncioPage() {
       <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho} />
 
       <Referencias key={`ref-${sku}`} sku={sku} marca={dados.produto.marca} />
+
+      {/* o que os compradores buscam (Shopee/Amazon/ML) e quanto o título cobre (20/out) */}
+      <TermosBusca key={`tb-${sku}`} sku={sku} canal={canal} titulo={r === "novo" ? null : (rascunho?.titulo ?? null)} />
 
       <EtapaTexto sku={sku} canal={canal} empresa={empresa} rascunho={r === "novo" ? null : rascunho}
         etapa={etapas.find((e) => e.etapa === "texto")} briefing={apoioQ.data?.briefing ?? null}

@@ -3591,6 +3591,39 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
   aceita "Genérico" sem código. A prévia devolve `amazon.marca`, `generico`, `ean_ficha`; a tela mostra o aviso e o
   campo EAN com o código que vai de fato. A OFERTA num ASIN que já existe não muda (a marca é a da ficha da Amazon).
 
+## 5.11.13 Termos de busca reais no título, nas palavras escondidas da Amazon e no Modelo do ML (20/out/2026)
+
+Pedido do dono: títulos pelo que o comprador realmente busca (opção B = A + palavras escondidas da Amazon). SQL +
+rollback em `docs/ia-termos-busca.sql`.
+- **Fontes:** Shopee = API de anúncios patrocinados **`ads/get_recommended_keyword_list`** (`item_id`, ~50 termos por
+  anúncio com `search_volume` mensal REAL, `quality_score`, `suggested_bid`; ex. "areia para gato" 339 mil) — módulos
+  `palavras` e `palavras-sku` da `shopee-ads-gestao` **v5** (slot `shopee-flashsale-probe`, deploy 21), gravam
+  **`shopee_palavras`** (PK shop+item+termo); só leitura na Shopee. Amazon = Brand Analytics (`pesquisa_amz_brand_analytics`,
+  só RANK, só a ACZ). ML = `pesquisa_ml_tendencias` (só posição); `pesquisa-ml` **v3** coleta também as categorias em que
+  vendemos (`atuo`) e ganhou `?modo=tendencias` (131 categorias, 2.309 termos em 20/out).
+- **RPC `ia_termos_busca(p_sku, p_titulo default null)`** (security invoker, authenticated + service_role; ~0,3 s): junta as
+  três fontes do produto (+ variações e componentes do kit; ML pelas categorias dos nossos MLB e as 2 de cima). Relevância:
+  o termo tem o **núcleo** (1ª palavra do nome) e é **confirmado** (todas as palavras já estão no vocabulário do produto =
+  nome, categoria e textos de TODOS os rascunhos dele e das variações) ou **a conferir** (≥ 50% das palavras no nome).
+  Marca de outro fabricante = `concorrente` (lista de `produtos`, `pesquisa_amz_asins` + fixa; a própria marca não conta).
+  Sem `unaccent`: `ia_norm()` tira acento por `translate`; `ia_tokens()` = palavras ≥ 3 letras sem stopwords e sem plural.
+  Devolve as 3 listas (com `no_titulo`), `palavras_ocultas` (palavras dos confirmados que o título NÃO cobre, ≤ 249 bytes),
+  `modelo_sugerido` (as mesmas na ordem do ML, ≤ 60) e `cobertura` (fortes no título). Só os CONFIRMADOS viram palavras
+  escondidas e Modelo. Testado como `authenticated` (15984, 11538).
+- **IA de texto (`ia-anuncio` v5, deploy 7):** título, descrição e bullets recebem "TERMOS QUE OS COMPRADORES REALMENTE
+  BUSCAM" (o canal do anúncio primeiro, até 12 por fonte com volume/posição) + "A CONFERIR" (só se a foto/rótulo confirmar)
+  + "nunca marca de outro fabricante". Falha da RPC = gera sem o bloco. `memoria_calculo.termos_busca` = quantos de cada fonte.
+- **Envio (`anuncio-publicar` v14, deploy 15):** Amazon ficha nova → `generic_keyword` no formulário; Amazon atualizar →
+  `campos.palavras` (ligado por padrão; vira falso sozinho se não há palavra ou já é a mesma; `opcoes.palavras` troca o
+  texto) com patch `replace /attributes/generic_keyword`; ML criar → **MODEL** entra sempre que a categoria tem, com o
+  `modelo_sugerido` (digitado > termos > palpite do ML). **Não testado ao vivo** (exige login; nenhum envio feito).
+- **Tela:** bloco "Termos de busca" na aba Anúncio de `/ia/gerar` (`TermosBusca.tsx`): três colunas, ✓ = já no título,
+  itálico = a conferir, riscado = concorrente, cobertura do título, palavras escondidas/Modelo para copiar e "Atualizar
+  palavras da Shopee" (lê sozinho 1× por tela se o produto tem anúncio e o dado falta ou tem > 30 dias). Na conferência da
+  Amazon (atualizar), linha "Palavras de busca (escondidas)" hoje → vai ficar, desmarcável.
+- **Limites:** Amazon e ML não dão volume (só posição); a Shopee sugere só para anúncio que já existe; termo "a conferir"
+  pode ser de outro tipo de produto (tofu, sílica numa areia de mandioca) — por isso nunca vai para palavras/Modelo.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -3636,19 +3669,19 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `amazon-inbound` | v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
-| `ia-anuncio` | v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
+| `ia-anuncio` | v5 (deploy 7; 20/out: termos reais de busca no texto, §5.11.13); v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
-| `anuncio-publicar` | v13 (deploy 14; 19/out: dados fiscais — NCM do Tiny, origem 0, papel e CEST — na criação Amazon, §5.11.12.3); v12 (deploy 13; 19/out: na Amazon, fora da Bumi a marca vai "Genérico" e a ficha nova sai sem o EAN do fabricante, §5.11.12.2); v11 (deploy 12; a Amazon também CRIA — oferta em ASIN existente ou ficha nova); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
+| `anuncio-publicar` | v14 (deploy 15; 20/out: palavras escondidas da Amazon e Modelo do ML pelos termos de busca, §5.11.13); v13 (deploy 14; 19/out: dados fiscais — NCM do Tiny, origem 0, papel e CEST — na criação Amazon, §5.11.12.3); v12 (deploy 13; 19/out: na Amazon, fora da Bumi a marca vai "Genérico" e a ficha nova sai sem o EAN do fabricante, §5.11.12.2); v11 (deploy 12; a Amazon também CRIA — oferta em ASIN existente ou ficha nova); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
-| `shopee-flashsale-probe` | v19 (= `shopee-ads-gestao` v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
+| `shopee-flashsale-probe` | v21 (= `shopee-ads-gestao` v5: + `palavras` / `palavras-sku`, sugestão de palavras com volume, §5.11.13); v19 (v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
 | `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
-| `pesquisa-ml` | v2 (19/out: grava `anuncio_proprio` × `participo_catalogo`) | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
+| `pesquisa-ml` | v3 (20/out: tendências também das categorias em que vendemos + `?modo=tendencias`, §5.11.13); v2 (19/out: grava `anuncio_proprio` × `participo_catalogo`) | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
 | `pesquisa-amz` | v3 | Pesquisa de produtos Amazon: `meus`, `descobrir`, `diario` (BSR), `brand_analytics`; só leitura na SP-API — ver §5.9.6. Crons 159–162 |
 | `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 

@@ -75,7 +75,9 @@ interface Previa {
   limites?: { titulo: number; fotos: number };
   // atualizar
   alvo?: Existente & { n_variacoes: number; situacao: string | null };
-  campos?: { titulo: boolean; descricao: boolean; fotos: boolean; preco: boolean };
+  campos?: { titulo: boolean; descricao: boolean; fotos: boolean; preco: boolean; palavras?: boolean };
+  /** Amazon · atualizar (v14): palavras-chave escondidas (generic_keyword) */
+  palavras?: { atual: string; nova: string; vai: boolean };
   atual?: { titulo: string; descricao: string; fotos: { id: string; url: string }[]; preco: number | null };
   fotos_plano?: { manter: string[]; novas: string[]; posicao: "inicio" | "fim" };
 }
@@ -400,7 +402,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
     const ativarDepois = modo !== "atualizar" && canal === "shopee" && junto.variacoes && !p.fora_do_ar;
     const aviso = modo === "atualizar" ? [
       `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
-      `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : ""].filter(Boolean).join(", ")}.`,
+      `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : "", c?.palavras ? "palavras de busca escondidas" : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
       extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})${promoExtra.has(chaveT(o)) ? ` + promoção ${promoExtra.get(chaveT(o))}` : ""}`).join(", ")}.` : "",
       extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
@@ -548,6 +550,13 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
             nota={ml ? "Desmarcado por padrão: o Mercado Livre só deixa trocar o título de anúncio que ainda não vendeu." : undefined} />
           <Troca rotulo="Descrição" marcado={op.c_descricao !== false} onMarcar={(v) => trocar({ c_descricao: v })}
             antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} nota={amz ? "Na Amazon a descrição e os bullets vão em campos separados; aqui aparecem juntos." : undefined} />
+          {amz && p.palavras && (
+            <Troca rotulo="Palavras de busca (escondidas)" marcado={op.c_palavras !== false && p.palavras.vai} onMarcar={(v) => trocar({ c_palavras: v })}
+              antes={p.palavras.atual} depois={p.palavras.nova}
+              nota={!p.palavras.nova ? "Sem termos de busca confirmados para este produto: nada a enviar."
+                : p.palavras.nova === p.palavras.atual ? "Já estão no anúncio: nada muda."
+                : "Termos que os compradores buscam e o título não cobre (Shopee, Amazon e Mercado Livre). Não aparecem para o comprador; a Amazon usa na busca."} />
+          )}
           <div className="flex items-start gap-2">
             <Checkbox className="mt-1" checked={op.c_fotos !== false} onCheckedChange={(v) => trocar({ c_fotos: v === true })} />
             <div className={`min-w-0 flex-1 space-y-2 ${op.c_fotos !== false ? "" : "opacity-60 pointer-events-none"}`}>
