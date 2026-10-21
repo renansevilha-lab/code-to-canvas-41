@@ -36,7 +36,7 @@ export const seg = (on: boolean): CSSProperties => ({
 const MONO = "pm-mono";
 
 // ---------------------------------------------------------------- estados
-export type EstadoLinha = "na" | "programado" | "aguardando" | "recusado" | "fora" | "auto" | "melhor" | "troca" | "encerrada" | "aplicado" | "pulado" | "pausado";
+export type EstadoLinha = "na" | "programado" | "aguardando" | "recusado" | "fora" | "auto" | "melhor" | "troca" | "encerrada" | "aplicado" | "pulado" | "pausado" | "outra" | "candidata";
 export const EST: Record<EstadoLinha, [string, string, string]> = {
   na: ["Na promoção", "var(--pm-gs)", "var(--pm-g)"], programado: ["Programado", "var(--pm-as)", "var(--pm-at)"],
   aguardando: ["Aguardando", "var(--pm-ams)", "var(--pm-am)"], recusado: ["Recusado", "var(--pm-rs)", "var(--pm-r)"],
@@ -44,6 +44,7 @@ export const EST: Record<EstadoLinha, [string, string, string]> = {
   melhor: ["Há promoção melhor", "var(--pm-ams)", "var(--pm-am)"], troca: ["Sugestão de troca", "var(--pm-as)", "var(--pm-at)"],
   encerrada: ["Encerrada", "var(--pm-gr)", "var(--pm-t3)"], aplicado: ["Aplicado agora", "var(--pm-gs)", "var(--pm-g)"],
   pulado: ["Pulado", "var(--pm-gr)", "var(--pm-t2)"], pausado: ["Pausado", "var(--pm-gr)", "var(--pm-t3)"],
+  outra: ["Já em outra", "var(--pm-gr)", "var(--pm-t2)"], candidata: ["Candidata", "var(--pm-gr)", "var(--pm-t2)"],
 };
 export type StatusPromo = "andamento" | "programada" | "encerrada" | "adesao" | "aguardando" | "fora";
 export const PST: Record<StatusPromo, [string, string, string]> = {
