@@ -30,6 +30,24 @@ type Props = {
  * agora puxa na hora, sem manter dezenas de execuções por hora rodando à toa.
  */
 export function BotaoSincronizar({ rotas, rotulo = "Sincronizar", titulo, invalidar, onConcluido }: Props) {
+  const { rodando, sincronizar } = useSincronizar({ rotas, invalidar, onConcluido });
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-9 gap-2"
+      title={titulo}
+      onClick={() => void sincronizar()}
+      disabled={rodando}
+    >
+      {rodando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+      {rodando ? "Sincronizando…" : rotulo}
+    </Button>
+  );
+}
+
+/** A mesma rotina do botão, para telas que desenham o próprio botão (ex.: Fulfillment no design novo). */
+export function useSincronizar({ rotas, invalidar, onConcluido }: Pick<Props, "rotas" | "invalidar" | "onConcluido">) {
   const [rodando, setRodando] = useState(false);
   const qc = useQueryClient();
 
@@ -74,17 +92,5 @@ export function BotaoSincronizar({ rotas, rotulo = "Sincronizar", titulo, invali
     }
   }
 
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-9 gap-2"
-      title={titulo}
-      onClick={() => void sincronizar()}
-      disabled={rodando}
-    >
-      {rodando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-      {rodando ? "Sincronizando…" : rotulo}
-    </Button>
-  );
+  return { rodando, sincronizar };
 }

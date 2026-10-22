@@ -36,6 +36,8 @@ import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/comp
 import { MargemFullCell, chaveMargem, useMargemFull } from "@/components/fulfillment/MargemFull";
 import { arredondarCaixa, chaveCaixa, useCaixasAmazon } from "@/components/fulfillment/CaixaReposicao";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
+import { CabecalhoFulfillment, Migalhas, nomeConta, usePainelFulfillment, type Destino } from "@/components/fulfillment/ui/Cabecalho";
+import { ConfirmacaoPm, ETAPAS, QuadroEnvios, idxEtapa, type EnvioQ } from "@/components/fulfillment/ui/QuadroEnvios";
 import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -228,7 +230,8 @@ function Thumb({ url, alt }: { url?: string | null; alt?: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Route
 
-type SearchParams = { tab: SubTab; mkt: MktFiltro; emp: EmpFiltro; q: string; somenteSugestao: boolean };
+// envio = id do envio aberto (tela de packing) ou "novo" (novo envio): as telas de dentro têm endereço.
+type SearchParams = { tab: SubTab; mkt: MktFiltro; emp: EmpFiltro; q: string; somenteSugestao: boolean; envio?: string };
 
 export const Route = createFileRoute("/fulfillment")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
@@ -240,6 +243,7 @@ export const Route = createFileRoute("/fulfillment")({
       : "todos"),
     q: typeof s.q === "string" ? s.q : "",
     somenteSugestao: s.somenteSugestao === false || s.somenteSugestao === "false" ? false : true,
+    envio: typeof s.envio === "string" && s.envio ? s.envio : undefined,
   }),
   component: FulfillmentPage,
 });
@@ -312,112 +316,95 @@ function FulfillmentPage() {
     enabled: tab === "reposicao",
   });
 
+  // destaque = envio que a faixa "Pede ação" mandou olhar (o quadro rola até ele)
+  const [destaque, setDestaque] = useState<string | null>(null);
+  const irPara = (d: Destino) => {
+    setDestaque(d.destaque ?? null);
+    navigate({ search: { ...search, tab: d.aba, envio: undefined }, replace: true });
+  };
+  const abrirEnvio = (id: string | null) => navigate({ search: { ...search, tab: "envios", envio: id ?? undefined } });
+  const dentro = tab === "envios" && !!search.envio;
+  const envioAbertoQ = useQuery({
+    queryKey: ["fulfillment", "envio-rotulo", search.envio],
+    enabled: dentro && search.envio !== "novo",
+    queryFn: async () => {
+      const { data } = await supabaseExternal.from("fulfillment_envios").select("numero, marketplace, empresa").eq("id", search.envio as string).maybeSingle();
+      return data as { numero: string | null; marketplace: string; empresa: string | null } | null;
+    },
+  });
+  const rotuloEnvio = envioAbertoQ.data?.numero
+    ? (/^\d+$/.test(envioAbertoQ.data.numero) ? `#${envioAbertoQ.data.numero}` : envioAbertoQ.data.numero)
+    : "Envio";
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="w-full flex flex-col gap-[18px] px-6 md:px-8 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            Estoque nos centros de distribuição e sugestão de reposição (envios Full)
-          </p>
-          <div className="flex items-center gap-2">
-            {/* "Atualizar" relê o que já está no banco; "Sincronizar CDs" vai
-                buscar nos marketplaces (o cron faz isso 2x por dia). */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 gap-2"
-              onClick={() => {
-                invQuery.refetch();
-                repQuery.refetch();
-                tinyQuery.refetch();
-              }}
-              disabled={invQuery.isFetching || repQuery.isFetching}
-            >
-              <RefreshCw
-                className={cn(
-                  "h-3.5 w-3.5",
-                  (invQuery.isFetching || repQuery.isFetching) && "animate-spin",
-                )}
-              />
-              Atualizar
-            </Button>
-            <BotaoSincronizar
-              rotulo="Sincronizar CDs"
-              titulo="Puxa o estoque de Amazon FBA (Ottz+SVL), Shopee SBS (Ottz+Bumi) e ML Full (Ottz+SVL) agora — leva ~1 min. O cron faz isso às 8h e às 18h."
-              rotas={[
-                "fulfillment-sync?modulo=amazon",
-                "fulfillment-sync?modulo=shopee&loja=ottz",
-                "fulfillment-sync?modulo=shopee&loja=svl",
-                "fulfillment-sync?modulo=ml&limite=120",
-              ]}
-              invalidar={["fulfillment"]}
-            />
-          </div>
-        </div>
-
-        <Tabs value={tab} onValueChange={(v) => update({ tab: v as SubTab })}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <TabsList>
-              <TabsTrigger value="reposicao" className="gap-1.5">
-                <PackagePlus className="h-4 w-4" /> Reposição
-              </TabsTrigger>
-              <TabsTrigger value="inventario" className="gap-1.5">
-                <Warehouse className="h-4 w-4" /> Inventário
-              </TabsTrigger>
-              <TabsTrigger value="envios" className="gap-1.5">
-                <Truck className="h-4 w-4" /> Envios
-              </TabsTrigger>
-              <TabsTrigger value="tarefas" className="gap-1.5">
-                <ClipboardList className="h-4 w-4" /> Tarefas
-              </TabsTrigger>
-            </TabsList>
-
-            {tab !== "envios" && tab !== "tarefas" && (
-              <div className="flex flex-wrap items-center gap-2">
-                <MktSegment value={mkt} onChange={(m) => update({ mkt: m })} />
-                <EmpSegment value={search.emp} onChange={(e) => update({ emp: e })} />
-                <div className="relative w-full max-w-xs">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    value={q}
-                    onChange={(e) => update({ q: e.target.value })}
-                    placeholder="Buscar por produto ou SKU..."
-                    className="pl-8 h-9 bg-card"
-                  />
-                </div>
+        {dentro ? (
+          <Migalhas
+            onVoltar={() => abrirEnvio(null)}
+            itens={[
+              { t: "Fulfillment", onClick: () => abrirEnvio(null) },
+              { t: "Envios", onClick: () => abrirEnvio(null) },
+              search.envio === "novo"
+                ? { t: "Novo envio" }
+                : { t: envioAbertoQ.data ? `${rotuloEnvio} · ${nomeConta(envioAbertoQ.data.marketplace, envioAbertoQ.data.empresa)}` : rotuloEnvio, mono: true },
+            ]}
+          />
+        ) : (
+          <CabecalhoFulfillment
+            emp={search.emp}
+            mkt={mkt}
+            aba={tab}
+            onEmp={(e) => update({ emp: e })}
+            onMkt={(m) => update({ mkt: m })}
+            onAba={(a) => { setDestaque(null); update({ tab: a }); }}
+            onIr={irPara}
+            busca={(tab === "reposicao" || tab === "inventario") ? (
+              <div className="relative w-full max-w-[240px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(e) => update({ q: e.target.value })}
+                  placeholder="Buscar por produto ou SKU..."
+                  className="pl-8 h-8 bg-card text-[12.5px]"
+                />
               </div>
-            )}
-          </div>
+            ) : null}
+          />
+        )}
 
-          <TabsContent value="reposicao" className="mt-4">
-            <ReposicaoTab
-              rows={(repQuery.data ?? []).filter((r) => search.emp === "todas" || (r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0]) === search.emp)}
-              loading={repQuery.isLoading}
-              error={(repQuery.error as Error | null)?.message ?? null}
-              busca={q}
-              somenteSugestao={somenteSugestao}
-              onToggleSugestao={(v) => update({ somenteSugestao: v })}
-            />
-          </TabsContent>
+        {tab === "reposicao" && (
+          <ReposicaoTab
+            rows={(repQuery.data ?? []).filter((r) => search.emp === "todas" || (r.empresa ?? EMPRESA_POR_SHOP[r.shop_id ?? 0]) === search.emp)}
+            loading={repQuery.isLoading}
+            error={(repQuery.error as Error | null)?.message ?? null}
+            busca={q}
+            somenteSugestao={somenteSugestao}
+            onToggleSugestao={(v) => update({ somenteSugestao: v })}
+          />
+        )}
 
-          <TabsContent value="inventario" className="mt-4">
-            <InventarioTab
-              rows={(invQuery.data ?? []).filter((r) => search.emp === "todas" || EMPRESA_POR_SHOP[r.shop_id ?? 0] === search.emp)}
-              loading={invQuery.isLoading}
-              error={(invQuery.error as Error | null)?.message ?? null}
-              busca={q}
-              tiny={tinyQuery.data}
-            />
-          </TabsContent>
+        {tab === "inventario" && (
+          <InventarioTab
+            rows={(invQuery.data ?? []).filter((r) => search.emp === "todas" || EMPRESA_POR_SHOP[r.shop_id ?? 0] === search.emp)}
+            loading={invQuery.isLoading}
+            error={(invQuery.error as Error | null)?.message ?? null}
+            busca={q}
+            tiny={tinyQuery.data}
+          />
+        )}
 
-          <TabsContent value="envios" className="mt-4">
-            <EnviosTab ativo={tab === "envios"} />
-          </TabsContent>
+        {tab === "envios" && (
+          <EnviosTab
+            emp={search.emp}
+            mkt={mkt}
+            destaque={destaque}
+            envio={search.envio ?? null}
+            onEnvio={abrirEnvio}
+          />
+        )}
 
-          <TabsContent value="tarefas" className="mt-4">
-            <TarefasTab ativo={tab === "tarefas"} />
-          </TabsContent>
-        </Tabs>
+        {tab === "tarefas" && <TarefasTab ativo />}
       </div>
     </TooltipProvider>
   );
@@ -1395,20 +1382,29 @@ function Barra({ valor, total }: { valor: number; total: number }) {
   );
 }
 
-function EnviosTab({ ativo }: { ativo: boolean }) {
+interface PreviaTiny {
+  plano?: Array<{ sku: string; nome: string | null; embalado: number; entrada_full: number }>;
+  avisos?: Array<{ sku: string; motivo: string }>;
+  deposito_full?: { nome: string };
+  ja_lancado_em?: string | null;
+}
+
+// Envios no design novo (22/out/2026): o quadro/lista é o QuadroEnvios; aqui ficam as leituras e
+// as escritas (mover etapa, arquivar, lançar no Tiny) e as telas de dentro, com endereço na URL
+// (?envio=<id> = packing, ?envio=novo = novo envio).
+function EnviosTab({ emp, mkt, destaque, envio, onEnvio }: {
+  emp: EmpFiltro; mkt: MktFiltro; destaque: string | null; envio: string | null; onEnvio: (id: string | null) => void;
+}) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
-  const [view, setView] = useState<"lista" | "novo">("lista");
   // Arquivados ficam fora do quadro (e do resumo do Discord — a view filtra),
   // mas continuam no banco: arquivar e reversivel, excluir nao.
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
-  const [packingId, setPackingId] = useState<string | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [dlg, setDlg] = useState<null | { tipo: "enviado" | "tiny"; id: string; previa?: PreviaTiny | null; erro?: string | null; ocupado?: boolean }>(null);
+  const painelQ = usePainelFulfillment(emp, mkt);
 
   const enviosQ = useQuery({
     queryKey: ["fulfillment", "envios"],
-    enabled: ativo,
     queryFn: async (): Promise<Envio[]> => {
       const { data, error } = await supabaseExternal
         .from("fulfillment_envios")
@@ -1421,7 +1417,6 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
 
   const progressoQ = useQuery({
     queryKey: ["fulfillment", "envios-progresso"],
-    enabled: ativo,
     queryFn: async (): Promise<Map<string, { plan: number; sep: number; itens: number; skus: { sku: string; qtd: number }[] }>> => {
       const { data, error } = await supabaseExternal
         .from("fulfillment_envio_itens")
@@ -1445,46 +1440,47 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
   const recarregar = () => {
     qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
     qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
+    qc.invalidateQueries({ queryKey: ["fulfillment", "painel"] });
   };
+
+  const todos = enviosQ.data ?? [];
+  const noFiltro = (e: Envio) => (emp === "todas" || (e.empresa ?? "ACZ Pet") === emp) && (mkt === "todos" || e.marketplace === mkt);
+  const envios = todos.filter((e) => !e.arquivado_em && noFiltro(e));
+  const arquivados = todos.filter((e) => !!e.arquivado_em && noFiltro(e));
 
   // Fotos só dos até 3 SKUs exibidos por cartão (lookup por SKU, lotes ≤300).
   // Fica antes dos returns antecipados (packing/novo) pela regra dos hooks.
   const skusMiniatura = useMemo(
-    () => (enviosQ.data ?? []).filter((e) => !e.arquivado_em)
-      .flatMap((e) => (progressoQ.data?.get(e.id)?.skus ?? []).slice(0, 3).map((x) => x.sku)),
-    [enviosQ.data, progressoQ.data],
+    () => envios.flatMap((e) => (progressoQ.data?.get(e.id)?.skus ?? []).slice(0, 3).map((x) => x.sku)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enviosQ.data, progressoQ.data, emp, mkt],
   );
   const { data: fotosCard = {} } = useFotos(skusMiniatura);
 
-  if (packingId) {
+  if (envio === "novo") {
     return (
-      <PackingEnvio
-        envioId={packingId}
-        onVoltar={() => {
-          setPackingId(null);
+      <NovoEnvio
+        onCancelar={() => onEnvio(null)}
+        onCriado={(id) => {
           recarregar();
+          onEnvio(id);
         }}
       />
     );
   }
-  if (view === "novo") {
+  if (envio) {
     return (
-      <NovoEnvio
-        onCancelar={() => setView("lista")}
-        onCriado={(id) => {
-          setView("lista");
+      <PackingEnvio
+        envioId={envio}
+        onVoltar={() => {
           recarregar();
-          setPackingId(id);
+          onEnvio(null);
         }}
       />
     );
   }
 
-  async function moverPara(id: string, stageId: string) {
-    setDragId(null);
-    setDragOver(null);
-    const e = (enviosQ.data ?? []).find((x) => x.id === id);
-    if (!e || e.status === stageId) return;
+  async function gravarEtapa(id: string, stageId: string) {
     qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) =>
       (old ?? []).map((x) => (x.id === id ? { ...x, status: stageId } : x)),
     );
@@ -1492,10 +1488,16 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
       .from("fulfillment_envios")
       .update({ status: stageId, atualizado_em: new Date().toISOString() })
       .eq("id", id);
-    if (error) {
-      toast.error("Falha ao mover", { description: error.message });
-      recarregar();
-    }
+    if (error) toast.error("Falha ao mover", { description: error.message });
+    recarregar();
+  }
+
+  function moverPara(id: string, stageId: string) {
+    const e = todos.find((x) => x.id === id);
+    if (!e || e.status === stageId) return;
+    // "Enviado" pede confirmação: dali em diante o Tiny precisa receber o lançamento de estoque
+    if (stageId === "enviado") { setDlg({ tipo: "enviado", id }); return; }
+    void gravarEtapa(id, stageId);
   }
 
   async function definirArquivado(e: Envio, arquivar: boolean) {
@@ -1523,281 +1525,204 @@ function EnviosTab({ ativo }: { ativo: boolean }) {
     } else {
       toast.success(`Envio ${rotulo} voltou para o quadro`);
     }
+    qc.invalidateQueries({ queryKey: ["fulfillment", "painel"] });
   }
 
-  async function excluirEnvio(e: Envio) {
-    const rotulo = e.numero ? `#${e.numero}` : "(sem número)";
-    if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
-    // Remoção otimista do quadro
-    qc.setQueryData<Envio[]>(["fulfillment", "envios"], (old) => (old ?? []).filter((x) => x.id !== e.id));
+  async function abrirLancamento(id: string) {
+    setDlg({ tipo: "tiny", id, previa: undefined });
     try {
-      await removerArquivosDoEnvio(e.id);
-      await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", e.id);
-      await supabaseExternal.from("fulfillment_envio_itens").delete().eq("envio_id", e.id);
-      const { error } = await supabaseExternal.from("fulfillment_envios").delete().eq("id", e.id);
-      if (error) throw error;
-      toast.success(`Envio ${rotulo} excluído`);
+      const { data, error } = await supabaseExternal.functions.invoke("fulfillment-estoque", { body: { modulo: "preview", envio_id: id } });
+      if (error) throw new Error(error.message);
+      setDlg((d) => (d && d.id === id ? { ...d, previa: data as PreviaTiny } : d));
     } catch (err) {
-      toast.error("Falha ao excluir", { description: (err as Error).message });
+      setDlg((d) => (d && d.id === id ? { ...d, previa: null, erro: (err as Error).message } : d));
+    }
+  }
+
+  async function confirmar() {
+    if (!dlg) return;
+    const e = todos.find((x) => x.id === dlg.id);
+    if (!e) { setDlg(null); return; }
+    if (dlg.tipo === "enviado") {
+      setDlg(null);
+      await gravarEtapa(e.id, "enviado");
+      toast.success(`${e.numero ?? "Envio"} marcado como enviado`, { description: "Próximo passo: lançar o estoque no Tiny." });
+      return;
+    }
+    const plano = dlg.previa?.plano ?? [];
+    if (plano.length === 0) { setDlg(null); return; }
+    setDlg({ ...dlg, ocupado: true, erro: null });
+    try {
+      const { data, error } = await supabaseExternal.functions.invoke("fulfillment-estoque", {
+        body: { modulo: "lancar", envio_id: e.id, confirmar: 1, lancado_por: perfil?.nome ?? "app" },
+      });
+      if (error) throw new Error(error.message);
+      const r = data as { ok?: boolean; movimentos?: number; erros?: string[]; erro?: string };
+      if (r?.ok) {
+        toast.success(`Estoque de ${e.numero ?? "envio"} lançado no Tiny`, { description: `${r.movimentos ?? 0} movimento(s)` });
+        setDlg(null);
+      } else {
+        setDlg({ ...dlg, ocupado: false, erro: r?.erro ?? (r?.erros ?? []).slice(0, 3).join(" | ") ?? "erro no Tiny" });
+      }
+    } catch (err) {
+      setDlg({ ...dlg, ocupado: false, erro: (err as Error).message });
     } finally {
       recarregar();
     }
   }
 
-  const todos = enviosQ.data ?? [];
-  const envios = todos.filter((e) => !e.arquivado_em);
-  const arquivados = todos.filter((e) => !!e.arquivado_em);
-  const hoje = new Date().toISOString().slice(0, 10);
-  const totPlan = envios.reduce((s, e) => s + (progressoQ.data?.get(e.id)?.plan ?? e.total_unidades ?? 0), 0);
-  // Contador de unidades (pedido do dono, 17/set): nos envios ainda não
-  // enviados, o que falta separar, o que já está separado mas em preparo, e o
-  // que está na coluna "Pronto para Envio".
-  const contador = envios.reduce(
-    (acc, e) => {
-      if (e.status === "enviado") return acc;
-      const p = progressoQ.data?.get(e.id);
-      const plan = p?.plan ?? e.total_unidades ?? 0;
-      const sep = p?.sep ?? 0;
-      acc.aguardando += Math.max(0, plan - sep);
-      if (e.status === "pronto_envio") acc.prontas += sep;
-      else acc.emPreparo += sep;
-      return acc;
-    },
-    { aguardando: 0, emPreparo: 0, prontas: 0 },
-  );
-  return (
-    <div className="flex flex-col gap-4">
-      {!mostrarArquivados && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            { rotulo: "Aguardando separação", valor: contador.aguardando, cor: "#B7791F", dica: "planejado − separado nos envios em aberto" },
-            { rotulo: "Separadas, em preparo", valor: contador.emPreparo, cor: "#2F6FB0", dica: "já separadas nas etapas Separando / Embalar / Etiquetas" },
-            { rotulo: "Prontas para envio", valor: contador.prontas, cor: "#0E8A5F", dica: "unidades dos envios na coluna Pronto para Envio" },
-          ].map((c) => (
-            <div key={c.rotulo} className="bg-card rounded-xl px-4 py-3" style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${c.cor}` }} title={c.dica}>
-              <div className="text-[11.5px] text-[#8B93A1]">{c.rotulo}</div>
-              <div className="text-[22px] font-semibold tracking-[-0.02em] leading-tight">{formatNumber(c.valor)} <span className="text-[13px] font-normal text-[#8B93A1]">un</span></div>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12.5px] text-[#8B93A1]">
-          {mostrarArquivados
-            ? `${arquivados.length} envio(s) arquivado(s) — fora do quadro e do resumo diário`
-            : `${envios.length} envios abertos · ${formatNumber(totPlan)} unidades planejadas · arraste os cartões entre as colunas para mudar o estágio`}
-        </p>
-        <div className="flex items-center gap-2">
-          {!mostrarArquivados && (
-            <LancarEstoqueEmMassa
-              envios={envios}
-              embalado={(id) => progressoQ.data?.get(id)?.sep ?? 0}
-              nomeUsuario={perfil?.nome ?? null}
-              onConcluido={recarregar}
-            />
-          )}
-          <Button
-            size="sm"
-            variant={mostrarArquivados ? "default" : "outline"}
-            className="gap-1.5"
-            onClick={() => setMostrarArquivados((v) => !v)}
-          >
-            <Archive className="h-3.5 w-3.5" />
-            {mostrarArquivados ? "Voltar ao quadro" : `Arquivados${arquivados.length ? ` (${arquivados.length})` : ""}`}
-          </Button>
-          {!mostrarArquivados && <ImportarEnviosAmazon onImportado={recarregar} />}
-          {!mostrarArquivados && (
-            <Button size="sm" className="gap-1.5" onClick={() => setView("novo")}>
-              <Plus className="h-4 w-4" /> Novo envio
-            </Button>
-          )}
-        </div>
-      </div>
+  const prog = (id: string) => progressoQ.data?.get(id);
+  const paraQuadro: EnvioQ[] = envios.map((e) => {
+    const p = prog(e.id);
+    return {
+      id: e.id, numero: e.numero, marketplace: e.marketplace, empresa: e.empresa, centro: e.centro, status: e.status,
+      data: e.data_envio_agendada, plan: p?.plan ?? num(e.total_unidades), sep: p?.sep ?? 0, itens: p?.itens ?? 0,
+      skus: p?.skus ?? [], lancadoEm: e.estoque_lancado_em, lancadoPor: e.estoque_lancado_por,
+      observacao: e.observacao, atualizadoEm: e.atualizado_em,
+    };
+  });
+  const painelEnv = painelQ.data && !("erro" in (painelQ.data.envios as object)) ? (painelQ.data.envios as { enviados_30d: number }) : null;
 
-      {enviosQ.isLoading ? (
-        <Skeleton className="h-64 w-full" />
-      ) : mostrarArquivados ? (
-        arquivados.length === 0 ? (
+  // ---------------- diálogo (marcar enviado / lançar no Tiny)
+  let dialogo: React.ReactNode = null;
+  if (dlg) {
+    const e = todos.find((x) => x.id === dlg.id);
+    const p = e ? prog(e.id) : undefined;
+    if (e) {
+      const rot = e.numero ? (/^\d+$/.test(e.numero) ? `#${e.numero}` : e.numero) : "(sem nº)";
+      const conta = nomeConta(e.marketplace, e.empresa);
+      const sep = p?.sep ?? 0;
+      const plan = p?.plan ?? num(e.total_unidades);
+      if (dlg.tipo === "enviado") {
+        const falta = Math.max(0, plan - sep);
+        dialogo = (
+          <ConfirmacaoPm
+            kicker={`${conta} · ${e.centro || "CD a definir"}`}
+            titulo={`Marcar ${rot} como enviado?`}
+            linhas={[
+              `${formatNumber(sep)} un em ${p?.itens ?? 0} ${p?.itens === 1 ? "item saem" : "itens saem"} na coleta${e.data_envio_agendada ? ` de ${format(parseISO(e.data_envio_agendada), "dd/MM")}` : ""}.`,
+              "O envio vai para “Enviado”. O próximo passo é lançar o estoque no Tiny: até lá, o Tiny segue vendendo essas unidades.",
+            ]}
+            aviso={falta > 0 ? `Faltam ${formatNumber(falta)} un. Elas vão constar como não enviadas.` : null}
+            okLabel={falta > 0 ? `Marcar enviado com ${formatNumber(falta)} un faltando` : "Marcar enviado"}
+            onOk={() => void confirmar()}
+            onCancelar={() => setDlg(null)}
+          />
+        );
+      } else {
+        const pv = dlg.previa;
+        const plano = pv?.plano ?? [];
+        const total = plano.reduce((t, it) => t + (it.entrada_full || 0), 0);
+        const linhas: React.ReactNode[] = pv === undefined ? [] : plano.length === 0
+          ? [pv?.ja_lancado_em ? "O estoque deste envio já foi lançado no Tiny. Nada a fazer." : "Nenhum item embalado pendente de lançamento (ou produto sem cadastro no Tiny)."]
+          : [
+              `Vai transferir ${formatNumber(total)} un de ${plano.length} ${plano.length === 1 ? "produto" : "produtos"} do depósito Geral para o depósito ${pv?.deposito_full?.nome ?? "Full"}.`,
+              ...plano.slice(0, 8).map((it) => <span key={it.sku}><span className="pm-mono">{it.sku}</span>{it.nome ? ` · ${it.nome.slice(0, 48)}` : ""} — <b>{formatNumber(it.entrada_full)} un</b></span>),
+              ...(plano.length > 8 ? [`e mais ${plano.length - 8} produtos`] : []),
+              ...(pv?.avisos ?? []).map((a) => `Fica de fora: ${a.sku} (${a.motivo})`),
+              "Kit é lançado nos componentes. Lançar de novo não duplica: o app só lança o que ainda falta.",
+            ];
+        dialogo = (
+          <ConfirmacaoPm
+            kicker="Escreve no Tiny · não dá para desfazer pelo app"
+            titulo={`Lançar o estoque de ${rot} no Tiny?`}
+            carregando={pv === undefined}
+            linhas={linhas}
+            erro={dlg.erro}
+            ocupado={dlg.ocupado}
+            okLabel={plano.length ? `Lançar ${formatNumber(total)} un no Tiny` : "Fechar"}
+            onOk={() => void confirmar()}
+            onCancelar={() => setDlg(null)}
+          />
+        );
+      }
+    }
+  }
+
+  const botao = (primario?: boolean): React.CSSProperties => ({
+    display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, cursor: "pointer", fontSize: 12.5,
+    border: primario ? 0 : "1px solid var(--pm-b)", background: primario ? "var(--pm-a)" : "var(--pm-s)",
+    color: primario ? "var(--pm-oa)" : "var(--pm-t2)", fontWeight: primario ? 600 : 500,
+  });
+
+  if (mostrarArquivados) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="pm-ui flex flex-wrap items-center gap-2">
+          <span style={{ fontSize: 12.5, color: "var(--pm-t3)" }}>{arquivados.length} envio(s) arquivado(s) — fora do quadro e do resumo diário</span>
+          <div className="flex-1" />
+          <button type="button" style={botao()} onClick={() => setMostrarArquivados(false)}>← Voltar ao quadro</button>
+        </div>
+        {arquivados.length === 0 ? (
           <Card className="p-10 text-center text-sm text-muted-foreground">
-            Nenhum envio arquivado. Use o ícone <Archive className="inline h-3.5 w-3.5 -mt-0.5" /> no cartão para tirar um envio do quadro.
+            Nenhum envio arquivado com o filtro atual. Use o ícone <Archive className="inline h-3.5 w-3.5 -mt-0.5" /> no cartão para tirar um envio do quadro.
           </Card>
         ) : (
           <div className="flex flex-col gap-2">
             {arquivados.map((e) => {
-              const st = stageDe(e.status);
-              const p = progressoQ.data?.get(e.id);
-              const planT = p?.plan ?? e.total_unidades ?? 0;
-              const sepT = p?.sep ?? 0;
+              const st = ETAPAS[idxEtapa(e.status)];
+              const p = prog(e.id);
               return (
-                <div
-                  key={e.id}
-                  onClick={() => setPackingId(e.id)}
-                  className="bg-card rounded-xl px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer hover:bg-muted/40"
-                  style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${st.col}` }}
-                >
-                  <span className="h-2 w-2 rounded-full shrink-0" style={{ background: MKT_COLOR[e.marketplace] ?? "#888" }} />
+                <div key={e.id} onClick={() => onEnvio(e.id)}
+                  className="pm-ui bg-card rounded-xl px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer hover:bg-muted/40"
+                  style={{ border: "1px solid var(--pm-b)", borderLeft: `4px solid ${st.cor}` }}>
                   <span className="text-[12.5px] font-semibold font-mono">{e.numero ? `#${e.numero}` : "(s/ nº)"}</span>
-                  <span className="text-[11.5px] text-muted-foreground">
-                    {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
-                  </span>
-                  <span className={cn("text-[10.5px] px-1.5 py-0.5 rounded font-medium", st.cls)}>{st.curto}</span>
-                  <span className="text-[11.5px] text-[#4B5462] font-mono">{formatNumber(sepT)} / {formatNumber(planT)} un</span>
-                  <span className="text-[11.5px] text-muted-foreground font-mono">
-                    {e.data_envio_agendada ? `coleta ${format(parseISO(e.data_envio_agendada), "dd/MM")}` : "sem data"}
-                  </span>
+                  <span className="text-[11.5px] text-muted-foreground">{nomeConta(e.marketplace, e.empresa)}{e.centro ? ` · ${e.centro}` : ""}</span>
+                  <span className="text-[11px] font-medium">{st.nome}</span>
+                  <span className="text-[11.5px] font-mono">{formatNumber(p?.sep ?? 0)} / {formatNumber(p?.plan ?? num(e.total_unidades))} un</span>
+                  <span className="text-[11.5px] text-muted-foreground font-mono">{e.data_envio_agendada ? `coleta ${format(parseISO(e.data_envio_agendada), "dd/MM")}` : "sem data"}</span>
                   <div className="flex-1" />
                   {e.arquivado_em && (
                     <span className="text-[11px] text-muted-foreground">
                       arquivado {format(parseISO(e.arquivado_em), "dd/MM 'às' HH:mm")}{e.arquivado_por ? ` por ${e.arquivado_por}` : ""}
                     </span>
                   )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5 h-7"
-                    onClick={(ev) => { ev.stopPropagation(); void definirArquivado(e, false); }}
-                  >
+                  <Button size="sm" variant="outline" className="gap-1.5 h-7" onClick={(ev) => { ev.stopPropagation(); void definirArquivado(e, false); }}>
                     <ArchiveRestore className="h-3.5 w-3.5" /> Desarquivar
                   </Button>
                 </div>
               );
             })}
           </div>
-        )
-      ) : envios.length === 0 ? (
-        <Card className="p-10 text-center text-sm text-muted-foreground">
-          Nenhum envio ainda. Clique em <strong>Novo envio</strong> e suba o PDF de preparação.
-        </Card>
-      ) : (
-        <div
-          className="grid gap-3.5 overflow-x-auto pb-1.5 items-start"
-          style={{ gridTemplateColumns: "repeat(5, minmax(196px, 1fr))" }}
-        >
-          {STAGES.map((stage) => {
-            const doStage = envios.filter((e) => stageDe(e.status).id === stage.id);
-            const over = !!dragId && dragOver === stage.id;
-            return (
-              <div
-                key={stage.id}
-                onDragOver={(e) => { e.preventDefault(); if (dragOver !== stage.id) setDragOver(stage.id); }}
-                onDragLeave={() => { if (dragOver === stage.id) setDragOver(null); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const id = e.dataTransfer.getData("text/plain") || dragId;
-                  if (id) void moverPara(id, stage.id);
-                }}
-                className="flex flex-col gap-2.5 min-h-[180px] rounded-[14px] p-1.5 pb-2.5"
-                style={{
-                  background: over ? "#F7F6FD" : stage.tint,
-                  border: over ? "1.5px dashed var(--color-primary)" : `1.5px solid ${stage.tint}`,
-                  boxShadow: "0 1px 3px rgba(16,20,26,.03)",
-                }}
-              >
-                <div className="flex items-center gap-2 px-2 py-2 -mx-1.5 -mt-1.5 rounded-t-[10px]" style={{ background: stage.col }}>
-                  <span className="h-[7px] w-[7px] rounded-full bg-white shrink-0" />
-                  <span className="text-[11.5px] font-bold uppercase tracking-wide text-white">{stage.curto}</span>
-                  <div className="flex-1" />
-                  <span className="text-[11px] font-bold text-white font-mono px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,.28)" }}>
-                    {doStage.length}
-                  </span>
-                </div>
+        )}
+      </div>
+    );
+  }
 
-                {doStage.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-[#C9CFD8] py-5 px-4 flex flex-col items-center gap-1.5 text-center" style={{ background: "rgba(255,255,255,.5)" }}>
-                    <span className="text-[#B8BEC8] text-base">◌</span>
-                    <span className="text-[12px] font-medium text-[#8B93A1]">Nenhum envio</span>
-                    <span className="text-[11px] text-[#A6ADBA]">Suba o PDF de preparação para criar</span>
-                  </div>
-                ) : (
-                  doStage.map((e) => {
-                    const p = progressoQ.data?.get(e.id);
-                    const planT = p?.plan ?? e.total_unidades ?? 0;
-                    const sepT = p?.sep ?? 0;
-                    const pctD = planT > 0 ? (sepT / planT) * 100 : 0;
-                    const atrasado = !!e.data_envio_agendada && e.status !== "enviado" && e.data_envio_agendada < hoje;
-                    return (
-                      <div
-                        key={e.id}
-                        draggable
-                        onDragStart={(ev) => { ev.dataTransfer.setData("text/plain", e.id); ev.dataTransfer.effectAllowed = "move"; setDragId(e.id); }}
-                        onDragEnd={() => { setDragId(null); setDragOver(null); }}
-                        onClick={() => { if (!dragId) setPackingId(e.id); }}
-                        className="bg-card rounded-xl p-3 pl-2.5 flex flex-col gap-2.5 cursor-grab"
-                        style={{ border: "1px solid #E6E8EC", borderLeft: `4px solid ${stage.col}`, opacity: dragId === e.id ? 0.4 : 1, boxShadow: "0 1px 2px rgba(16,20,26,.04)" }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: MKT_COLOR[e.marketplace] ?? "#888" }} />
-                          <span className="text-[12.5px] font-semibold font-mono whitespace-nowrap">{e.numero ? `#${e.numero}` : "(s/ nº)"}</span>
-                          <div className="flex-1" />
-                          {/* "E" = estoque já lançado no Tiny (transferência Geral → Full).
-                              Evita relançar por engano e mostra de relance o que falta. */}
-                          {e.estoque_lancado_em && (
-                            <span
-                              className="shrink-0 h-[18px] w-[18px] rounded-full flex items-center justify-center text-[10px] font-bold leading-none"
-                              style={{ background: "#0E8A5F", color: "#fff" }}
-                              title={`Estoque lançado no Tiny em ${format(parseISO(e.estoque_lancado_em), "dd/MM/yyyy 'às' HH:mm")}${e.estoque_lancado_por ? ` por ${e.estoque_lancado_por}` : ""}`}
-                              aria-label="Estoque lançado no Tiny"
-                            >
-                              E
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            className="shrink-0 h-[18px] w-[18px] rounded flex items-center justify-center text-[#B8BEC8] hover:text-[#4B5462] hover:bg-[#F1F2F5]"
-                            title="Arquivar — sai do quadro sem excluir (dá para desarquivar)"
-                            aria-label="Arquivar envio"
-                            draggable={false}
-                            onClick={(ev) => { ev.stopPropagation(); void definirArquivado(e, true); }}
-                          >
-                            <Archive className="h-3 w-3" />
-                          </button>
-                          <span className="text-[#C9CFD8] text-xs tracking-tighter">⠿</span>
-                        </div>
-                        <span
-                          className="self-start text-[13px] font-bold px-2.5 py-1 rounded-lg font-mono"
-                          style={{ background: atrasado ? "#FBEDEA" : "#F4F5F7", color: atrasado ? "#C9432F" : "#6C7481" }}
-                        >
-                          {e.data_envio_agendada ? (atrasado ? "atrasado · " : "coleta ") + format(parseISO(e.data_envio_agendada), "dd/MM") : "sem data"}
-                        </span>
-                        <span className="text-[11.5px] text-muted-foreground truncate">
-                          {MKT_LABEL[e.marketplace] ?? e.marketplace}{e.centro ? ` · ${e.centro}` : ""}
-                        </span>
-                        {p && p.skus.length > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            {p.skus.slice(0, 3).map((x) => (
-                              <div key={x.sku} title={`${x.sku} · ${formatNumber(x.qtd)} un`}>
-                                <Thumb url={fotosCard[x.sku]} alt={x.sku} />
-                              </div>
-                            ))}
-                            {p.skus.length > 3 && (
-                              <span className="text-[11px] text-muted-foreground font-mono">+{p.skus.length - 3}</span>
-                            )}
-                          </div>
-                        )}
-                        <div className="flex flex-col gap-1.5">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="text-[11.5px] text-[#4B5462] font-mono">{formatNumber(sepT)} / {formatNumber(planT)} un</span>
-                            <span className="text-[11px] font-semibold font-mono" style={{ color: stage.col }}>{Math.round(pctD)}%</span>
-                          </div>
-                          <div className="h-[5px] rounded-[3px] bg-[#F1F2F5] overflow-hidden">
-                            <div className="h-full rounded-[3px]" style={{ width: `${Math.min(100, pctD)}%`, background: stage.col }} />
-                          </div>
-                        </div>
-                        {e.observacao && (
-                          <span className="text-[11px] text-muted-foreground leading-snug" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                            {e.observacao}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+  return (
+    <>
+      <QuadroEnvios
+        envios={paraQuadro}
+        fotos={fotosCard}
+        carregando={enviosQ.isLoading}
+        erro={enviosQ.error ? (enviosQ.error as Error).message : progressoQ.error ? (progressoQ.error as Error).message : null}
+        onTentar={recarregar}
+        destaque={destaque}
+        enviados30d={painelEnv?.enviados_30d ?? null}
+        onAbrir={(id) => onEnvio(id)}
+        onMover={moverPara}
+        onArquivar={(id) => { const e = todos.find((x) => x.id === id); if (e) void definirArquivado(e, true); }}
+        onLancar={(id) => void abrirLancamento(id)}
+        acoes={
+          <>
+            <LancarEstoqueEmMassa
+              envios={envios}
+              embalado={(id) => prog(id)?.sep ?? 0}
+              nomeUsuario={perfil?.nome ?? null}
+              onConcluido={recarregar}
+            />
+            <button type="button" style={botao()} onClick={() => setMostrarArquivados(true)}>
+              <Archive className="h-3.5 w-3.5" /> Arquivados{arquivados.length ? ` · ${arquivados.length}` : ""}
+            </button>
+            <ImportarEnviosAmazon onImportado={recarregar} />
+            <button type="button" style={botao(true)} onClick={() => onEnvio("novo")}>
+              <Plus className="h-3.5 w-3.5" /> Novo envio
+            </button>
+          </>
+        }
+      />
+      {dialogo}
+    </>
   );
 }
 
