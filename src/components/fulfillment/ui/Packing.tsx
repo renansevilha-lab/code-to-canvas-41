@@ -236,7 +236,8 @@ export function PackingNovo(p: PackingProps) {
   }
 
   const ladoVisivel = !estreito || mais;
-  const docsNormais = p.docs;
+  // ordem pedida pelo dono (22/out): etiqueta de produtos, folha PREP, nota fiscal, etiquetas das caixas
+  const docsNormais = [...p.docs].sort((a, b) => ordemDoc(a) - ordemDoc(b));
 
   return (
     <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 12, color: "var(--pm-t)", fontSize: 13, lineHeight: 1.4, fontVariantNumeric: "tabular-nums" }}>
@@ -379,7 +380,6 @@ export function PackingNovo(p: PackingProps) {
             <div style={{ ...card, padding: 0, gap: 0 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "12px 14px 6px" }}>
                 <span style={tituloCard}>Documentos</span>
-                <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>tipo lido pelo nome do arquivo</span>
               </div>
               {p.extraDocs && <div style={{ padding: "0 14px 8px" }}>{p.extraDocs}</div>}
               {p.temEtiquetaVolume && p.nEtiquetasVolume > 0 && (
@@ -407,14 +407,7 @@ export function PackingNovo(p: PackingProps) {
                   {docsNormais.map((d) => (
                     <LinhaDoc
                       key={d.id}
-                      tipo={
-                        <select value={d.tipo} onChange={(e) => p.onTipoDoc(d.id, e.target.value)} title="Tipo detectado — corrija se errou"
-                          style={{ border: 0, background: "transparent", padding: 0, fontSize: 12.5, fontWeight: 500, color: "var(--pm-t)", cursor: "pointer", maxWidth: "100%" }}>
-                          {p.tiposDoc.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-                          {!p.tiposDoc.some((t) => t.id === d.tipo) && <option value={d.tipo}>{d.tipo}</option>}
-                        </select>
-                      }
-                      arq={`${d.nome ?? "documento"}${d.tamanho ? ` · ${Math.round(d.tamanho / 1024)} KB` : ""}`}
+                      tipo={rotuloDoc(d)}
                       onAbrir={() => p.onAbrirDoc(d)}
                       acoes={docDel === d.id ? (
                         <>
@@ -424,11 +417,9 @@ export function PackingNovo(p: PackingProps) {
                         </>
                       ) : (
                         <>
-                          {(d.mime ?? "").includes("pdf") && (
-                            <button type="button" title={`Imprimir na ${imp?.nome ?? "impressora"}`} disabled={p.imprimindoDoc !== null} onClick={() => p.onImprimirDoc(d)} style={btnQuad(32)}>
-                              {p.imprimindoDoc === d.id ? <Spin /> : <IcImp s={14} />}
-                            </button>
-                          )}
+                          <button type="button" title={`Abrir ${d.nome ?? "documento"}`} onClick={() => p.onAbrirDoc(d)} style={btnQuad(32)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>
+                          </button>
                           <button type="button" title="Excluir documento" onClick={() => setDocDel(d.id)} style={{ ...btnQuad(32), color: "var(--pm-t3)" }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                           </button>
@@ -523,13 +514,33 @@ export function PackingNovo(p: PackingProps) {
   );
 }
 
-function LinhaDoc({ tipo, arq, acoes, onAbrir }: { tipo: ReactNode; arq: string; acoes: ReactNode; onAbrir?: () => void }) {
+/** Nome curto do documento (22/out, pedido do dono): o tipo, sem o nome do arquivo. */
+function rotuloDoc(d: DocPk): string {
+  const xml = /.xml$/i.test(d.nome ?? "");
+  switch (d.tipo) {
+    case "etiqueta_produto": return "Etiqueta produtos";
+    case "preparacao": return "Folha PREP";
+    case "danfe": return xml ? "Nota fiscal (XML)" : "Nota fiscal";
+    case "etiquetas": return "Etiquetas caixas";
+    case "folha_envio": return "Folha de envio";
+    default: return d.nome ?? "Documento";
+  }
+}
+function ordemDoc(d: DocPk): number {
+  const xml = /.xml$/i.test(d.nome ?? "");
+  return ({ etiqueta_produto: 1, preparacao: 2, danfe: xml ? 4 : 3, etiquetas: 5, folha_envio: 6 } as Record<string, number>)[d.tipo] ?? 9;
+}
+
+function LinhaDoc({ tipo, arq, acoes, onAbrir }: { tipo: ReactNode; arq?: string; acoes: ReactNode; onAbrir?: () => void }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: "1px solid var(--pm-b)" }}>
       <IcDoc />
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 500, minWidth: 0 }}>{tipo}</span>
-        {onAbrir ? (
+        {onAbrir && !arq ? (
+          <button type="button" onClick={onAbrir} title="Abrir"
+            style={{ border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--pm-t)" }}>{tipo}</button>
+        ) : <span style={{ fontSize: 12.5, fontWeight: 500, minWidth: 0 }}>{tipo}</span>}
+        {!arq ? null : onAbrir ? (
           <button type="button" onClick={onAbrir} title="Abrir" className={MONO}
             style={{ border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 11, color: "var(--pm-at)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{arq}</button>
         ) : (

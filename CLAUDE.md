@@ -1868,10 +1868,12 @@ concluir.
   agrupadas (quantas, o que vai em cada, medidas, peso, nomes "B1–B26"), alerta âmbar para preparo além da etiqueta (saco
   plástico, bolha…), FNSKU/validade por item e botão "Ler da Amazon". Envio importado do Seller Central (sem plano do app)
   não mostra o cartão. Preenchido em 22/out: FBA19TZFT26Z 26 cx (= folha da Amazon), FBA19TPQXVN9 24, FBA19TPSZTVN 6.
-- **Folha de encaixotamento em PDF + envios do Seller Central (22/out, `amazon-inbound` v12, deploy 16, sha256 conferido dos 3
-  arquivos; pedido do dono):** `_shared/folha-caixas.ts` (pdf-lib) monta a folha A4 — totais, alerta de preparo, "Como montar as
-  caixas" (iguais agrupadas, nomes B1–B26), produtos (FNSKU, validade, preparo, quem etiqueta) e conferência caixa a caixa com
-  [ ] — anexada no envio como tipo `preparacao` ("Folha de encaixotamento FBA….pdf") sempre que o encaixotamento é lido; o
+- **Folha de encaixotamento em PDF + envios do Seller Central (22/out, `amazon-inbound` v12, deploy 18, sha256 conferido dos 3
+  arquivos; pedido do dono):** `_shared/folha-caixas.ts` (pdf-lib) monta a "Folha PREP" A4 — 2ª versão do mesmo dia, pedido do
+  dono: "foto do produto > como montar os volumes, não precisa caixa a caixa": por produto a foto (Tiny via `view_foto_produto`,
+  reduzida a 300 px JPEG com imagescript — a PNG do Tiny tem ~0,5 MB), "N volumes com X un cada" + medidas/peso, alerta de
+  preparo; caixas mistas à parte. `FOLHA_VERSAO` (envios_amazon[].folha.versao) faz a rodada refazer folhas antigas, UMA por
+  rodada e foto por foto (decodificar várias PNG juntas deu 546 WORKER_RESOURCE_LIMIT) — anexada no envio como tipo `preparacao` ("Folha de encaixotamento FBA….pdf") sempre que o encaixotamento é lido; o
   `nf-remessa` faz a de quem já tem caixas (até 5/rodada) e `{plano, reler: true}` relê caixas e refaz a folha (botão "Ler da
   Amazon"). **Envio criado no Seller Central** (sem plano do app): `vincular {numeros?}` (login) acha o plano pela API —
   `listInboundPlans` ACTIVE+SHIPPED por `LAST_UPDATED_TIME` e `getShipment.shipmentConfirmationId` = FBA. **Armadilha:** a data do
@@ -1880,7 +1882,10 @@ concluir.
   log "vinculado do Seller Central") e anexa etiquetas das caixas, de produto e a folha; daí NF/DANFE/coleta seguem pelo cron
   169, que também vincula sozinho 1 envio FBA por rodada (tentativa em `debug_fulfillment` `modulo='amazon-vincular'`; não achado
   = nova tentativa em 6 h). Tela: envio sem plano mostra "Buscar na Amazon". 22/out: FBA19TM3DJHC e FBA19TL1K4ZJ (ACZ) com tudo
-  (NF 7348/25 e 7333/25, coleta 29/10); FBA19V284QY0/V28KLCM (SVL) com etiquetas e folha, NF aguardando a etapa 3 do Seller Central.
+  (NF 7348/25 e 7333/25, coleta 29/10); FBA19V284QY0/V28KLCM (SVL) com etiquetas e folha, NF aguardando a etapa 3 do Seller Central. Na tela do envio, o cartão virou
+  "Como montar os volumes" (foto + volumes por produto) e a lista de Documentos (`ui/Packing.tsx`, todos os marketplaces) mostra só
+  o nome curto — Etiqueta produtos · Folha PREP · Nota fiscal (e o XML) · Etiquetas caixas — com abrir e X (sem seletor de tipo
+  nem impressão pela linha; imprimir = abrir o PDF).
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 

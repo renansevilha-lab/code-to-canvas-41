@@ -66,7 +66,7 @@
 //   equipe montar as caixas): `listShipmentBoxes` (nome "P1 - B13", ID, peso, medidas, conteúdo) + `listShipmentItems`
 //   (ASIN, FNSKU, preparo exigido) → envios_amazon[].encaixotamento. Gravado no envios-app e, para envio que ainda não
 //   tem, pela rodada do nf-remessa (até 3 por rodada; com plano, todos). A tela do envio agrupa as caixas iguais.
-// v12 (22/out/2026, pedido do dono): FOLHA DE ENCAIXOTAMENTO em PDF (../_shared/folha-caixas.ts), anexada no envio (tipo
+// v12 (22/out/2026, pedido do dono; 2ª versão da folha no mesmo dia: foto + volumes por produto, sem caixa a caixa): FOLHA DE ENCAIXOTAMENTO em PDF (../_shared/folha-caixas.ts), anexada no envio (tipo
 //   preparacao) sempre que o encaixotamento é lido; `reler: true` no nf-remessa com plano relê caixas e refaz a folha. E os
 //   envios criados no SELLER CENTRAL (sem plano do app): `vincular {numeros?}` acha o plano/envio da Amazon pelo número FBA
 //   (planos ACTIVE + SHIPPED criados perto da data do nome "FBA STA (MM/DD/AAAA …)"), grava o plano em amazon_envio_plano
@@ -76,6 +76,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { gerarDanfe } from "../_shared/danfe.ts";
 import { gerarFolhaCaixas } from "../_shared/folha-caixas.ts";
+import { Image } from "https://deno.land/x/imagescript@1.2.17/mod.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -368,17 +369,45 @@ async function lerEncaixotamento(token: string, planoId: string, shipmentId: str
   };
 }
 
-/** v12: folha de encaixotamento em PDF, anexada no envio da aba Envios. */
+/** v12: folha PREP em PDF (foto do produto + como montar os volumes), anexada no envio da aba Envios. A versão sobe
+ *  quando o layout muda: a rodada do nf-remessa refaz as folhas de versão antiga (substitui o anexo). */
+const FOLHA_VERSAO = 2;
 async function anexarFolha(p: Record<string, any>, e: Record<string, any>, substituir = false) {
   if (!e.envio_app_id || !e.encaixotamento) return null;
   const nomes: Record<string, { sku?: string | null; titulo?: string | null }> = {};
   for (const l of ((p.itens ?? []) as any[])) if (l?.msku) nomes[String(l.msku)] = { sku: l.sku ?? null, titulo: l.titulo ?? null };
+  // foto de cada produto (Tiny primeiro, como em todo o app); foto fora do ar ou em formato que não abre sai sem foto
+  const fotos: Record<string, Uint8Array> = {};
+  const skus = [...new Set(Object.values(nomes).map((n) => n.sku).filter(Boolean))] as string[];
+  if (skus.length) {
+    const { data } = await db.from("view_foto_produto").select("sku, foto").in("sku", skus);
+    const url = new Map(((data ?? []) as any[]).map((x) => [String(x.sku), x.foto as string | null]));
+    // uma por vez: decodificar várias PNG ao mesmo tempo estoura a memória da função (546 WORKER_RESOURCE_LIMIT)
+    for (const it of ((e.encaixotamento.itens ?? []) as any[])) { // só os produtos DESTE envio (o plano pode ter outros)
+      const msku = String(it.msku), n = nomes[msku] ?? {};
+      const u = n.sku ? url.get(String(n.sku)) : null;
+      if (!u) continue;
+      try {
+        const r = await fetch(u, { signal: AbortSignal.timeout(6000) });
+        if (!r.ok) continue;
+        // a foto do Tiny é PNG grande (~0,5 MB): reduzida a 300 px em JPEG com fundo branco (~20 KB no PDF)
+        const img = await Image.decode(new Uint8Array(await r.arrayBuffer()));
+        const esc = Math.min(1, 300 / Math.max(img.width, img.height));
+        img.resize(Math.max(1, Math.round(img.width * esc)), Math.max(1, Math.round(img.height * esc)));
+        const fundo = new Image(img.width, img.height);
+        fundo.fill(0xffffffff);
+        fundo.composite(img, 0, 0);
+        fotos[msku] = await fundo.encodeJPEG(80);
+      } catch { /* sem foto */ }
+    }
+  }
   const pdf = await gerarFolhaCaixas({
     fba: String(e.fba), empresa: p.empresa ?? null, cd: e.cd ?? null, coleta: e.coleta?.inicio ?? null, plano: p.plano_id ?? null,
-    caixas: e.encaixotamento.caixas ?? [], itens: e.encaixotamento.itens ?? [], nomes,
+    caixas: e.encaixotamento.caixas ?? [], itens: e.encaixotamento.itens ?? [], nomes, fotos,
   });
-  const r = await anexarDoc(String(e.envio_app_id), "preparacao", `Folha de encaixotamento ${e.fba}.pdf`, pdf, "gerado pelo app", "application/pdf", substituir);
-  e.folha = { gerada_em: new Date().toISOString() };
+  const r = await anexarDoc(String(e.envio_app_id), "preparacao", `Folha de encaixotamento ${e.fba}.pdf`, pdf, "gerado pelo app", "application/pdf",
+    substituir || (!!e.folha && e.folha.versao !== FOLHA_VERSAO));
+  e.folha = { gerada_em: new Date().toISOString(), versao: FOLHA_VERSAO };
   return r;
 }
 
@@ -784,7 +813,7 @@ Deno.serve(async (req) => {
       for (const p of (planos ?? []) as Record<string, any>[]) {
         for (const e of ((p.envios_amazon ?? []) as Record<string, any>[])) {
           if (e.id && e.envio_app_id && (!e.encaixotamento || reler)) semEnc.push({ p, e });
-          else if (e.envio_app_id && e.encaixotamento && !e.folha) semFolha.push({ p, e });
+          else if (e.envio_app_id && e.encaixotamento && e.folha?.versao !== FOLHA_VERSAO) semFolha.push({ p, e });
           if (e.id && e.envio_app_id && !e.nf?.chave) cands.push({ p, e });
           if (e.envio_app_id && e.nf?.chave && !e.nf?.danfe && !e.nf?.danfe_erro) semPdf.push({ p, e });
           const passou = e.coleta?.inicio && Date.parse(e.coleta.inicio) < Date.now() - 86400000;
@@ -829,7 +858,7 @@ Deno.serve(async (req) => {
         } catch (x) { extras.push({ fba: e.fba, encaixotamento: String((x as Error).message ?? x) }); }
       }
       // v12: folha de encaixotamento de quem já tem as caixas lidas (não consulta a Amazon)
-      for (const { p, e } of semFolha.slice(0, 5)) {
+      for (const { p, e } of semFolha.slice(0, 1)) { // uma por rodada: cada folha decodifica as fotos dos produtos
         if (dry || Date.now() > ate - 8000) break;
         try {
           const folha = await anexarFolha(p, e);
@@ -1191,7 +1220,7 @@ Deno.serve(async (req) => {
           } else r.criado = false;
           r.envio_id = envioId;
           if (!e.encaixotamento) { try { e.encaixotamento = await lerEncaixotamento(token, String(planoRow.plano_id), String(e.id)); } catch (x) { r.avisos.push(`encaixotamento: ${(x as Error).message}`); } }
-          if (e.encaixotamento && !e.folha) { e.envio_app_id = envioId; try { r.doc_folha = await anexarFolha(planoRow, e); } catch (x) { r.avisos.push(`folha: ${(x as Error).message}`); } }
+          if (e.encaixotamento && e.folha?.versao !== FOLHA_VERSAO) { e.envio_app_id = envioId; try { r.doc_folha = await anexarFolha(planoRow, e); } catch (x) { r.avisos.push(`folha: ${(x as Error).message}`); } }
           if (pdfCaixas) r.doc_caixas = await anexarDoc(envioId, "etiquetas", `Etiquetas das caixas ${e.fba}.pdf`, pdfCaixas, quem.nome);
           if (pdfProduto) r.doc_produto = await anexarDoc(envioId, "etiqueta_produto", `Etiquetas de produto ${e.fba}.pdf`, pdfProduto, quem.nome);
           e.envio_app_id = envioId;
