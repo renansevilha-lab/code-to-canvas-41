@@ -36,11 +36,13 @@ import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/comp
 import { MargemFullCell, chaveMargem, useMargemFull } from "@/components/fulfillment/MargemFull";
 import { arredondarCaixa, chaveCaixa, useCaixasAmazon } from "@/components/fulfillment/CaixaReposicao";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
-import { CabecalhoFulfillment, Migalhas, nomeConta, usePainelFulfillment, type Destino } from "@/components/fulfillment/ui/Cabecalho";
+import { CabecalhoFulfillment, Migalhas, nomeConta, usePainelFulfillment, type Destino, type EmpF } from "@/components/fulfillment/ui/Cabecalho";
 import { ConfirmacaoPm, ETAPAS, QuadroEnvios, idxEtapa, type EnvioQ } from "@/components/fulfillment/ui/QuadroEnvios";
 import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
 import { EncaixotamentoAmazon } from "@/components/fulfillment/EncaixotamentoAmazon";
 import { PackingNovo, ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
+import { NovoEnvioNovo } from "@/components/fulfillment/ui/NovoEnvio";
+import { ReposicaoNova } from "@/components/fulfillment/ui/Reposicao";
 import { confirmarSep, temHostSep } from "@/components/separacao/ui/dialogos";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -384,6 +386,8 @@ function FulfillmentPage() {
             busca={q}
             somenteSugestao={somenteSugestao}
             onToggleSugestao={(v) => update({ somenteSugestao: v })}
+            emp={search.emp}
+            onNovoEnvio={() => abrirEnvio("novo")}
           />
         )}
 
@@ -404,6 +408,7 @@ function FulfillmentPage() {
             destaque={destaque}
             envio={search.envio ?? null}
             onEnvio={abrirEnvio}
+            onReposicao={() => irPara({ aba: "reposicao" })}
           />
         )}
 
@@ -425,6 +430,8 @@ function ReposicaoTab({
   busca,
   somenteSugestao,
   onToggleSugestao,
+  emp,
+  onNovoEnvio,
 }: {
   rows: ReposicaoRow[];
   loading: boolean;
@@ -432,6 +439,8 @@ function ReposicaoTab({
   busca: string;
   somenteSugestao: boolean;
   onToggleSugestao: (v: boolean) => void;
+  emp: EmpF;
+  onNovoEnvio: () => void;
 }) {
   // seleção e quantidade a enviar — estado de trabalho (ação em andamento)
   const [sel, setSel] = useState<Record<string, boolean>>({});
@@ -531,7 +540,7 @@ function ReposicaoTab({
     );
   }
 
-  return (
+  const antigo = (
     <div className="flex flex-col gap-4">
       <section className="grid grid-cols-2 xl:grid-cols-4 gap-[14px]">
         <InvKpi label="SKUs abaixo da cobertura-alvo" value={repKpis.abaixo} loading={loading} color="var(--color-destructive)" />
@@ -722,17 +731,6 @@ function ReposicaoTab({
         )}
       </Card>
 
-      {planoAmazon && (
-        <PlanoAmazonDialog
-          key={planoAmazon.chave}
-          aberto
-          onFechar={() => setPlanoAmazon(null)}
-          empresa={planoAmazon.empresa}
-          itens={planoAmazon.itens}
-          planoId={planoAmazon.planoId ?? null}
-        />
-      )}
-
       <EnvioSheet
         aberto={envioAberto}
         onFechar={() => setEnvioAberto(false)}
@@ -750,6 +748,37 @@ function ReposicaoTab({
         }))}
       />
     </div>
+  );
+
+  return (
+    <>
+      <ProtecaoPacking antigo={antigo}>
+        <ReposicaoNova
+          rows={rows.filter((r) => {
+            const termo = busca.trim().toLowerCase();
+            return !termo || (r.produto ?? "").toLowerCase().includes(termo) || (r.sku ?? "").toLowerCase().includes(termo);
+          })}
+          loading={loading}
+          emp={emp}
+          fotos={fotos}
+          margens={margens}
+          caixas={caixas}
+          planos={<PlanosAmazonLista onAbrir={(planoId, empresa) => setPlanoAmazon({ chave: Date.now(), empresa, planoId })} />}
+          onAmazon={(empresa, its) => setPlanoAmazon({ chave: Date.now(), empresa, itens: its })}
+          onNovoEnvio={onNovoEnvio}
+        />
+      </ProtecaoPacking>
+      {planoAmazon && (
+        <PlanoAmazonDialog
+          key={planoAmazon.chave}
+          aberto
+          onFechar={() => setPlanoAmazon(null)}
+          empresa={planoAmazon.empresa}
+          itens={planoAmazon.itens}
+          planoId={planoAmazon.planoId ?? null}
+        />
+      )}
+    </>
   );
 }
 
@@ -1239,6 +1268,8 @@ interface ParsedItem {
   titulo: string | null;
   titulo_pdf: string | null;
   qtd: number | null;
+  /** quantidade como veio no PDF (a tela compara com a editada) */
+  qtd_pdf?: number | null;
   no_cadastro: boolean;
   tem_foto: boolean;
   ordem: number;
@@ -1427,8 +1458,8 @@ interface PreviaTiny {
 // Envios no design novo (22/out/2026): o quadro/lista é o QuadroEnvios; aqui ficam as leituras e
 // as escritas (mover etapa, arquivar, lançar no Tiny) e as telas de dentro, com endereço na URL
 // (?envio=<id> = packing, ?envio=novo = novo envio).
-function EnviosTab({ emp, mkt, destaque, envio, onEnvio }: {
-  emp: EmpFiltro; mkt: MktFiltro; destaque: string | null; envio: string | null; onEnvio: (id: string | null) => void;
+function EnviosTab({ emp, mkt, destaque, envio, onEnvio, onReposicao }: {
+  emp: EmpFiltro; mkt: MktFiltro; destaque: string | null; envio: string | null; onEnvio: (id: string | null) => void; onReposicao: () => void;
 }) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
@@ -1500,6 +1531,9 @@ function EnviosTab({ emp, mkt, destaque, envio, onEnvio }: {
           recarregar();
           onEnvio(id);
         }}
+        onQuadro={() => { recarregar(); onEnvio(null); }}
+        onReposicao={onReposicao}
+        onImportado={recarregar}
       />
     );
   }
@@ -1761,8 +1795,13 @@ function EnviosTab({ emp, mkt, destaque, envio, onEnvio }: {
   );
 }
 
-function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado: (id: string) => void }) {
+function NovoEnvio({ onCancelar, onCriado, onQuadro, onReposicao, onImportado }: {
+  onCancelar: () => void; onCriado: (id: string) => void; onQuadro: () => void; onReposicao: () => void; onImportado: () => void;
+}) {
   const { perfil } = usePerfil();
+  const [arquivoPdf, setArquivoPdf] = useState<string | null>(null);
+  const [lidoEm, setLidoEm] = useState<string | null>(null);
+  const [zplNome, setZplNome] = useState<string | null>(null);
   const [marketplace, setMarketplace] = useState("mercadolivre");
   const [empresa, setEmpresa] = useState<string>("");
   const [numero, setNumero] = useState("");
@@ -1789,6 +1828,7 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
 
   async function lerPdf(file: File) {
     setParsing(true);
+    setArquivoPdf(file.name);
     try {
       const b64 = await fileToBase64(file);
       const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
@@ -1799,7 +1839,8 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       const d = data as { itens?: ParsedItem[]; total?: number; numero?: string; aviso?: string; produtos_esperados?: number };
       const parsed = d.itens ?? [];
       // Guarda o SKU original do PDF em sku_origem para preservar quando o operador corrigir o sku.
-      setItens(parsed.map((p) => ({ ...p, sku_origem: p.sku_origem ?? p.sku })));
+      setItens(parsed.map((p) => ({ ...p, sku_origem: p.sku_origem ?? p.sku, qtd_pdf: p.qtd })));
+      setLidoEm(new Date().toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }).replace(":", "h"));
       setTotalPdf(d.total ?? null);
       setProdutosPdf(d.produtos_esperados ?? null);
       setAvisoLeitura(d.aviso ?? null);
@@ -1838,10 +1879,11 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
     setItens((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  async function salvar() {
+  /** navegar = tela antiga (abre o envio na hora); a nova mostra o "criado" e deixa escolher. */
+  async function salvar(navegar = true): Promise<{ id: string; atualizado: boolean } | null> {
     if (itens.length === 0) {
       toast.warning("Suba a lista (PDF) antes de salvar.");
-      return;
+      return null;
     }
     setSalvando(true);
     try {
@@ -1859,12 +1901,14 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
           .limit(1);
         const existente = (existentes ?? [])[0] as { id: string; status: string; total_unidades: number } | undefined;
         if (existente) {
-          const atualizar = window.confirm(
-            `O envio ${numero.trim()} já existe (${existente.status}, ${existente.total_unidades} un planejadas).\n\n` +
-            `OK = ATUALIZAR o envio existente com esta lista (o que já foi separado é preservado; a equipe é avisada no Discord do que mudou).\n` +
-            `Cancelar = voltar sem salvar.`,
-          );
-          if (!atualizar) { setSalvando(false); return; }
+          const atualizar = await confirmarSep({
+            kicker: `${MKT_LABEL[marketplace] ?? marketplace} · envio já existe`,
+            titulo: `Atualizar o envio ${numero.trim()} com esta lista?`,
+            resumo: `Ele já está no quadro (${stageDe(existente.status).curto}, ${existente.total_unidades} un planejadas).`,
+            linhas: ["O que já foi separado é preservado; a equipe recebe no Discord o que mudou.", "Cancelar = voltar sem salvar."],
+            okTxt: "Atualizar o envio existente",
+          });
+          if (!atualizar) { setSalvando(false); return null; }
           const { data: diff, error } = await supabaseExternal.rpc("fulfillment_atualizar_envio", {
             p_envio_id: existente.id,
             p_itens: itens.map((it, i) => ({
@@ -1884,8 +1928,8 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
             ? "Nada mudou — o envio já estava igual à lista."
             : `Envio atualizado: ${d.alterados?.length ?? 0} qtd alterada(s), ${d.adicionados?.length ?? 0} novo(s), ${d.removidos?.length ?? 0} removido(s) · ${d.total_unidades} un. Separação preservada; aviso enviado no Discord.`,
             { duration: 9000 });
-          onCriado(existente.id);
-          return;
+          if (navegar) onCriado(existente.id);
+          return { id: existente.id, atualizado: true };
         }
       }
       const { data: env, error: e1 } = await supabaseExternal
@@ -1918,15 +1962,28 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
       const { error: e2 } = await supabaseExternal.from("fulfillment_envio_itens").insert(linhas);
       if (e2) throw e2;
       toast.success("Envio criado — bora separar!");
-      onCriado(envioId);
+      if (navegar) onCriado(envioId);
+      return { id: envioId, atualizado: false };
     } catch (e) {
       toast.error("Erro ao salvar o envio", { description: (e as Error).message });
+      return null;
     } finally {
       setSalvando(false);
     }
   }
 
-  return (
+  async function anexarZpl(f: File) {
+    try {
+      const txt = await f.text();
+      setEtiquetasZpl(txt);
+      setZplNome(f.name);
+      toast.success(`Etiquetas anexadas · ${contarCopiasZpl(txt)} etiquetas`);
+    } catch {
+      toast.error("Falha ao ler o arquivo de etiquetas");
+    }
+  }
+
+  const antigo = (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" className="gap-1 -ml-2" onClick={onCancelar}>
@@ -2101,6 +2158,32 @@ function NovoEnvio({ onCancelar, onCriado }: { onCancelar: () => void; onCriado:
         </Card>
       )}
     </div>
+  );
+
+  return (
+    <ProtecaoPacking antigo={antigo}>
+      <NovoEnvioNovo
+        marketplace={marketplace}
+        empresa={empresa}
+        onConta={(m, e) => { setMarketplace(m); setEmpresa(e); }}
+        numero={numero} onNumero={setNumero}
+        centro={centro} onCentro={setCentro}
+        data={dataAgendada} onData={setDataAgendada}
+        itens={itens}
+        fotos={fotos ?? {}}
+        totalPdf={totalPdf} produtosPdf={produtosPdf} avisoLeitura={avisoLeitura}
+        lendo={parsing} arquivo={arquivoPdf} lidoEm={lidoEm}
+        onPdf={(f) => void lerPdf(f)}
+        onQtd={setQtd} onSku={setSku} onSkuPronto={(i) => void resolverSku(i)} onRemover={remover}
+        nEtiquetas={etiquetasZpl ? contarCopiasZpl(etiquetasZpl) : 0} zplNome={zplNome} onZpl={(f) => void anexarZpl(f)}
+        salvando={salvando}
+        onCriar={() => salvar(false)}
+        onAbrir={onCriado}
+        onQuadro={onQuadro}
+        onReposicao={onReposicao}
+        importarAmazon={<ImportarEnviosAmazon onImportado={onImportado} />}
+      />
+    </ProtecaoPacking>
   );
 }
 

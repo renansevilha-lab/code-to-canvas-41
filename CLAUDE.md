@@ -1191,6 +1191,16 @@ move o envio para `pronto_envio`; "Marcar enviado" no novo pede confirmação (l
 confirmações usam `confirmarSep` (agora com `lista`, `semCancelar`, `corKicker` e `temHostSep()`); lançar no Tiny mostra a
 prévia (transfere / fica de fora) e depois o resultado. Na Reposição: ordenar por coluna (clique no título; 3º clique volta à
 ordem do motor), filtro Empresa/Marketplace fixo ao rolar e segmento escolhido em roxo cheio (também na Separação).
+**Fase 3 (22/out): Novo envio e Reposição no design**, cada um com o antigo de reserva (`ProtecaoPacking`). Novo envio
+(`ui/NovoEnvio.tsx`): passos Conta (ML ACZ/SVL, Shopee Ottz/Bumi ou outro marketplace; à direita Amazon = "Montar envio
+na Reposição" e "Importar da Amazon") → PDF (arrastar; tabela com PDF × Enviar e conferência por linha — sem SKU BLOQUEIA,
+fora do cadastro/≠ PDF só avisam; `ParsedItem.qtd_pdf` guarda o que veio no PDF) → Coleta e ZPL → Revisar → tela "criado"
+(abrir a separação ou voltar ao quadro). Mesmo `salvar()` (agora devolve `{id, atualizado}`; envio com número repetido
+pergunta por `confirmarSep` e atualiza pela RPC). Reposição (`ui/Reposicao.tsx`): KPIs, grupos Urgente (vende e CD zerado
+ou cobertura < 7 d) / Sugerido (sugestão > 0) / Ok-excesso (recolhido), 40 linhas por grupo com "ver mais", ordenação por
+coluna, barra de cobertura × alvo, "A enviar" em caixas da Amazon, depósito da empresa, detalhe por linha, barra escura
+de seleção e painel lateral "Montar envio" por conta (Amazon → `PlanoAmazonDialog` de sempre; ML/Shopee → copiar lista +
+"Subir o PDF" que abre o Novo envio), "Modelos de caixa" por conta Amazon. O "só com sugestão" da URL vale só no antigo.
 
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
