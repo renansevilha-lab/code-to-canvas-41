@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PackageCheck,
@@ -76,6 +76,13 @@ import {
 import { rotuloCanal } from "@/lib/canais";
 import { useObsSeparacao, editarObsSeparacao, ObsLinha } from "@/lib/separacaoObs";
 import { buscarMlFlex } from "@/lib/mlFlex";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { idade, int as intBR, LOGO } from "@/components/dashboard/formato";
+import {
+  MONO, envioSep, EscolhaImpressora, BotaoAtualizar, FaixaPedeAcao, BarraAbas, Segmento, ChipEnvioSep,
+  BotaoFiltros, FiltrosAtivos, CabecalhoGrupo, LinhaFila, PainelImpressao, BarraSelecao,
+  type CartaoAcao, type Alerta, type AcaoLinha, type ItemMenu, type Tom, type PainelImpressaoProps,
+} from "@/components/separacao/ui/kit";
 
 // ============ Edge function helpers ============
 
@@ -777,7 +784,7 @@ interface SyncTinyResponse {
   pendentes_detalhe?: number;
 }
 
-function AtualizarDoTinyButton() {
+function useSyncTiny() {
   const queryClient = useQueryClient();
   const [syncing, setSyncing] = useState(false);
 
@@ -810,7 +817,11 @@ function AtualizarDoTinyButton() {
       setSyncing(false);
     }
   };
+  return { syncing, handleSyncTiny };
+}
 
+function AtualizarDoTinyButton() {
+  const { syncing, handleSyncTiny } = useSyncTiny();
   return (
     <Button
       size="sm"
@@ -837,7 +848,7 @@ function AtualizarDoTinyButton() {
 // Força o processo do cron (aplica a TAG + APROVA no Tiny os pedidos Shopee em
 // aberto) sob demanda, sem esperar os 5 min. Depois puxa a separação recém-criada
 // pra fila do app (aprovar gera a separação no Tiny).
-function ProcessarAbertosButton() {
+function useProcessarAbertos() {
   const queryClient = useQueryClient();
   const [rodando, setRodando] = useState(false);
 
@@ -888,7 +899,11 @@ function ProcessarAbertosButton() {
       setRodando(false);
     }
   };
+  return { rodando, handle };
+}
 
+function ProcessarAbertosButton() {
+  const { rodando, handle } = useProcessarAbertos();
   return (
     <Button
       size="sm"
@@ -928,10 +943,10 @@ interface SaudeEtiquetasRow {
 
 interface RiscoCancelRow { loja: string; cancela_em: string; dias_para_cancelar: number; pedidos: number; aguardando_coleta: number; na_fila: number; valor: number }
 
-function SaudeEtiquetasFaixa() {
-  // Risco de cancelamento automático (Shopee): arranjado e não coletado;
-  // cancela_em = ship_by + 3 dias (view_risco_cancelamento_resumo).
-  const riscoQ = useQuery({
+// Risco de cancelamento automático (Shopee): arranjado e não coletado;
+// cancela_em = ship_by + 3 dias (view_risco_cancelamento_resumo).
+function useRiscoCancelResumo() {
+  return useQuery({
     queryKey: ["separacao", "risco-cancelamento"],
     refetchInterval: 120_000,
     staleTime: 60_000,
@@ -942,7 +957,10 @@ function SaudeEtiquetasFaixa() {
       return (data ?? []) as RiscoCancelRow[];
     },
   });
-  const { data } = useQuery({
+}
+
+function useSaudeEtiquetas() {
+  return useQuery({
     queryKey: ["separacao", "saude-etiquetas"],
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -953,6 +971,11 @@ function SaudeEtiquetasFaixa() {
       return (data ?? []) as SaudeEtiquetasRow[];
     },
   });
+}
+
+function SaudeEtiquetasFaixa() {
+  const riscoQ = useRiscoCancelResumo();
+  const { data } = useSaudeEtiquetas();
   const linhas = data ?? [];
   if (linhas.length === 0) return null;
   const ritmo = linhas.reduce((a, b) => a + Number(b.geradas_30min), 0);
@@ -1844,6 +1867,8 @@ interface LotesDoDiaProps {
   impressoras: Impressora[];
   loadingImpressoras: boolean;
   impressoraSelecionada: Impressora | undefined;
+  /** aba própria "Lotes do dia" (visual novo): já abre expandido */
+  abertoInicial?: boolean;
 }
 
 function LotesDoDia({
@@ -1852,6 +1877,7 @@ function LotesDoDia({
   impressoras,
   loadingImpressoras,
   impressoraSelecionada,
+  abertoInicial,
 }: LotesDoDiaProps) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
@@ -1859,7 +1885,7 @@ function LotesDoDia({
   const [ajudaAberta, setAjudaAberta] = useState(false);
   // Recolhido por definição (pedido do dono, 24/ago): a tela abre direto na
   // fila; o painel expande no clique quando o operador precisa dele.
-  const [corpoAberto, setCorpoAberto] = useState(false);
+  const [corpoAberto, setCorpoAberto] = useState(!!abertoInicial);
   const [confirmar, setConfirmar] = useState<TagLoteRow | null>(null);
   const [embalando, setEmbalando] = useState<string | null>(null);
   const [imprimindo, setImprimindo] = useState<string | null>(null);
@@ -2597,10 +2623,15 @@ function LotesDoDia({
 }
 
 
-function FilaPriorizada() {
+type VisualSep = "novo" | "antigo";
+type TurnoSep = "leves" | "pesados" | "todos";
+const STORAGE_TURNO = "separacao.turno";
+
+function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; onVisual?: (v: VisualSep) => void } = {}) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
-  const { data: rows, isLoading, error } = usePriorizadaRows();
+  const filaQ = usePriorizadaRows();
+  const { data: rows, isLoading, error } = filaQ;
   const { data: fullCount } = useFullCount();
   const { data: lotesHoje } = useTagsDoDia();
   const { data: tagsPorLinha } = useTagsPorLinha();
@@ -2727,6 +2758,34 @@ function FilaPriorizada() {
   const [expandedSku, setExpandedSku] = useState<Set<string>>(new Set());
   const [forcarSku, setForcarSku] = useState<PriorizadaRow | null>(null);
 
+  // ---- visual novo (design "Separação", 22/out/2026) ----
+  const novo = visual === "novo";
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const [aba, setAba] = useState<"fila" | "multi" | "lotes">("fila");
+  // "Meu turno": leves (até 4 kg) · pesados (acima de 4 kg) · todos. Linha sem
+  // peso no cadastro aparece nos dois turnos (não dá para saber de quem é).
+  const [turno, setTurno] = useState<TurnoSep>(() => {
+    try {
+      const v = localStorage.getItem(STORAGE_TURNO);
+      return v === "leves" || v === "pesados" ? v : "todos";
+    } catch { return "todos"; }
+  });
+  useEffect(() => { try { localStorage.setItem(STORAGE_TURNO, turno); } catch { /* noop */ } }, [turno]);
+  const [soPresa, setSoPresa] = useState(false);
+  const [atualizandoFila, setAtualizandoFila] = useState(false);
+  const saudeQ = useSaudeEtiquetas();
+  const riscoResQ = useRiscoCancelResumo();
+  const totaisSepQ = useSeparacaoTotais();
+  const syncTiny = useSyncTiny();
+  const abertos = useProcessarAbertos();
+  const bandasEfetivas = useMemo<Set<string>>(() => {
+    if (!novo) return bandasPeso;
+    if (turno === "leves") return new Set(["ate_limite", "sem_peso"]);
+    if (turno === "pesados") return new Set(["entre", "acima", "sem_peso"]);
+    return new Set();
+  }, [novo, turno, bandasPeso]);
+
   function toggleExpand(key: string) {
     setExpandedSku((prev) => {
       const n = new Set(prev);
@@ -2777,9 +2836,9 @@ function FilaPriorizada() {
   // "Embalar todos os impressos": marca embalado no Tiny, linha a linha (ordem
   // de prioridade), SÓ os pedidos com impressão confirmada. Quem não tem
   // etiqueta confirmada não é tocado — para isso existe o "Forçar restante".
-  async function embalarTodosImpressos() {
+  async function embalarTodosImpressos(base: PriorizadaRow[] = filteredRows) {
     if (massa) return;
-    const alvo = filteredRows.filter((r) => pedidosImpressosDaLinha(r) > 0);
+    const alvo = base.filter((r) => pedidosImpressosDaLinha(r) > 0);
     const totalPed = alvo.reduce((s2, r) => s2 + pedidosImpressosDaLinha(r), 0);
     if (alvo.length === 0) {
       toast.info("Nenhum pedido com impressão confirmada no filtro atual");
@@ -3492,13 +3551,14 @@ function FilaPriorizada() {
         const dias = diasAtePrazo(prazosPorLinha?.get(linhaKeyDe(r)) ?? null);
         if (!prazoFiltro.includes(faixaPrazo(dias))) return false;
       }
-      if (bandasPeso.size > 0) {
+      if (bandasEfetivas.size > 0) {
         const pi = pesoPorLinha?.get(linhaKeyDe(r));
-        if (!bandasPeso.has(pi?.banda ?? "sem_peso")) return false;
+        if (!bandasEfetivas.has(pi?.banda ?? "sem_peso")) return false;
       }
+      if (soPresa && (impressaoEstados?.porLinha.get(linhaKeyDe(r))?.sent ?? 0) === 0) return false;
       return true;
     });
-  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, soFlex, flexFila, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, bandasPeso, pesoPorLinha]);
+  }, [rows, enviosAtivosSet, buscaSku, prazoFiltro, prazosPorLinha, soSemEstoque, soFlex, flexFila, riscoFiltro, riscoPorLinha, empresaFiltro, tagsPorLinha, pedidoLinhas, bandasEfetivas, pesoPorLinha, soPresa, impressaoEstados]);
 
   const unitarios = useMemo(
     () => filteredRows.filter((r) => (r.tipo_grupo ?? "unitario") === "unitario"),
@@ -3530,6 +3590,633 @@ function FilaPriorizada() {
       unidades: filteredRows.reduce((s, r) => s + Number(r.total_unidades ?? 0), 0),
     };
   }, [filteredRows]);
+
+  // =========================================================================
+  // VISUAL NOVO (design "Separação" do Claude Design, 22/out/2026). Só muda a
+  // apresentação: imprimir, TAG, embalar, falta de estoque e os filtros são as
+  // MESMAS funções de cima. O visual antigo fica no menu "Atualizar".
+  // =========================================================================
+  if (novo) {
+    const soma = (xs: PriorizadaRow[], k: "qtd_pedidos" | "total_unidades") => xs.reduce((a, r) => a + Number(r[k] ?? 0), 0);
+    const todosUnit = (rows ?? []).filter((r) => (r.tipo_grupo ?? "unitario") === "unitario");
+    const multisTodos = (rows ?? []).filter((r) => r.tipo_grupo === "multi");
+    const pedMulti = soma(multisTodos, "qtd_pedidos");
+    const prazoIso = (r: PriorizadaRow) => prazosPorLinha?.get(linhaKeyDe(r)) ?? null;
+    const nomeImp = impressoraSelecionada?.nome ?? "impressora";
+
+    // Leva para a aba Fila com UM filtro ligado (os outros saem, turno = todos).
+    const irFila = (f: { prazo?: string[]; risco?: "hoje" | "amanha"; semEst?: boolean; presa?: boolean }) => {
+      setAba("fila");
+      setSelectedEnvios(null);
+      setPrazoFiltro(f.prazo ?? []);
+      setRiscoFiltro(f.risco ?? null);
+      setSoSemEstoque(!!f.semEst);
+      setSoFlex(false);
+      setSoPresa(!!f.presa);
+      setEmpresaFiltro(null);
+      setBuscaSku("");
+      setTurno("todos");
+    };
+
+    // ---------------- Pede ação ----------------
+    const cartoes: CartaoAcao[] = [];
+    const emDia: string[] = [];
+    const saude = saudeQ.data ?? [];
+    const ritmo = saude.reduce((a, b) => a + Number(b.geradas_30min), 0);
+    const totalErro = saude.reduce((a, b) => a + Number(b.em_erro), 0);
+    const semEtiqueta = saude.reduce((a, b) => a + Number(b.aguardando_geracao) + Number(b.em_erro), 0);
+    const parado = semEtiqueta >= 25 && ritmo === 0;
+    if (parado) {
+      cartoes.push({ chave: "parada", tom: "r", label: "Geração de etiquetas parada", n: `${intBR(semEtiqueta)} sem etiqueta`, ctx: "nenhuma etiqueta nova em 30 min · avise o TI" });
+    }
+    const vencidas = todosUnit.filter((r) => { const d = diasAtePrazo(prazoIso(r)); return d !== null && d < 0; });
+    if (vencidas.length > 0) {
+      const desde = vencidas.map(prazoIso).filter((x): x is string => !!x).sort()[0];
+      const envs = [...new Set(vencidas.map((r) => envioSep(r.tipo_envio).curto))].join(", ");
+      cartoes.push({
+        chave: "vencido", tom: "r", label: "Prazo vencido", n: `${intBR(soma(vencidas, "qtd_pedidos"))} pedidos`,
+        ctx: `${envs}${desde ? ` · desde ${fmtPrazoData(desde)}` : ""} · ${vencidas.length} linha${vencidas.length === 1 ? "" : "s"}`,
+        onClick: () => irFila({ prazo: ["vencidos"] }),
+      });
+    } else emDia.push("nenhum prazo vencido");
+    const risco = riscoResQ.data ?? [];
+    const blocoRisco = (rot: string, xs: RiscoCancelRow[], tom: Tom, id: "hoje" | "amanha") => {
+      if (xs.length === 0) return;
+      const s2 = (k: keyof RiscoCancelRow) => xs.reduce((a, b) => a + Number(b[k] ?? 0), 0);
+      const naFila = s2("na_fila");
+      cartoes.push({
+        chave: `cancela-${id}`, tom, label: rot, n: `${intBR(s2("pedidos"))} · ${formatBRL(s2("valor"))}`,
+        ctx: `${[...new Set(xs.map((x) => x.loja))].join(", ")} · ${intBR(naFila)} na fila · ${intBR(s2("aguardando_coleta"))} embalados esperando coleta`,
+        onClick: naFila > 0 ? () => irFila({ risco: id }) : () => void navigate({ to: "/risco-cancelamento" }),
+      });
+    };
+    const cancHoje = risco.filter((x) => Number(x.dias_para_cancelar) <= 0);
+    const cancAmanha = risco.filter((x) => Number(x.dias_para_cancelar) === 1);
+    blocoRisco("Cancela hoje", cancHoje, "r", "hoje");
+    blocoRisco("Cancela amanhã", cancAmanha, "a", "amanha");
+    if (cancHoje.length === 0) emDia.push("nada cancela hoje");
+    if (!parado && totalErro > 0) {
+      cartoes.push({
+        chave: "etiquetas", tom: "a", label: "Etiquetas com erro", n: intBR(totalErro),
+        ctx: saude.map((l) => `${l.loja} ${intBR(Number(l.com_etiqueta))}/${intBR(Number(l.elegiveis_total))} prontas${Number(l.em_erro) > 0 ? ` · ${intBR(Number(l.em_erro))} em erro` : ""}`).join(" · ") + " · o sistema tenta de novo sozinho",
+      });
+    } else if (!parado && saude.length > 0) emDia.push("etiquetas geradas");
+    let enviadasSemConf = 0, linhasSent = 0;
+    for (const r of todosUnit) {
+      const s3 = impressaoEstados?.porLinha.get(linhaKeyDe(r))?.sent ?? 0;
+      if (s3 > 0) { enviadasSemConf += s3; linhasSent++; }
+    }
+    if (enviadasSemConf > 0 && !imprimindoKey && !massa) {
+      cartoes.push({
+        chave: "presa", tom: "a", label: "Aguardando a impressora", n: `${intBR(enviadasSemConf)} etiqueta${enviadasSemConf === 1 ? "" : "s"}`,
+        ctx: `${linhasSent} linha${linhasSent === 1 ? "" : "s"} · enviadas e ainda sem confirmação da impressora`,
+        onClick: () => irFila({ presa: true }),
+      });
+    } else if (enviadasSemConf === 0) emDia.push("impressora confirmando tudo");
+    let falta = 0;
+    const faltaNomes: string[] = [];
+    for (const r of todosUnit) {
+      const f = tagsPorLinha?.get(linhaKeyDe(r))?.falta ?? 0;
+      if (f > 0) { falta += f; if (faltaNomes.length < 2) faltaNomes.push(r.nome_produto ?? r.sku ?? "?"); }
+    }
+    if (falta > 0) {
+      cartoes.push({ chave: "falta", tom: "a", label: "Falta de estoque", n: `${intBR(falta)} pedidos`, ctx: faltaNomes.join(" · "), onClick: () => irFila({ semEst: true }) });
+    }
+    if (pedMulti > 0) {
+      cartoes.push({ chave: "multi", tom: "n", label: "Multi SKU pendentes", n: `${intBR(pedMulti)} pedidos`, ctx: `${multisTodos.length} combinações · fora da impressão em massa`, onClick: () => setAba("multi") });
+    }
+    const ordemTom: Record<Tom, number> = { r: 0, a: 1, n: 2, g: 3 };
+    cartoes.sort((a, b) => ordemTom[a.tom] - ordemTom[b.tom]);
+
+    // ---------------- topo ----------------
+    const filaIdade = filaQ.dataUpdatedAt ? idade(new Date(filaQ.dataUpdatedAt).toISOString()).txt : null;
+    const tinyIso = totaisSepQ.data?.atualizado_em ?? null;
+    const opcoesImp = impressoras.map((p) => ({ id: p.printer_id, nome: p.nome, online: p.estado !== "offline" }));
+    const selImp = opcoesImp.find((o) => o.id === printerId);
+    const outraOnline = opcoesImp.find((o) => o.online && o.id !== printerId);
+    const atualizarFilaNovo = async () => {
+      setAtualizandoFila(true);
+      try { await qc.invalidateQueries({ queryKey: ["separacao"] }); } finally { setAtualizandoFila(false); }
+    };
+
+    // ---------------- turno, envio, filtros ----------------
+    const pedPorBanda = (bandas: string[]) => todosUnit
+      .filter((r) => bandas.includes(pesoPorLinha?.get(linhaKeyDe(r))?.banda ?? "sem_peso"))
+      .reduce((a, r) => a + Number(r.qtd_pedidos ?? 0), 0);
+    const envios = [...new Set(todosUnit.map((r) => r.tipo_envio ?? "—"))]
+      .sort((a, b) => (todosUnit.find((r) => (r.tipo_envio ?? "—") === a)?.ordem_envio ?? 99) - (todosUnit.find((r) => (r.tipo_envio ?? "—") === b)?.ordem_envio ?? 99));
+    const envioUnico = selectedEnvios && selectedEnvios.length === 1 ? selectedEnvios[0] : null;
+    const togPrazo = (id: string) => setPrazoFiltro((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    const grupoFiltros = [
+      { nome: "Prazo", ops: [["vencidos", "Vencidos"], ["0", "Vence hoje"], ["1", "Amanhã"]].map(([id, nome]) => ({ id, nome, on: prazoFiltro.includes(id), onClick: () => togPrazo(id) })) },
+      {
+        nome: "Risco", ops: [
+          { id: "hoje", nome: "Cancela hoje", on: riscoFiltro === "hoje", onClick: () => setRiscoFiltro((v) => (v === "hoje" ? null : "hoje")) },
+          { id: "amanha", nome: "Cancela amanhã", on: riscoFiltro === "amanha", onClick: () => setRiscoFiltro((v) => (v === "amanha" ? null : "amanha")) },
+          { id: "semEst", nome: "Sem estoque", on: soSemEstoque, onClick: () => setSoSemEstoque((v) => !v) },
+          { id: "presa", nome: "Aguardando a impressora", on: soPresa, onClick: () => setSoPresa((v) => !v) },
+        ],
+      },
+      { nome: "Envio", ops: [{ id: "flex", nome: "ML Flex", on: soFlex, onClick: () => setSoFlex((v) => !v) }] },
+    ];
+    const nAtivos = prazoFiltro.length + (riscoFiltro ? 1 : 0) + (soSemEstoque ? 1 : 0) + (soPresa ? 1 : 0) + (soFlex ? 1 : 0);
+    const nomePrazo: Record<string, string> = Object.fromEntries(FAIXAS_PRAZO.map((f) => [f.id, f.id === "vencidos" ? "Prazo vencido" : f.id === "0" ? "Vence hoje" : f.label]));
+    const ativos: Array<{ nome: string; onClick: () => void }> = [
+      ...prazoFiltro.map((id) => ({ nome: nomePrazo[id] ?? id, onClick: () => togPrazo(id) })),
+      ...(riscoFiltro ? [{ nome: riscoFiltro === "hoje" ? "Cancela hoje" : "Cancela amanhã", onClick: () => setRiscoFiltro(null) }] : []),
+      ...(soSemEstoque ? [{ nome: "Sem estoque", onClick: () => setSoSemEstoque(false) }] : []),
+      ...(soPresa ? [{ nome: "Aguardando a impressora", onClick: () => setSoPresa(false) }] : []),
+      ...(soFlex ? [{ nome: "ML Flex", onClick: () => setSoFlex(false) }] : []),
+      ...(buscaSku.trim() ? [{ nome: `“${buscaSku.trim()}”`, onClick: () => setBuscaSku("") }] : []),
+    ];
+    const limparFiltros = () => { setPrazoFiltro([]); setRiscoFiltro(null); setSoSemEstoque(false); setSoPresa(false); setSoFlex(false); setBuscaSku(""); };
+
+    // ---------------- uma linha da fila ----------------
+    const linhaFila = (item: PriorizadaRow) => {
+      const key = linhaKeyDe(item);
+      const skuKey = `${item.sku}|${item.tipo_envio}`;
+      const keyBusy = `sku:${item.sku}:${item.tipo_envio}`;
+      const busyImprimir = imprimindoKey === keyBusy;
+      const busyEmbalar = embalandoKey === keyBusy;
+      const info = tagsPorLinha?.get(key);
+      const agg = impressaoEstados?.porLinha.get(key);
+      const estBtn = estadoBotaoLinha(agg);
+      const liberados = (agg?.done ?? 0) + (agg?.forcado ?? 0);
+      const total = agg?.total ?? 0;
+      const enviadas = agg?.sent ?? 0;
+      const grupo = item.tag_sugerida ?? "";
+      const env = envioSep(item.tipo_envio);
+      const canal = item.tipo_envio === "ML" ? "mercadolivre" : item.tipo_envio === "TIKTOK" ? "tiktok" : "shopee";
+      const emp = info?.empresas ?? new Set<string>();
+      const empTxt = emp.has("ottz") && emp.has("bumi") ? "Ottz e Bumi" : emp.has("bumi") ? "Bumi" : emp.has("ottz") ? "Ottz" : "";
+      const lojaTxt = canal === "mercadolivre" ? `ML ${empTxt}`.trim() : canal === "tiktok" ? "TikTok" : (empTxt || "Shopee");
+      const iso = prazoIso(item);
+      const dias = diasAtePrazo(iso);
+      const prazo: { t: string; tom: Tom } = !iso || dias === null ? { t: "sem prazo", tom: "n" }
+        : dias < 0 ? { t: `Vencido · ${fmtPrazoData(iso)}`, tom: "r" }
+        : dias === 0 ? { t: "Hoje", tom: "a" }
+        : dias === 1 ? { t: "Amanhã", tom: "n" }
+        : { t: fmtPrazoData(iso), tom: "n" };
+      const alertas: Alerta[] = [];
+      const ri = riscoPorLinha?.get(key);
+      if (ri?.hoje) alertas.push({ chave: "ch", t: `cancela hoje (${ri.hoje})`, tom: "r" });
+      if (ri?.amanha) alertas.push({ chave: "ca", t: `cancela amanhã (${ri.amanha})`, tom: "a" });
+      const f = info?.falta ?? 0;
+      if (f > 0) {
+        const c = confFaltaQ.data?.get(item.sku ?? "");
+        const conf = !c || c.desfeito_em ? "" : !c.conferido_em ? " · conferindo Shopee" : c.shopee_zerada ? " · Shopee zerada" : ` · Shopee ainda com ${c.resultado?.total_vivo ?? "?"}`;
+        alertas.push({ chave: "falta", t: `sem estoque (${f})${conf}`, tom: "r" });
+      }
+      const nFlex = flexFila?.porLinha.get(key) ?? 0;
+      if (nFlex > 0) alertas.push({ chave: "flex", t: `Flex (${nFlex}) · motoboy hoje`, tom: "a" });
+      const pi = pesoPorLinha?.get(key);
+      if (!pi || pi.faixa === "sem_peso") alertas.push({ chave: "peso", t: "peso faltando no cadastro", tom: "a" });
+      else if (turno === "todos") {
+        const kg = Number(pi.peso_kg ?? 0);
+        alertas.push({ chave: "peso", t: `${pi.faixa === "pesados" ? "pesado" : "leve"} · ${fmtPeso(kg)}/pedido`, tom: "contorno" });
+      }
+      const tagAtual = info && info.estado !== "sem_tag" ? info.tag ?? null : null;
+      const lote = tagAtual ? lotesPorTag.get(tagAtual) : undefined;
+      let tagNota: React.ReactNode = null;
+      if (aplicando === grupo) tagNota = <span style={{ fontSize: 10.5, color: "var(--pm-at)" }}>marcando no Tiny…</span>;
+      else if (info?.estado === "parcial") tagNota = <span style={{ fontSize: 10.5, color: "var(--pm-am)" }}>{info.semTag} sem TAG</span>;
+      else if (info?.estado === "tags_mistas") tagNota = <span style={{ fontSize: 10.5, color: "var(--pm-am)" }}>TAGs diferentes</span>;
+      if (bloqueados.has(grupo)) {
+        tagNota = (
+          <span style={{ fontSize: 10.5, color: "var(--pm-am)", maxWidth: 96 }}>
+            confira em Lotes do dia{" "}
+            <button type="button" onClick={() => desbloquear(grupo)} style={{ border: 0, background: "transparent", color: "var(--pm-at)", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10.5 }}>liberar</button>
+          </span>
+        );
+      }
+      const tudo = total > 0 && liberados === total;
+      const passos: [string, string, string] = [
+        tagAtual || liberados > 0 || enviadas > 0 ? "var(--pm-g)" : "var(--pm-a)",
+        tudo ? "var(--pm-g)" : liberados > 0 || enviadas > 0 ? "var(--pm-a)" : "var(--pm-sk)",
+        tudo ? "var(--pm-a)" : "var(--pm-sk)",
+      ];
+      const travado = imprimindoKey !== null || aplicando !== null || massa !== null;
+      let acao: AcaoLinha;
+      let nota: React.ReactNode = null;
+      if (busyImprimir) {
+        const ip = impProg;
+        acao = ip && ip.fase !== "enviando"
+          ? { tipo: "progresso", texto: `Imprimindo… ${ip.impressas ?? 0}/${ip.etiquetas}`, pct: ip.etiquetas ? ((ip.impressas ?? 0) / ip.etiquetas) * 100 : 0 }
+          : { tipo: "progresso", texto: `Enviando… ${ip?.etiquetas ?? 0}`, pct: ip && ip.lotesTotal ? (ip.loteAtual / ip.lotesTotal) * 60 : 10 };
+        nota = "a impressora confirma uma a uma";
+      } else if (aplicando === grupo) {
+        acao = { tipo: "progresso", texto: "Marcando a TAG no Tiny…", pct: 90 };
+      } else if (estBtn === "aguardando") {
+        acao = { tipo: "progresso", texto: `Imprimindo… ${liberados}/${total}`, pct: total ? (liberados / total) * 100 : 0 };
+        nota = `${enviadas} enviada${enviadas === 1 ? "" : "s"} · a impressora confirma uma a uma`;
+      } else if (estBtn === "liberado") {
+        acao = { tipo: "embalar", rotulo: "Marcar embalado", onClick: () => void embalarPorSku(item), ocupado: busyEmbalar, disabled: embalandoKey !== null };
+      } else if (estBtn === "parcial") {
+        acao = { tipo: "embalar", rotulo: `Embalar ${liberados}/${total}`, onClick: () => void embalarPorSku(item), ocupado: busyEmbalar, disabled: embalandoKey !== null };
+        nota = enviadas > 0
+          ? `${enviadas} aguardando a impressora`
+          : (
+            <>
+              {total - liberados} sem etiqueta ·{" "}
+              <button type="button" disabled={travado} onClick={() => void imprimirComTag(item)} style={{ border: 0, background: "transparent", color: "var(--pm-at)", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10.5 }}>imprimir os que faltam</button>
+            </>
+          );
+      } else {
+        acao = { tipo: "imprimir", rotulo: "Imprimir etiqueta", onClick: () => void imprimirComTag(item), disabled: travado };
+        if (canal === "tiktok") nota = "TikTok: etiqueta pelo painel do TikTok";
+        else if ((agg?.error ?? 0) > 0) nota = `${agg?.error} com erro na impressão · imprima de novo`;
+      }
+      const obs = obsSepQ.data?.get(`linha|${key}`);
+      const menu: ItemMenu[] = [
+        {
+          t: obs ? "Editar observação…" : "Observação…", sub: "aparece na linha e no lote",
+          onClick: () => {
+            void editarObsSeparacao("linha", key, obs?.texto, perfil?.nome ?? null)
+              .then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); });
+          },
+        },
+        { t: "Reportar falta de estoque…", sub: "lê o saldo no Tiny", onClick: () => reportarFaltaLinha(item), disabled: reportandoLinha !== null },
+        ...(f > 0 && item.sku ? [{
+          t: "Estoque voltou", sub: "desfaz o balanço 0 no Tiny",
+          onClick: () => { void desfazerZeramento(String(item.sku), perfil?.nome ?? null).then((ok) => { if (ok) void qc.invalidateQueries({ queryKey: ["separacao"] }); }); },
+        }] : []),
+        {
+          t: "Mensagem aos clientes", sub: canal === "shopee" ? "pelo chat da Shopee" : "só pedidos da Shopee",
+          onClick: () => setMsgLinha({ tipo: "linha", sku: item.sku ?? null, tipoEnvio: item.tipo_envio ?? null, tagSugerida: item.tag_sugerida ?? null, rotulo: `${item.sku ?? "?"} · ${item.tipo_envio ?? ""} (${formatNumber(Number(item.qtd_pedidos ?? 0))} pedidos)` }),
+        },
+        ...((info?.estado ?? "sem_tag") !== "sem_tag" ? [{
+          t: "Reimprimir (forçar)…", sub: "gera etiqueta em dobro", perigo: true, disabled: imprimindoKey !== null,
+          onClick: () => {
+            if (!window.confirm(
+              `ATENÇÃO — reimprimir ${item.sku ?? ""} · ${item.tipo_envio ?? ""}\n\n` +
+              `Vai sair DE NOVO etiqueta que JÁ FOI IMPRESSA. Se a anterior ainda existir, o pacote pode receber duas etiquetas (risco de extravio/devolução).\n\n` +
+              `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.\n\nConfirmar a reimpressão?`,
+            )) return;
+            void imprimirPorSku(item, { forcar: true });
+          },
+        }] : []),
+        ...(total > 0 && estBtn !== "liberado" ? [{ t: "Forçar embalar…", sub: "sem confirmação da impressora", perigo: true, disabled: embalandoKey !== null, onClick: () => setForcarSku(item) }] : []),
+      ];
+      return (
+        <LinhaFila
+          key={`${item.prioridade}-${item.sku}-${item.tipo_envio}-${item.qtd_unidades}`}
+          n={item.prioridade}
+          cor={env.cor}
+          foto={item.foto_capa}
+          nome={item.nome_produto ?? item.sku ?? "—"}
+          sku={item.sku ?? "—"}
+          logo={LOGO[canal] ?? null}
+          lojaTxt={lojaTxt}
+          obs={obs ? <ObsLinha obs={obs} /> : null}
+          unPorPedido={Number(item.qtd_unidades ?? 1)}
+          pedidos={Number(item.qtd_pedidos ?? 0)}
+          unidades={Number(item.total_unidades ?? 0)}
+          prazo={prazo}
+          alertas={alertas}
+          tag={tagAtual ? { texto: tagAtual, embalada: lote?.status === "embalada", onCopiar: () => void copyToClipboard(tagAtual) } : null}
+          tagNota={tagNota}
+          passos={passos}
+          acao={acao}
+          nota={nota}
+          sel={!!grupo && selGrupos.has(grupo)}
+          selDisabled={!grupo || bloqueados.has(grupo)}
+          onSel={() => toggleGrupo(grupo, !selGrupos.has(grupo))}
+          menu={menu}
+          menuOcupado={reportandoLinha === skuKey}
+          aberto={expandedSku.has(skuKey)}
+          onExpandir={() => toggleExpand(skuKey)}
+          mobile={isMobile}
+        >
+          <PedidosDoSku
+            sku={item.sku}
+            tipoEnvio={item.tipo_envio}
+            tagSugerida={item.tag_sugerida}
+            imprimindoKey={imprimindoKey}
+            embalandoKey={embalandoKey}
+            onImprimir={imprimirPedido}
+            onEmbalar={embalarPedido}
+            estadosPorSep={impressaoEstados?.porSep}
+            flexSeps={flexFila?.seps}
+            soFlex={soFlex}
+          />
+        </LinhaFila>
+      );
+    };
+
+    // ---------------- seleção ----------------
+    const selRows = (rows ?? []).filter((r) => r.tag_sugerida && selGrupos.has(r.tag_sugerida));
+    const selPed = soma(selRows, "qtd_pedidos");
+    const selEmb = selRows.reduce((a, r) => a + pedidosImpressosDaLinha(r), 0);
+
+    // ---------------- painel de impressão ----------------
+    let painel: PainelImpressaoProps | null = null;
+    if (massa && massa.fase) {
+      const imp = massa.impressas ?? 0;
+      const tot = imp + (massa.pendentes ?? 0);
+      const fim = massa.fase === "concluido";
+      painel = {
+        titulo: `Impressão · ${nomeImp}`, sub: "todas as linhas já foram entregues à impressora",
+        status: fim ? "Impressora concluiu" : "Impressora imprimindo", statusTom: fim ? "g" : "t",
+        prog: `${intBR(imp)} / ${intBR(tot)}`, pct: tot ? (imp / tot) * 100 : 100, barTom: fim ? "g" : "a",
+        texto: `${intBR(massa.etiquetas ?? 0)} etiquetas enviadas · faltam ${intBR(massa.pendentes ?? 0)} na impressora`,
+        botoes: fim ? [] : [{ t: "Fechar · a impressora segue sozinha", primario: true, onClick: () => { fecharEsperaRef.current = true; } }],
+        mobile: isMobile,
+      };
+    } else if (massa) {
+      const emb = massa.modo === "embalar";
+      painel = {
+        titulo: emb ? "Embalando no Tiny" : `Impressão · ${nomeImp}`,
+        sub: emb ? "só pedidos com etiqueta confirmada" : "Shopee por loja · identificadora por último",
+        status: massaPausada ? `Pausada na linha ${massa.atual} de ${massa.total}` : `${emb ? "Embalando" : "Imprimindo"} linha ${massa.atual} de ${massa.total}`,
+        statusTom: massaPausada ? "a" : "t",
+        prog: emb ? `${massa.atual} / ${massa.total}` : `${intBR(massa.etiquetas ?? 0)} / ${intBR(massa.previstas ?? 0)}`,
+        pct: (massa.atual / Math.max(1, massa.total)) * 100, barTom: "a",
+        texto: <><span style={MONO}>{massa.linha}</span>{impProg?.etapa ? <> · <span style={MONO}>{impProg.etapa}</span></> : null}</>,
+        botoes: [
+          { t: massaPausada ? "Continuar" : "Pausar", onClick: () => { pausaMassaRef.current = !pausaMassaRef.current; setMassaPausada(pausaMassaRef.current); } },
+          { t: "Parar após esta linha", perigo: true, onClick: () => { cancelarMassaRef.current = true; pausaMassaRef.current = false; } },
+        ],
+        mobile: isMobile,
+      };
+    } else if (impProg) {
+      const enviando = impProg.fase === "enviando";
+      const fim = impProg.fase === "concluido";
+      painel = {
+        titulo: `Impressão · ${nomeImp}`, sub: impProg.rotulo,
+        status: enviando ? "Enviando à impressora" : fim ? "Impressora concluiu" : "Impressora imprimindo",
+        statusTom: fim ? "g" : "t",
+        prog: enviando ? `${intBR(impProg.etiquetas)} etiquetas` : `${intBR(impProg.impressas ?? 0)} / ${intBR(impProg.etiquetas)}`,
+        pct: enviando ? (impProg.lotesTotal ? (impProg.loteAtual / impProg.lotesTotal) * 100 : 0) : impProg.etiquetas ? ((impProg.impressas ?? 0) / impProg.etiquetas) * 100 : 100,
+        barTom: fim ? "g" : "a",
+        texto: enviando
+          ? <>{impProg.etapa ? <span style={MONO}>{impProg.etapa}</span> : "preparando"}{impProg.lotesTotal > 1 ? ` · parte ${impProg.loteAtual} de ${impProg.lotesTotal}` : ""}</>
+          : `faltam ${intBR(impProg.pendentes ?? 0)} na fila · ${intBR(impProg.impressas ?? 0)} confirmadas`,
+        botoes: impProg.fase === "impressora" ? [{ t: "Fechar · a impressora segue sozinha", primario: true, onClick: () => { fecharEsperaRef.current = true; } }] : [],
+        mobile: isMobile,
+      };
+    }
+
+    const caixa = { padding: "10px 14px", borderRadius: 12, background: "var(--pm-s)", border: "1px solid var(--pm-b)", fontSize: 12.5 } as const;
+    const pedFila = soma(todosUnit, "qtd_pedidos");
+    const lojaSel: "todas" | "ottz" | "bumi" = empresaFiltro ?? "todas";
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: painel ? 200 : 24 }}>
+        <FaltaEstoqueDialog
+          alvo={alvoFalta}
+          por={perfil?.nome ?? null}
+          onClose={() => { setAlvoFalta(null); setReportandoLinha(null); }}
+          onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+        />
+        <MensagemLoteDialog alvo={msgLinha} onClose={() => setMsgLinha(null)} enviadoPor={perfil?.nome ?? null} />
+
+        <header style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em" }}>Separação</h1>
+            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>
+              {atualizandoFila || filaQ.isFetching ? "atualizando a fila…" : [
+                filaIdade ? `fila lida ${filaIdade}` : null,
+                tinyIso ? `Tiny sincronizado há ${tempoRelativo(tinyIso)}` : null,
+              ].filter(Boolean).join(" · ")}
+            </span>
+          </div>
+          <div style={{ flex: 1 }} />
+          <EscolhaImpressora opcoes={opcoesImp} selecionada={selImp} onEscolher={setPrinterId} carregando={loadingImpressoras} />
+          <BotaoAtualizar
+            onAtualizar={() => void atualizarFilaNovo()}
+            girando={atualizandoFila || syncTiny.syncing || abertos.rodando}
+            itens={[
+              { t: syncTiny.syncing ? "Atualizando do Tiny…" : "Atualizar do Tiny", sub: "relê a fila de separação · ~30 s", onClick: () => void syncTiny.handleSyncTiny(), disabled: syncTiny.syncing },
+              { t: abertos.rodando ? "Processando abertos…" : "Processar abertos agora", sub: "aplica a TAG e aprova no Tiny os pedidos Shopee em aberto", onClick: () => void abertos.handle(), disabled: abertos.rodando },
+              { t: "Usar o visual antigo", sub: "a tela de antes, com tudo que ela tinha", onClick: () => onVisual?.("antigo") },
+            ]}
+          />
+        </header>
+
+        {selImp && !selImp.online && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 14px", padding: "10px 14px", borderRadius: 12, background: "var(--pm-rs)", border: "1px solid var(--pm-r)" }}>
+            <b style={{ color: "var(--pm-r)", fontWeight: 600 }}>A {selImp.nome} está offline</b>
+            <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>As etiquetas ficam presas na fila até você trocar ou ela voltar.</span>
+            <div style={{ flex: 1 }} />
+            {outraOnline && (
+              <button type="button" onClick={() => setPrinterId(outraOnline.id)} style={{ height: 38, padding: "0 12px", borderRadius: 9, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                Trocar para {outraOnline.nome}
+              </button>
+            )}
+          </div>
+        )}
+
+        <FaixaPedeAcao cartoes={cartoes} emDia={emDia} carregando={isLoading} />
+
+        <BarraAbas
+          ativa={aba}
+          abas={[
+            { id: "fila", nome: "Fila", n: pedFila, onClick: () => setAba("fila") },
+            { id: "multi", nome: "Multi SKU", n: pedMulti, onClick: () => setAba("multi") },
+            { id: "lotes", nome: "Lotes do dia", n: lotesHoje?.length ?? null, onClick: () => setAba("lotes") },
+            { id: "monitor", nome: "Monitoramento", onClick: () => void navigate({ to: "/monitoramento" }) },
+            { id: "hist", nome: "Histórico", onClick: () => void navigate({ to: "/historico-separacao", search: { modo: "tag" } }) },
+          ]}
+          direita={aba === "fila" ? (
+            <>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Meu turno</span>
+              <Segmento<TurnoSep>
+                altura={32}
+                valor={turno}
+                onValor={setTurno}
+                ops={[
+                  { id: "leves", nome: "Leves", sub: `até 4 kg · ${intBR(pedPorBanda(["ate_limite", "sem_peso"]))}` },
+                  { id: "pesados", nome: "Pesados", sub: `acima de 4 kg · ${intBR(pedPorBanda(["entre", "acima", "sem_peso"]))}` },
+                  { id: "todos", nome: "Todos", sub: intBR(pedFila) },
+                ]}
+              />
+            </>
+          ) : null}
+        />
+
+        {aba === "multi" && <MultiSkuPanel />}
+        {aba === "lotes" && (
+          <LotesDoDia
+            printerId={printerId}
+            setPrinterId={setPrinterId}
+            impressoras={impressoras}
+            loadingImpressoras={loadingImpressoras}
+            impressoraSelecionada={impressoraSelecionada}
+            abertoInicial
+          />
+        )}
+
+        {aba === "fila" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <ChipEnvioSep nome="Todos" n={pedFila} on={!envioUnico} onClick={() => setSelectedEnvios(null)} />
+                {envios.map((e) => (
+                  <ChipEnvioSep
+                    key={e}
+                    nome={envioSep(e).curto}
+                    cor={envioSep(e).cor}
+                    n={soma(todosUnit.filter((r) => (r.tipo_envio ?? "—") === e), "qtd_pedidos")}
+                    on={envioUnico === e}
+                    onClick={() => setSelectedEnvios(envioUnico === e ? null : [e])}
+                  />
+                ))}
+              </div>
+              <Segmento<"todas" | "ottz" | "bumi">
+                valor={lojaSel}
+                onValor={(v) => setEmpresaFiltro(v === "todas" ? null : v)}
+                ops={[{ id: "todas", nome: "Ottz e Bumi" }, { id: "ottz", nome: "Ottz" }, { id: "bumi", nome: "Bumi" }]}
+              />
+              <span style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 10px", borderRadius: 9, background: "var(--pm-as)", color: "var(--pm-at)", fontSize: 12, fontWeight: 600 }}>
+                {turno === "pesados" ? "Peso: acima de 4 kg · meu turno" : turno === "leves" ? "Peso: até 4 kg · meu turno" : "Peso: todos"}
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 10px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", flex: "1 1 200px", maxWidth: 320 }}>
+                <Search className="h-3.5 w-3.5" style={{ color: "var(--pm-t3)" }} />
+                <input
+                  value={buscaSku}
+                  onChange={(e) => setBuscaSku(e.target.value)}
+                  placeholder="SKU, nome ou nº do pedido"
+                  style={{ border: 0, outline: "none", background: "transparent", flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--pm-t)" }}
+                />
+              </div>
+              <BotaoFiltros grupos={grupoFiltros} nAtivos={nAtivos} nVis={filteredRows.length} onLimpar={limparFiltros} />
+            </div>
+            <FiltrosAtivos itens={ativos} />
+
+            {pedidoHits && pedidoHits.length > 0 && (
+              <div style={{ ...caixa, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 12px", fontSize: 12 }}>
+                <span style={{ color: "var(--pm-t3)" }}>Pedido na fila:</span>
+                {pedidoHits.slice(0, 5).map((h) => (
+                  <span key={`${h.numero_ecommerce}-${h.venda_numero}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <b style={MONO}>{h.numero_ecommerce ?? h.venda_numero}</b>
+                    <span style={{ color: "var(--pm-t3)" }}>{rotuloCanal(h.marca_canal)}</span>
+                    {h.tag_lote ? <b style={{ ...MONO, padding: "1px 6px", borderRadius: 5, background: "var(--pm-t)", color: "var(--pm-s)" }}>{h.tag_lote}</b> : <span style={{ color: "var(--pm-am)", fontWeight: 600 }}>sem TAG</span>}
+                    {(h.qtd_skus ?? 1) > 1 && <span style={{ color: "var(--pm-t3)" }}>(multi SKU · aba Multi SKU)</span>}
+                  </span>
+                ))}
+                {pedidoHits.length > 5 && <span style={{ color: "var(--pm-t3)" }}>+{pedidoHits.length - 5}</span>}
+              </div>
+            )}
+            {pedidoHits && pedidoHits.length === 0 && !buscaPedidoQ.isLoading && (
+              <div style={{ ...caixa, borderStyle: "dashed", color: "var(--pm-t2)", fontSize: 12 }}>
+                Nenhum pedido na fila com esse número. Pode já ter sido separado (veja o Histórico) ou ainda não veio do Tiny.
+              </div>
+            )}
+
+            {isLoading && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {[1, 2, 3, 4, 5].map((k) => (
+                  <div key={k} style={{ height: 70, borderRadius: 12, background: "var(--pm-s)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", gap: 12, padding: "0 14px" }}>
+                    <div style={{ width: 52, height: 52, borderRadius: 9, background: "var(--pm-sk)" }} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ width: "40%", height: 12, borderRadius: 5, background: "var(--pm-sk)" }} />
+                      <div style={{ width: "20%", height: 10, borderRadius: 5, background: "var(--pm-sk)" }} />
+                    </div>
+                    <div style={{ width: 180, height: 44, borderRadius: 10, background: "var(--pm-sk)" }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {error && (
+              <div style={{ ...caixa, background: "var(--pm-rs)", border: "1px solid var(--pm-r)", color: "var(--pm-r)" }}>
+                Não deu para ler a fila agora: {(error as Error).message}.{" "}
+                <button type="button" onClick={() => void atualizarFilaNovo()} style={{ border: 0, background: "transparent", color: "var(--pm-at)", textDecoration: "underline", cursor: "pointer" }}>tentar de novo</button>
+              </div>
+            )}
+            {!isLoading && !error && grupos.length === 0 && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "48px 16px", borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", textAlign: "center" }}>
+                <b style={{ fontSize: 20, fontWeight: 600 }}>Nada para separar 🎉</b>
+                <span style={{ fontSize: 13, color: "var(--pm-t2)" }}>
+                  {todosUnit.length === 0
+                    ? "A fila do galpão está zerada. Pedidos novos aparecem aqui sozinhos."
+                    : "Nenhuma linha com estes filtros no seu turno. Troque para “Todos” ou limpe os filtros."}
+                </span>
+              </div>
+            )}
+
+            {grupos.map((g) => {
+              const env = envioSep(g.tipo_envio);
+              const doEnvio = todosUnit.filter((r) => (r.tipo_envio ?? "—") === g.tipo_envio);
+              const selecionaveis = g.items.map((r) => r.tag_sugerida).filter((x): x is string => !!x && !bloqueados.has(x));
+              const todosSel = selecionaveis.length > 0 && selecionaveis.every((x) => selGrupos.has(x));
+              return (
+                <div key={g.tipo_envio} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <CabecalhoGrupo
+                    cor={env.cor}
+                    nome={env.nome}
+                    prio={env.prio}
+                    tot={`${doEnvio.length} linhas · ${intBR(soma(doEnvio, "qtd_pedidos"))} pedidos · ${intBR(soma(doEnvio, "total_unidades"))} un`}
+                    vis={`${g.items.length} no seu filtro`}
+                    acao={selecionaveis.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelGrupos((prev) => {
+                          const n2 = new Set(prev);
+                          for (const x of selecionaveis) { if (todosSel) n2.delete(x); else n2.add(x); }
+                          return n2;
+                        })}
+                        style={{ height: 26, padding: "0 8px", borderRadius: 7, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 11.5, color: "var(--pm-at)", fontWeight: 500 }}
+                      >
+                        {todosSel ? "tirar a seleção" : `selecionar as ${selecionaveis.length}`}
+                      </button>
+                    ) : null}
+                  />
+                  {g.items.map(linhaFila)}
+                </div>
+              );
+            })}
+
+            {pedMulti > 0 && (
+              <button
+                type="button"
+                onClick={() => setAba("multi")}
+                style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 10px", padding: "10px 14px", borderRadius: 12, border: "1px dashed var(--pm-bs)", background: "transparent", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "var(--pm-t2)" }}
+              >
+                <b style={{ fontWeight: 600, color: "var(--pm-t)" }}>Multi SKU</b>
+                {multisTodos.length} combinações · {intBR(pedMulti)} pedidos ficam na aba Multi SKU, fora da impressão em massa
+                <span style={{ color: "var(--pm-at)", fontWeight: 500 }}>Abrir Multi SKU →</span>
+              </button>
+            )}
+
+            {selGrupos.size > 0 && !painel && (
+              <BarraSelecao
+                linhas={selRows.length}
+                pedidos={selPed}
+                onLimpar={() => setSelGrupos(new Set())}
+                botoes={[
+                  ...(selEmb > 0 ? [{ t: `Embalar impressos · ${intBR(selEmb)}`, tipo: "contorno" as const, onClick: () => void embalarTodosImpressos(selRows), disabled: massa !== null }] : []),
+                  { t: "Reimprimir (forçar)", tipo: "perigo" as const, onClick: () => void imprimirTudoEmMassa(selRows, { forcar: true }), disabled: massa !== null },
+                  { t: `Imprimir ${selRows.length} linhas (${intBR(selPed)} pedidos)`, tipo: "primario" as const, onClick: () => void imprimirTudoEmMassa(selRows), disabled: massa !== null },
+                ]}
+              />
+            )}
+          </div>
+        )}
+
+        {painel && <PainelImpressao {...painel} />}
+
+        <ForcarEmbalarDialog
+          open={forcarSku !== null}
+          titulo={`Forçar embalado — ${forcarSku?.sku ?? ""} · ${forcarSku?.tipo_envio ?? ""}`}
+          descricao={(() => {
+            const agg = impressaoEstados?.porLinha.get(forcarSku ? linhaKeyDe(forcarSku) : "");
+            return (
+              <p>
+                <strong>{agg?.total ?? 0}</strong> pedido(s) nesta linha serão marcados como embalados no Tiny — incluindo{" "}
+                <strong>{(agg?.error ?? 0) + (agg?.ausente ?? 0)}</strong> sem confirmação de impressão e <strong>{agg?.sent ?? 0}</strong> ainda aguardando.
+              </p>
+            );
+          })()}
+          loading={embalandoKey === `sku:${forcarSku?.sku}:${forcarSku?.tipo_envio}`}
+          onCancel={() => setForcarSku(null)}
+          onConfirm={(nome, motivo) => {
+            if (forcarSku) void embalarPorSku(forcarSku, { nome, motivo });
+            setForcarSku(null);
+          }}
+        />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -4569,7 +5256,40 @@ function useSeparacaoRows() {
   });
 }
 
+const STORAGE_VISUAL = "separacao.visual";
+
+/**
+ * Rede de segurança do visual novo: se ele quebrar na tela (erro de render),
+ * a bancada cai sozinha no visual antigo em vez de ficar sem a Separação.
+ */
+class ProtecaoVisualNovo extends Component<{ children: ReactNode; reserva: (erro: string) => ReactNode }, { erro: string | null }> {
+  state = { erro: null as string | null };
+  static getDerivedStateFromError(e: Error) { return { erro: e?.message ?? String(e) }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.error("Separação (visual novo) quebrou", e, info.componentStack); }
+  render() { return this.state.erro ? this.props.reserva(this.state.erro) : this.props.children; }
+}
+
 function SeparacaoPage() {
+  const [visual, setVisualState] = useState<VisualSep>(() => {
+    try { return localStorage.getItem(STORAGE_VISUAL) === "antigo" ? "antigo" : "novo"; } catch { return "novo"; }
+  });
+  const setVisual = (v: VisualSep) => {
+    setVisualState(v);
+    try { localStorage.setItem(STORAGE_VISUAL, v); } catch { /* noop */ }
+  };
+  if (visual === "novo") {
+    return (
+      <ProtecaoVisualNovo reserva={(erro) => <SeparacaoAntiga onVisual={setVisual} aviso={erro} />}>
+        <div className="pm-ui w-full px-4 md:px-8 py-5">
+          <FilaPriorizada visual="novo" onVisual={setVisual} />
+        </div>
+      </ProtecaoVisualNovo>
+    );
+  }
+  return <SeparacaoAntiga onVisual={setVisual} />;
+}
+
+function SeparacaoAntiga({ onVisual, aviso }: { onVisual: (v: VisualSep) => void; aviso?: string }) {
   const { data: rows, isLoading, error, refetch, isFetching } = useSeparacaoRows();
   const qc = useQueryClient();
   const [selectedEnvios, setSelectedEnvios] = useState<string[] | null>(null);
@@ -4700,11 +5420,19 @@ function SeparacaoPage() {
 
   return (
     <div className="w-full px-6 md:px-8 py-6 space-y-[18px]">
+      {aviso && (
+        <Card className="p-3 border-amber-400 bg-amber-50 text-amber-900 text-sm dark:bg-amber-950/30 dark:text-amber-200">
+          O visual novo da Separação deu erro e a tela voltou para o antigo. Avise quem cuida do sistema: <span className="font-mono">{aviso}</span>
+        </Card>
+      )}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <p className="text-sm text-muted-foreground">
           Fila de pedidos aguardando separação no galpão (Full excluído).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button size="sm" variant="ghost" onClick={() => onVisual("novo")} title="Volta para a tela nova da Separação">
+            Usar o visual novo
+          </Button>
           <ProcessarAbertosButton />
           <AtualizarDoTinyButton />
           <Button onClick={atualizarFila} disabled={isFetching} variant="outline">
