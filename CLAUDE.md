@@ -1201,6 +1201,20 @@ ou cobertura < 7 d) / Sugerido (sugestão > 0) / Ok-excesso (recolhido), 40 linh
 coluna, barra de cobertura × alvo, "A enviar" em caixas da Amazon, depósito da empresa, detalhe por linha, barra escura
 de seleção e painel lateral "Montar envio" por conta (Amazon → `PlanoAmazonDialog` de sempre; ML/Shopee → copiar lista +
 "Subir o PDF" que abre o Novo envio), "Modelos de caixa" por conta Amazon. O "só com sugestão" da URL vale só no antigo.
+**Fase 4 (22/out): Inventário e Tarefas** no design, cada um com o antigo de reserva (`ProtecaoPacking`). Inventário
+(`ui/Inventario.tsx`): cartões por conta (disponível, reservado, a caminho, inutilizável em âmbar, nº de anúncios) + "Total nos
+Fulls" com o valor a custo da `dashboard_estoque_valor` (o mesmo número do Dashboard; com filtro de empresa vale para as duas) e a
+tabela "Por produto" que abre em cada CD/conta, com chips Com inutilizável / Sem SKU vinculado (link "vincular" →
+/mapeamento-skus) / Zerado e ordenação por coluna. A leitura do `estoque_fulfillment` passou a ser PAGINADA (899 linhas em 22/out,
+o corte é 1.000). Tarefas (`TarefasTab.tsx`, `QuadroNovo` + o ramo novo da `Contagem`): KPIs, segmento por tipo, responsáveis
+por iniciais, colunas com "Começar ›"/"Concluir ›" (concluir continua abrindo a tarefa), coluna Feito recolhida ("Ver todas").
+Contagem em cartões grandes (foto, entrada de 56 px, Enter vai ao próximo; no filtro "Faltam" o item recém-contado fica na tela
+até ir ao próximo), progresso fixo no topo, "Mostrar sistema" e "Conferir com o Tiny e ajustar". O diálogo do ajuste (AjusteTiny)
+e a "Nova tarefa" ainda são os antigos. **Não conferido na tela** (pede login).
+**Tema claro/escuro (22/out):** botão sol/lua no topo (`BotaoTema` em `__root.tsx`); `src/lib/tema.ts` liga a classe `dark` no
+`<html>`, guarda em `localStorage "tema"` e o `SCRIPT_TEMA` aplica antes da 1ª pintura. **Contraste (22/out, pedido do dono:
+"cores muito parecidas"):** os tokens `--pm-*` (claro e escuro) ficaram mais separados (fundo × cartão × borda × textos).
+Rótulos dos passos do Packing quebram em 2 linhas sem sobrepor, e os botões do cartão (Completar, imprimir) descem de linha.
 
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
