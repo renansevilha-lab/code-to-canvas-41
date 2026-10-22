@@ -376,6 +376,34 @@ async function copiarFotoDoBase(sku: string) {
   } catch (e) { toast.error("Não consegui copiar a foto", { id: aviso, description: (e as Error).message, duration: 15000 }); }
 }
 
+/** Produto criado pelo app: transforma em kit no Tiny as variações que ficaram simples (ex.: o Tiny pediu para esperar
+ *  no meio da criação). Repete enquanto houver pendente, esperando o tempo que o Tiny pede. */
+async function terminarKits(sku: string, qc: ReturnType<typeof useQueryClient>) {
+  if (!window.confirm(`Transformar em kit, no Tiny, as variações de ${sku} que ficaram como produto simples?`)) return;
+  const aviso = toast.loading("Transformando as variações em kit no Tiny…");
+  try {
+    let feitos = 0; let erros: string[] = []; let pendentes = 0; let jaEram = 0;
+    for (let rodada = 0; rodada < 8; rodada++) {
+      const r = (await chamarVariacoes("completar-kits", { sku_pai: sku, confirmar: true })) as {
+        ok: boolean; erro?: string; ja_eram_kit?: number; pendentes?: number; itens?: { sku: string; ok: boolean; pendente?: boolean; espera?: number; erro?: string | null }[];
+      };
+      if (!r.ok) throw new Error(r.erro ?? "falhou");
+      if (rodada === 0) jaEram = r.ja_eram_kit ?? 0;
+      const itens = r.itens ?? [];
+      feitos += itens.filter((i) => i.ok).length;
+      erros = itens.filter((i) => !i.ok && !i.pendente).map((i) => `${i.sku}: ${i.erro}`);
+      pendentes = r.pendentes ?? 0;
+      if (!pendentes) break;
+      const espera = Math.max(5, ...itens.filter((i) => i.pendente).map((i) => Number(i.espera) || 5));
+      toast.loading(`${feitos} viraram kit · o Tiny pediu para esperar, retomo em ${espera} s…`, { id: aviso });
+      await new Promise((ok) => setTimeout(ok, espera * 1000));
+    }
+    void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+    if (erros.length || pendentes) toast.error(`${feitos} viraram kit; ${erros.length + pendentes} ainda não`, { id: aviso, description: erros.join(" · ") || "o Tiny segue pedindo para esperar: tente de novo em 1 minuto", duration: 20000 });
+    else toast.success(feitos ? `${feitos} variação(ões) viraram kit` : `Nada a fazer: as ${jaEram} variações já eram kit`, { id: aviso, duration: 8000 });
+  } catch (e) { toast.error("Não consegui terminar os kits", { id: aviso, description: (e as Error).message, duration: 15000 }); }
+}
+
 /**
  * Uma linha do catálogo. Como no Tiny: o kit mostra a composição, e o produto com variações
  * abre as variações logo abaixo (cada uma com venda, canais e anúncio próprios).
@@ -465,6 +493,11 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
             {x.criado_app && !variacao && (
               <DropdownMenuItem onSelect={() => copiarFotoDoBase(x.sku)}>
                 <ImagePlus className="h-4 w-4 mr-2" />Copiar a foto do produto base
+              </DropdownMenuItem>
+            )}
+            {x.criado_app && !variacao && x.tipo === "V" && (
+              <DropdownMenuItem onSelect={() => void terminarKits(x.sku, qc)}>
+                <Layers className="h-4 w-4 mr-2" />Terminar os kits no Tiny
               </DropdownMenuItem>
             )}
           </DropdownMenuContent>
@@ -1040,6 +1073,12 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, variacao, seleciona
                   <DropdownMenuItem onSelect={() => copiarFotoDoBase(x.sku)} className="flex flex-col items-start gap-0">
                     <span className="font-semibold">Copiar a foto do produto base</span>
                     <span className="text-[11px] text-muted-foreground">no pai e nas variações sem foto no Tiny</span>
+                  </DropdownMenuItem>
+                )}
+                {x.criado_app && x.tipo === "V" && (
+                  <DropdownMenuItem onSelect={() => void terminarKits(x.sku, qc)} className="flex flex-col items-start gap-0">
+                    <span className="font-semibold">Terminar os kits no Tiny</span>
+                    <span className="text-[11px] text-muted-foreground">variações que ficaram como produto simples</span>
                   </DropdownMenuItem>
                 )}
               </DropdownMenuContent>

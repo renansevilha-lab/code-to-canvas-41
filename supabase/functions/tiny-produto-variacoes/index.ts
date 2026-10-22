@@ -1,5 +1,9 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v6 (14/out/2026)
+// Edge Function: tiny-produto-variacoes v7 (22/out/2026; v6 14/out)
+// v7: 429 do Tiny (limite por minuto) espera e repete até 3× em toda chamada v3; o que ainda assim esbarra no
+//     limite fica PENDENTE (a tela retoma), não vira erro definitivo; a conferência do kit relê até 3× (o Tiny
+//     demora a refletir); variação que já é o kit certo não é reenviada. ?modulo=completar-kits {sku_pai, confirmar}
+//     termina os kits de um produto criado pelo app (quantidade/base do registro da criação).
 // ----------------------------------------------------------------------------
 // Cria NO TINY, a partir de um produto simples, um produto COM VARIAÇÕES em que cada
 // variação é um KIT do produto base (ex.: "1 unidades", "2 unidades", "3 unidades") —
@@ -88,15 +92,24 @@ async function tokenTiny(): Promise<string> {
   return String(data.access_token);
 }
 async function v3(token: string, metodo: string, path: string, corpo?: unknown) {
-  const r = await fetch(`${TINY}${path}`, {
-    method: metodo,
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(corpo !== undefined ? { "Content-Type": "application/json" } : {}) },
-    body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
-  });
-  const txt = await r.text();
-  let body: any = null; try { body = txt ? JSON.parse(txt) : null; } catch { body = { mensagem: txt.slice(0, 300) }; }
-  await sleep(600); // ~1 chamada/s do Tiny
-  return { status: r.status, body };
+  for (let tentativa = 0; ; tentativa++) {
+    const r = await fetch(`${TINY}${path}`, {
+      method: metodo,
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(corpo !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+    });
+    const txt = await r.text();
+    let body: any = null; try { body = txt ? JSON.parse(txt) : null; } catch { body = { mensagem: txt.slice(0, 300) }; }
+    await sleep(600); // ~1 chamada/s do Tiny
+    // v7 (22/out): 429 = o Tiny recusou SEM processar (limite de chamadas por minuto) — esperar e repetir é seguro,
+    // até 3 vezes. Antes a 1ª recusa virava erro definitivo e a variação ficava simples (Bebedouro 16607: 8 de 9).
+    if (r.status === 429 && tentativa < 3) {
+      const ra = Number(r.headers.get("retry-after"));
+      await sleep(ra > 0 && ra <= 10 ? ra * 1000 : 2000 * (tentativa + 1));
+      continue;
+    }
+    return { status: r.status, body };
+  }
 }
 /** API v2 (uma chamada, sem repetir: no código 6 o Tiny reinicia a espera a cada tentativa). */
 async function v2(servico: string, campos: Record<string, string>) {
@@ -268,9 +281,16 @@ async function conferir(token: string, pd: Pedido) {
 /** Passo 2: a variação (nascida simples) vira KIT do produto base, pela API v2. */
 async function virarKit(token: string, idVariacao: number, idBase: number, quantidade: number) {
   const g = await v3(token, "GET", `/produtos/${idVariacao}`);
-  if (g.status !== 200) return { ok: false, erro: `não consegui ler a variação ${idVariacao}: ${erroV3(g.body) || g.status}` };
+  // 429 depois das tentativas = limite do Tiny: fica PENDENTE (a tela espera e tenta de novo), não é erro definitivo
+  if (g.status !== 200) return { ok: false, erro: `não consegui ler a variação ${idVariacao}: ${erroV3(g.body) || g.status}`, ...(g.status === 429 ? { limite: true, espera: 20 } : {}) };
   const d = g.body;
   if (d.tipoVariacao !== "V") return { ok: false, erro: "este produto não é uma variação" };
+  const kitDe = (b: any) => ((b?.kit ?? []) as any[]).map((k) => ({ sku: k.produto?.sku, id: Number(k.produto?.id), quantidade: Number(k.quantidade) }));
+  // já é o kit certo (ex.: o Tiny aplicou numa tentativa anterior e a conferência leu cedo demais): não reenvia
+  const ja = kitDe(d);
+  if (d.tipo === "K" && ja.length === 1 && ja[0].id === idBase && ja[0].quantidade === quantidade) {
+    return { ok: true, erro: null, sku: d.sku, tipo: d.tipo, kit: ja, preco: num(d.precos?.preco) };
+  }
   const produto: Record<string, unknown> = {
     sequencia: "1", id: idVariacao, codigo: d.sku, nome: d.descricao, unidade: d.unidade || "UN", preco: Number(d.precos?.preco ?? 0),
     origem: String(d.origem ?? 0), situacao: "A", tipo: "P", classe_produto: "K",
@@ -279,11 +299,24 @@ async function virarKit(token: string, idVariacao: number, idBase: number, quant
   };
   const ret = await v2("produto.alterar.php", { produto: JSON.stringify({ produtos: [{ produto }] }) });
   const regOk = String(ret?.registros?.[0]?.registro?.status ?? ret?.status ?? "") === "OK";
-  if (!regOk) { const e = erroV2(ret); return { ok: false, erro: `o Tiny recusou transformar em kit: ${e.texto}`, limite: e.codigo === "6" }; }
-  const c = await v3(token, "GET", `/produtos/${idVariacao}`);
-  const kit = ((c.body?.kit ?? []) as any[]).map((k) => ({ sku: k.produto?.sku, quantidade: Number(k.quantidade) }));
-  const certo = c.body?.tipo === "K" && kit.length === 1 && Number(kit[0].quantidade) === quantidade;
+  if (!regOk) { const e = erroV2(ret); return { ok: false, erro: `o Tiny recusou transformar em kit: ${e.texto}`, limite: e.codigo === "6", espera: 60 }; }
+  // conferência: o Tiny pode levar 1–2 s para refletir a mudança — relê até 3 vezes antes de dizer que não ficou
+  let c = { status: 0, body: null as any }; let kit: { sku: string; id: number; quantidade: number }[] = []; let certo = false;
+  for (let i = 0; i < 3 && !certo; i++) {
+    if (i) await sleep(1500);
+    c = await v3(token, "GET", `/produtos/${idVariacao}`);
+    kit = kitDe(c.body);
+    certo = c.body?.tipo === "K" && kit.length === 1 && Number(kit[0].quantidade) === quantidade;
+  }
+  if (!certo && c.status === 429) return { ok: false, erro: "o Tiny aceitou o kit, mas não deixou conferir (limite de chamadas)", limite: true, espera: 20 };
   return { ok: certo, erro: certo ? null : "o Tiny respondeu OK, mas a variação não ficou como kit — confira no Tiny", sku: c.body?.sku, tipo: c.body?.tipo, kit, preco: num(c.body?.precos?.preco) };
+}
+
+/** Variação que virou kit: espelha a composição e o tipo na hora (sem esperar a sincronização). */
+async function gravarKit(sku: string, base: { espelho: Record<string, any>; det: Record<string, any> }, quantidade: number) {
+  await db.from("produto_kits").delete().eq("sku_kit", sku);
+  await db.from("produto_kits").insert({ sku_kit: sku, sku_componente: base.espelho.sku, quantidade, nome_componente: base.det.descricao, atualizado_em: new Date().toISOString() });
+  await db.from("produtos").update({ tipo: "K" }).eq("sku", sku);
 }
 
 /** Foto principal de um produto do Tiny = o 1º anexo com endereço (a mesma regra do `foto_capa` do espelho). */
@@ -499,14 +532,50 @@ Deno.serve(async (req) => {
 
     if (modulo === "kit") {
       if (body.confirmar !== true) return json({ ok: false, erro: "exige confirmar: true" }, 400);
-      const base = await carregarBase(token, String(body.base_sku ?? "").trim());
-      const r = await virarKit(token, Number(body.id_variacao), Number(base.espelho.id_tiny), Math.floor(num(body.quantidade) ?? 0));
-      if (r.ok && r.sku) {
-        await db.from("produto_kits").delete().eq("sku_kit", r.sku);
-        await db.from("produto_kits").insert({ sku_kit: r.sku, sku_componente: base.espelho.sku, quantidade: Number(body.quantidade), nome_componente: base.det.descricao, atualizado_em: new Date().toISOString() });
-        await db.from("produtos").update({ tipo: "K" }).eq("sku", r.sku);
+      let base: Awaited<ReturnType<typeof carregarBase>>;
+      try { base = await carregarBase(token, String(body.base_sku ?? "").trim()); }
+      catch (e) {
+        const m = String(e instanceof Error ? e.message : e);
+        return json({ ok: false, erro: m, ...(/\b429\b/.test(m) ? { limite: true, espera: 20 } : {}) });
       }
+      const r = await virarKit(token, Number(body.id_variacao), Number(base.espelho.id_tiny), Math.floor(num(body.quantidade) ?? 0));
+      if (r.ok && r.sku) await gravarKit(r.sku, base, Number(body.quantidade));
       return json({ ...r, ok: r.ok });
+    }
+
+    // v7 (22/out): termina os kits de um produto criado pelo app — as variações que ficaram simples (ex.: o Tiny
+    // pediu para esperar no meio da criação). Quantidade e produto base vêm do registro da criação. ~20 s por chamada.
+    if (modulo === "completar-kits") {
+      if (body.confirmar !== true) return json({ ok: false, erro: "exige confirmar: true" }, 400);
+      const skuPai = String(body.sku_pai ?? "").trim();
+      const { data: reg } = await db.from("debug_fulfillment").select("resultado").eq("modulo", "tiny-produto-variacoes").eq("etapa", skuPai)
+        .eq("status_http", 201).order("criado_em", { ascending: false }).limit(1).maybeSingle();
+      const plano = (((reg?.resultado as any)?.variacoes ?? []) as any[]).filter((v) => v?.id && v?.base_sku && Number(v?.quantidade) > 0);
+      if (!plano.length) return json({ ok: false, erro: `não achei o registro da criação de ${skuPai} pelo app` });
+      const { data: jaKit } = await db.from("produto_kits").select("sku_kit").in("sku_kit", plano.map((v) => String(v.sku)));
+      const feitos = new Set(((jaKit ?? []) as any[]).map((k) => String(k.sku_kit)));
+      const faltam = plano.filter((v) => !feitos.has(String(v.sku)));
+      const inicio = Date.now(); const bases = new Map<string, Awaited<ReturnType<typeof carregarBase>>>();
+      const itens: Record<string, unknown>[] = []; let parou = false;
+      for (const v of faltam) {
+        const sku = String(v.sku);
+        if (parou || Date.now() - inicio > 20_000) { itens.push({ sku, ok: false, pendente: true, erro: parou ? "o Tiny pediu para esperar" : "não coube nesta chamada" }); continue; }
+        try {
+          if (!bases.has(v.base_sku)) bases.set(v.base_sku, await carregarBase(token, String(v.base_sku)));
+        } catch (e) {
+          const m = String(e instanceof Error ? e.message : e);
+          if (/\b429\b/.test(m)) parou = true;
+          itens.push({ sku, ok: false, pendente: parou, erro: m }); continue;
+        }
+        const base = bases.get(v.base_sku)!;
+        const r = await virarKit(token, Number(v.id), Number(base.espelho.id_tiny), Number(v.quantidade));
+        if (r.ok) await gravarKit(String(r.sku ?? sku), base, Number(v.quantidade));
+        const lim = !r.ok && (r as any).limite === true;
+        if (lim) parou = true;
+        itens.push({ sku, rotulo: v.rotulo, ok: r.ok, erro: r.erro ?? null, ...(lim ? { pendente: true, espera: (r as any).espera ?? 60 } : {}) });
+      }
+      await db.from("debug_fulfillment").insert({ modulo: "tiny-produto-variacoes", etapa: `${skuPai}:completar-kits`, status_http: 200, resultado: { quem: quem.nome, itens } });
+      return json({ ok: true, sku_pai: skuPai, ja_eram_kit: feitos.size, itens, pendentes: itens.filter((i: any) => i.pendente).length });
     }
 
     const pd = lerPedido(body);
@@ -557,12 +626,14 @@ Deno.serve(async (req) => {
       const linha = { sku: v.sku, rotulo: v.rotulo, valores: v.valores, base_sku: v.baseSku, quantidade: v.quantidade, preco: v.preco };
       const cv = criadas.find((x) => x.sku === v.sku);
       if (!cv) { variacoes.push({ ...linha, ok: false, erro: "o Tiny não devolveu esta variação" }); continue; }
-      if (parou) { variacoes.push({ ...linha, id: cv.id, ok: false, pendente: true, erro: "não tentei: o Tiny pediu para esperar (limite de chamadas) — tente de novo daqui a 1 minuto" }); continue; }
+      if (parou) { variacoes.push({ ...linha, id: cv.id, ok: false, pendente: true, erro: "não tentei: o Tiny pediu para esperar (limite de chamadas) — a tela tenta de novo" }); continue; }
       if (Date.now() - inicio > 20_000) { variacoes.push({ ...linha, id: cv.id, ok: false, pendente: true, erro: "ainda não virou kit (não coube nesta chamada)" }); continue; }
       const k = await virarKit(token, cv.id, Number(baseDe(v).espelho.id_tiny), v.quantidade);
-      if ((k as any).limite) parou = true;
+      const lim = !k.ok && (k as any).limite === true;
+      if (lim) parou = true;
       if (k.ok) okKit.add(v.sku);
-      variacoes.push({ ...linha, id: cv.id, ok: k.ok, erro: k.erro ?? null, tipo: (k as any).tipo ?? "S" });
+      // limite do Tiny = pendente (a tela retoma), não erro definitivo
+      variacoes.push({ ...linha, id: cv.id, ok: k.ok, erro: k.erro ?? null, tipo: (k as any).tipo ?? "S", ...(lim ? { pendente: true, espera: (k as any).espera ?? 60 } : {}) });
     }
     const kits = pd.variacoes.filter((v) => okKit.has(v.sku)).map((v) => ({
       sku_kit: v.sku, sku_componente: v.baseSku, quantidade: v.quantidade, nome_kit: `${pd.nome} - ${v.rotulo}`, nome_componente: baseDe(v).det.descricao, atualizado_em: agora,

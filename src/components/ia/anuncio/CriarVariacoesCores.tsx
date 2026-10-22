@@ -123,15 +123,17 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
     setOcupado("terminando");
     let atual = r;
     const faltam = () => atual.variacoes.filter((v) => !v.ok && v.id && v.pendente);
-    for (let rodada = 0; rodada < 3 && faltam().length; rodada++) {
+    for (let rodada = 0; rodada < 6 && faltam().length; rodada++) {
       for (const v of faltam()) {
         setProgresso(`transformando em kit: ${v.rotulo} (${atual.variacoes.filter((x) => x.ok).length}/${atual.variacoes.length})`);
         try {
           const k = await chamarVariacoes("kit", { id_variacao: v.id, quantidade: v.quantidade, base_sku: v.base_sku, confirmar: true });
-          const limite = k.limite === true; // código 6 da API antiga do Tiny: esperar 1 minuto, sem repetir já
+          // limite do Tiny (código 6 da API antiga = 60 s; 429 da nova = 20 s): espera e retoma
+          const limite = k.limite === true;
+          const espera = Number(k.espera) > 0 ? Number(k.espera) : 60;
           atual = { ...atual, variacoes: atual.variacoes.map((x) => (x.sku === v.sku ? { ...x, ok: k.ok === true, pendente: !k.ok && limite, erro: k.erro ?? null } : x)) };
           setResultado(atual);
-          if (limite) { setProgresso("o Tiny pediu para esperar: retomo em 60 s…"); await new Promise((ok) => setTimeout(ok, 60_000)); }
+          if (limite) { setProgresso(`o Tiny pediu para esperar: retomo em ${espera} s…`); await new Promise((ok) => setTimeout(ok, espera * 1000)); }
         } catch (e) {
           atual = { ...atual, variacoes: atual.variacoes.map((x) => (x.sku === v.sku ? { ...x, pendente: false, erro: (e as Error).message } : x)) };
           setResultado(atual);
