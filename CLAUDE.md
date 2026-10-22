@@ -1155,6 +1155,22 @@ existindo na barra. Função separada da `tiny-separacao` (crítica; outras sess
 mexem). **Fase 2 (a testar): embalar automaticamente os pedidos com impressão
 confirmada** — o gancho natural é o `confirmar-impressao` (job `done`).
 
+## 5.5.1 Separação no design novo — fase 1 (22/out/2026)
+
+Pacote "Separação" do Claude Design (zip de 22/out). `SeparacaoPage` abre o visual novo por padrão
+(`localStorage separacao.visual`; "Usar o visual antigo" no menu do Atualizar) e, se o novo quebrar na
+tela, a `ProtecaoVisualNovo` (error boundary) mostra o antigo com o erro no topo. O novo é um ramo
+`if (novo)` dentro da MESMA `FilaPriorizada`: imprimir/TAG/embalar/falta/forçar são as funções de
+sempre; peças visuais em `src/components/separacao/ui/kit.tsx` (tokens `--pm-*`, + `--pm-er/spx/ml/tt`).
+Topo: impressora (Popover; offline = faixa vermelha com "Trocar para"), Atualizar + Tiny/Processar abertos.
+"Pede ação": prazo vencido, cancela hoje/amanhã (`view_risco_cancelamento_resumo`; sem nada na fila
+leva a /risco-cancelamento), etiquetas com erro/geração parada (`view_etiquetas_saude`), aguardando a
+impressora (estado `sent`), falta de estoque, Multi SKU. Abas Fila · Multi SKU · Lotes do dia (+ links
+para Monitoramento/Histórico). "Meu turno" (`separacao.turno`) = bandas de peso: leves {até 4 kg, sem
+peso}, pesados {4–8, >8, sem peso}. Seleção → barra escura (embalar impressos, reimprimir forçado,
+imprimir). Ainda no estilo antigo: drill-down dos pedidos (`PedidosDoSku`), Multi SKU, Lotes do dia,
+confirmações por `window.confirm`, "Impressões de hoje". **Não conferido na tela** (pede login).
+
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
 Rota `/ponto` (módulo `galpao`), quiosque: a pessoa escolhe o nome, digita a
