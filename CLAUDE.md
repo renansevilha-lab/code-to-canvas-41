@@ -1787,6 +1787,17 @@ concluir.
   tenta os envios dele. Só envios criados pelo app (plano com `sh…`/`wf…`); importados do Seller Central não têm esses ids.
   1ª rodada: ACZ FBA19TZFT26Z NF 7541/25 (R$ 1.297,40, emitente ACZ PET); SVL FBA19TPSZTVN NF 6320/5 e FBA19TPQXVN9 NF
   6321/5 (emitente BMPC). A emitente é a própria empresa (regime especial da Amazon emite em nome dela).
+- **DANFE em PDF + coleta reservada (21/out, `amazon-inbound` v10, deploy 13, sha256 conferido dos dois arquivos):**
+  `supabase/functions/_shared/danfe.ts` (pdf-lib via esm.sh, sem dependência de Deno) monta o DANFE A4 a partir do XML —
+  canhoto, emitente, chave com Code 128C (conferido igual ao jsbarcode), natureza/protocolo, destinatário, impostos,
+  transportador/volumes, produtos com folhas extras, dados adicionais (infAdFisco + infCpl + pedido); `infAdProd` vai na
+  descrição. Anexado como `DANFE <nº>-<série> <FBA>.pdf` junto do XML; nota já importada sem PDF ganha o PDF na rodada
+  seguinte (lê o XML do Storage). Deploy leva os DOIS arquivos (`index.ts` + `../_shared/danfe.ts`). **Reserva da coleta
+  NÃO existe na API para a transportadora parceira**: `generateSelfShipAppointmentSlots` recusa ("Selected carrier was not
+  self-ship carrier") — é só para transportadora própria. Mas depois de reservada no Seller Central, a opção de transporte
+  escolhida devolve o dia em `carrierAppointment` (`GET …/transportationOptions?shipmentId=`): a rodada relê (até 3 envios,
+  a cada 3 h por envio) e grava `envios_amazon[].coleta` + `fulfillment_envios.data_envio_agendada`. Lido em 21/out:
+  FBA19TZFT26Z 30/10, FBA19TPSZTVN 21/10, FBA19TPQXVN9 29/10.
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
@@ -3729,7 +3740,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v10 (deploy 13; 21/out: DANFE em PDF do XML via `_shared/danfe.ts` + coleta reservada lida da Amazon) · v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v5 (deploy 7; 20/out: termos reais de busca no texto, §5.11.13); v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |

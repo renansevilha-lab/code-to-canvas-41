@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v9 (21/out/2026; NF de remessa importada da Amazon) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v10 (21/out/2026; NF de remessa + DANFE em PDF + coleta reservada) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -56,8 +56,15 @@
 //                (cron a cada 10 min); com plano, tenta os envios dele. Baixa o XML, anexa no envio (tipo danfe), grava
 //                número/série/chave em envios_amazon[].nf e escreve a nota na observação do envio. Aceita a chave
 //                publicável (só lê a Amazon e grava o próprio envio).
+// v10 (21/out/2026, pedido do dono): DANFE em PDF gerado do XML (../_shared/danfe.ts) e anexado junto; envios com nota e
+//   sem PDF ganham o PDF na rodada seguinte (sem consulta à Amazon). E a COLETA RESERVADA: a reserva da transportadora
+//   parceira é feita no Seller Central (a API não tem chamada para isso — o agendamento avulso só serve a transportadora
+//   própria: "Selected carrier was not self-ship carrier"), mas a opção de transporte escolhida passa a trazer o dia
+//   reservado em carrierAppointment. A rodada relê isso (`transportationOptions?shipmentId=`, até 3 envios, a cada 3 h por
+//   envio) e grava em envios_amazon[].coleta + fulfillment_envios.data_envio_agendada.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { gerarDanfe } from "../_shared/danfe.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -573,10 +580,64 @@ Deno.serve(async (req) => {
         : await sel.gte("criado_em", new Date(Date.now() - 60 * 86400000).toISOString());
       if (eP) return json({ ok: false, erro: `banco: ${eP.message}` }, 500);
       const cands: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      const semPdf: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      const coletas: { p: Record<string, any>; e: Record<string, any> }[] = [];
       for (const p of (planos ?? []) as Record<string, any>[]) {
         for (const e of ((p.envios_amazon ?? []) as Record<string, any>[])) {
           if (e.id && e.envio_app_id && !e.nf?.chave) cands.push({ p, e });
+          if (e.envio_app_id && e.nf?.chave && !e.nf?.danfe && !e.nf?.danfe_erro) semPdf.push({ p, e });
+          const passou = e.coleta?.inicio && Date.parse(e.coleta.inicio) < Date.now() - 86400000;
+          if (e.id && e.transporte_escolhido && !passou && (b.plano || !e.coleta_lida_em || Date.now() - Date.parse(e.coleta_lida_em) > 3 * 3600000)) coletas.push({ p, e });
         }
+      }
+      // v10: DANFE em PDF a partir do XML (o da Amazon, ou o já guardado no envio)
+      const anexarDanfe = async (e: Record<string, any>, xml: string) => {
+        try {
+          const pdf = await gerarDanfe(xml);
+          await anexarDoc(String(e.envio_app_id), "danfe", `DANFE ${e.nf?.numero ?? ""}-${e.nf?.serie ?? ""} ${e.fba}.pdf`, pdf, "gerado do XML da Amazon");
+          e.nf = { ...(e.nf ?? {}), danfe: true };
+          delete e.nf?.danfe_erro;
+          return null;
+        } catch (x) {
+          const erro = String((x as Error).message ?? x);
+          e.nf = { ...(e.nf ?? {}), danfe_erro: erro };
+          return erro;
+        }
+      };
+      const extras: Record<string, unknown>[] = [];
+      for (const { p, e } of semPdf.slice(0, 3)) {
+        if (dry || Date.now() > ate - 8000) break;
+        const { data: d } = await db.from("fulfillment_envio_docs").select("storage_path").eq("envio_id", String(e.envio_app_id))
+          .like("nome", "NF remessa %.xml").limit(1).maybeSingle();
+        if (!d?.storage_path) continue;
+        const { data: arq } = await db.storage.from(DOCS_BUCKET).download(String(d.storage_path));
+        if (!arq) continue;
+        const erro = await anexarDanfe(e, await arq.text());
+        await salvar(String(p.id), { envios_amazon: p.envios_amazon }, erro ? undefined : { acao: "DANFE gerado", fba: e.fba });
+        extras.push({ fba: e.fba, danfe: erro ?? "anexado" });
+      }
+      // v10: coleta reservada no Seller Central → dia da coleta no envio
+      for (const { p, e } of coletas.slice(0, b.plano ? 10 : 3)) {
+        if (dry || Date.now() > ate - 8000) break;
+        const token = await tokenConta(Number(p.shop_id));
+        const r = await sp(token, "GET", `${API}/inboundPlans/${encodeURIComponent(String(p.plano_id))}/transportationOptions?shipmentId=${encodeURIComponent(String(e.id))}`);
+        e.coleta_lida_em = new Date().toISOString();
+        const op = ((r.body?.transportationOptions ?? []) as any[]).find((o) => String(o.transportationOptionId) === String(e.transporte_escolhido))
+          ?? ((r.body?.transportationOptions ?? []) as any[])[0];
+        const ini = op?.carrierAppointment?.startTime ?? null;
+        if (ok(r) && ini) {
+          const mudou = e.coleta?.inicio !== ini;
+          e.coleta = { inicio: ini, fim: op.carrierAppointment?.endTime ?? null, transportadora: op.carrier?.name ?? null };
+          if (mudou && e.envio_app_id) {
+            await db.from("fulfillment_envios").update({ data_envio_agendada: diaBRT(ini), atualizado_em: new Date().toISOString() }).eq("id", String(e.envio_app_id));
+          }
+          await salvar(String(p.id), { envios_amazon: p.envios_amazon }, mudou ? { acao: "coleta lida da Amazon", fba: e.fba, dia: diaBRT(ini) } : undefined);
+          extras.push({ fba: e.fba, coleta: diaBRT(ini), mudou });
+        } else {
+          await salvar(String(p.id), { envios_amazon: p.envios_amazon });
+          extras.push({ fba: e.fba, coleta: null, erro: ok(r) ? "sem coleta na opção" : motivo(r) });
+        }
+        await sleep(600);
       }
       // o cron pega o que está há mais tempo sem tentar e espera 25 min entre tentativas do mesmo envio
       const fila = cands
@@ -628,15 +689,16 @@ Deno.serve(async (req) => {
           e.nf = nf;
           delete e.nf_erro;
           e.nf_tentativa_em = nf.importada_em;
+          const erroPdf = await anexarDanfe(e, txt);
           await salvar(String(p.id), { envios_amazon: p.envios_amazon }, { acao: "NF de remessa importada", por: quem.nome, fba: e.fba, numero: nf.numero });
-          resultado.push({ fba: e.fba, nf, doc });
+          resultado.push({ fba: e.fba, nf, doc, danfe: erroPdf ?? "anexado" });
         } catch (x) {
           const erro = String((x as Error).message ?? x);
           await marcar(erro);
           resultado.push({ fba: e.fba, erro });
         }
       }
-      return json({ ok: true, dry, candidatos: cands.length, resultado });
+      return json({ ok: true, dry, candidatos: cands.length, resultado, extras });
     }
 
     if (modulo === "amazon-envios" || modulo === "importar" || modulo === "recebimento") {

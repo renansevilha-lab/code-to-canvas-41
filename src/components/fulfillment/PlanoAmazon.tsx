@@ -38,7 +38,8 @@ interface OpcaoTransporte {
 interface NfRemessa { numero: string | null; serie: string | null; chave: string; emitida_em: string | null; valor: number | null; importada_em: string }
 interface EnvioAmazon {
   id: string; fba: string | null; cd: string | null; status: string | null; transporte_opcoes?: OpcaoTransporte[]; transporte_escolhido?: string | null; envio_app_id?: string | null;
-  nf?: NfRemessa | null; nf_erro?: string | null; nf_tentativa_em?: string | null;
+  nf?: (NfRemessa & { danfe?: boolean; danfe_erro?: string }) | null; nf_erro?: string | null; nf_tentativa_em?: string | null;
+  coleta?: { inicio: string; fim: string | null; transportadora: string | null } | null;
 }
 // v6: depois do transporte confirmado o servidor cria o envio na aba Envios (itens + etiquetas das caixas e de produto)
 interface EnvioApp { fba: string | null; cd: string | null; envio_id?: string; criado?: boolean; erro?: string; avisos: string[]; caixas?: number; doc_caixas?: string; doc_produto?: string }
@@ -65,6 +66,7 @@ export const PASSOS: Record<string, string> = {
 };
 const PARADOS = new Set(["escolher_destino", "destino_confirmado", "escolher_transporte", "transporte_confirmado", "cancelado", "erro"]);
 const dataHora = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "short", day: "2-digit", month: "2-digit" }) : "—");
+const horaBRT = (iso: string) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 /** Nome da opção para gente: parceira da Amazon = coleta; por nossa conta = quem leva e como. */
 function rotuloOpcao(o: OpcaoTransporte): string {
   if (o.solucao === "AMAZON_PARTNERED_CARRIER") return `Coleta ${o.transportadora ?? ""} (parceira Amazon) · ${dataHora(o.coleta_inicio)}${o.custo != null ? ` · ${formatBRL(o.custo)}` : ""}`;
@@ -531,10 +533,17 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                         {e.nf ? (
                           <span className="text-emerald-700 dark:text-emerald-400">
                             NF de remessa nº {e.nf.numero} série {e.nf.serie}
-                            {e.nf.valor != null ? ` · ${formatBRL(e.nf.valor)}` : ""} · XML anexado no envio
+                            {e.nf.valor != null ? ` · ${formatBRL(e.nf.valor)}` : ""} · {e.nf.danfe ? "XML e DANFE (PDF) anexados no envio" : "XML anexado no envio"}
+                            {e.nf.danfe_erro ? <span className="text-amber-700"> · DANFE não gerado: {e.nf.danfe_erro}</span> : null}
                           </span>
                         ) : (
                           <>NF de remessa: ainda não importada{e.nf_erro ? ` (${e.nf_erro})` : ""}</>
+                        )}
+                        {e.coleta && (
+                          <div className="text-foreground">
+                            Coleta na Amazon{e.coleta.transportadora ? ` (${e.coleta.transportadora})` : ""}: <b>{dataHora(e.coleta.inicio)}</b>
+                            {` · ${horaBRT(e.coleta.inicio)}${e.coleta.fim ? `–${horaBRT(e.coleta.fim)}` : ""}`}
+                          </div>
                         )}
                       </div>
                     )}
