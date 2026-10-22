@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, PackageSearch, Search } from "lucide-react";
+import { ChevronDown, Loader2, PackageSearch, Search } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -241,9 +241,9 @@ function LogTimeline({ eventos, chaveLabel, comData }: { eventos: LogRow[]; chav
 }
 
 type Modo = "tag" | "pedido";
-type EventoFiltro = "todos" | "aplicada" | "impressao" | "embalado" | "finalizada";
+type EventoFiltro = "todos" | "aplicada" | "impressao" | "embalado" | "finalizada" | "forcado";
 
-function HistoricoPage() {
+function useHistorico() {
   const { modo } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const setModo = (m: Modo) => navigate({ search: (p) => ({ ...p, modo: m }), replace: true });
@@ -317,6 +317,18 @@ function HistoricoPage() {
     );
   }
 
+  // "Só forçados e reimpressões": TAG/pedido com evento forçado no log
+  const forcados = useMemo(() => {
+    const tagsF = new Set<string>(), sepsF = new Set<number>();
+    for (const ev of log) {
+      const d = (ev.detalhe ?? {}) as Record<string, unknown>;
+      if (d.forcar !== true && d.forcado !== true) continue;
+      if (ev.tag) tagsF.add(ev.tag);
+      if (ev.separacao_id != null) sepsF.add(ev.separacao_id);
+    }
+    return { tagsF, sepsF };
+  }, [log]);
+
   const contadores = useMemo(() => {
     const total = tags.length;
     const finalizadas = tags.filter((t) => !!t.finalizada_em).length;
@@ -339,7 +351,8 @@ function HistoricoPage() {
         [t.aplicada_por, ...(t.impressa_por ?? []), ...(t.embalada_por ?? []), t.finalizada_por]
           .filter(Boolean).includes(pessoaFiltro),
       );
-    if (eventoFiltro !== "todos")
+    if (eventoFiltro === "forcado") out = out.filter((t) => forcados.tagsF.has(t.tag));
+    else if (eventoFiltro !== "todos")
       out = out.filter((t) =>
         eventoFiltro === "aplicada" ? !!t.aplicada_em
           : eventoFiltro === "impressao" ? num(t.qtd_impressoes) > 0
@@ -347,7 +360,7 @@ function HistoricoPage() {
               : !!t.finalizada_em,
       );
     return out.slice().sort((a, b) => (b.ultimo_evento_em ?? "").localeCompare(a.ultimo_evento_em ?? ""));
-  }, [tags, q, pessoaFiltro, eventoFiltro]);
+  }, [tags, q, pessoaFiltro, eventoFiltro, forcados]);
 
   const filteredPedidos = useMemo(() => {
     let out = pedidos;
@@ -360,7 +373,8 @@ function HistoricoPage() {
       out = out.filter((p) =>
         [p.aplicada_por, p.impressa_por, p.embalado_por, p.finalizada_por].filter(Boolean).includes(pessoaFiltro),
       );
-    if (eventoFiltro !== "todos")
+    if (eventoFiltro === "forcado") out = out.filter((p) => forcados.sepsF.has(p.separacao_id) || (!!p.tag_lote && forcados.tagsF.has(p.tag_lote)));
+    else if (eventoFiltro !== "todos")
       out = out.filter((p) =>
         eventoFiltro === "aplicada" ? !!p.aplicada_em
           : eventoFiltro === "impressao" ? !!p.impressao_em
@@ -368,7 +382,7 @@ function HistoricoPage() {
               : !!p.finalizada_em,
       );
     return out.slice().sort((a, b) => (b.aplicada_em ?? "").localeCompare(a.aplicada_em ?? ""));
-  }, [pedidos, q, pessoaFiltro, eventoFiltro]);
+  }, [pedidos, q, pessoaFiltro, eventoFiltro, forcados]);
 
   const isDayEmpty = !carregando && tags.length === 0 && pedidos.length === 0;
   const listaVazia = modo === "tag" ? filteredTags.length === 0 : filteredPedidos.length === 0;
@@ -383,6 +397,11 @@ function HistoricoPage() {
   function limparFiltros() { setSearch(""); setEventoFiltro("todos"); setPessoaFiltro(null); }
   function irParaTag(tag: string) { setModo("tag"); setSearch(tag); }
 
+  return { modo, setModo, periodo, trocarPeriodo, dayOffset, setDayOffset, cIni, setCIni, cFim, setCFim, limite, setLimite, search, setSearch, eventoFiltro, setEventoFiltro, pessoaFiltro, setPessoaFiltro, expTag, expPed, ini, fim, multi, incluiHoje, isToday, tagsQ, pedidosQ, logQ, tags, pedidos, log, carregando, logPorTag, logDoPedido, contadores, pessoas, q, filteredTags, filteredPedidos, isDayEmpty, listaVazia, isFilterEmpty, toggleTag, togglePed, limparFiltros, irParaTag };
+}
+
+function HistoricoAntigo() {
+  const { modo, setModo, periodo, trocarPeriodo, dayOffset, setDayOffset, cIni, setCIni, cFim, setCFim, limite, setLimite, search, setSearch, eventoFiltro, setEventoFiltro, pessoaFiltro, setPessoaFiltro, expTag, expPed, ini, fim, multi, incluiHoje, isToday, tagsQ, pedidosQ, logQ, tags, pedidos, log, carregando, logPorTag, logDoPedido, contadores, pessoas, q, filteredTags, filteredPedidos, isDayEmpty, listaVazia, isFilterEmpty, toggleTag, togglePed, limparFiltros, irParaTag } = useHistorico();
   return (
     <div className="flex flex-col gap-5 p-1">
       {/* Cabeçalho */}
@@ -648,6 +667,240 @@ function HistoricoPage() {
       )}
     </div>
   );
+}
+
+// ============================================================================
+// VISUAL NOVO (design "Separação · Histórico", 22/out/2026): mesma leitura
+// (useHistorico); cada TAG/pedido vira uma fila de etapas com hora e quem,
+// e reimpressão/embalado forçados aparecem em vermelho. O antigo fica de reserva.
+// ============================================================================
+
+const MONO_H = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" } as const;
+
+interface Etapa { chave: string; nome: string; hora: string | null; quem: string; forcada?: boolean }
+
+function ChipsEtapas({ etapas, comData }: { etapas: Etapa[]; comData: boolean }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+      {etapas.map((e, i) => {
+        const pend = !e.hora;
+        const cor = e.forcada ? "var(--pm-r)" : pend ? "var(--pm-t3)" : e.chave === "finalizada" ? "var(--pm-g)" : "var(--pm-t2)";
+        return (
+          <div key={e.chave + i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", padding: "5px 9px", borderRadius: 9, border: `1px ${pend ? "dashed" : "solid"} ${e.forcada ? "var(--pm-r)" : pend ? "var(--pm-bs)" : "var(--pm-b)"}`, background: e.forcada ? "var(--pm-rs)" : "var(--pm-s)", minWidth: 104 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: cor }}>{e.nome}</span>
+              <span style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>
+                <span style={{ ...MONO_H, fontWeight: 600, color: "var(--pm-t)" }}>{pend ? "—" : hm(e.hora, comData)}</span> {pend ? "pendente" : e.quem}
+              </span>
+            </div>
+            {i < etapas.length - 1 && <span style={{ color: "var(--pm-t3)" }}>→</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const ehForcado = (ev: LogRow) => {
+  const d = (ev.detalhe ?? {}) as Record<string, unknown>;
+  return d.forcar === true || d.forcado === true;
+};
+function etapasForcadas(eventos: LogRow[]): Etapa[] {
+  return eventos.filter(ehForcado).map((ev) => {
+    const d = (ev.detalhe ?? {}) as Record<string, unknown>;
+    const reimp = ev.evento === "etiqueta_impressa";
+    const extra = reimp && d.enviadas != null ? ` · ${d.enviadas} etiqueta(s)` : "";
+    return { chave: `f${ev.id}`, nome: reimp ? "reimpressão (forçar)" : "embalado forçado", hora: ev.criado_em, quem: `${ev.usuario ?? "—"}${extra}`, forcada: true };
+  });
+}
+
+function FotoH({ url, nome }: { url: string | null; nome: string | null }) {
+  const [erro, setErro] = useState(false);
+  const caixa = { width: 40, height: 40, flex: "none" as const, borderRadius: 8, border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
+  if (!url || erro) return <span style={{ ...caixa, background: "var(--pm-s2)", fontSize: 11, fontWeight: 600, color: "var(--pm-t3)" }}>{(nome ?? "?").slice(0, 2)}</span>;
+  return <span style={{ ...caixa, background: "#fff" }}><img src={url} alt={nome ?? ""} loading="lazy" onError={() => setErro(true)} style={{ width: "100%", height: "100%", objectFit: "contain" }} /></span>;
+}
+
+function Seg<T extends string>({ ops, valor, onValor }: { ops: Array<[T, string]>; valor: T; onValor: (v: T) => void }) {
+  return (
+    <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", borderRadius: 9 }}>
+      {ops.map(([id, nome]) => {
+        const on = id === valor;
+        return (
+          <button key={id} type="button" onClick={() => onValor(id)}
+            style={{ border: 0, cursor: "pointer", height: 32, padding: "0 12px", borderRadius: 7, fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? "var(--pm-s)" : "transparent", color: on ? "var(--pm-t)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none" }}>
+            {nome}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoricoNovo() {
+  const h = useHistorico();
+  const { modo, setModo, periodo, trocarPeriodo, setDayOffset, cIni, setCIni, cFim, setCFim, limite, setLimite, search, setSearch,
+    eventoFiltro, setEventoFiltro, pessoaFiltro, setPessoaFiltro, expTag, expPed, ini, fim, multi, isToday, carregando,
+    logPorTag, logDoPedido, contadores, pessoas, filteredTags, filteredPedidos, isDayEmpty, isFilterEmpty, toggleTag, togglePed,
+    limparFiltros, irParaTag } = h;
+  const campo = { height: 36, borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", padding: "0 10px", fontSize: 12.5, color: "var(--pm-t)" } as const;
+  const cartao = { background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 12, boxShadow: "var(--pm-sh)" } as const;
+  const vazio = (t: ReactNode) => <div style={{ padding: 24, borderRadius: 12, border: "1px dashed var(--pm-bs)", textAlign: "center", color: "var(--pm-t2)" }}>{t}</div>;
+
+  return (
+    <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 10, padding: "16px clamp(12px, 2vw, 28px) 32px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em" }}>Histórico da separação</h1>
+        <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>quem fez o quê, e quando</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>
+          <b style={MONO_H}>{contadores.total}</b> TAGs {multi ? "no período" : "no dia"} · <b style={{ ...MONO_H, color: "var(--pm-g)" }}>{contadores.finalizadas}</b> finalizadas · <b style={{ ...MONO_H, color: "var(--pm-am)" }}>{contadores.em_aberto}</b> em aberto
+        </span>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+        <Seg<Modo> valor={modo} onValor={setModo} ops={[["tag", "Por TAG"], ["pedido", "Por pedido"]]} />
+        <Seg<Periodo> valor={periodo} onValor={trocarPeriodo} ops={[["dia", "Dia"], ["semana", "Semana"], ["mes", "Mês"], ["personalizado", "Personalizado"]]} />
+        {periodo === "personalizado" ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="date" value={cIni} max={hojeSP()} onChange={(e) => { if (e.target.value) { setCIni(e.target.value); setLimite(LIMITE_LISTA); } }} style={campo} />
+            <span style={{ color: "var(--pm-t3)" }}>até</span>
+            <input type="date" value={cFim} max={hojeSP()} onChange={(e) => { if (e.target.value) { setCFim(e.target.value); setLimite(LIMITE_LISTA); } }} style={campo} />
+          </span>
+        ) : (
+          <span style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)" }}>
+            <button type="button" onClick={() => { setDayOffset((v) => v - 1); setLimite(LIMITE_LISTA); }} style={{ border: 0, background: "transparent", cursor: "pointer", width: 30, height: 30, fontSize: 16, color: "var(--pm-t)" }}>‹</button>
+            <span style={{ fontSize: 12.5, fontWeight: 600, minWidth: 150, textAlign: "center", textTransform: "capitalize" }}>{labelIntervalo(periodo, ini, fim)}</span>
+            <button type="button" disabled={isToday} onClick={() => { setDayOffset((v) => v + 1); setLimite(LIMITE_LISTA); }} style={{ border: 0, background: "transparent", cursor: isToday ? "default" : "pointer", width: 30, height: 30, fontSize: 16, color: "var(--pm-t)", opacity: isToday ? 0.3 : 1 }}>›</button>
+            {!isToday && (
+              <button type="button" onClick={() => { setDayOffset(0); setLimite(LIMITE_LISTA); }} style={{ border: 0, background: "var(--pm-as)", color: "var(--pm-at)", cursor: "pointer", height: 28, padding: "0 8px", borderRadius: 7, fontSize: 11.5, fontWeight: 600 }}>
+                {periodo === "dia" ? "hoje" : periodo === "semana" ? "esta semana" : "este mês"}
+              </button>
+            )}
+          </span>
+        )}
+        <select value={pessoaFiltro ?? ""} onChange={(e) => setPessoaFiltro(e.target.value || null)} style={campo}>
+          <option value="">Todas as pessoas</option>
+          {pessoas.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <select value={eventoFiltro} onChange={(e) => setEventoFiltro(e.target.value as EventoFiltro)} style={campo}>
+          <option value="todos">Todos os eventos</option>
+          <option value="aplicada">TAG aplicada</option>
+          <option value="impressao">Etiquetas impressas</option>
+          <option value="embalado">Embalado</option>
+          <option value="finalizada">Finalizada</option>
+          <option value="forcado">Só forçados e reimpressões</option>
+        </select>
+        <div style={{ ...campo, display: "flex", alignItems: "center", gap: 6, flex: "1 1 180px", maxWidth: 280 }}>
+          <Search className="h-3.5 w-3.5" style={{ color: "var(--pm-t3)" }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={modo === "pedido" ? "nº do pedido, TAG ou SKU" : "TAG ou SKU, ex.: 2210-04"}
+            style={{ ...MONO_H, border: 0, outline: "none", background: "transparent", flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--pm-t)" }} />
+        </div>
+      </div>
+
+      {carregando && <div style={{ ...cartao, height: 240, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t3)", gap: 8 }}><Loader2 className="h-4 w-4 animate-spin" /> Lendo o histórico…</div>}
+      {isDayEmpty && vazio(`Nenhuma separação registrada ${multi ? "neste período" : "neste dia"}.`)}
+      {isFilterEmpty && vazio(<>Nada com esses filtros. <button type="button" onClick={limparFiltros} style={{ border: 0, background: "transparent", color: "var(--pm-at)", textDecoration: "underline", cursor: "pointer" }}>Limpar filtros</button></>)}
+
+      {modo === "tag" && !carregando && !isDayEmpty && !isFilterEmpty && (
+        <>
+          {filteredTags.slice(0, limite).map((t) => {
+            const ev = logPorTag.get(t.tag) ?? [];
+            const fin = !!t.finalizada_em;
+            const nImp = num(t.qtd_impressoes);
+            const etapas: Etapa[] = [
+              { chave: "aplicada", nome: "TAG aplicada", hora: t.aplicada_em, quem: t.aplicada_por ?? "" },
+              { chave: "impressa", nome: nImp > 1 ? `impressa · ${nImp}×` : "impressa", hora: t.primeira_impressao_em, quem: (t.impressa_por ?? []).join(", ") },
+              ...etapasForcadas(ev),
+              { chave: "embalada", nome: "embalada", hora: t.embalado_em, quem: (t.embalada_por ?? []).join(", ") },
+              { chave: "finalizada", nome: "finalizada", hora: t.finalizada_em, quem: t.finalizada_por ?? "" },
+            ];
+            const aberto = expTag.has(t.tag);
+            return (
+              <div key={t.tag} style={{ ...cartao, borderLeft: `4px solid ${fin ? "var(--pm-g)" : "var(--pm-am)"}`, overflow: "hidden" }}>
+                <div onClick={() => toggleTag(t.tag)} style={{ cursor: "pointer", padding: "10px 14px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 170 }}>
+                    <FotoH url={t.foto_capa} nome={t.sku} />
+                    <span style={{ display: "flex", flexDirection: "column" }}>
+                      <span style={{ ...MONO_H, fontSize: 16, fontWeight: 700 }}>{t.tag}</span>
+                      <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>SKU {t.sku ?? "—"}{multi ? ` · ${t.dia.slice(8, 10)}/${t.dia.slice(5, 7)}` : ""}</span>
+                    </span>
+                  </div>
+                  <ChipsEtapas etapas={etapas} comData={multi} />
+                  <ChevronDown className="h-4 w-4" style={{ color: "var(--pm-t3)", transform: aberto ? "rotate(180deg)" : "none" }} />
+                </div>
+                {aberto && <LogTimeline eventos={ev} chaveLabel={t.tag} comData={multi} />}
+              </div>
+            );
+          })}
+          <MostrarMais total={filteredTags.length} limite={limite} onMais={() => setLimite((v) => v + LIMITE_LISTA)} />
+        </>
+      )}
+
+      {modo === "pedido" && !carregando && !isDayEmpty && !isFilterEmpty && (
+        <>
+          {filteredPedidos.slice(0, limite).map((p) => {
+            const ev = logDoPedido(p);
+            const fin = !!p.finalizada_em;
+            const etapas: Etapa[] = [
+              { chave: "aplicada", nome: "TAG aplicada", hora: p.aplicada_em, quem: p.aplicada_por ?? "" },
+              { chave: "impressa", nome: "impressa", hora: p.impressao_em, quem: p.impressa_por ?? "" },
+              ...etapasForcadas(ev),
+              { chave: "embalada", nome: "embalada", hora: p.embalado_em, quem: p.embalado_por ?? "" },
+              { chave: "finalizada", nome: "finalizada", hora: p.finalizada_em, quem: p.finalizada_por ?? "" },
+            ];
+            const aberto = expPed.has(p.separacao_id);
+            return (
+              <div key={p.separacao_id} style={{ ...cartao, borderLeft: `4px solid ${fin ? "var(--pm-g)" : "var(--pm-am)"}`, overflow: "hidden" }}>
+                <div onClick={() => togglePed(p.separacao_id)} style={{ cursor: "pointer", padding: "10px 14px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 220, maxWidth: 320 }}>
+                    <FotoH url={p.foto_capa} nome={p.nome_produto} />
+                    <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <span style={{ ...MONO_H, fontSize: 14, fontWeight: 700 }}>{p.numero_ecommerce ?? `venda ${p.venda_numero ?? "—"}`}</span>
+                      <span title={p.nome_produto ?? ""} style={{ fontSize: 12, color: "var(--pm-t2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {num(p.qtd_unidades)} un · {p.nome_produto ?? p.sku ?? "—"}
+                      </span>
+                      <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>
+                        {rotuloCanal(p.marca_canal)}{p.forma_envio ? ` · ${p.forma_envio}` : ""}
+                        {p.tag_lote && (
+                          <> · <button type="button" onClick={(e) => { e.stopPropagation(); irParaTag(p.tag_lote as string); }} style={{ ...MONO_H, border: 0, background: "transparent", padding: 0, color: "var(--pm-at)", fontWeight: 700, cursor: "pointer" }}>{p.tag_lote}</button></>
+                        )}
+                      </span>
+                    </span>
+                  </div>
+                  <ChipsEtapas etapas={etapas} comData={multi} />
+                  <ChevronDown className="h-4 w-4" style={{ color: "var(--pm-t3)", transform: aberto ? "rotate(180deg)" : "none" }} />
+                </div>
+                {aberto && <LogTimeline eventos={ev} chaveLabel={`pedido ${p.numero_ecommerce ?? p.separacao_id}`} comData={multi} />}
+              </div>
+            );
+          })}
+          <MostrarMais total={filteredPedidos.length} limite={limite} onMais={() => setLimite((v) => v + LIMITE_LISTA)} />
+        </>
+      )}
+    </div>
+  );
+}
+
+class ProtecaoHistorico extends Component<{ children: ReactNode }, { erro: string | null }> {
+  state = { erro: null as string | null };
+  static getDerivedStateFromError(e: Error) { return { erro: e?.message ?? String(e) }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.error("Histórico (visual novo) quebrou", e, info.componentStack); }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    return (
+      <div className="flex flex-col gap-3">
+        <Card className="p-3 border-amber-400 bg-amber-50 text-amber-900 text-sm dark:bg-amber-950/30 dark:text-amber-200">
+          O visual novo do Histórico deu erro e voltou para o antigo: <span className="font-mono">{this.state.erro}</span>
+        </Card>
+        <HistoricoAntigo />
+      </div>
+    );
+  }
+}
+
+function HistoricoPage() {
+  return <ProtecaoHistorico><HistoricoNovo /></ProtecaoHistorico>;
 }
 
 function MostrarMais({ total, limite, onMais }: { total: number; limite: number; onMais: () => void }) {

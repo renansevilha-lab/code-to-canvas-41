@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, Hourglass, Loader2, PackageX, SearchX, Weight,
@@ -350,7 +350,7 @@ function FotoProduto({ url, nome, tipo }: { url: string | null; nome: string | n
   );
 }
 
-function MonitoramentoPage() {
+function MonitoramentoAntigo() {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const [finalizando, setFinalizando] = useState<string | null>(null);
@@ -746,6 +746,354 @@ function MonitoramentoPage() {
       )}
     </div>
   );
+}
+
+// ============================================================================
+// VISUAL NOVO (design "Separação · Monitoramento da bancada", 22/out/2026).
+// Mesmas leituras e o mesmo RPC de finalizar; muda a apresentação, entra o
+// "Finalizando como" (crédito da TAG de quem está na bancada, não do login
+// compartilhado) e um "Desfazer" de 8 s logo depois de finalizar.
+// O visual antigo (MonitoramentoAntigo) fica de reserva se este quebrar.
+// ============================================================================
+
+const STORAGE_QUEM = "monitoramento.quem";
+const MONO_M = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" } as const;
+
+/** Peso por PEDIDO lido do nome (peso da embalagem × un por pedido). */
+function pesoPorPedido(nome: string | null, un: number): { txt: string; pesado: boolean | null } | null {
+  const p = extrairPeso(nome);
+  if (!p) return null;
+  const v = Number(String(p.valor).replace(",", "."));
+  if (!Number.isFinite(v)) return null;
+  const u = p.unidade.toLowerCase();
+  const fmtN = (x: number) => (Math.round(x * 100) / 100).toLocaleString("pt-BR");
+  if (u === "kg" || u === "g") {
+    const kg = (u === "g" ? v / 1000 : v) * un;
+    return { txt: `${fmtN(kg)} kg`, pesado: kg > 4 };
+  }
+  const l = (u === "ml" ? v / 1000 : v) * un;
+  return { txt: `${fmtN(l)} l`, pesado: null };
+}
+
+function corUn(n: number): { bg: string; fg: string } {
+  switch (n) {
+    case 1: return { bg: "var(--pm-s2)", fg: "var(--pm-t)" };
+    case 2: return { bg: "#3b82f6", fg: "#fff" };
+    case 3: return { bg: "#f59e0b", fg: "#fff" };
+    case 4: return { bg: "#c026d3", fg: "#fff" };
+    case 5: return { bg: "#059669", fg: "#fff" };
+    default: return { bg: "#dc2626", fg: "#fff" };
+  }
+}
+
+function FotoM({ url, nome }: { url: string | null; nome: string | null }) {
+  const [erro, setErro] = useState(false);
+  const caixa = { width: 56, height: 56, flex: "none" as const, borderRadius: 10, border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
+  if (!url || erro) return <span style={{ ...caixa, background: "var(--pm-s2)", fontSize: 13, fontWeight: 600, color: "var(--pm-t3)" }}>{iniciais(nome)}</span>;
+  return <span style={{ ...caixa, background: "#fff" }}><img src={url} alt={nome ?? ""} loading="lazy" onError={() => setErro(true)} style={{ width: "100%", height: "100%", objectFit: "contain" }} /></span>;
+}
+
+interface Recente { lote: Lote; por: string; ate: number }
+
+function MonitoramentoNovo() {
+  const qc = useQueryClient();
+  const { perfil } = usePerfil();
+  const raiz = useRef<HTMLDivElement>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNowMs(Date.now()), 1000); return () => clearInterval(t); }, []);
+
+  const equipeQ = useQuery({
+    queryKey: ["separacao", "equipe"],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabaseExternal.from("equipe_membros").select("nome").eq("ativo", true).order("ordem");
+      if (error) throw error;
+      return ((data ?? []) as { nome: string }[]).map((r) => r.nome);
+    },
+  });
+  const [quem, setQuem] = useState<string>(() => { try { return localStorage.getItem(STORAGE_QUEM) ?? ""; } catch { return ""; } });
+  const quemEfetivo = quem || perfil?.nome || "";
+  useEffect(() => { try { if (quem) localStorage.setItem(STORAGE_QUEM, quem); } catch { /* noop */ } }, [quem]);
+  const equipe = [...new Set([...(equipeQ.data ?? []), ...(perfil?.nome ? [perfil.nome] : []), ...(quem ? [quem] : [])])];
+
+  const totaisQ = useQuery({
+    queryKey: ["monitoramento", "totais"],
+    queryFn: async (): Promise<Totais | null> => {
+      const { data, error } = await supabaseExternal.from("view_monitoramento_totais").select("*").maybeSingle();
+      if (error) throw error;
+      return (data ?? null) as Totais | null;
+    },
+    refetchInterval: 20000,
+  });
+  const lotesQ = useQuery({
+    queryKey: ["monitoramento", "lotes"],
+    queryFn: async (): Promise<Lote[]> => {
+      const { data, error } = await supabaseExternal.from("view_monitoramento_lotes").select("*");
+      if (error) throw error;
+      return (data ?? []) as Lote[];
+    },
+    refetchInterval: 20000,
+  });
+  const totais = totaisQ.data ?? null;
+  const todosLotes = lotesQ.data ?? [];
+
+  const [tipoFiltro, setTipoFiltro] = useState<string | null>(null);
+  const [prazoFiltro, setPrazoFiltro] = useState<string[]>([]);
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const [finalizando, setFinalizando] = useState<string | null>(null);
+  const [recentes, setRecentes] = useState<Record<string, Recente>>({});
+
+  // some o "Desfazer" depois de 8 s
+  useEffect(() => {
+    const vencidos = Object.entries(recentes).filter(([, r]) => r.ate <= nowMs).map(([t]) => t);
+    if (vencidos.length) setRecentes((cur) => { const n = { ...cur }; for (const t of vencidos) delete n[t]; return n; });
+  }, [nowMs, recentes]);
+
+  const tipos = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of todosLotes) { const t = (l.tipo_envio ?? "—").toUpperCase(); m.set(t, (m.get(t) ?? 0) + 1); }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [todosLotes]);
+  const passa = (l: Lote) =>
+    (!tipoFiltro || (l.tipo_envio ?? "—").toUpperCase() === tipoFiltro) &&
+    (prazoFiltro.length === 0 || prazoFiltro.includes(faixaPrazo(diasAtePrazo(l.prazo))));
+  const visiveis = [
+    ...Object.values(recentes).filter((r) => !todosLotes.some((l) => l.tag === r.lote.tag)).map((r) => r.lote),
+    ...todosLotes,
+  ].filter(passa).sort((a, b) => num(a.sequencia) - num(b.sequencia));
+
+  async function finalizar(lote: Lote) {
+    if (finalizando || !quemEfetivo) { if (!quemEfetivo) toast.warning("Escolha quem está finalizando"); return; }
+    setFinalizando(lote.tag);
+    const prevLotes = qc.getQueryData<Lote[]>(["monitoramento", "lotes"]);
+    const prevTotais = qc.getQueryData<Totais>(["monitoramento", "totais"]);
+    const p = num(lote.qtd_pedidos), u = num(lote.total_unidades);
+    qc.setQueryData<Lote[]>(["monitoramento", "lotes"], (old) => (old ?? []).filter((c) => c.tag !== lote.tag));
+    qc.setQueryData<Totais>(["monitoramento", "totais"], (old) => old ? {
+      ...old,
+      na_tela_lotes: num(old.na_tela_lotes) - 1, na_tela_pedidos: num(old.na_tela_pedidos) - p, na_tela_unidades: num(old.na_tela_unidades) - u,
+      finalizadas_lotes: num(old.finalizadas_lotes) + 1, finalizadas_pedidos: num(old.finalizadas_pedidos) + p, finalizadas_unidades: num(old.finalizadas_unidades) + u,
+    } : old);
+    const { error } = await supabaseExternal.rpc("monitoramento_finalizar_tag", { p_tag: lote.tag, p_desfazer: false, p_por: quemEfetivo });
+    if (error) {
+      qc.setQueryData(["monitoramento", "lotes"], prevLotes);
+      qc.setQueryData(["monitoramento", "totais"], prevTotais);
+      toast.error(`Falha ao finalizar a TAG ${lote.tag}`, { description: error.message });
+    } else {
+      setRecentes((cur) => ({ ...cur, [lote.tag]: { lote, por: quemEfetivo, ate: Date.now() + 8000 } }));
+      void registrarSeparacaoLog({
+        evento: "tag_finalizada", usuario: quemEfetivo, tag: lote.tag,
+        detalhe: { qtd_pedidos: p, total_unidades: u, sku: lote.sku, login: perfil?.nome ?? null },
+      });
+      void qc.invalidateQueries({ queryKey: ["monitoramento"] });
+    }
+    setFinalizando(null);
+  }
+
+  async function desfazer(tag: string) {
+    const r = recentes[tag];
+    setRecentes((cur) => { const n = { ...cur }; delete n[tag]; return n; });
+    const { error } = await supabaseExternal.rpc("monitoramento_finalizar_tag", { p_tag: tag, p_desfazer: true, p_por: null });
+    if (error) {
+      toast.error(`Não deu para desfazer a TAG ${tag}`, { description: error.message });
+      if (r) setRecentes((cur) => ({ ...cur, [tag]: r }));
+      return;
+    }
+    toast.success(`TAG ${tag} voltou para a tela`);
+    void qc.invalidateQueries({ queryKey: ["monitoramento"] });
+  }
+
+  const relogio = new Date(nowMs).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+  const idadeS = Math.max(0, Math.floor((nowMs - (lotesQ.dataUpdatedAt || nowMs)) / 1000));
+  const prox = Math.max(0, 20 - idadeS);
+  const funil = [
+    { label: "A separar", n: totais?.a_separar_pedidos, sub: `pedidos · ${fmt(totais?.a_separar_unidades)} un · ${fmt(totais?.multi_pedidos)} multi SKU à parte`, cor: "var(--pm-t)" },
+    { label: "Em lote, aguardando etiqueta", n: totais?.em_lote_pedidos, sub: `pedidos · ${fmt(totais?.em_lote_lotes)} TAGs`, cor: "var(--pm-am)" },
+    { label: "Na tela · etiqueta impressa", n: totais?.na_tela_pedidos, sub: `pedidos · ${fmt(totais?.na_tela_lotes)} TAGs`, cor: "var(--pm-at)" },
+    { label: "Finalizadas hoje", n: totais?.finalizadas_pedidos, sub: `pedidos · ${fmt(totais?.finalizadas_lotes)} TAGs`, cor: "var(--pm-g)" },
+  ];
+  const corEnvio = (t: string | null) => {
+    const k = (t ?? "").toUpperCase();
+    return k === "ER" ? "var(--pm-er)" : k === "SPX" ? "var(--pm-spx)" : k === "ML" ? "var(--pm-ml)" : k === "TIKTOK" ? "var(--pm-tt)" : "var(--pm-t3)";
+  };
+  const carregando = totaisQ.isLoading || lotesQ.isLoading;
+  const cartao = { background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 16, boxShadow: "var(--pm-sh)" } as const;
+
+  return (
+    <div ref={raiz} className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 14, padding: "16px clamp(12px, 2vw, 28px) 32px", background: "var(--pm-bg)", minHeight: "100%", overflow: "auto" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px" }}>
+        <span style={{ ...MONO_M, fontSize: "clamp(40px, 6vw, 64px)", fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1 }}>{relogio}</span>
+        <span style={{ display: "flex", flexDirection: "column" }}>
+          <b style={{ fontSize: 15, fontWeight: 600 }}>Monitoramento da bancada</b>
+          <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>atualiza a cada 20 s · {lotesQ.isFetching ? "atualizando…" : `próxima em ${prox} s`}</span>
+        </span>
+        <div style={{ flex: 1 }} />
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+          Finalizando como
+          <select
+            value={quemEfetivo}
+            onChange={(e) => setQuem(e.target.value)}
+            style={{ height: 44, borderRadius: 10, border: "1.5px solid var(--pm-a)", background: "var(--pm-s)", padding: "0 12px", fontSize: 15, fontWeight: 600, color: "var(--pm-t)" }}
+          >
+            {!quemEfetivo && <option value="">escolha…</option>}
+            {equipe.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => { try { if (document.fullscreenElement) void document.exitFullscreen(); else void raiz.current?.requestFullscreen(); } catch { /* noop */ } }}
+          style={{ height: 44, padding: "0 14px", borderRadius: 10, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--pm-t)" }}
+        >
+          Tela cheia
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,180px),1fr))", gap: 10 }}>
+        {funil.map((f) => (
+          <div key={f.label} style={{ ...cartao, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--pm-t2)" }}>{f.label}</span>
+            <span style={{ ...MONO_M, fontSize: 44, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1.05, color: f.cor }}>{carregando ? "…" : fmt(f.n)}</span>
+            <span style={{ fontSize: 12.5, color: "var(--pm-t3)" }}>{f.sub}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }}>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Lotes na tela</span>
+        <span style={{ fontSize: 12.5, color: "var(--pm-t3)" }}>o crédito da TAG é de quem está em “Finalizando como”</span>
+        <div style={{ flex: 1 }} />
+        {tipos.length > 1 && (
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {[["", "Todos", todosLotes.length] as const, ...tipos.map(([t, n]) => [t, t, n] as const)].map(([id, nome, n]) => {
+              const on = (tipoFiltro ?? "") === id;
+              return (
+                <button key={id || "todos"} type="button" onClick={() => setTipoFiltro(id || null)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 11px", borderRadius: 17, border: `1.5px solid ${on ? "var(--pm-a)" : "var(--pm-b)"}`, background: on ? "var(--pm-as)" : "var(--pm-s)", cursor: "pointer", fontSize: 12.5, fontWeight: on ? 600 : 500, color: on ? "var(--pm-at)" : "var(--pm-t)" }}>
+                  {id && <i style={{ width: 8, height: 8, borderRadius: 2, background: corEnvio(id) }} />}{nome}<span style={{ ...MONO_M, fontSize: 11.5, color: "var(--pm-t3)" }}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {FAIXAS_PRAZO.filter((f) => ["vencidos", "0", "1"].includes(f.id)).map((f) => {
+            const on = prazoFiltro.includes(f.id);
+            return (
+              <button key={f.id} type="button" onClick={() => setPrazoFiltro((cur) => (on ? cur.filter((x) => x !== f.id) : [...cur, f.id]))}
+                style={{ height: 34, padding: "0 11px", borderRadius: 17, border: `1.5px solid ${on ? "var(--pm-a)" : "var(--pm-b)"}`, background: on ? "var(--pm-as)" : "var(--pm-s)", cursor: "pointer", fontSize: 12.5, fontWeight: on ? 600 : 500, color: on ? "var(--pm-at)" : "var(--pm-t)" }}>
+                {f.curto}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {carregando && <div style={{ ...cartao, height: 280 }} />}
+      {!carregando && visiveis.length === 0 && (
+        <div style={{ ...cartao, padding: "40px 16px", textAlign: "center", display: "flex", flexDirection: "column", gap: 6 }}>
+          <b style={{ fontSize: 18, fontWeight: 600 }}>{todosLotes.length === 0 ? "Nenhum lote na tela: tudo finalizado 🎉" : "Nenhum lote neste filtro"}</b>
+          <span style={{ fontSize: 13, color: "var(--pm-t2)" }}>{todosLotes.length === 0 ? "Os lotes aparecem aqui assim que a etiqueta é impressa." : `${todosLotes.length} lote(s) na tela ficaram fora do filtro.`}</span>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,300px),1fr))", gap: 12, alignItems: "start" }}>
+        {visiveis.map((c) => {
+          const r = recentes[c.tag];
+          const ped = num(c.qtd_pedidos), imp = num(c.etiquetas_impressas), conf = num(c.etiquetas_confirmadas);
+          const un = num(c.unidades_por_pedido) || 1;
+          const peso = pesoPorPedido(c.produto_nome, un);
+          const cu = corUn(un);
+          const dias = diasAtePrazo(c.prazo);
+          const prazo = !c.prazo || dias === null ? { t: "sem prazo", bg: "var(--pm-s2)", c: "var(--pm-t2)" }
+            : dias < 0 ? { t: `Vencido · ${fmtPrazoData(c.prazo)}`, bg: "var(--pm-rs)", c: "var(--pm-r)" }
+            : dias === 0 ? { t: "Hoje", bg: "var(--pm-ams)", c: "var(--pm-am)" }
+            : dias === 1 ? { t: "Amanhã", bg: "var(--pm-s2)", c: "var(--pm-t2)" }
+            : { t: fmtPrazoData(c.prazo), bg: "var(--pm-s2)", c: "var(--pm-t2)" };
+          const etCor = conf >= ped ? "var(--pm-g)" : "var(--pm-am)";
+          const aberta = expandidas.has(c.tag);
+          return (
+            <div key={c.tag} style={{ ...cartao, background: r ? "var(--pm-gs)" : "var(--pm-s)", border: `1px solid ${r ? "var(--pm-g)" : "var(--pm-b)"}`, borderTop: `6px solid ${corEnvio(c.tipo_envio)}`, padding: 14, display: "flex", flexDirection: "column", gap: 8, gridColumn: aberta ? "1 / -1" : undefined, opacity: finalizando === c.tag ? 0.5 : 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--pm-t2)" }}>{(c.tipo_envio ?? "—").toUpperCase()}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: prazo.bg, color: prazo.c }}>{prazo.t}</span>
+                <div style={{ flex: 1 }} />
+                <span style={{ ...MONO_M, fontSize: 12, color: "var(--pm-t3)" }}>SKU {c.sku ?? "—"}</span>
+              </div>
+              <button type="button" onClick={() => setExpandidas((cur) => { const n = new Set(cur); if (n.has(c.tag)) n.delete(c.tag); else n.add(c.tag); return n; })}
+                title={aberta ? "Esconder os pedidos" : "Ver os pedidos da TAG"}
+                style={{ ...MONO_M, border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 46, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1, color: r ? "var(--pm-g)" : "var(--pm-t)", display: "flex", alignItems: "center", gap: 6 }}>
+                {c.tag}<ChevronDown className="h-5 w-5" style={{ color: "var(--pm-t3)", transform: aberta ? "rotate(180deg)" : "none" }} />
+              </button>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <FotoM url={c.foto} nome={c.produto_nome} />
+                <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.25 }}><NomeComPeso nome={c.produto_nome} /></span>
+              </div>
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                <div style={{ flex: 1, padding: "8px 10px", borderRadius: 10, background: peso?.pesado ? "var(--pm-t)" : "var(--pm-s2)", color: peso?.pesado ? "var(--pm-s)" : "var(--pm-t)", display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", opacity: 0.8 }}>{!peso ? "PESO ?" : peso.pesado === null ? "VOLUME" : peso.pesado ? "PESADO" : "LEVE"}</span>
+                  <b style={{ ...MONO_M, fontSize: 24, fontWeight: 700 }}>{peso?.txt ?? "—"}</b>
+                  <span style={{ fontSize: 11, opacity: 0.8 }}>{peso ? "por pedido" : "sem peso no nome"}</span>
+                </div>
+                <div style={{ flex: 1, padding: "8px 10px", borderRadius: 10, background: cu.bg, color: cu.fg, display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", opacity: 0.85 }}>UN POR PEDIDO</span>
+                  <b style={{ ...MONO_M, fontSize: 24, fontWeight: 700 }}>{un}</b>
+                  <span style={{ fontSize: 11, opacity: 0.85 }}>{fmt(ped)} pedidos · {fmt(c.total_unidades)} un</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+                  <span style={{ color: "var(--pm-t2)" }}>Etiquetas</span>
+                  <span style={{ ...MONO_M, fontWeight: 600, color: etCor }}>{imp}/{ped} impressas · {conf} confirmadas</span>
+                </div>
+                <div style={{ height: 8, borderRadius: 4, background: "var(--pm-sk)", overflow: "hidden" }}>
+                  <i style={{ display: "block", height: "100%", width: `${ped ? Math.min(100, (conf / ped) * 100) : 0}%`, background: etCor }} />
+                </div>
+              </div>
+              {aberta && <div style={{ borderTop: "1px solid var(--pm-b)", paddingTop: 8 }}><PedidosDaTag tag={c.tag} /></div>}
+              {r ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 52, padding: "0 6px 0 14px", borderRadius: 12, background: "var(--pm-g)", color: "var(--pm-s)" }}>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>✓ Finalizada por {r.por}</span>
+                  <button type="button" onClick={() => void desfazer(c.tag)} style={{ height: 40, padding: "0 12px", borderRadius: 9, border: 0, background: "var(--pm-s)", color: "var(--pm-g)", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
+                    Desfazer · {Math.max(1, Math.ceil((r.ate - nowMs) / 1000))} s
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {conf < ped && <span style={{ fontSize: 12, color: "var(--pm-am)", fontWeight: 600 }}>{ped - conf} etiqueta(s) ainda sem confirmação da impressora</span>}
+                  <button type="button" disabled={finalizando !== null || !quemEfetivo} onClick={() => void finalizar(c)}
+                    style={{ height: 52, borderRadius: 12, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", cursor: "pointer", fontSize: 15, fontWeight: 700, opacity: finalizando !== null || !quemEfetivo ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    {finalizando === c.tag && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {quemEfetivo ? `Finalizar TAG como ${quemEfetivo}` : "Escolha quem está finalizando"}
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+class ProtecaoMonitor extends Component<{ children: ReactNode }, { erro: string | null }> {
+  state = { erro: null as string | null };
+  static getDerivedStateFromError(e: Error) { return { erro: e?.message ?? String(e) }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.error("Monitoramento (visual novo) quebrou", e, info.componentStack); }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    return (
+      <div className="flex flex-col gap-3">
+        <Card className="p-3 border-amber-400 bg-amber-50 text-amber-900 text-sm dark:bg-amber-950/30 dark:text-amber-200">
+          O visual novo do Monitoramento deu erro e voltou para o antigo: <span className="font-mono">{this.state.erro}</span>
+        </Card>
+        <MonitoramentoAntigo />
+      </div>
+    );
+  }
+}
+
+function MonitoramentoPage() {
+  return <ProtecaoMonitor><MonitoramentoNovo /></ProtecaoMonitor>;
 }
 
 export const Route = createFileRoute("/monitoramento")({

@@ -1174,8 +1174,12 @@ por TAG) no padrão; cor por un/pedido de volta (1 cinza, 2 azul, 3 âmbar, 4 ro
 "Cancela amanhã" sem valor. Confirmações: `confirmarSep()`/`pedirTextoSep()` (`ui/dialogos.tsx`) abrem o
 diálogo desenhado quando o `HostDialogosSep` está montado (visual novo) e caem no `window.confirm/prompt`
 no antigo; `VisualNovoSep` (contexto) troca FaltaEstoqueDialog, ForcarEmbalarDialog (quem = `equipe_membros`
-+ motivo + confirmação), PedidosDoSku, LotesDoDia e MultiSkuPanel. Monitoramento e Histórico seguem
-como estavam. **Não conferido na tela** (pede login).
++ motivo + confirmação), PedidosDoSku, LotesDoDia e MultiSkuPanel. **Fase 3 (22/out): `/monitoramento` e
+`/historico-separacao`** no design, cada um com o antigo de reserva (error boundary). Monitoramento: relógio,
+funil, cartões com TAG grande, peso por pedido (nome × un), un/pedido colorido, **"Finalizando como"**
+(`localStorage monitoramento.quem`; o crédito `p_por` passa a ser de quem está na bancada, não do login) e
+"Desfazer" de 8 s (`monitoramento_finalizar_tag(p_desfazer)`). Histórico: lógica em `useHistorico()`;
+etapas em fila com hora/quem e eventos forçados (`detalhe.forcar/forcado`) em vermelho + filtro "Só forçados". **Não conferido na tela** (pede login).
 
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
