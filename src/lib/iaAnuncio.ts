@@ -203,7 +203,7 @@ export const importarDoTiny = (skus: string[]) =>
  * Variações na Amazon (edge fn `amazon-variacoes`, 18/out/2026): `ler` e `previa` só leem/validam; `aplicar`
  * escreve. Devolve a resposta mesmo com `ok: false` (o `aplicar` diz o que já foi feito antes de parar).
  */
-export async function chamarAmazonVariacoes(modulo: "ler" | "previa" | "aplicar", body: Record<string, unknown>): Promise<any> {
+export async function chamarAmazonVariacoes(modulo: "ler" | "previa" | "aplicar" | "fiscal-previa" | "fiscal-aplicar", body: Record<string, unknown>): Promise<any> {
   const { data } = await supabaseExternal.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Faça login de novo.");

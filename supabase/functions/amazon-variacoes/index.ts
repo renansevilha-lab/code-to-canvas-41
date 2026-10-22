@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-variacoes v1 (18/out/2026) — IA · Anúncios
+// Edge Function: amazon-variacoes v2 (22/out/2026; v1 18/out) — IA · Anúncios
 // ----------------------------------------------------------------------------
 // Variações (família de tamanhos etc.) em anúncio da Amazon que JÁ EXISTE. Pedido do dono: opções B + C
 //   B) pôr na família um anúncio nosso que hoje está SOLTO (PATCH no SKU: vira filho do pai);
@@ -21,6 +21,12 @@
 // SKU novo na Amazon = `<nosso sku>_FBA` (o fulfillment-sync já casa esse formato com o cadastro).
 // Sessão de usuário com o módulo `ia`. Até 19/out 03:00 UTC, `ler` e `previa` (que não escrevem)
 // também aceitam a chave publicável — rota de ensaio, morre sozinha.
+// v2 (22/out/2026, pedido do dono): SÓ OS DADOS FISCAIS de um anúncio que já existe, sem tocar em título, fotos
+//   ou preço. POST ?modulo=fiscal-previa {empresa, busca, item_id?, sku?, valores?: {ncm, origem, papel, cest}}
+//   → o anúncio, hoje × vai ficar por campo e o VALIDADOR da Amazon; ?modulo=fiscal-aplicar {…, confirmar: true}
+//   → um PATCH só (sem repetição), registro em debug_fulfillment (modulo 'amazon-fiscal'). Valores sugeridos:
+//   NCM do Tiny (v3), CEST do Tiny (v2 — a v3 não traz), origem 0 (regra da casa), atividade pela conta. Só vai o
+//   campo que difere do anúncio. `fiscal-previa` aceita a chave publicável até 23/out 03:00 UTC (ensaio).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -35,6 +41,8 @@ const CONTA: Record<string, { shop_id: number; nome: string }> = {
   svl: { shop_id: 900002, nome: "Amazon · SVL" },
 };
 const ENSAIO_ATE = Date.parse("2026-10-19T03:00:00Z");
+const ENSAIO_FISCAL_ATE = Date.parse("2026-10-23T03:00:00Z");
+const TINY_HOST = Deno.env.get("TINY_API_HOST") || "https://api.tiny.com.br/public-api/v3";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -49,6 +57,7 @@ async function exigirAcesso(req: Request, modulo: string): Promise<{ nome: strin
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "anon" && (modulo === "ler" || modulo === "previa") && Date.now() < ENSAIO_ATE) return { nome: "ensaio" };
+  if (pl.role === "anon" && modulo === "fiscal-previa" && Date.now() < ENSAIO_FISCAL_ATE) return { nome: "ensaio" };
   if (pl.role !== "authenticated") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "ia" });
@@ -443,6 +452,130 @@ async function ler(c: Conta, busca: string) {
   return { encontrado: true, nosso: true, catalogo, anuncio, familia, sugestoes };
 }
 
+// ---------------------------------------------------------------- v2: SÓ DADOS FISCAIS
+const CAMPOS_FISCAIS = [
+  { k: "ncm", attr: "ncm_code", nome: "NCM" },
+  { k: "origem", attr: "import_designation", nome: "Origem" },
+  { k: "papel", attr: "contributor_supply_chain_role", nome: "Atividade da empresa" },
+  { k: "cest", attr: "tax_classification_code", nome: "CEST" },
+] as const;
+// atividade da empresa para o produto (mesma regra da criação na anuncio-publicar, FISCAL_AMZ)
+const PAPEL_CONTA: Record<number, string> = { 900001: "distributor", 900002: "distributor" };
+const digitos = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+
+/** NCM e origem (v3) e CEST (v2) do cadastro do Tiny. Melhor-esforço: o que não vier fica vazio. */
+async function fiscalTiny(idTiny: number | null): Promise<{ ncm: string; origem: string | null; cest: string; lido: boolean }> {
+  const out = { ncm: "", origem: null as string | null, cest: "", lido: false };
+  if (!idTiny) return out;
+  try {
+    const { data } = await db.from("oauth_tokens_tiny").select("access_token").eq("conta", "ottz").order("atualizado_em", { ascending: false }).limit(1).single();
+    if (data) {
+      const r = await fetch(`${TINY_HOST}/produtos/${idTiny}`, { headers: { Authorization: `Bearer ${data.access_token}`, Accept: "application/json" } });
+      if (r.ok) {
+        const p = await r.json();
+        out.ncm = digitos(p?.ncm); out.lido = true;
+        out.origem = p?.origem != null && String(p.origem).trim() !== "" ? String(p.origem).trim() : null;
+      }
+    }
+  } catch { /* segue sem */ }
+  const tk = (Deno.env.get("TINY_V2_TOKEN") || "").trim();
+  if (tk) {
+    try {
+      const r = await fetch(`https://api.tiny.com.br/api2/produto.obter.php?token=${encodeURIComponent(tk)}&id=${idTiny}&formato=json`);
+      if (r.ok) out.cest = digitos((await r.json())?.retorno?.produto?.cest);
+    } catch { /* segue sem */ }
+  }
+  return out;
+}
+/** Nosso SKU para um SKU da Amazon: de-para → sem _FBA/FBA-/… → o próprio (o primeiro que está no cadastro). */
+async function nossoSkuCadastro(skuAmz: string): Promise<string | null> {
+  const { data: m } = await db.from("sku_mapeamento").select("sku_correto").ilike("marketplace", "amazon%").eq("sku_origem", skuAmz).limit(1).maybeSingle();
+  const limpo = skuAmz.replace(/(_FBAA?|_FBM|-FBA|\s*-\s*HJ)$/i, "").replace(/^FBA-/i, "");
+  for (const s of [...new Set([m?.sku_correto, limpo, skuAmz].filter(Boolean).map(String))]) {
+    const { data } = await db.from("produtos").select("sku").eq("sku", s).maybeSingle();
+    if (data) return s;
+  }
+  return null;
+}
+/** SKUs da Amazon que a busca acha nesta conta (ASIN pelo searchListingsItems; senão SKU direto, _FBA, FBA-). */
+async function skusDaBusca(c: Conta, busca: string): Promise<string[]> {
+  if (/^B0[A-Z0-9]{8}$/i.test(busca)) {
+    const r = await sp(c, "GET", `/listings/2021-08-01/items/${encodeURIComponent(c.seller)}`,
+      { marketplaceIds: c.mkt, identifiers: busca.toUpperCase(), identifiersType: "ASIN", includedData: "summaries", pageSize: "20" });
+    return arr(r.body?.items).map((x: any) => String(x?.sku ?? "")).filter(Boolean);
+  }
+  const out: string[] = [];
+  for (const s of [busca, `${busca}_FBA`, `FBA-${busca}`]) {
+    const r = await lerItem(c, s, "summaries");
+    if (ok(r) && r.body?.summaries?.[0]?.asin) out.push(s);
+  }
+  return out;
+}
+
+async function fiscal(c: Conta, body: any) {
+  const busca = String(body?.busca ?? "").trim();
+  if (!busca) return { erro: "informe o ASIN, o SKU da Amazon ou o nosso SKU" };
+  const skus = await skusDaBusca(c, busca);
+  if (!skus.length) return { erro: `não achei anúncio "${busca}" na conta ${c.nome}` };
+  const skuAmz = body?.item_id && skus.includes(String(body.item_id)) ? String(body.item_id) : skus[0];
+  const r = await lerItem(c, skuAmz, "summaries,attributes,issues");
+  const sm = r.body?.summaries?.[0]; const at = r.body?.attributes ?? {};
+  if (!ok(r) || !sm) return { erro: `não consegui ler o anúncio ${skuAmz}: ${problemas(r.body).erros.join(" · ") || r.status}` };
+  const atual = (a: any, attr: string) => { const v = a?.[attr]?.[0]?.value; return v == null ? "" : String(v); };
+
+  const nosso = typeof body?.sku === "string" && body.sku.trim() ? body.sku.trim() : await nossoSkuCadastro(skuAmz);
+  const { data: cad } = nosso ? await db.from("produtos").select("id_tiny, nome").eq("sku", nosso).maybeSingle() : { data: null };
+  const tiny = await fiscalTiny(cad?.id_tiny ? Number(cad.id_tiny) : null);
+  const sugerido: Record<string, { v: string; fonte: string }> = {
+    ncm: { v: tiny.ncm, fonte: tiny.ncm ? "Tiny" : "" },
+    origem: { v: "0", fonte: "regra da casa (nacional)" },
+    papel: { v: PAPEL_CONTA[c.shop_id] ?? "distributor", fonte: "conta" },
+    cest: { v: tiny.cest, fonte: tiny.cest ? "Tiny" : "" },
+  };
+  const digitados = (body?.valores ?? {}) as Record<string, unknown>;
+  const pendencias: string[] = []; const avisos: string[] = [];
+  if (!nosso) avisos.push(`não achei o produto do anúncio ${skuAmz} no cadastro: informe o NCM`);
+  else if (!cad?.id_tiny) avisos.push(`o SKU ${nosso} não tem id do Tiny no cadastro: NCM e CEST não puderam ser lidos`);
+  else if (!tiny.lido) avisos.push("o Tiny não respondeu: NCM e origem do cadastro não foram lidos");
+  if (tiny.origem && tiny.origem !== "0") avisos.push(`no Tiny a origem do ${nosso} é ${tiny.origem}; na Amazon vai 0 (regra da casa). A NF que o Tiny emite sai com ${tiny.origem}: acerte o cadastro no Tiny`);
+
+  const linhas = CAMPOS_FISCAIS.map((f) => {
+    const dig = String(digitados[f.k] ?? "").trim();
+    const novo = dig ? (f.k === "ncm" || f.k === "cest" ? digitos(dig) : dig) : sugerido[f.k].v;
+    const hoje = atual(at, f.attr);
+    return { campo: f.k, attr: f.attr, nome: f.nome, atual: hoje, novo, fonte: dig ? "digitado" : sugerido[f.k].fonte, muda: !!novo && novo !== hoje };
+  });
+  const ncm = linhas.find((l) => l.campo === "ncm")!;
+  if (ncm.novo && ncm.novo.length !== 8) pendencias.push(`NCM "${ncm.novo}" precisa ter 8 dígitos`);
+  if (!ncm.novo && !ncm.atual) pendencias.push("sem NCM: nem o Tiny nem o anúncio têm — digite o NCM");
+  if (ncm.muda && ncm.atual) avisos.push(`o NCM muda de ${ncm.atual} para ${ncm.novo}: NCM muda o imposto da nota, confirme com o contador`);
+  const cest = linhas.find((l) => l.campo === "cest")!;
+  if (cest.novo && cest.novo.length !== 7) pendencias.push(`CEST "${cest.novo}" precisa ter 7 dígitos`);
+
+  // o CEST leva também o tipo da classificação (sem ele a Amazon recusa: erro 99022 "type" em tax_classification_code)
+  const patches = linhas.filter((l) => l.muda).map((l) => ({ op: "replace", path: `/attributes/${l.attr}`,
+    value: l.campo === "cest" ? [{ type: "cest", value: l.novo, marketplace_id: c.mkt }] : so(c, l.novo) }));
+  const corpo = { productType: String(sm.productType), patches };
+  let validacao: string | null = null;
+  if (patches.length && !pendencias.length) {
+    const v = await sp(c, "PATCH", itemPath(c, skuAmz), { marketplaceIds: c.mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, corpo);
+    const pv = problemas(v.body);
+    validacao = String(v.body?.status ?? v.status);
+    pendencias.push(...pv.erros.map((e) => `Amazon: ${e}`));
+    avisos.push(...pv.avisos.map((e) => `Amazon: ${e}`));
+    if (!pv.erros.length && validacao !== "VALID") pendencias.push(`Amazon: a validação respondeu ${validacao}`);
+  }
+  return {
+    skuAmz, corpo, linhas, nosso, asin: sm.asin ?? null,
+    pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)],
+    previa: {
+      conta: c.nome, sku_amazon: skuAmz, skus_achados: skus, asin: sm.asin ?? null, nome: sm.itemName ?? null, tipo: sm.productType ?? null,
+      situacao: arr(sm.status).map(String), url: sm.asin ? `https://www.amazon.com.br/dp/${sm.asin}` : null,
+      nosso_sku: nosso, nome_cadastro: cad?.nome ?? null, origem_tiny: tiny.origem, linhas, nada_a_mudar: patches.length === 0, validacao,
+    },
+  };
+}
+
 // ---------------------------------------------------------------- handler
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -457,6 +590,32 @@ Deno.serve(async (req) => {
       const busca = String(body?.busca ?? u.searchParams.get("busca") ?? "").trim();
       if (!busca) return json({ erro: "informe o ASIN ou o SKU" }, 400);
       return json({ ok: true, conta: c.nome, ...(await ler(c, busca)) });
+    }
+    if (modulo === "fiscal-previa" || modulo === "fiscal-aplicar") {
+      const f = await fiscal(c, body);
+      if ("erro" in f) return json({ ok: false, erro: f.erro }, 400);
+      if (modulo === "fiscal-previa") return json({ ok: true, previa: f.previa, pendencias: f.pendencias, avisos: f.avisos });
+      if (body?.confirmar !== true) return json({ ok: false, erro: "confirmação exigida (confirmar: true)" }, 400);
+      if (f.pendencias.length) return json({ ok: false, erro: "há pendências — confira antes de enviar", pendencias: f.pendencias }, 400);
+      if (!f.corpo.patches.length) return json({ ok: false, erro: "os dados fiscais do anúncio já estão iguais: nada a enviar" }, 400);
+      // escrita real: um PATCH só, sem repetição automática
+      const w = await sp(c, "PATCH", itemPath(c, f.skuAmz), { marketplaceIds: c.mkt, issueLocale: "pt_BR" }, f.corpo);
+      const pw = problemas(w.body);
+      const aceito = ok(w) && String(w.body?.status ?? "") === "ACCEPTED";
+      let depois: Record<string, string> | null = null;
+      if (aceito) {
+        await new Promise((res) => setTimeout(res, 3000));
+        const d2 = await lerItem(c, f.skuAmz, "attributes");
+        depois = Object.fromEntries(CAMPOS_FISCAIS.map((x) => { const v = d2.body?.attributes?.[x.attr]?.[0]?.value; return [x.k, v == null ? "" : String(v)]; }));
+      }
+      const resposta = { status: w.status, situacao: w.body?.status ?? null, submissionId: w.body?.submissionId ?? null, erros: pw.erros, avisos: pw.avisos };
+      await db.from("debug_fulfillment").insert({
+        modulo: "amazon-fiscal", etapa: `${c.shop_id}:${f.skuAmz}`, status_http: w.status,
+        resultado: { conta: c.nome, por: quem.nome, nosso_sku: f.nosso, asin: f.asin, antes: Object.fromEntries(f.linhas.map((l) => [l.campo, l.atual])), enviado: f.corpo, resposta, depois },
+      });
+      if (!aceito) return json({ ok: false, erro: `a Amazon recusou: ${pw.erros.join(" · ") || w.body?.status || w.status}`, resposta }, 200);
+      return json({ ok: true, sku_amazon: f.skuAmz, asin: f.asin, enviados: f.linhas.filter((l) => l.muda).map((l) => l.nome), depois, resposta,
+        aviso: "a Amazon aplica em alguns minutos; se \"depois\" ainda mostrar o valor antigo, confira de novo daqui a pouco" });
     }
     if (modulo !== "previa" && modulo !== "aplicar") return json({ erro: `módulo desconhecido: ${modulo}` }, 400);
 

@@ -3774,6 +3774,23 @@ Pergunta do dono: dá para mandar os dados fiscais à Amazon pela API? Sonda `am
   aceita "Genérico" sem código. A prévia devolve `amazon.marca`, `generico`, `ean_ficha`; a tela mostra o aviso e o
   campo EAN com o código que vai de fato. A OFERTA num ASIN que já existe não muda (a marca é a da ficha da Amazon).
 
+## 5.11.12.4 Amazon — botão "só os dados fiscais" de anúncio que já existe (22/out/2026)
+
+Pedido do dono (teste no ASIN B0HNKZD9BN = 16457_FBA). Bloco **"Dados fiscais na Amazon"** na aba Anúncio de `/ia/gerar`
+quando o destino é Amazon (`src/components/ia/anuncio/FiscalAmazon.tsx`, ao lado do de variações): pesquisa por ASIN, SKU da
+Amazon ou nosso SKU → tabela NCM / Origem / Atividade da empresa / CEST com "no anúncio hoje" × "vai ficar" (editável) × de onde
+vem → Conferir (validador) → "Enviar só os dados fiscais" com confirmação listando de → para. Não mexe em título, fotos ou preço.
+- **Onde mora no servidor:** `amazon-variacoes` **v2** (deploy 5), `?modulo=fiscal-previa` / `fiscal-aplicar` — e NÃO na
+  `anuncio-publicar` (143 KB: o deploy pelo MCP exige colar o arquivo inteiro). Sugeridos: NCM do Tiny (v3), CEST do Tiny (v2),
+  origem **0** (regra da casa), atividade pela conta (distribuidor nas duas). Só vai o campo que difere; ASIN com mais de um SKU
+  nosso deixa escolher. Envio = um PATCH, sem repetição, relê o anúncio 3 s depois e grava em `debug_fulfillment`
+  (`modulo=amazon-fiscal`, `etapa=<shop_id>:<sku amazon>`, antes/enviado/resposta/depois). Envio exige login; a prévia aceita a
+  chave publicável até 23/out 03:00 UTC (ensaio).
+- **CEST precisa do tipo:** `tax_classification_code` = `[{type: "cest", value, marketplace_id}]` — só com `value` a Amazon
+  recusa (99022). Com o tipo: VALID (ensaio no 16457_FBA).
+- **Testado (só prévia e validador):** B0HNKZD9BN já estava com NCM 25059000 / origem 0 / distribuidor (correção de 19/out) →
+  "nada a enviar"; origem 1 e CEST digitados dão VALID. **Nenhum envio real feito por este botão ainda.**
+
 ## 5.11.13 Termos de busca reais no título, nas palavras escondidas da Amazon e no Modelo do ML (20/out/2026)
 
 Pedido do dono: títulos pelo que o comprador realmente busca (opção B = A + palavras escondidas da Amazon). SQL +
@@ -3861,7 +3878,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `shopee-flashsale-probe` | v21 (= `shopee-ads-gestao` v5: + `palavras` / `palavras-sku`, sugestão de palavras com volume, §5.11.13); v19 (v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
-| `amazon-variacoes` | v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
+| `amazon-variacoes` | v2 (deploy 5; 22/out: `fiscal-previa`/`fiscal-aplicar` = só os dados fiscais de anúncio que já existe, §5.11.12.4) · v1 (deploy 3) | Família de variações na Amazon: `ler` (ASIN/SKU → família + kits do Tiny), `previa` (validador), `aplicar` (pôr anúncio solto na família, criar tamanho novo, criar pai). JWT de usuário + módulo `ia` — ver §5.11.12.1 |
 | `ml-anuncio-sonda` | v5 | Diagnóstico só leitura + validador do ML: ensaia as chamadas do envio ao Mercado Livre para um SKU (`?conta=ottz\|svl&sku=`); v4/v5: `?teste=limite` (limite por compra — recusado pela API) — ver §5.11.5 |
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `pesquisa-ml` | v3 (20/out: tendências também das categorias em que vendemos + `?modo=tendencias`, §5.11.13); v2 (19/out: grava `anuncio_proprio` × `participo_catalogo`) | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
