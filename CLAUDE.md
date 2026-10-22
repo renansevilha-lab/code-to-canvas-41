@@ -1765,6 +1765,15 @@ concluir.
   criado na Amazon (a recusa foi na criação). O Xô Gatinho 500 ml (DF-CLWD-07BZ) é **LIQUID** com prep **SELLER_ONLY**
   (etiqueta + **saco plástico** por unidade): no envio, cada frasco vai ensacado. Os outros 11 do plano: só etiqueta (prep NONE).
   No SVL a falha não apareceu porque nenhum item precisava de prep.
+- **"A enviar" já em caixas fechadas (21/out, pedido do dono):** na Reposição, linha da Amazon com modelo de caixa
+  (`amazon_modelo_caixa` por conta + SKU; `src/components/fulfillment/CaixaReposicao.ts`) abre com a sugestão no múltiplo
+  mais próximo de `un_por_caixa` (mínimo 1 caixa; desce uma caixa se passar do disponível no Tiny) e mostra "N cx de U";
+  digitado fora do múltiplo fica âmbar ("não fecha caixa de U"). A coluna Sugestão continua o número cru da view. SKU com
+  dois anúncios de modelos diferentes fica sem arredondar. ML/Shopee não têm modelo de caixa.
+- **"Transporte confirmado" no app × Seller Central (21/out, FBA19TZFT26Z, ACZ):** a API mostrava o envio com
+  `selectedTransportationOptionId` (coleta Total Express, janela 23/10) e um rastreio AMZC… por caixa logo depois da
+  confirmação, status v0 `WORKING`; o dono não via data nem NF no Seller Central. A NF de remessa é a etapa 3 (Seller
+  Central) e o status só sai de WORKING depois dela.
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 

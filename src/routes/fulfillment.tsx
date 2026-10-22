@@ -34,6 +34,7 @@ import { Card } from "@/components/ui/card";
 import { LancarEstoqueEmMassa } from "@/components/fulfillment/LancarEstoqueEmMassa";
 import { PlanoAmazonDialog, PlanosAmazonLista, type ItemReposicao } from "@/components/fulfillment/PlanoAmazon";
 import { MargemFullCell, chaveMargem, useMargemFull } from "@/components/fulfillment/MargemFull";
+import { arredondarCaixa, chaveCaixa, useCaixasAmazon } from "@/components/fulfillment/CaixaReposicao";
 import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
 import { Badge } from "@/components/ui/badge";
@@ -448,6 +449,8 @@ function ReposicaoTab({
   const [planoAmazon, setPlanoAmazon] = useState<{ chave: number; empresa: string | null; itens?: ItemReposicao[]; planoId?: string } | null>(null);
   const { data: fotos = {} } = useFotos(rows.map((r) => r.sku));
   const { data: margens } = useMargemFull();
+  const { data: caixas } = useCaixasAmazon();
+  const caixaDe = (r: ReposicaoRow) => (r.marketplace === "amazon" ? caixas?.get(chaveCaixa(r.shop_id, r.sku)) : undefined);
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -463,12 +466,14 @@ function ReposicaoTab({
 
   const valorAEnviar = (r: ReposicaoRow) => {
     const k = rowKey(r);
-    return qtd[k] ?? num(r.sugestao_envio);
+    if (qtd[k] !== undefined) return qtd[k];
+    const cx = caixaDe(r);
+    return cx ? arredondarCaixa(num(r.sugestao_envio), cx.un, num(r.estoque_empresa)) : num(r.sugestao_envio);
   };
 
   const selecionadas = useMemo(
     () => filtradas.filter((r) => sel[rowKey(r)] && valorAEnviar(r) > 0),
-    [filtradas, sel, qtd],
+    [filtradas, sel, qtd, caixas],
   );
   const totalUnidades = selecionadas.reduce((s, r) => s + valorAEnviar(r), 0);
 
@@ -571,6 +576,7 @@ function ReposicaoTab({
                 filtradas.map((r) => {
                   const k = rowKey(r);
                   const enviar = valorAEnviar(r);
+                  const cx = caixaDe(r);
                   const estoqueEmpresa = num(r.estoque_empresa);
                   const semEstoque = enviar > estoqueEmpresa;
                   return (
@@ -637,8 +643,24 @@ function ReposicaoTab({
                           onChange={(e) =>
                             setQtd((prev) => ({ ...prev, [k]: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))
                           }
-                          className="h-8 w-20 text-right tabular-nums ml-auto"
+                          className={cn(
+                            "h-8 w-20 text-right tabular-nums ml-auto",
+                            cx && enviar > 0 && enviar % cx.un !== 0 && "border-amber-500 text-amber-700 dark:text-amber-400",
+                          )}
                         />
+                        {cx && cx.un > 1 && (
+                          <div
+                            className={cn(
+                              "text-[10.5px] mt-0.5 whitespace-nowrap",
+                              enviar > 0 && enviar % cx.un !== 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+                            )}
+                            title={`Modelo de caixa da Amazon: ${cx.nome ?? `caixa com ${cx.un}`}`}
+                          >
+                            {enviar > 0 && enviar % cx.un !== 0
+                              ? `não fecha caixa de ${cx.un}`
+                              : `${formatNumber(enviar / cx.un)} cx de ${cx.un}`}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {semEstoque ? (
