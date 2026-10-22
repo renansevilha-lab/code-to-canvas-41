@@ -1168,8 +1168,14 @@ leva a /risco-cancelamento), etiquetas com erro/geração parada (`view_etiqueta
 impressora (estado `sent`), falta de estoque, Multi SKU. Abas Fila · Multi SKU · Lotes do dia (+ links
 para Monitoramento/Histórico). "Meu turno" (`separacao.turno`) = bandas de peso: leves {até 4 kg, sem
 peso}, pesados {4–8, >8, sem peso}. Seleção → barra escura (embalar impressos, reimprimir forçado,
-imprimir). Ainda no estilo antigo: drill-down dos pedidos (`PedidosDoSku`), Multi SKU, Lotes do dia,
-confirmações por `window.confirm`, "Impressões de hoje". **Não conferido na tela** (pede login).
+imprimir). **Fase 2 (22/out):** pedidos da linha, Multi SKU (cartões por combinação + picking em 2
+colunas), Lotes do dia (Hoje/Ontem, status, quem finalizou, menu) e "Impressões de hoje" (`separacao_log`
+por TAG) no padrão; cor por un/pedido de volta (1 cinza, 2 azul, 3 âmbar, 4 roxo, 5 verde, 6+ vermelho);
+"Cancela amanhã" sem valor. Confirmações: `confirmarSep()`/`pedirTextoSep()` (`ui/dialogos.tsx`) abrem o
+diálogo desenhado quando o `HostDialogosSep` está montado (visual novo) e caem no `window.confirm/prompt`
+no antigo; `VisualNovoSep` (contexto) troca FaltaEstoqueDialog, ForcarEmbalarDialog (quem = `equipe_membros`
++ motivo + confirmação), PedidosDoSku, LotesDoDia e MultiSkuPanel. Monitoramento e Histórico seguem
+como estavam. **Não conferido na tela** (pede login).
 
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 

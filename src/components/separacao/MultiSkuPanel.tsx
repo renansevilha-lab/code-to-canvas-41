@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -27,6 +27,11 @@ import { buscarMlFlex } from "@/lib/mlFlex";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  MONO, envioSep, Segmento, ChipEnvioSep, BotaoFiltros, FiltrosAtivos, MenuItens, PainelImpressao, BarraSelecao, Foto,
+  type ItemMenu,
+} from "@/components/separacao/ui/kit";
+import { VisualNovoSep, confirmarSep, BotaoPm } from "@/components/separacao/ui/dialogos";
 
 // ============================================================================
 // Separação de pedidos MULTI SKU (aba própria em /separacao, 16/set/2026).
@@ -193,6 +198,7 @@ function useImpressoras() {
 // ============================================================================
 export function MultiSkuPanel() {
   const qc = useQueryClient();
+  const novo = useContext(VisualNovoSep);
   const { perfil } = usePerfil();
   const { data: impressoras } = useImpressoras();
   const [printerId, setPrinterId] = useState<number>(() => {
@@ -389,7 +395,11 @@ export function MultiSkuPanel() {
   async function tagEImprimir(peds: PedidoMulti[], grupo: string, opts?: { forcar?: boolean }) {
     if (!printerId) { toast.warning("Escolha a impressora primeiro."); return; }
     if (ocupado || peds.length === 0) return;
-    if (impressora?.estado === "offline" && !window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+    if (impressora?.estado === "offline" && !(await confirmarSep({
+      perigo: true, kicker: "Impressora offline", titulo: `A ${impressora.nome} não responde`,
+      resumo: "Se imprimir assim, as etiquetas ficam presas na fila do PC e saem quando ela voltar, sem aviso.",
+      linhas: ["Se outra Zebra estiver online, troque no topo da tela."], okTxt: "Imprimir assim mesmo",
+    }))) return;
     fecharRef.current = false;
     setProg({ etapa: "TAG", etiquetas: 0, fase: "enviando" });
     try {
@@ -423,7 +433,12 @@ export function MultiSkuPanel() {
   }
 
   async function imprimirUmPedido(p: PedidoMulti) {
-    if (impressa(p) && !window.confirm(`A etiqueta do pedido ${p.venda_numero} já saiu (${hhmm(p.impressa_em)}). Reimprimir mesmo assim? Etiqueta em dobro no pacote gera extravio.`)) return;
+    if (impressa(p) && !(await confirmarSep({
+      perigo: true, kicker: "Reimprimir (forçar) · gera etiqueta em dobro",
+      titulo: `Reimprimir a etiqueta do pedido ${p.venda_numero}?`,
+      resumo: `A etiqueta já saiu às ${hhmm(p.impressa_em)}. Etiqueta em dobro no pacote gera extravio.`,
+      check: "Conferi: a etiqueta original não está na bancada", okTxt: "Reimprimir",
+    }))) return;
     await tagEImprimir([p], `MULTI · ${descricaoCombo(p.itens)}`, { forcar: impressa(p) });
   }
 
@@ -432,7 +447,12 @@ export function MultiSkuPanel() {
     const alvo = peds.filter(impressa);
     const pulados = peds.length - alvo.length;
     if (alvo.length === 0) { toast.info("Nada a embalar", { description: "Só pedidos com etiqueta impressa e confirmada podem ser embalados." }); return; }
-    if (!window.confirm(`Marcar ${alvo.length} pedido(s) como EMBALADOS no Tiny?${pulados > 0 ? `\n${pulados} ficam de fora (etiqueta ainda não impressa).` : ""}`)) return;
+    if (!(await confirmarSep({
+      kicker: "Multi SKU · embalar no Tiny", titulo: `Marcar ${alvo.length} pedido(s) como embalados?`,
+      resumo: `${alvo.length} pedido(s) com etiqueta impressa e confirmada.`,
+      linhas: pulados > 0 ? [`${pulados} ficam de fora: etiqueta ainda não impressa.`] : [],
+      okTxt: `Embalar ${alvo.length} pedido(s)`,
+    }))) return;
     let ok = 0, erros = 0;
     try {
       for (let i = 0; i < alvo.length; i++) {
@@ -458,14 +478,14 @@ export function MultiSkuPanel() {
     void qc.invalidateQueries({ queryKey: ["separacao", "multi", "picking"] });
   }
   async function marcarTudoSeparado() {
-    if (!window.confirm(`Marcar TODOS os ${picking.length} SKUs como totalmente separados?`)) return;
+    if (!(await confirmarSep({ kicker: "Picking list", titulo: `Marcar os ${picking.length} SKUs como totalmente separados?`, okTxt: "Marcar tudo separado" }))) return;
     const { error } = await supabaseExternal.from("separacao_multi_picking").upsert(
       picking.map((r) => ({ sku: r.sku, qtd_separada: Math.max(Number(r.qtd_necessaria), Number(r.qtd_separada)), atualizado_por: perfil?.nome ?? null, atualizado_em: new Date().toISOString() })), { onConflict: "sku" });
     if (error) { toast.error("Falha", { description: error.message }); return; }
     void qc.invalidateQueries({ queryKey: ["separacao", "multi", "picking"] });
   }
   async function zerarPicking() {
-    if (!window.confirm("Zerar o picking (todas as quantidades separadas voltam a 0)?")) return;
+    if (!(await confirmarSep({ perigo: true, kicker: "Picking list", titulo: "Zerar o picking?", resumo: "Todas as quantidades separadas voltam a 0.", okTxt: "Zerar" }))) return;
     const { error } = await supabaseExternal.from("separacao_multi_picking").delete().neq("sku", "");
     if (error) { toast.error("Falha", { description: error.message }); return; }
     void qc.invalidateQueries({ queryKey: ["separacao", "multi", "picking"] });
@@ -474,7 +494,11 @@ export function MultiSkuPanel() {
   async function liberarEImprimir() {
     const lib = alocacao.liberados;
     if (lib.length === 0) return;
-    if (!window.confirm(`Liberar ${lib.length} pedido(s) cobertos pelo picking: aplicar TAG, imprimir as etiquetas e abater as quantidades separadas?`)) return;
+    if (!(await confirmarSep({
+      kicker: `Picking list · ${impressora?.nome ?? "impressora"}`, titulo: `Liberar e imprimir ${lib.length} pedido(s)?`,
+      resumo: "Os pedidos cobertos pelo que foi separado ganham TAG e etiqueta, e as quantidades separadas são abatidas.",
+      okTxt: `Liberar e imprimir (${lib.length})`,
+    }))) return;
     // abate ANTES de imprimir (o que sobra continua separado para os próximos)
     const consumo = new Map<string, number>();
     for (const p of lib) for (const i of p.itens) consumo.set(i.sku, (consumo.get(i.sku) ?? 0) + i.qtd);
@@ -492,6 +516,328 @@ export function MultiSkuPanel() {
   const selecionados = useMemo(() => grupos.filter((g) => sel.has(g.chave)).flatMap((g) => g.peds), [grupos, sel]);
   const toggleAberto = (k: string) => setAbertos((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const togglePedido = (id: number) => setPedidosAbertos((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  // ================================================================ render (visual novo)
+  if (novo) {
+    const corEnv = (e: string | null) => (e === "ML Flex" ? "var(--pm-ml)" : envioSep(e).cor);
+    const tomPrazo = (dias: number | null, iso: string | null): { t: string; bg: string; c: string } =>
+      dias === null ? { t: "sem prazo", bg: "var(--pm-s2)", c: "var(--pm-t2)" }
+        : dias < 0 ? { t: `Vencido · ${ddmm(iso)}`, bg: "var(--pm-rs)", c: "var(--pm-r)" }
+        : dias === 0 ? { t: "Hoje", bg: "var(--pm-ams)", c: "var(--pm-am)" }
+        : dias === 1 ? { t: "Amanhã", bg: "var(--pm-s2)", c: "var(--pm-t2)" }
+        : { t: ddmm(iso), bg: "var(--pm-s2)", c: "var(--pm-t2)" };
+    const pill = (t: { t: string; bg: string; c: string }) => (
+      <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: t.bg, color: t.c, whiteSpace: "nowrap" }}>{t.t}</span>
+    );
+    const envioUnico = envios && envios.length === 1 ? envios[0] : null;
+    const togPrazo = (id: string) => setPrazoFiltro((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    const grupoFiltros = [
+      { nome: "Prazo", ops: FAIXAS_PRAZO.filter((f) => faixasDisponiveis.has(f.id)).map((f) => ({ id: f.id, nome: f.label, on: prazoFiltro.includes(f.id), onClick: () => togPrazo(f.id) })) },
+      { nome: "Situação", ops: ESTADOS.filter(([id]) => id !== "todos").map(([id, rot]) => ({ id, nome: rot, on: estado === id, onClick: () => setEstado(estado === id ? "todos" : id) })) },
+    ];
+    const ativos = [
+      ...prazoFiltro.map((id) => ({ nome: FAIXAS_PRAZO.find((f) => f.id === id)?.label ?? id, onClick: () => togPrazo(id) })),
+      ...(estado !== "todos" ? [{ nome: ESTADOS.find(([id]) => id === estado)?.[1] ?? estado, onClick: () => setEstado("todos") }] : []),
+      ...(busca.trim() ? [{ nome: `“${busca.trim()}”`, onClick: () => setBusca("") }] : []),
+    ];
+    const cartao: CSSProperties = { background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 14, boxShadow: "var(--pm-sh)" };
+    const vazio = (t: ReactNode) => <div style={{ ...cartao, padding: "32px 16px", textAlign: "center", fontSize: 13, color: "var(--pm-t2)" }}>{t}</div>;
+    const pedidoLinha = (p: PedidoMulti, i: number) => {
+      const obs = obsQ.data?.get(`pedido|${p.separacao_id}`);
+      const imp = impressa(p) ? { t: `✓ impressa ${hhmm(p.impressa_em)}`, c: "var(--pm-g)" } : p.impressao_estado === "sent" ? { t: "enviada · sem confirmação", c: "var(--pm-am)" } : { t: "sem etiqueta", c: "var(--pm-t3)" };
+      const menu: ItemMenu[] = [
+        { t: impressa(p) ? "Reimprimir (forçar)…" : "Imprimir só este", sub: impressa(p) ? "gera etiqueta em dobro" : undefined, perigo: impressa(p), disabled: ocupado, onClick: () => void imprimirUmPedido(p) },
+        { t: "Marcar este embalado", sub: impressa(p) ? undefined : "imprima antes", disabled: ocupado || !impressa(p), onClick: () => void marcarEmbalado([p]) },
+        { t: obs ? "Editar observação…" : "Observação…", onClick: () => { const chave = String(p.separacao_id); void editarObsSeparacao("pedido", chave, obs?.texto, perfil?.nome ?? null).then(recarregarObs); } },
+      ];
+      return (
+        <div key={p.separacao_id} style={{ display: "grid", gridTemplateColumns: "minmax(110px,1.2fr) 80px 100px 80px minmax(130px,1fr) 36px", gap: 8, alignItems: "center", padding: "5px 10px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
+          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <span style={{ ...MONO, fontWeight: 600 }} title={p.numero_ecommerce ?? ""}>#{p.venda_numero}</span>
+            {obs && <ObsLinha obs={obs} />}
+          </span>
+          <span style={{ color: "var(--pm-t2)" }}>{p.loja}{p.tipo_envio === "ML Flex" ? " · Flex" : ""}</span>
+          <span>{pill(tomPrazo(p.dias_para_prazo, p.ship_by_date))}</span>
+          <span style={{ ...MONO, color: "var(--pm-t2)" }}>{p.tag_lote ?? "—"}</span>
+          <span style={{ fontWeight: 600, color: imp.c }}>{imp.t}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" title="Ações do pedido" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}><MoreVertical className="h-3.5 w-3.5" /></button>
+            </DropdownMenuTrigger>
+            <MenuItens itens={menu} largura={230} />
+          </DropdownMenu>
+        </div>
+      );
+    };
+
+    let painel: ReactNode = null;
+    if (prog) {
+      const fim = prog.fase === "concluido";
+      const tot = (prog.impressas ?? 0) + (prog.pendentes ?? 0);
+      painel = (
+        <PainelImpressao
+          mobile={false}
+          titulo={`Impressão · ${impressora?.nome ?? "impressora"}`}
+          sub="Multi SKU · Shopee por loja, identificadora por último"
+          status={prog.fase === "enviando" ? "Enviando à impressora" : fim ? "Impressora concluiu" : "Impressora imprimindo"}
+          statusTom={fim ? "g" : "t"}
+          prog={prog.fase === "enviando" ? `${prog.etiquetas} etiquetas` : `${prog.impressas ?? 0} / ${tot}`}
+          pct={prog.fase === "enviando" ? 30 : tot ? ((prog.impressas ?? 0) / tot) * 100 : 100}
+          barTom={fim ? "g" : "a"}
+          texto={prog.fase === "enviando" ? <span style={MONO}>{prog.etapa}</span> : `faltam ${prog.pendentes ?? 0} na impressora`}
+          botoes={prog.fase === "impressora" ? [{ t: "Fechar · a impressora segue sozinha", primario: true, onClick: () => { fecharRef.current = true; } }] : []}
+        />
+      );
+    } else if (embalando) {
+      painel = (
+        <PainelImpressao
+          mobile={false}
+          titulo="Embalando no Tiny" sub="só pedidos com etiqueta confirmada"
+          status={`Pedido ${embalando.atual} de ${embalando.total}`} statusTom="t"
+          prog={`${embalando.atual} / ${embalando.total}`} pct={(embalando.atual / embalando.total) * 100} barTom="a"
+          texto="marcando um a um no Tiny" botoes={[]}
+        />
+      );
+    }
+
+    const totNec = picking.reduce((s, r) => s + Number(r.qtd_necessaria), 0);
+    const totSep = picking.reduce((s, r) => s + Math.min(Number(r.qtd_separada), Number(r.qtd_necessaria)), 0);
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: painel ? 200 : 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+          <Segmento<"pedido" | "picking"> altura={34} valor={modo} onValor={setModo} ops={[{ id: "pedido", nome: "Por pedido" }, { id: "picking", nome: "Picking list" }]} />
+          <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>
+            {formatNumber(resumo.pedidos)} pedidos · {formatNumber(resumo.combos)} combinações · {formatNumber(resumo.unidades)} un · {formatNumber(resumo.semTag)} sem TAG · {formatNumber(resumo.impressos)} impressos
+          </span>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, fontWeight: 500, color: impressora?.estado === "offline" ? "var(--pm-r)" : "var(--pm-t2)" }}>
+            Imprime em: {impressora?.nome ?? "escolha no topo"} · a mesma da Fila{impressora?.estado === "offline" ? " · offline" : ""}
+          </span>
+        </div>
+
+        {pedidos.length > 0 && (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <ChipEnvioSep nome="Todos" n={pedidos.length} on={!envioUnico} onClick={() => setEnvios(null)} />
+                {enviosDisponiveis.map((e) => (
+                  <ChipEnvioSep key={e} nome={e} cor={corEnv(e)} n={pedidos.filter((p) => (p.tipo_envio ?? "?") === e).length} on={envioUnico === e} onClick={() => setEnvios(envioUnico === e ? null : [e])} />
+                ))}
+              </div>
+              <Segmento<"todas" | "Ottz" | "Bumi" | "ML"> valor={empresa} onValor={setEmpresa} ops={[{ id: "todas", nome: "Todas" }, { id: "Ottz", nome: "Ottz" }, { id: "Bumi", nome: "Bumi" }, { id: "ML", nome: "ML" }]} />
+              <div style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 10px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", flex: "1 1 200px", maxWidth: 300 }}>
+                <Search className="h-3.5 w-3.5" style={{ color: "var(--pm-t3)" }} />
+                <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pedido, TAG, SKU ou nome" style={{ border: 0, outline: "none", background: "transparent", flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--pm-t)" }} />
+              </div>
+              <BotaoFiltros grupos={grupoFiltros} nAtivos={prazoFiltro.length + (estado !== "todos" ? 1 : 0)} nVis={modo === "pedido" ? grupos.length : picking.length} onLimpar={limparFiltros} />
+            </div>
+            <FiltrosAtivos itens={ativos} />
+          </>
+        )}
+
+        {q.isLoading ? <div style={{ ...cartao, height: 320 }} />
+          : q.error ? vazio(<span style={{ color: "var(--pm-r)" }}>Não deu para ler o Multi SKU: {(q.error as Error).message}</span>)
+          : pedidos.length === 0 ? vazio("Nenhum pedido multi SKU na fila 🎉")
+          : filtrados.length === 0 ? vazio(<>Nenhum pedido com estes filtros. <button type="button" onClick={limparFiltros} style={{ border: 0, background: "transparent", color: "var(--pm-at)", textDecoration: "underline", cursor: "pointer" }}>Limpar filtros</button></>)
+          : modo === "pedido" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,420px),1fr))", gap: 10, alignItems: "start" }}>
+              {grupos.map((g) => {
+                const aberto = abertos.has(g.chave);
+                const nImp = g.peds.filter(impressa).length;
+                const faltam = g.peds.length - nImp;
+                const envs = Array.from(new Set(g.peds.map((p) => p.tipo_envio ?? "?")));
+                const lojas = Array.from(new Set(g.peds.map((p) => p.loja)));
+                const tags = Array.from(new Set(g.peds.map((p) => p.tag_lote).filter(Boolean))) as string[];
+                const maisUrgente = g.peds.reduce((a, b) => ((a.dias_para_prazo ?? 999) <= (b.dias_para_prazo ?? 999) ? a : b));
+                const chaveObs = chaveLinhaMulti(g.itens);
+                const obsG = obsQ.data?.get(`linha|${chaveObs}`);
+                const nObsPed = g.peds.filter((p) => obsQ.data?.has(`pedido|${p.separacao_id}`)).length;
+                const marcado = sel.has(g.chave);
+                return (
+                  <div key={g.chave} style={{ ...cartao, border: `1px solid ${marcado ? "var(--pm-a)" : "var(--pm-b)"}`, borderLeft: `4px solid ${corEnv(envs[0])}`, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 10px" }}>
+                      <input type="checkbox" aria-label="Selecionar combinação" checked={marcado}
+                        onChange={(e) => setSel((s) => { const n = new Set(s); if (e.target.checked) n.add(g.chave); else n.delete(g.chave); return n; })}
+                        style={{ width: 18, height: 18, accentColor: "var(--pm-a)" }} />
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--pm-t2)" }}>{envs.join(" · ")}</span>
+                      <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>{lojas.join(", ")}</span>
+                      {pill(tomPrazo(maisUrgente.dias_para_prazo, maisUrgente.ship_by_date))}
+                      <div style={{ flex: 1 }} />
+                      <span style={{ fontSize: 14, fontWeight: 600 }}><span style={MONO}>{g.peds.length}</span> pedido{g.peds.length === 1 ? "" : "s"}</span>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button type="button" title="Mais ações" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}><MoreVertical className="h-3.5 w-3.5" /></button>
+                        </DropdownMenuTrigger>
+                        <MenuItens largura={250} itens={[
+                          { t: obsG ? "Editar observação do grupo…" : "Observação do grupo…", sub: "aparece também na Fila", onClick: () => void editarObsSeparacao("linha", chaveObs, obsG?.texto, perfil?.nome ?? null).then(recarregarObs) },
+                          { t: aberto ? "Esconder os pedidos" : "Ver os pedidos", onClick: () => toggleAberto(g.chave) },
+                        ]} />
+                      </DropdownMenu>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {g.itens.map((i) => (
+                        <div key={i.sku} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 6px", borderRadius: 10, background: "var(--pm-s2)", flex: "1 1 170px", minWidth: 0 }}>
+                          <Foto src={i.foto} alt={i.nome ?? i.sku} tam={44} />
+                          <b style={{ ...MONO, fontSize: 20, fontWeight: 700 }}>×{formatNumber(i.qtd)}</b>
+                          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                            <span title={i.nome ?? ""} style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nome ?? i.sku}</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--pm-t2)" }}>
+                              {i.localizacao && <><MapPin className="h-3 w-3" /><b style={{ ...MONO, fontWeight: 600 }}>{i.localizacao}</b> ·</>} SKU {i.sku}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {(obsG || nObsPed > 0) && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {obsG && <ObsLinha obs={obsG} />}
+                        {nObsPed > 0 && <span style={{ fontSize: 11, color: "#7A5CC7" }}>{nObsPed} pedido(s) com observação</span>}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--pm-sk)", overflow: "hidden" }}>
+                        <i style={{ display: "block", height: "100%", width: `${(nImp / g.peds.length) * 100}%`, background: nImp >= g.peds.length ? "var(--pm-g)" : "var(--pm-a)" }} />
+                      </div>
+                      <span style={{ ...MONO, fontSize: 12, color: "var(--pm-t2)" }}>{nImp}/{g.peds.length} impressos</span>
+                      {tags.map((t) => <span key={t} style={{ ...MONO, fontSize: 11.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "var(--pm-s2)" }}>{t}</span>)}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {faltam > 0 && (
+                        <button type="button" disabled={ocupado} onClick={() => void tagEImprimir(g.peds, `MULTI · ${descricaoCombo(g.itens)}`)}
+                          style={{ flex: 1, height: 44, borderRadius: 10, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", cursor: ocupado ? "default" : "pointer", fontSize: 13.5, fontWeight: 600, opacity: ocupado ? 0.55 : 1 }}>
+                          Imprimir {faltam} etiqueta{faltam === 1 ? "" : "s"}
+                        </button>
+                      )}
+                      {nImp > 0 && (
+                        <button type="button" disabled={ocupado} onClick={() => void marcarEmbalado(g.peds)}
+                          style={{ flex: 1, height: 44, borderRadius: 10, border: "2px solid var(--pm-a)", background: "var(--pm-s)", color: "var(--pm-at)", cursor: ocupado ? "default" : "pointer", fontSize: 13.5, fontWeight: 700, opacity: ocupado ? 0.55 : 1 }}>
+                          Marcar embalado{faltam > 0 ? ` (${nImp})` : ""}
+                        </button>
+                      )}
+                      <button type="button" onClick={() => toggleAberto(g.chave)} title={aberto ? "Esconder os pedidos" : "Ver os pedidos"}
+                        style={{ width: 44, height: 44, borderRadius: 10, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}>
+                        <ChevronDown className="h-4 w-4" style={{ transform: aberto ? "rotate(180deg)" : "none" }} />
+                      </button>
+                    </div>
+                    {aberto && (
+                      <div style={{ borderTop: "1px solid var(--pm-b)", paddingTop: 6, overflowX: "auto" }}>
+                        <div style={{ minWidth: 560 }}>{g.peds.map(pedidoLinha)}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,340px),1fr))", gap: 12, alignItems: "start" }}>
+              <div style={{ ...cartao, display: "flex", flexDirection: "column", minWidth: 0, gridColumn: "span 1" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px", padding: "12px 14px" }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>1. Buscar na prateleira</span>
+                  <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>{picking.length} SKUs · {formatNumber(totSep)} de {formatNumber(totNec)} un separadas · ordem de localização</span>
+                  <div style={{ flex: 1 }} />
+                  <BotaoPm style={{ height: 32, fontSize: 12 }} disabled={picking.length === 0} onClick={() => void marcarTudoSeparado()}>Marcar tudo separado</BotaoPm>
+                  <BotaoPm style={{ height: 32, fontSize: 12 }} disabled={picking.length === 0} onClick={() => void zerarPicking()}><RotateCcw className="h-3.5 w-3.5" /> Zerar</BotaoPm>
+                </div>
+                {picking.length === 0 && <div style={{ padding: "12px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12.5, color: "var(--pm-t3)" }}>Nenhum item pendente: todos os pedidos multi já têm TAG.</div>}
+                {picking.map((r) => {
+                  const nec = Number(r.qtd_necessaria), sep = Number(r.qtd_separada);
+                  const ok = sep >= nec;
+                  const val = editando[r.sku] ?? String(sep);
+                  return (
+                    <div key={r.sku} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--pm-b)", background: ok ? "var(--pm-gs)" : "transparent" }}>
+                      <span style={{ ...MONO, minWidth: 56, height: 32, padding: "0 8px", borderRadius: 8, background: "var(--pm-t)", color: "var(--pm-s)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>{r.localizacao ?? "—"}</span>
+                      <Foto src={r.foto} alt={r.nome ?? r.sku} tam={44} />
+                      <div style={{ display: "flex", flexDirection: "column", flex: "1 1 160px", minWidth: 0 }}>
+                        <span title={r.nome ?? ""} style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nome ?? r.sku}</span>
+                        <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}><span style={MONO}>SKU {r.sku}</span> · {r.pedidos} pedido{r.pedidos === 1 ? "" : "s"}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          inputMode="numeric"
+                          value={val}
+                          onChange={(e) => setEditando((s) => ({ ...s, [r.sku]: e.target.value.replace(/\D/g, "") }))}
+                          onBlur={() => { if (editando[r.sku] !== undefined) void salvarSeparado(r.sku, Number(editando[r.sku])); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          style={{ ...MONO, width: 68, height: 48, textAlign: "center", borderRadius: 10, border: `1.5px solid ${ok ? "var(--pm-g)" : "var(--pm-bs)"}`, background: "var(--pm-s)", fontSize: 22, fontWeight: 700, color: "var(--pm-t)" }}
+                        />
+                        <span style={{ ...MONO, fontSize: 14, color: "var(--pm-t2)", whiteSpace: "nowrap" }}>de {formatNumber(nec)}</span>
+                        {ok ? (
+                          <span style={{ width: 48, height: 48, borderRadius: 10, background: "var(--pm-g)", color: "var(--pm-s)", display: "flex", alignItems: "center", justifyContent: "center" }}><CheckCircle2 className="h-5 w-5" /></span>
+                        ) : (
+                          <button type="button" onClick={() => void salvarSeparado(r.sku, nec)} style={{ height: 48, padding: "0 12px", borderRadius: 10, border: "1px solid var(--pm-a)", background: "var(--pm-s)", color: "var(--pm-at)", cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>✓ tudo</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+                <div style={{ ...cartao, border: `1.5px solid ${alocacao.liberados.length ? "var(--pm-g)" : "var(--pm-b)"}`, display: "flex", flexDirection: "column" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "12px 14px" }}>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>2. Liberados para impressão</span>
+                    <span style={{ ...MONO, fontSize: 13, fontWeight: 600, color: "var(--pm-g)" }}>{alocacao.liberados.length}</span>
+                  </div>
+                  <div style={{ maxHeight: 420, overflow: "auto" }}>
+                    {alocacao.liberados.map((p) => (
+                      <div key={p.separacao_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12 }}>
+                        <i style={{ width: 8, height: 8, borderRadius: 2, background: corEnv(p.tipo_envio), flex: "none" }} />
+                        <span style={{ ...MONO, fontWeight: 600 }}>#{p.venda_numero}</span>
+                        <span style={{ color: "var(--pm-t2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{descricaoCombo(p.itens)}</span>
+                        <span style={{ color: "var(--pm-t3)" }}>{p.loja}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {alocacao.liberados.length === 0 && <div style={{ padding: "10px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12, color: "var(--pm-t3)" }}>Complete os itens à esquerda: os pedidos aparecem aqui.</div>}
+                  <div style={{ padding: "10px 14px 12px" }}>
+                    <button type="button" disabled={ocupado || alocacao.liberados.length === 0 || !printerId} onClick={() => void liberarEImprimir()}
+                      style={{ width: "100%", height: 48, borderRadius: 11, border: 0, background: alocacao.liberados.length ? "var(--pm-a)" : "var(--pm-bs)", color: "var(--pm-oa)", cursor: alocacao.liberados.length ? "pointer" : "default", fontSize: 14, fontWeight: 600 }}>
+                      Liberar e imprimir ({alocacao.liberados.length})
+                    </button>
+                  </div>
+                </div>
+                <div style={{ ...cartao, display: "flex", flexDirection: "column" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "12px 14px" }}>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>Ainda incompletos</span>
+                    <span style={{ ...MONO, fontSize: 13, fontWeight: 600, color: "var(--pm-am)" }}>{alocacao.faltando.length}</span>
+                  </div>
+                  <div style={{ maxHeight: 360, overflow: "auto" }}>
+                    {alocacao.faltando.map(({ p, faltas }) => (
+                      <div key={p.separacao_id} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "7px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12 }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <i style={{ width: 8, height: 8, borderRadius: 2, background: corEnv(p.tipo_envio), flex: "none" }} />
+                          <span style={{ ...MONO, fontWeight: 600 }}>#{p.venda_numero}</span>
+                          <span style={{ color: "var(--pm-t3)" }}>{p.loja}</span>
+                        </span>
+                        <span style={{ color: "var(--pm-am)", fontWeight: 600, paddingLeft: 16 }}>falta {faltas.map((f) => `${f.sku} ×${formatNumber(f.falta)}`).join(" · ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {alocacao.faltando.length === 0 && <div style={{ padding: "10px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12, color: "var(--pm-g)", fontWeight: 600 }}>Nenhum. Tudo separado ✓</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+        {painel}
+        {!painel && modo === "pedido" && sel.size > 0 && (
+          <BarraSelecao
+            rotulo="combinações"
+            linhas={sel.size}
+            pedidos={selecionados.length}
+            onLimpar={() => setSel(new Set())}
+            botoes={[
+              ...(selecionados.some(impressa) ? [{ t: `Embalar impressos · ${selecionados.filter(impressa).length}`, tipo: "contorno" as const, disabled: ocupado, onClick: () => void marcarEmbalado(selecionados) }] : []),
+              {
+                t: `Imprimir ${sel.size} combinação(ões)`, tipo: "primario" as const, disabled: ocupado,
+                onClick: () => { void (async () => { for (const g of grupos.filter((x) => sel.has(x.chave))) await tagEImprimir(g.peds, `MULTI · ${descricaoCombo(g.itens)}`); })(); },
+              },
+            ]}
+          />
+        )}
+      </div>
+    );
+  }
 
   // ================================================================ render
   return (

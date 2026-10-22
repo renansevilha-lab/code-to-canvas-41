@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PackageCheck,
@@ -79,10 +79,11 @@ import { buscarMlFlex } from "@/lib/mlFlex";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { idade, int as intBR, LOGO } from "@/components/dashboard/formato";
 import {
-  MONO, envioSep, EscolhaImpressora, BotaoAtualizar, FaixaPedeAcao, BarraAbas, Segmento, ChipEnvioSep,
+  MONO, envioSep, MenuItens, ImpressoesHoje, type ImpressaoHoje, EscolhaImpressora, BotaoAtualizar, FaixaPedeAcao, BarraAbas, Segmento, ChipEnvioSep,
   BotaoFiltros, FiltrosAtivos, CabecalhoGrupo, LinhaFila, PainelImpressao, BarraSelecao,
   type CartaoAcao, type Alerta, type AcaoLinha, type ItemMenu, type Tom, type PainelImpressaoProps,
 } from "@/components/separacao/ui/kit";
+import { VisualNovoSep, HostDialogosSep, confirmarSep, ForcarEmbalarPm, DialogoPm, BotaoPm, CaixaPm } from "@/components/separacao/ui/dialogos";
 
 // ============ Edge function helpers ============
 
@@ -137,6 +138,18 @@ interface Impressora {
 }
 
 const STORAGE_PRINTER = "separacao.printerId";
+
+// Impressora offline: no visual novo é o diálogo desenhado; no antigo, window.confirm.
+function confirmarImpressoraOffline(nome?: string): Promise<boolean> {
+  return confirmarSep({
+    perigo: true,
+    kicker: "Impressora offline",
+    titulo: `A ${nome ?? "impressora"} não responde`,
+    resumo: "Se imprimir assim, as etiquetas ficam presas na fila do PC e saem quando ela voltar, sem aviso.",
+    linhas: ["Se outra Zebra estiver online, troque no topo da tela (“Imprimindo em”)."],
+    okTxt: "Imprimir assim mesmo",
+  });
+}
 
 function useImpressoras() {
   return useQuery({
@@ -649,6 +662,21 @@ function ForcarEmbalarDialog({
   const [motivo, setMotivo] = useState("");
   const [confirmado, setConfirmado] = useState(false);
   const podeConfirmar = nome.trim().length >= 2 && confirmado;
+  const novoVisual = useContext(VisualNovoSep);
+  const { perfil } = usePerfil();
+  if (novoVisual) {
+    return (
+      <ForcarEmbalarPm
+        aberto={open}
+        titulo={titulo}
+        resumo={descricao}
+        quemPadrao={perfil?.nome ?? null}
+        carregando={loading}
+        onCancelar={onCancel}
+        onConfirmar={onConfirm}
+      />
+    );
+  }
   return (
     <AlertDialog
       open={open}
@@ -1563,6 +1591,7 @@ function PedidosDoSku({
   soFlex,
 }: PedidosDoSkuProps) {
   const qc = useQueryClient();
+  const novo = useContext(VisualNovoSep);
   const [forcar, setForcar] = useState<PedidoSepRow | null>(null);
   const { perfil } = usePerfil();
   const obsQ = useObsSeparacao();
@@ -1627,6 +1656,102 @@ function PedidosDoSku({
       </div>
     );
   }
+  if (novo) {
+    const cols = "minmax(150px,1.3fr) minmax(110px,1fr) 100px 90px minmax(150px,1fr) 40px";
+    const obsDe = (p: PedidoSepRow) => obsQ.data?.get(`pedido|${p.separacao_id}`);
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <FaltaEstoqueDialog
+          alvo={alvoFalta}
+          por={perfil?.nome ?? null}
+          onClose={() => { setAlvoFalta(null); setReportando(null); }}
+          onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+        />
+        <div style={{ minWidth: 660 }}>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 10, padding: "6px 10px", background: "var(--pm-s2)", borderRadius: 8, fontSize: 11, color: "var(--pm-t3)", fontWeight: 500 }}>
+            <span>Pedido</span><span>Loja</span><span>Prazo</span><span>TAG</span><span>Impressão</span><span />
+          </div>
+          {pedidos.map((p, i) => {
+            const loja = marcaToLoja(p.marca_canal);
+            const canal = marcaToCanal(p.marca_canal);
+            const mlNaoIntegrado = canal === "mercadolivre" && !mlContaIntegrada(p.marca_canal);
+            const semEtiqueta = canal === "tiktok" || canal === "outro" || mlNaoIntegrado || (canal === "shopee" && (loja === null || loja === "tiktok"));
+            const key = `ped:${p.numero_ecommerce}`;
+            const ocupado = imprimindoKey === key || embalandoKey === key || reportando === p.separacao_id;
+            const estado: EstadoImpressao = p.separacao_id != null ? (estadosPorSep?.get(p.separacao_id) ?? "ausente") : "ausente";
+            const liberado = estado === "done" || estado === "forcado";
+            const imp = estado === "done" ? { t: "✓ confirmada", c: "var(--pm-g)" }
+              : estado === "forcado" ? { t: "✓ forçada", c: "var(--pm-g)" }
+              : estado === "sent" ? { t: "enviada · sem confirmação", c: "var(--pm-am)" }
+              : estado === "error" ? { t: "erro na impressão", c: "var(--pm-r)" }
+              : { t: semEtiqueta ? (canal === "tiktok" ? "etiqueta pelo TikTok" : mlNaoIntegrado ? "pelo painel do ML" : "sem etiqueta pelo app") : "sem etiqueta", c: "var(--pm-t3)" };
+            const dias = diasAtePrazo(p.ship_by_date);
+            const prazo = !p.ship_by_date || dias === null ? "—" : dias < 0 ? `venceu ${fmtPrazoData(p.ship_by_date)}` : dias === 0 ? "hoje" : dias === 1 ? "amanhã" : fmtPrazoData(p.ship_by_date);
+            const logo = canal === "mercadolivre" ? LOGO.mercadolivre : canal === "tiktok" ? LOGO.tiktok : canal === "shopee" ? LOGO.shopee : null;
+            const obs = obsDe(p);
+            const flex = p.separacao_id != null && !!flexSeps?.has(p.separacao_id);
+            const menu: ItemMenu[] = [
+              {
+                t: canal === "tiktok" ? "Etiqueta: o TikTok não usa o app" : mlNaoIntegrado ? "Etiqueta: conta SVL, use o painel do ML" : "Imprimir só este",
+                disabled: semEtiqueta || imprimindoKey !== null, onClick: () => onImprimir(p),
+              },
+              { t: "Marcar este embalado", sub: liberado ? undefined : estado === "sent" ? "aguardando a impressora" : "imprima antes", disabled: !liberado || embalandoKey !== null, onClick: () => onEmbalar(p) },
+              { t: "Reportar falta de estoque…", disabled: reportando !== null || p.separacao_id == null, onClick: () => reportarFalta(p) },
+              ...(p.falta_estoque_em && p.sku_unico ? [{
+                t: "Estoque voltou", sub: "desfaz o balanço 0 no Tiny",
+                onClick: () => { void desfazerZeramento(String(p.sku_unico), perfil?.nome ?? null).then((ok) => { if (ok) void qc.invalidateQueries({ queryKey: ["separacao"] }); }); },
+              }] : []),
+              {
+                t: obs ? "Editar observação…" : "Observação…", disabled: p.separacao_id == null,
+                onClick: () => {
+                  const chave = String(p.separacao_id);
+                  void editarObsSeparacao("pedido", chave, obs?.texto, perfil?.nome ?? null)
+                    .then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); });
+                },
+              },
+              ...(!liberado ? [{ t: "Forçar embalar este…", sub: "sem confirmação da impressora", perigo: true, disabled: embalandoKey !== null, onClick: () => setForcar(p) }] : []),
+            ];
+            return (
+              <div key={`${p.numero_ecommerce}-${i}`} style={{ display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center", padding: "5px 10px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
+                <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={MONO}>{p.numero_ecommerce ?? "—"}</span>
+                    {flex && <span style={{ fontSize: 10.5, fontWeight: 600, padding: "0 6px", borderRadius: 5, background: "var(--pm-ams)", color: "var(--pm-am)" }}>Flex</span>}
+                    {p.falta_estoque_em && <span style={{ fontSize: 10.5, fontWeight: 600, padding: "0 6px", borderRadius: 5, background: "var(--pm-rs)", color: "var(--pm-r)" }} title={p.falta_estoque_por ? `por ${p.falta_estoque_por}` : undefined}>sem estoque</span>}
+                  </span>
+                  {obs && <ObsLinha obs={obs} />}
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                  {logo && <span style={{ display: "inline-block", width: 13, height: 13, borderRadius: 3, background: `#fff url(${logo}) center/contain no-repeat`, flex: "none" }} />}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rotuloCanal(p.marca_canal)}</span>
+                </span>
+                <span style={{ color: dias !== null && dias < 0 ? "var(--pm-r)" : "var(--pm-t2)", fontWeight: dias !== null && dias <= 0 ? 600 : 400 }}>{prazo}</span>
+                <span style={{ ...MONO, color: "var(--pm-t2)" }}>{p.tag_lote ?? "—"}</span>
+                <span style={{ fontWeight: 600, color: imp.c }}>{imp.t}</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" title="Ações do pedido" disabled={ocupado} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}>
+                      {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreVertical className="h-3.5 w-3.5" />}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <MenuItens itens={menu} largura={240} />
+                </DropdownMenu>
+              </div>
+            );
+          })}
+        </div>
+        <ForcarEmbalarDialog
+          open={forcar !== null}
+          titulo={`Forçar embalar o pedido ${forcar?.numero_ecommerce ?? ""}?`}
+          descricao={<>A impressão deste pedido não foi confirmada{forcar?.tag_lote ? ` (lote ${forcar.tag_lote})` : ""}. Ele fica como “embalado forçado”, com seu nome e o motivo.</>}
+          loading={embalandoKey === `ped:${forcar?.numero_ecommerce}`}
+          onCancel={() => setForcar(null)}
+          onConfirm={(nome, motivo) => { if (forcar) onEmbalar(forcar, { nome, motivo }); setForcar(null); }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="ml-8 mt-1 mb-2 border-l-2 border-muted pl-3">
       <FaltaEstoqueDialog
@@ -2112,7 +2237,13 @@ function LotesDoDia({
   async function marcarEmbaladoVarios() {
     const tags = [...selLotes];
     if (tags.length === 0 || embalandoLote) return;
-    if (!window.confirm(`Marcar ${tags.length} lote(s) como EMBALADO no Tiny? Não tem desfazer.`)) return;
+    if (!(await confirmarSep({
+      kicker: "Lotes do dia · embalar no Tiny",
+      titulo: `Marcar ${tags.length} lote(s) como embalado?`,
+      resumo: "Só os pedidos com etiqueta confirmada pela impressora são marcados; os outros ficam como pendência.",
+      linhas: ["Não tem desfazer no Tiny."],
+      okTxt: `Embalar ${tags.length} lote(s)`,
+    }))) return;
     setEmbalandoLote(true);
     let okLotes = 0, totalEmb = 0;
     const comPendencia: string[] = [];
@@ -2142,6 +2273,233 @@ function LotesDoDia({
     } finally {
       setEmbalandoLote(false);
     }
+  }
+
+  // ---- visual novo (design "Separação · Lotes do dia", 22/out/2026) ----
+  const novoVisual = useContext(VisualNovoSep);
+  const [dia, setDia] = useState<"hoje" | "ontem">("hoje");
+  const ontemQ = useQuery({
+    queryKey: ["separacao", "tags_lote", "ontem"],
+    enabled: novoVisual && dia === "ontem",
+    queryFn: async () => {
+      const d = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+      const { data, error } = await supabaseExternal.from("tags_lote").select("*").eq("data", d).order("sequencia", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as TagLoteRow[];
+    },
+  });
+  const lotesVis = dia === "hoje" ? [...(lotes ?? [])].sort((a, b) => b.sequencia - a.sequencia) : (ontemQ.data ?? []);
+  const tagsVis = lotesVis.map((l) => l.tag);
+  const extraQ = useQuery({
+    queryKey: ["separacao", "lotes-extra", dia, tagsVis.join(",")],
+    enabled: novoVisual && tagsVis.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const skus = [...new Set(lotesVis.map((l) => l.sku).filter((x): x is string => !!x && x !== "MULTI"))];
+      const [prods, peds] = await Promise.all([
+        skus.length ? supabaseExternal.from("produtos").select("sku, nome").in("sku", skus) : Promise.resolve({ data: [] as { sku: string; nome: string | null }[] }),
+        supabaseExternal.from("separacao_tiny").select("tag_lote, marca_canal").in("tag_lote", tagsVis).limit(5000),
+      ]);
+      const nomes = new Map<string, string>();
+      for (const p of (prods.data ?? []) as { sku: string; nome: string | null }[]) if (p.nome) nomes.set(p.sku, p.nome);
+      const lojas = new Map<string, Set<string>>();
+      for (const p of (peds.data ?? []) as { tag_lote: string | null; marca_canal: string | null }[]) {
+        if (!p.tag_lote) continue;
+        const e = empresaDe(p.marca_canal);
+        const set = lojas.get(p.tag_lote) ?? new Set<string>();
+        if (e) set.add(e);
+        lojas.set(p.tag_lote, set);
+      }
+      return { nomes, lojas };
+    },
+  });
+
+  if (novoVisual) {
+    const hhmm = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }).replace(":", "h") : "";
+    const finalizadas = lotesVis.filter((l) => l.finalizada_em);
+    const porPessoa = new Map<string, number>();
+    for (const l of finalizadas) if (l.finalizada_por) porPessoa.set(l.finalizada_por, (porPessoa.get(l.finalizada_por) ?? 0) + 1);
+    const cols = "96px minmax(220px,1.6fr) 70px 110px 200px minmax(130px,1fr) 44px";
+    const ddmm = (offset: number) => new Date(Date.now() - offset * 86_400_000).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
+    const carregandoVis = dia === "hoje" ? isLoading : ontemQ.isLoading;
+    const erroVis = (dia === "hoje" ? error : ontemQ.error) as Error | null;
+    const pendentesVis = lotesVis.filter((l) => l.status !== "embalada");
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <FaltaEstoqueDialog
+          alvo={alvoFalta}
+          por={perfil?.nome ?? null}
+          onClose={() => { setAlvoFalta(null); setReportandoFalta(null); }}
+          onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }}
+        />
+        <MensagemLoteDialog alvo={msgLote ? { tipo: "tag", tag: msgLote, rotulo: `lote ${msgLote}` } : null} onClose={() => setMsgLote(null)} enviadoPor={perfil?.nome ?? null} />
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 14px" }}>
+          <Segmento<"hoje" | "ontem">
+            valor={dia}
+            onValor={setDia}
+            altura={32}
+            ops={[{ id: "hoje", nome: `Hoje · ${ddmm(0)}` }, { id: "ontem", nome: `Ontem · ${ddmm(1)}` }]}
+          />
+          <span style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>
+            {lotesVis.length} TAGs · {finalizadas.length} finalizadas · {formatNumber(lotesVis.reduce((a, l) => a + Number(l.qtd_pedidos ?? 0), 0))} pedidos
+          </span>
+          <div style={{ flex: 1 }} />
+          {porPessoa.size > 0 && (
+            <span style={{ fontSize: 12.5 }}>
+              <span style={{ color: "var(--pm-t3)" }}>Finalizadas {dia === "hoje" ? "hoje" : "ontem"}: </span>
+              {[...porPessoa.entries()].sort((a, b) => b[1] - a[1]).map(([nome, n]) => (
+                <span key={nome} style={{ marginRight: 8 }}><b style={{ fontWeight: 600 }}>{nome}</b> <span style={{ ...MONO, fontWeight: 600 }}>{n}</span></span>
+              ))}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              const v = !identificadorAtivo;
+              setIdentificadorAtivo(v);
+              try { localStorage.setItem(STORAGE_IDENT, v ? "1" : "0"); } catch { /* noop */ }
+            }}
+            title="Etiqueta identificadora no fim de cada lote de 2+ pedidos (Fila e Lotes do dia)"
+            style={{ display: "flex", alignItems: "center", gap: 8, height: 34, padding: "0 10px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 12, color: "var(--pm-t)" }}
+          >
+            <span style={{ width: 30, height: 18, borderRadius: 9, background: identificadorAtivo ? "var(--pm-a)" : "var(--pm-bs)", position: "relative", flex: "none" }}>
+              <i style={{ position: "absolute", top: 2, left: identificadorAtivo ? 14 : 2, width: 14, height: 14, borderRadius: "50%", background: "var(--pm-s)", boxShadow: "var(--pm-sh)" }} />
+            </span>
+            Identificadora no fim do lote
+          </button>
+        </div>
+
+        {selLotes.size > 0 && (
+          <BarraSelecao
+            linhas={selLotes.size}
+            pedidos={lotesVis.filter((l) => selLotes.has(l.tag)).reduce((a, l) => a + Number(l.qtd_pedidos ?? 0), 0)}
+            onLimpar={() => setSelLotes(new Set())}
+            botoes={[{ t: embalandoLote ? "Embalando…" : `Marcar ${selLotes.size} lote(s) embalado(s)`, tipo: "primario", disabled: embalandoLote, onClick: () => void marcarEmbaladoVarios() }]}
+          />
+        )}
+
+        {carregandoVis && <div style={{ height: 300, borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)" }} />}
+        {erroVis && <div style={{ padding: "10px 14px", borderRadius: 12, background: "var(--pm-rs)", border: "1px solid var(--pm-r)", color: "var(--pm-r)", fontSize: 12.5 }}>Não deu para ler os lotes: {erroVis.message}</div>}
+        {!carregandoVis && !erroVis && lotesVis.length === 0 && (
+          <div style={{ padding: "32px 16px", borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", textAlign: "center", fontSize: 13, color: "var(--pm-t2)" }}>
+            {dia === "hoje" ? "Nenhum lote hoje ainda. A TAG nasce quando alguém clica em Imprimir etiqueta na Fila." : "Nenhum lote ontem."}
+          </div>
+        )}
+        {!carregandoVis && lotesVis.length > 0 && (
+          <div style={{ background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 14, boxShadow: "var(--pm-sh)", overflowX: "auto" }}>
+            <div style={{ minWidth: 860 }}>
+              <div style={{ display: "grid", gridTemplateColumns: `28px ${cols}`, gap: 10, padding: "8px 14px", background: "var(--pm-s2)", fontSize: 11, color: "var(--pm-t3)", fontWeight: 500, borderRadius: "14px 14px 0 0", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  aria-label="Selecionar os lotes não embalados"
+                  checked={pendentesVis.length > 0 && pendentesVis.every((l) => selLotes.has(l.tag))}
+                  onChange={(e) => setSelLotes(e.target.checked ? new Set(pendentesVis.map((l) => l.tag)) : new Set())}
+                  style={{ width: 16, height: 16, accentColor: "var(--pm-a)" }}
+                />
+                <span>TAG</span><span>Produto / bloco</span><span style={{ textAlign: "right" }}>Pedidos</span><span>Loja</span><span>Status</span><span>Quem · quando</span><span />
+              </div>
+              {lotesVis.map((l) => {
+                const embalada = l.status === "embalada";
+                const finalizada = !!l.finalizada_em;
+                const mUn = /^(.*?)(\d+)un\s*$/.exec(l.grupo_origem ?? "");
+                const multi = (l.sku ?? "") === "MULTI";
+                const env = envioSep(l.tipo_envio);
+                const nome = multi ? `Multi SKU: ${l.grupo_origem ?? ""}` : extraQ.data?.nomes.get(l.sku ?? "") ?? l.sku ?? l.grupo_origem ?? "—";
+                const bloco = multi ? `bloco multi · ${env.curto}` : `${mUn ? `${mUn[2]} un por pedido · ` : ""}${env.curto}`;
+                const lj = extraQ.data?.lojas.get(l.tag);
+                const loja = !lj || lj.size === 0 ? "—" : lj.has("ottz") && lj.has("bumi") ? "Ottz e Bumi" : lj.has("bumi") ? "Bumi" : "Ottz";
+                const st = finalizada ? { t: "✓ Finalizada", bg: "var(--pm-gs)", c: "var(--pm-g)" }
+                  : embalada ? { t: "Embalada · aguarda finalizar", bg: "var(--pm-ams)", c: "var(--pm-am)" }
+                  : l.status === "imprimindo" ? { t: "Imprimindo…", bg: "var(--pm-as)", c: "var(--pm-at)" }
+                  : l.impresso_em ? { t: "Impressa · aguarda embalar", bg: "var(--pm-s2)", c: "var(--pm-t)" }
+                  : { t: "Aguardando impressão", bg: "var(--pm-s2)", c: "var(--pm-t2)" };
+                const quem = finalizada ? `${l.finalizada_por ?? "—"} · ${hhmm(l.finalizada_em)}`
+                  : embalada ? `embalada ${hhmm(l.embalado_em)}`
+                  : l.impresso_em ? `impressa ${hhmm(l.impresso_em)}`
+                  : `criada ${hhmm(l.criado_em)}`;
+                const obs = obsQ.data?.get(`lote|${l.tag}`);
+                const ocupado = imprimindo === l.tag || embalando === l.tag || imprimindoIdent === l.tag || reportandoFalta === l.tag;
+                const menu: ItemMenu[] = [
+                  { t: "Copiar TAG", onClick: () => void copyToClipboard(l.tag) },
+                  ...(!embalada ? [
+                    { t: "Imprimir as etiquetas do lote", sub: "a que já saiu não sai de novo", disabled: imprimindo !== null, onClick: () => void imprimirLote(l) },
+                    { t: "Marcar embalado", sub: "só pedidos com etiqueta confirmada", disabled: embalando !== null, onClick: () => setConfirmar(l) },
+                  ] : []),
+                  { t: l.impresso_em ? "Reimprimir identificadora" : "Imprimir identificadora", sub: `sai na ${impressoraSelecionada?.nome ?? "impressora"}`, disabled: imprimindoIdent !== null, onClick: () => void imprimirIdentificador(l) },
+                  { t: "Mensagem aos clientes", sub: "pelo chat da Shopee", onClick: () => setMsgLote(l.tag) },
+                  { t: obs ? "Editar observação…" : "Observação…", onClick: () => { void editarObsSeparacao("lote", l.tag, obs?.texto, perfil?.nome ?? null).then((mudou) => { if (mudou) void qc.invalidateQueries({ queryKey: ["separacao", "obs"] }); }); } },
+                  ...(!embalada ? [{ t: "Reportar falta de estoque (lote)…", disabled: reportandoFalta !== null, onClick: () => reportarFaltaLote(l) }] : []),
+                  ...(!embalada ? [{
+                    t: "Reimprimir (forçar)…", sub: "gera etiqueta em dobro", perigo: true, disabled: imprimindo !== null,
+                    onClick: () => {
+                      void confirmarSep({
+                        perigo: true,
+                        kicker: "Reimprimir (forçar) · gera etiqueta em dobro",
+                        titulo: `Reimprimir as etiquetas do lote ${l.tag}?`,
+                        resumo: `${l.qtd_pedidos} etiqueta(s) de envio + a identificadora, na ${impressoraSelecionada?.nome ?? "impressora"}. Se as primeiras estiverem na bancada, o pacote recebe duas.`,
+                        linhas: ["Use só se as etiquetas travaram, não saíram ou foram perdidas."],
+                        check: "Conferi: as etiquetas originais não estão na bancada",
+                        okTxt: "Reimprimir o lote",
+                      }).then((ok) => { if (ok) void imprimirLote(l, true); });
+                    },
+                  }] : []),
+                ];
+                return (
+                  <div key={l.id} style={{ display: "grid", gridTemplateColumns: `28px ${cols}`, gap: 10, alignItems: "center", padding: "8px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12.5 }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Selecionar ${l.tag}`}
+                      disabled={embalada}
+                      checked={selLotes.has(l.tag)}
+                      onChange={(e) => toggleLote(l.tag, e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: "var(--pm-a)", opacity: embalada ? 0.3 : 1 }}
+                    />
+                    <button type="button" onClick={() => void copyToClipboard(l.tag)} title="Copiar TAG" style={{ ...MONO, border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 14, fontWeight: 700, color: finalizada ? "var(--pm-g)" : "var(--pm-t)" }}>{l.tag}</button>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <i style={{ width: 4, height: 28, borderRadius: 2, background: env.cor, flex: "none" }} />
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span title={nome} style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nome}</span>
+                        <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>{bloco}</span>
+                        {obs && <ObsLinha obs={obs} />}
+                      </span>
+                    </span>
+                    <span style={{ ...MONO, textAlign: "right" }}>
+                      {formatNumber(l.qtd_pedidos)}
+                      {l.qtd_pulados > 0 && <span style={{ display: "block", fontSize: 10.5, color: "var(--pm-am)" }}>+{l.qtd_pulados} pulados</span>}
+                    </span>
+                    <span style={{ color: "var(--pm-t2)" }}>{loja}</span>
+                    <span style={{ justifySelf: "start", fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 7, background: st.bg, color: st.c, whiteSpace: "nowrap" }}>{st.t}</span>
+                    <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>{quem}</span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button type="button" title="Ações do lote" style={{ width: 36, height: 36, borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}>
+                          {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+                        </button>
+                      </DropdownMenuTrigger>
+                      <MenuItens itens={menu} largura={270} />
+                    </DropdownMenu>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <DialogoPm
+          aberto={confirmar !== null}
+          onFechar={() => { if (!embalando) setConfirmar(null); }}
+          kicker="Lotes do dia · embalar no Tiny"
+          titulo={`Marcar o lote ${confirmar?.tag ?? ""} como embalado?`}
+          rodape={<>
+            <BotaoPm onClick={() => setConfirmar(null)} disabled={embalando !== null}>Cancelar</BotaoPm>
+            <BotaoPm tipo="primario" disabled={embalando !== null} onClick={() => { if (confirmar) void marcarEmbalado(confirmar); }}>{embalando ? "Embalando…" : "Marcar embalado"}</BotaoPm>
+          </>}
+        >
+          <CaixaPm>{confirmar?.qtd_pedidos ?? 0} pedido(s) saem da fila e passam para EMBALADO no Tiny.</CaixaPm>
+          <span style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>Só os pedidos com etiqueta confirmada pela impressora; os outros ficam como pendência. Não tem desfazer no Tiny.</span>
+        </DialogoPm>
+      </div>
+    );
   }
 
   const lotesPendentes = (lotes ?? []).filter((l) => l.status !== "embalada");
@@ -2779,6 +3137,38 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
   const totaisSepQ = useSeparacaoTotais();
   const syncTiny = useSyncTiny();
   const abertos = useProcessarAbertos();
+  // "Impressões de hoje" (topo): o que saiu hoje por TAG, do registro da separação
+  const impHojeQ = useQuery({
+    queryKey: ["separacao", "impressoes-hoje"],
+    enabled: novo,
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<ImpressaoHoje[]> => {
+      const dia = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const desde = new Date(`${dia}T00:00:00-03:00`).toISOString();
+      const { data, error } = await supabaseExternal
+        .from("separacao_log")
+        .select("criado_em, usuario, tag, sku, detalhe")
+        .eq("evento", "etiqueta_impressa")
+        .gte("criado_em", desde)
+        .order("criado_em", { ascending: false })
+        .limit(1000);
+      if (error) throw error;
+      const m = new Map<string, ImpressaoHoje>();
+      for (const r of (data ?? []) as { criado_em: string; usuario: string | null; tag: string | null; sku: string | null; detalhe: { enviadas?: number; forcar?: boolean } | null }[]) {
+        if (!r.tag) continue;
+        const env = Number(r.detalhe?.enviadas ?? 0);
+        const cur = m.get(r.tag) ?? {
+          tag: r.tag, sku: r.sku, quem: r.usuario, etiquetas: 0, forcada: false, vazias: 0,
+          hora: new Date(r.criado_em).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }).replace(":", "h"),
+        };
+        cur.etiquetas += env;
+        if (r.detalhe?.forcar) cur.forcada = true;
+        if (env === 0) cur.vazias++;
+        m.set(r.tag, cur);
+      }
+      return [...m.values()];
+    },
+  });
   const bandasEfetivas = useMemo<Set<string>>(() => {
     if (!novo) return bandasPeso;
     if (turno === "leves") return new Set(["ate_limite", "sem_peso"]);
@@ -2844,11 +3234,13 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
       toast.info("Nenhum pedido com impressão confirmada no filtro atual");
       return;
     }
-    if (!window.confirm(
-      `Marcar como EMBALADOS no Tiny todos os pedidos com etiqueta impressa e confirmada?\n\n` +
-      `${alvo.length} linha(s) · ${totalPed} pedido(s) do filtro atual, na ordem de prioridade.\n` +
-      `Pedidos sem impressão confirmada NÃO são tocados.`,
-    )) return;
+    if (!(await confirmarSep({
+      kicker: "Embalar em massa · Tiny",
+      titulo: `Marcar ${totalPed} pedido(s) como embalados?`,
+      resumo: `${alvo.length} linha(s) · ${totalPed} pedido(s) com etiqueta impressa e confirmada, na ordem de prioridade.`,
+      linhas: ["Pedido sem impressão confirmada não é tocado: para esses existe o “Forçar embalar”."],
+      okTxt: `Embalar ${totalPed} pedido(s)`,
+    }))) return;
     cancelarMassaRef.current = false;
     pausaMassaRef.current = false;
     setMassaPausada(false);
@@ -2898,18 +3290,28 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
       const info = tagsPorLinha?.get(linhaKeyDe(r));
       return !info || info.estado !== "com_tag";
     }).length;
-    if (!window.confirm(
-      (opts?.forcar
-        ? `ATENÇÃO — REIMPRESSÃO FORÇADA EM MASSA\n` +
-          `Vai sair DE NOVO toda etiqueta JÁ IMPRESSA dessas linhas. Se as anteriores ainda existirem, ` +
-          `os pacotes podem receber duas etiquetas (risco de extravio/devolução). ` +
-          `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.\n\n`
-        : `Imprimir TODOS os lotes do filtro atual?\n\n`) +
-      `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.\n` +
-      (semTag > 0 ? `${semTag} linha(s) ainda sem TAG — a TAG é criada ao imprimir e marcada no Tiny só nos pedidos que saírem.\n` : "") +
-      (multis > 0 ? `${multis} combinação(ões) multi-SKU ficam de fora (fluxo próprio).\n` : "") +
-      (opts?.forcar ? `Confirmar a REIMPRESSÃO de tudo isso?` : `Etiquetas já impressas NÃO saem de novo (proteção automática).`),
-    )) return;
+    const notas = [
+      ...(semTag > 0 ? [`${semTag} linha(s) ainda sem TAG: a TAG nasce ao imprimir e é marcada no Tiny só nos pedidos que saírem.`] : []),
+      "Shopee sai por loja (Ottz, depois Bumi) e a identificadora de cada lote sai por último.",
+      ...(multis > 0 ? [`${multis} combinação(ões) Multi SKU ficam de fora: vão pela aba Multi SKU.`] : []),
+    ];
+    if (!(await confirmarSep(opts?.forcar
+      ? {
+        perigo: true,
+        kicker: "Reimprimir (forçar) · gera etiqueta em dobro",
+        titulo: `Reimprimir ${linhas.length} linha(s)?`,
+        resumo: `Vai sair DE NOVO toda etiqueta já impressa destas linhas (${totalPedidos} pedidos). Se as anteriores ainda estiverem na bancada, o pacote recebe duas etiquetas (risco de extravio/devolução).`,
+        linhas: ["Use só se as etiquetas foram perdidas, rasgadas ou saíram na impressora errada.", ...notas],
+        check: "Conferi: as etiquetas originais não estão na bancada",
+        okTxt: `Reimprimir ${totalPedidos} etiquetas`,
+      }
+      : {
+        kicker: `Impressão em massa · ${impressoraSelecionada?.nome ?? "impressora"}`,
+        titulo: `Imprimir ${linhas.length} linha(s)?`,
+        resumo: `${linhas.length} linha(s) · ${totalPedidos} pedido(s), na ordem de prioridade da fila.`,
+        linhas: [...notas, "Etiqueta já impressa não sai de novo (proteção automática)."],
+        okTxt: `Imprimir ${totalPedidos} etiquetas`,
+      }))) return;
     cancelarMassaRef.current = false;
     pausaMassaRef.current = false;
     setMassaPausada(false);
@@ -2966,7 +3368,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
     const key = `sku:${item.sku}:${item.tipo_envio}`;
     if (!opts?.emMassa && imprimindoKey) return undefined;
     if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
-      if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return undefined;
+      if (!(await confirmarImpressoraOffline(impressoraSelecionada?.nome))) return undefined;
     }
     setImprimindoKey(key);
     // quem saiu de fato (Shopee: pedidos_impressos do lote; ML: um a um) — é o
@@ -3157,7 +3559,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
         return;
       }
       if (!opts?.emMassa && impressoraSelecionada?.estado === "offline") {
-        if (!window.confirm("Impressora offline. O job pode ficar preso na fila. Continuar?")) return;
+        if (!(await confirmarImpressoraOffline(impressoraSelecionada?.nome))) return;
       }
       try {
         const r = await callImprimirFn<ReservarTagResponse>(
@@ -3311,7 +3713,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
     if (!p.numero_ecommerce) { toast.error("Sem número do pedido"); return; }
     if (imprimindoKey) return;
     if (impressoraSelecionada?.estado === "offline") {
-      if (!window.confirm("Impressora offline. Continuar?")) return;
+      if (!(await confirmarImpressoraOffline(impressoraSelecionada?.nome))) return;
     }
     setImprimindoKey(key);
     try {
@@ -3640,20 +4042,20 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
       });
     } else emDia.push("nenhum prazo vencido");
     const risco = riscoResQ.data ?? [];
-    const blocoRisco = (rot: string, xs: RiscoCancelRow[], tom: Tom, id: "hoje" | "amanha") => {
+    const blocoRisco = (rot: string, xs: RiscoCancelRow[], tom: Tom, id: "hoje" | "amanha", comValor: boolean) => {
       if (xs.length === 0) return;
       const s2 = (k: keyof RiscoCancelRow) => xs.reduce((a, b) => a + Number(b[k] ?? 0), 0);
       const naFila = s2("na_fila");
       cartoes.push({
-        chave: `cancela-${id}`, tom, label: rot, n: `${intBR(s2("pedidos"))} · ${formatBRL(s2("valor"))}`,
+        chave: `cancela-${id}`, tom, label: rot, n: comValor ? `${intBR(s2("pedidos"))} · ${formatBRL(s2("valor"))}` : `${intBR(s2("pedidos"))} pedidos`,
         ctx: `${[...new Set(xs.map((x) => x.loja))].join(", ")} · ${intBR(naFila)} na fila · ${intBR(s2("aguardando_coleta"))} embalados esperando coleta`,
         onClick: naFila > 0 ? () => irFila({ risco: id }) : () => void navigate({ to: "/risco-cancelamento" }),
       });
     };
     const cancHoje = risco.filter((x) => Number(x.dias_para_cancelar) <= 0);
     const cancAmanha = risco.filter((x) => Number(x.dias_para_cancelar) === 1);
-    blocoRisco("Cancela hoje", cancHoje, "r", "hoje");
-    blocoRisco("Cancela amanhã", cancAmanha, "a", "amanha");
+    blocoRisco("Cancela hoje", cancHoje, "r", "hoje", true);
+    blocoRisco("Cancela amanhã", cancAmanha, "a", "amanha", false);
     if (cancHoje.length === 0) emDia.push("nada cancela hoje");
     if (!parado && totalErro > 0) {
       cartoes.push({
@@ -3847,12 +4249,15 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
         ...((info?.estado ?? "sem_tag") !== "sem_tag" ? [{
           t: "Reimprimir (forçar)…", sub: "gera etiqueta em dobro", perigo: true, disabled: imprimindoKey !== null,
           onClick: () => {
-            if (!window.confirm(
-              `ATENÇÃO — reimprimir ${item.sku ?? ""} · ${item.tipo_envio ?? ""}\n\n` +
-              `Vai sair DE NOVO etiqueta que JÁ FOI IMPRESSA. Se a anterior ainda existir, o pacote pode receber duas etiquetas (risco de extravio/devolução).\n\n` +
-              `Use só se as etiquetas anteriores foram perdidas, rasgadas ou saíram na impressora errada.\n\nConfirmar a reimpressão?`,
-            )) return;
-            void imprimirPorSku(item, { forcar: true });
+            void confirmarSep({
+              perigo: true,
+              kicker: "Reimprimir (forçar) · gera etiqueta em dobro",
+              titulo: `Reimprimir as etiquetas de ${tagAtual ?? item.sku ?? "esta linha"}?`,
+              resumo: `Estas etiquetas já saíram${liberados > 0 ? ` (${liberados} confirmadas)` : ""}. Reimprimir gera etiqueta em dobro se a primeira estiver na bancada.`,
+              linhas: [`${item.nome_produto ?? item.sku ?? ""} · ${formatNumber(Number(item.qtd_pedidos ?? 0))} pedidos · sai na ${nomeImp}.`, "Use só se a etiqueta foi perdida, rasgada ou saiu na impressora errada."],
+              check: "Conferi: a etiqueta original não está na bancada",
+              okTxt: "Reimprimir etiquetas",
+            }).then((ok) => { if (ok) void imprimirPorSku(item, { forcar: true }); });
           },
         }] : []),
         ...(total > 0 && estBtn !== "liberado" ? [{ t: "Forçar embalar…", sub: "sem confirmação da impressora", perigo: true, disabled: embalandoKey !== null, onClick: () => setForcarSku(item) }] : []),
@@ -3982,6 +4387,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
           </div>
           <div style={{ flex: 1 }} />
           <EscolhaImpressora opcoes={opcoesImp} selecionada={selImp} onEscolher={setPrinterId} carregando={loadingImpressoras} />
+          <ImpressoesHoje itens={impHojeQ.data ?? []} carregando={impHojeQ.isLoading} />
           <BotaoAtualizar
             onAtualizar={() => void atualizarFilaNovo()}
             girando={atualizandoFila || syncTiny.syncing || abertos.rodando}
@@ -5280,9 +5686,12 @@ function SeparacaoPage() {
   if (visual === "novo") {
     return (
       <ProtecaoVisualNovo reserva={(erro) => <SeparacaoAntiga onVisual={setVisual} aviso={erro} />}>
-        <div className="pm-ui w-full px-4 md:px-8 py-5">
-          <FilaPriorizada visual="novo" onVisual={setVisual} />
-        </div>
+        <VisualNovoSep.Provider value>
+          <div className="pm-ui w-full px-4 md:px-8 py-5">
+            <FilaPriorizada visual="novo" onVisual={setVisual} />
+          </div>
+          <HostDialogosSep />
+        </VisualNovoSep.Provider>
       </ProtecaoVisualNovo>
     );
   }

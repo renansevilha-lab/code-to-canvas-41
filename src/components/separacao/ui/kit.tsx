@@ -23,6 +23,18 @@ export const envioSep = (t: string | null) =>
   ENVIOS_SEP[t ?? ""] ?? { nome: t ?? "Sem envio", curto: t ?? "—", cor: "var(--pm-t3)", prio: "" };
 
 export type Tom = "r" | "a" | "g" | "n";
+
+/** Cor fixa por unidades por pedido (1, 2, 3…) — a bancada já reconhece pela cor; mesma escala do visual antigo. */
+export function corUnidades(n: number): { bg: string; fg: string } {
+  switch (n) {
+    case 1: return { bg: "var(--pm-s2)", fg: "var(--pm-t)" };
+    case 2: return { bg: "#3b82f6", fg: "#fff" };
+    case 3: return { bg: "#f59e0b", fg: "#fff" };
+    case 4: return { bg: "#c026d3", fg: "#fff" };
+    case 5: return { bg: "#059669", fg: "#fff" };
+    default: return { bg: "#dc2626", fg: "#fff" };
+  }
+}
 export const COR_TOM: Record<Tom, string> = { r: "var(--pm-r)", a: "var(--pm-am)", g: "var(--pm-g)", n: "var(--pm-t2)" };
 const FUNDO_TOM: Record<Tom, string> = { r: "var(--pm-rs)", a: "var(--pm-ams)", g: "var(--pm-gs)", n: "var(--pm-s2)" };
 
@@ -388,9 +400,9 @@ export interface LinhaFilaProps {
   children?: ReactNode;
 }
 
-function Foto({ src, alt }: { src: string | null; alt: string }) {
+export function Foto({ src, alt, tam = 52 }: { src: string | null; alt: string; tam?: number }) {
   const [erro, setErro] = useState(false);
-  const caixa: CSSProperties = { width: 52, height: 52, flex: "none", borderRadius: 10, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
+  const caixa: CSSProperties = { width: tam, height: tam, flex: "none", borderRadius: tam >= 48 ? 10 : 8, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
   if (!src || erro) {
     const ab = alt.replace(/[^A-Za-zÀ-ú ]/g, "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
     return <span style={{ ...caixa, fontSize: 12, fontWeight: 600, color: "var(--pm-t3)" }}>{ab || "—"}</span>;
@@ -417,10 +429,15 @@ export function LinhaFila(p: LinhaFilaProps) {
         {/* produto */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, gridColumn: col("auto", "1 / -1") }}>
           <Foto src={p.foto} alt={p.nome} />
-          <div style={{ width: 58, height: 52, flex: "none", borderRadius: 10, border: `1.5px solid ${p.unPorPedido >= 3 ? "var(--pm-t)" : "var(--pm-bs)"}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
-            <b style={{ ...MONO, fontSize: 24, fontWeight: 700 }}>{p.unPorPedido}</b>
-            <span style={{ fontSize: 10, color: "var(--pm-t2)", marginTop: 3 }}>un/pedido</span>
-          </div>
+          {(() => {
+            const c = corUnidades(p.unPorPedido);
+            return (
+              <div title={`${p.unPorPedido} unidade${p.unPorPedido === 1 ? "" : "s"} por pedido`} style={{ width: 58, height: 52, flex: "none", borderRadius: 10, background: c.bg, color: c.fg, border: p.unPorPedido === 1 ? "1.5px solid var(--pm-bs)" : "0", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
+                <b style={{ ...MONO, fontSize: 24, fontWeight: 700 }}>{p.unPorPedido}</b>
+                <span style={{ fontSize: 10, marginTop: 3, opacity: 0.85 }}>un/pedido</span>
+              </div>
+            );
+          })()}
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span title={p.nome} style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{p.nome}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--pm-t3)", flexWrap: "wrap" }}>
@@ -556,13 +573,13 @@ export function PainelImpressao(p: PainelImpressaoProps) {
   );
 }
 
-export function BarraSelecao({ linhas, pedidos, botoes, onLimpar }: {
-  linhas: number; pedidos: number; onLimpar: () => void;
+export function BarraSelecao({ linhas, pedidos, botoes, onLimpar, rotulo = "linhas" }: {
+  linhas: number; pedidos: number; onLimpar: () => void; rotulo?: string;
   botoes: Array<{ t: string; onClick: () => void; tipo: "primario" | "contorno" | "perigo"; disabled?: boolean }>;
 }) {
   return (
     <div style={{ position: "sticky", bottom: 12, zIndex: 15, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px", padding: "10px 12px 10px 16px", borderRadius: 14, background: "var(--pm-t)", color: "var(--pm-s)", boxShadow: "var(--pm-shl)" }}>
-      <span style={{ fontSize: 13 }}><b style={{ ...MONO, fontWeight: 600 }}>{int(linhas)}</b> linhas · <b style={{ ...MONO, fontWeight: 600 }}>{int(pedidos)}</b> pedidos</span>
+      <span style={{ fontSize: 13 }}><b style={{ ...MONO, fontWeight: 600 }}>{int(linhas)}</b> {rotulo} · <b style={{ ...MONO, fontWeight: 600 }}>{int(pedidos)}</b> pedidos</span>
       <div style={{ flex: 1 }} />
       <button type="button" onClick={onLimpar} style={{ height: 40, padding: "0 12px", borderRadius: 9, border: "1px solid oklch(1 0 0 / 0.25)", background: "transparent", color: "var(--pm-s)", cursor: "pointer", fontSize: 12.5 }}>Limpar</button>
       {botoes.map((b) => (
@@ -582,5 +599,49 @@ export function BarraSelecao({ linhas, pedidos, botoes, onLimpar }: {
         </button>
       ))}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Impressões de hoje (topo): o que saiu hoje, por TAG, do registro da separação
+// ---------------------------------------------------------------------------
+
+export interface ImpressaoHoje { tag: string; hora: string; sku: string | null; etiquetas: number; quem: string | null; forcada: boolean; vazias: number }
+
+export function ImpressoesHoje({ itens, carregando }: { itens: ImpressaoHoje[]; carregando: boolean }) {
+  const [aberto, setAberto] = useState(false);
+  const total = itens.reduce((a, i) => a + i.etiquetas, 0);
+  const comAlerta = itens.some((i) => i.forcada || (i.etiquetas === 0 && i.vazias > 0));
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button type="button" className="hover:bg-[var(--pm-s2)]" style={{ display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 12px", borderRadius: 10, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 12.5, color: "var(--pm-t2)" }}>
+          Impressões de hoje
+          <span style={{ ...MONO, fontSize: 11, fontWeight: 600, padding: "0 6px", borderRadius: 8, background: comAlerta ? "var(--pm-ams)" : "var(--pm-s2)", color: comAlerta ? "var(--pm-am)" : "var(--pm-t2)" }}>{itens.length}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="pm-ui" style={{ width: 380, maxWidth: "calc(100vw - 24px)", padding: 0, borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", boxShadow: "var(--pm-shl)", color: "var(--pm-t)" }}>
+        <div style={{ display: "flex", flexDirection: "column", padding: "12px 14px", borderBottom: "1px solid var(--pm-b)" }}>
+          <b style={{ fontSize: 14, fontWeight: 600 }}>Impressões de hoje</b>
+          <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>{itens.length} TAGs · {int(total)} etiquetas enviadas à impressora</span>
+        </div>
+        <div style={{ maxHeight: 420, overflow: "auto" }}>
+          {carregando && <div style={{ padding: 14, fontSize: 12, color: "var(--pm-t3)" }}>Lendo…</div>}
+          {!carregando && itens.length === 0 && <div style={{ padding: 14, fontSize: 12, color: "var(--pm-t3)" }}>Nada impresso hoje ainda.</div>}
+          {itens.map((i) => (
+            <div key={i.tag} style={{ display: "grid", gridTemplateColumns: "44px minmax(0,1fr) auto", gap: 8, alignItems: "center", padding: "7px 14px", borderBottom: "1px solid var(--pm-b)", fontSize: 12 }}>
+              <span style={{ ...MONO, fontWeight: 600 }}>{i.hora}</span>
+              <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ ...MONO, fontWeight: 600 }}>{i.tag}{i.sku ? <span style={{ fontWeight: 400, color: "var(--pm-t3)" }}> · SKU {i.sku}</span> : null}</span>
+                <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>{i.quem ?? "—"}{i.forcada ? " · reimpressão forçada" : ""}</span>
+              </span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap", color: i.forcada ? "var(--pm-am)" : i.etiquetas > 0 ? "var(--pm-g)" : "var(--pm-t3)" }}>
+                {i.etiquetas > 0 ? `${i.etiquetas} etiqueta${i.etiquetas === 1 ? "" : "s"}` : "nada novo"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

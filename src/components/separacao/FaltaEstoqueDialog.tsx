@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, PackageX, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { EXTERNAL_PUBLISHABLE_KEY, EXTERNAL_URL, supabaseExternal } from "@/integrations/supabase/external-client";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { cn } from "@/lib/utils";
+import { VisualNovoSep, DialogoPm, BotaoPm, CaixaPm, OpcaoPm, MarcaPm } from "@/components/separacao/ui/dialogos";
 
 // ============================================================================
 // Reportar falta de estoque — diálogo de confirmação (decisão do dono, 17/set):
@@ -161,6 +162,7 @@ export function FaltaEstoqueDialog({ alvo, onClose, onFeito, por }: {
   por: string | null;
 }) {
   const aberto = alvo != null;
+  const novo = useContext(VisualNovoSep);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erroPreview, setErroPreview] = useState<string | null>(null);
@@ -236,6 +238,59 @@ export function FaltaEstoqueDialog({ alvo, onClose, onFeito, por }: {
     } finally {
       setEnviando(false);
     }
+  }
+
+  if (novo) {
+    const hora = new Date().toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }).replace(":", "h");
+    const okTxt = zerarEfetivo ? `Reportar e zerar${ehKit && escolhido ? ` ${escolhido}` : ""} no Tiny` : "Reportar falta";
+    return (
+      <DialogoPm
+        aberto={aberto}
+        onFechar={() => { if (!enviando) onClose(); }}
+        kicker={`Falta de estoque${ehKit ? " · kit" : ""} · Tiny lido agora, ${hora}`}
+        titulo={preview?.sku ? `Reportar falta: ${preview.nome ?? ""} (${preview.sku})` : "Reportar falta de estoque"}
+        rodape={<>
+          <BotaoPm onClick={onClose} disabled={enviando}>Cancelar</BotaoPm>
+          <BotaoPm tipo="primario" disabled={!podeConfirmar} onClick={() => void confirmar()}>
+            {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{okTxt}
+          </BotaoPm>
+        </>}
+      >
+        {carregando && <span style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--pm-t2)" }}><Loader2 className="h-4 w-4 animate-spin" /> Lendo o estoque no Tiny…</span>}
+        {erroPreview && <CaixaPm tom="r">Não deu para preparar o reporte: {erroPreview}</CaixaPm>}
+        {preview && (
+          <>
+            <CaixaPm>
+              {alvo?.rotulo} · {preview.pedidos} pedido(s) · {preview.unidades} un{ehKit ? " · kit" : ""}
+              {!ehKit && candidatoEscolhido && <><br />Depósito Geral no Tiny: <b>{fmtGeral(candidatoEscolhido.geral, candidatoEscolhido.erro).replace("Geral: ", "")}</b></>}
+            </CaixaPm>
+            {preview.aviso && <span style={{ fontSize: 12.5, color: "var(--pm-am)" }}>{preview.aviso}</span>}
+            {ehKit && zerarEfetivo && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Qual componente do kit faltou?</span>
+                {preview.candidatos.map((c) => (
+                  <OpcaoPm
+                    key={c.sku}
+                    marcada={escolhido === c.sku}
+                    onClick={() => setEscolhido(c.sku)}
+                    t={<>{c.nome ?? c.sku} <span style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--pm-t3)" }}>({c.sku}{c.quantidade != null ? ` · ${c.quantidade}× no kit` : ""})</span></>}
+                    sub={fmtGeral(c.geral, c.erro)}
+                    subCor={c.geral && c.geral.saldo > 0 ? "var(--pm-t3)" : "var(--pm-r)"}
+                  />
+                ))}
+                {preview.candidatos.length === 0 && <span style={{ fontSize: 12, color: "var(--pm-r)" }}>Kit sem composição cadastrada no Tiny: não há o que zerar.</span>}
+              </div>
+            )}
+            <MarcaPm marcado={zerarEfetivo} onClick={() => { if (podeZerar) alternarZerar(!zerar); }}>
+              Zerar no Tiny (depósito Geral)
+              {!ehKit && candidatoEscolhido?.geral && <span style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--pm-t3)", marginLeft: 6 }}>{candidatoEscolhido.geral.saldo} → 0</span>}
+            </MarcaPm>
+            <span style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>Os pedidos ganham o marcador FALTA ESTOQUE no Tiny e o aviso vai ao Discord. A Shopee é conferida ~10 min depois; dá para desfazer em “Estoque voltou”.</span>
+            {zerarEfetivo && <CaixaPm tom="a"><span style={{ fontSize: 12.5, fontWeight: 500 }}>Zerar escreve no Tiny: os outros canais deixam de vender este SKU até a entrada de estoque.</span></CaixaPm>}
+          </>
+        )}
+      </DialogoPm>
+    );
   }
 
   return (

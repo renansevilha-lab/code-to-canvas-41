@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { StickyNote } from "lucide-react";
 
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { pedirTextoSep } from "@/components/separacao/ui/dialogos";
 
 // ============ Observações da equipe (pedido / linha / lote) ============
 // Anotação de resolução de problema (ex.: falta de estoque — "comprado,
@@ -33,10 +34,15 @@ export async function editarObsSeparacao(
   escopo: "pedido" | "linha" | "lote", chave: string,
   atual: string | undefined, autor: string | null,
 ): Promise<boolean> {
-  const texto = window.prompt(
-    "Observação — visível para toda a equipe na fila. Deixe vazio para remover.",
-    atual ?? "",
-  );
+  // visual novo: diálogo desenhado; antigo: window.prompt (pedirTextoSep decide)
+  const texto = await pedirTextoSep({
+    kicker: "Observação",
+    titulo: escopo === "pedido" ? "Observação do pedido" : escopo === "lote" ? "Observação do lote" : "Observação da linha",
+    atual,
+    placeholder: "Ex.: embalar com saco duplo",
+    ajuda: "Visível para toda a equipe na fila, no lote e no Monitoramento. Deixe vazio para remover.",
+    okTxt: "Salvar observação",
+  });
   if (texto === null) return false;
   const t = texto.trim();
   if (!t) {
