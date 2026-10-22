@@ -1,6 +1,9 @@
 // ============================================================================
-// Edge Function: fulfillment-sync v5
+// Edge Function: fulfillment-sync v5.1
 // ----------------------------------------------------------------------------
+// v5.1 (21/out/2026) — CORS de volta. A v4 saiu sem nenhum cabeçalho CORS: o cron seguia funcionando,
+//   mas o botão de sincronizar do Fulfillment dava "Failed to fetch" nos quatro módulos (o navegador
+//   recebe o OPTIONS sem permissão e nem manda o POST). Toda resposta leva o CORS (CLAUDE.md §6.2).
 // v5 (19/out/2026, pedido do dono) — ESTOQUE DO FULL DO ML SEMPRE INTEIRO. A fase de stock lia 120
 //   anúncios por rodada, um por vez, e o cron roda 2×/dia: cada anúncio era relido a cada ~1,5 dia
 //   (o 14560 aparecia com 0 no Full tendo vendido 6 depois da última leitura). Agora cada rodada lê
@@ -142,7 +145,21 @@ async function transitoPorEnvios(token: string, mkt: string, ate: number): Promi
   return { porSku, envios, antigos, detalhe };
 }
 
+const CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
 serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  const r = await tratar(req);
+  const h = new Headers(r.headers);
+  for (const [k, v] of Object.entries(CORS)) h.set(k, v);
+  return new Response(r.body, { status: r.status, headers: h });
+});
+
+async function tratar(req: Request): Promise<Response> {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const url = new URL(req.url);
   const modulo = url.searchParams.get("modulo") || "";
@@ -555,4 +572,4 @@ serve(async (req: Request) => {
   }
 
   return Response.json({ modulos: ["amazon", "ml (limite)", "shopee (loja)"], nota: "sincroniza estoque_fulfillment" });
-});
+}
