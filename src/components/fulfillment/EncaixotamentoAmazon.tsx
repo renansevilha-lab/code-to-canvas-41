@@ -29,7 +29,7 @@ const dataBR = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.sl
 /** Por produto: os formatos de volume (unidades por volume × medidas × peso) e quantos de cada; caixas com mais de um
  *  produto ficam à parte. */
 function montarVolumes(caixas: CaixaEnc[]) {
-  const porMsku = new Map<string, Map<string, { volumes: number; un: number; c: number | null; l: number | null; a: number | null; kg: number | null }>>();
+  const porMsku = new Map<string, Map<string, { volumes: number; un: number; c: number | null; l: number | null; a: number | null; kg: number | null; nomes: Set<string> }>>();
   const mistas = new Map<string, { volumes: number; cx: CaixaEnc }>();
   for (const cx of caixas) {
     const n = Math.max(1, cx.qtd || 1);
@@ -43,8 +43,10 @@ function montarVolumes(caixas: CaixaEnc[]) {
     const it = cx.itens[0];
     const formatos = porMsku.get(it.msku) ?? new Map();
     const k = [it.q, cx.c, cx.l, cx.a, cx.kg].join("|");
-    const f = formatos.get(k) ?? { volumes: 0, un: it.q, c: cx.c, l: cx.l, a: cx.a, kg: cx.kg };
+    const f = formatos.get(k) ?? { volumes: 0, un: it.q, c: cx.c, l: cx.l, a: cx.a, kg: cx.kg, nomes: new Set<string>() };
     f.volumes += n;
+    // o nome do modelo da caixa vem repetido em cada caixa (e com espaço no fim): guarda uma vez só
+    if (cx.nome?.trim()) f.nomes.add(cx.nome.trim());
     formatos.set(k, f);
     porMsku.set(it.msku, formatos);
   }
@@ -174,7 +176,7 @@ export function EncaixotamentoAmazon({ numero }: { numero: string }) {
                   {formatos.map((f, k) => (
                     <div key={k} className="text-[14px]">
                       <b className="tabular-nums">{formatNumber(f.volumes)} {f.volumes === 1 ? "volume" : "volumes"}</b> com <b>{f.un} un</b> cada
-                      <span className="text-muted-foreground"> · {f.c ?? "?"}×{f.l ?? "?"}×{f.a ?? "?"} cm · {f.kg != null ? `${formatNumber(f.kg)} kg` : "peso ?"}</span>
+                      <span className="text-muted-foreground">{f.nomes.size ? ` · ${[...f.nomes].join(" / ")}` : ""} · {f.c ?? "?"}×{f.l ?? "?"}×{f.a ?? "?"} cm · {f.kg != null ? `${formatNumber(f.kg)} kg` : "peso ?"}</span>
                     </div>
                   ))}
                   {especial.length > 0 && (
