@@ -1181,6 +1181,17 @@ funil, cartões com TAG grande, peso por pedido (nome × un), un/pedido colorido
 "Desfazer" de 8 s (`monitoramento_finalizar_tag(p_desfazer)`). Histórico: lógica em `useHistorico()`;
 etapas em fila com hora/quem e eventos forçados (`detalhe.forcar/forcado`) em vermelho + filtro "Só forçados". **Não conferido na tela** (pede login).
 
+**Fulfillment › dentro do envio (Packing) no design (22/out, fase 2 do Fulfillment):** `src/components/fulfillment/ui/Packing.tsx`
+(`PackingNovo`, só apresentação; o `PackingEnvio` de `routes/fulfillment.tsx` segue com toda a lógica e passa os handlers;
+a tela antiga fica como reserva na `ProtecaoPacking`). Topo fixo (top 69): separado X de Y, 4 passos (contar → etiquetas →
+enviado → Tiny) e UM botão de próximo passo; cartões por item (−/+/digitado, Completar, etiqueta por SKU, "sem cadastro no
+Tiny" = SKU sem `id_tiny`, clique no SKU corrige); lateral com impressora, documentos (exclusão confirmada na linha),
+observações, recebimento, etapa/data/adicionar item/atualizar por PDF/excluir. Imprimir as etiquetas de volume com tudo contado
+move o envio para `pronto_envio`; "Marcar enviado" no novo pede confirmação (lista do que falta) e FICA no envio. As
+confirmações usam `confirmarSep` (agora com `lista`, `semCancelar`, `corKicker` e `temHostSep()`); lançar no Tiny mostra a
+prévia (transfere / fica de fora) e depois o resultado. Na Reposição: ordenar por coluna (clique no título; 3º clique volta à
+ordem do motor), filtro Empresa/Marketplace fixo ao rolar e segmento escolhido em roxo cheio (também na Separação).
+
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
 Rota `/ponto` (módulo `galpao`), quiosque: a pessoa escolhe o nome, digita a
