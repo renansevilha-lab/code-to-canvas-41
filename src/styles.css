@@ -304,14 +304,15 @@
    Mesmos valores do handoff; prefixo --pm- para não colidir com o shadcn.
    Claro/escuro seguem a classe .dark do app. */
 .pm-ui {
-  --pm-bg: oklch(0.966 0.003 264);
+  /* contraste reforçado em 22/out (pedido do dono: cores muito parecidas) */
+  --pm-bg: oklch(0.955 0.004 264);
   --pm-s: oklch(1 0 0);
-  --pm-s2: oklch(0.968 0.004 285);
-  --pm-b: oklch(0.912 0.006 285);
-  --pm-bs: oklch(0.86 0.008 285);
-  --pm-t: oklch(0.23 0.014 285);
-  --pm-t2: oklch(0.44 0.014 285);
-  --pm-t3: oklch(0.55 0.012 285);
+  --pm-s2: oklch(0.945 0.006 285);
+  --pm-b: oklch(0.87 0.008 285);
+  --pm-bs: oklch(0.79 0.01 285);
+  --pm-t: oklch(0.21 0.014 285);
+  --pm-t2: oklch(0.38 0.014 285);
+  --pm-t3: oklch(0.47 0.012 285);
   --pm-a: oklch(0.536 0.183 289);
   --pm-as: oklch(0.955 0.025 289);
   --pm-at: oklch(0.47 0.18 289);
@@ -324,8 +325,8 @@
   --pm-am: oklch(0.52 0.11 65);
   --pm-ams: oklch(0.962 0.04 85);
   --pm-gr: oklch(0.95 0.004 285);
-  --pm-sk: oklch(0.935 0.005 285);
-  --pm-bar: oklch(0.88 0.01 285);
+  --pm-sk: oklch(0.91 0.007 285);
+  --pm-bar: oklch(0.84 0.012 285);
   --pm-st1: oklch(0.7 0.14 70);
   --pm-st2: oklch(0.6 0.14 245);
   --pm-st3: oklch(0.58 0.15 320);
@@ -337,7 +338,7 @@
   --pm-spx: oklch(0.58 0.15 255);
   --pm-ml: oklch(0.78 0.15 95);
   --pm-tt: oklch(0.42 0.02 285);
-  --pm-sh: 0 1px 2px 0 oklch(0.2 0.02 264 / 0.05);
+  --pm-sh: 0 1px 2px 0 oklch(0.2 0.02 264 / 0.09);
   --pm-shl: 0 12px 32px -8px oklch(0.2 0.02 264 / 0.22), 0 2px 6px -2px oklch(0.2 0.02 264 / 0.08);
   color: var(--pm-t);
   font-size: 13px;
@@ -347,12 +348,12 @@
 .dark .pm-ui {
   --pm-bg: oklch(0.16 0.008 285);
   --pm-s: oklch(0.2 0.009 285);
-  --pm-s2: oklch(0.235 0.01 285);
-  --pm-b: oklch(0.29 0.012 285);
-  --pm-bs: oklch(0.37 0.014 285);
-  --pm-t: oklch(0.95 0.004 285);
-  --pm-t2: oklch(0.78 0.01 285);
-  --pm-t3: oklch(0.65 0.012 285);
+  --pm-s2: oklch(0.25 0.01 285);
+  --pm-b: oklch(0.33 0.012 285);
+  --pm-bs: oklch(0.42 0.014 285);
+  --pm-t: oklch(0.96 0.004 285);
+  --pm-t2: oklch(0.82 0.01 285);
+  --pm-t3: oklch(0.7 0.012 285);
   --pm-a: oklch(0.66 0.17 289);
   --pm-as: oklch(0.29 0.07 289);
   --pm-at: oklch(0.82 0.11 289);

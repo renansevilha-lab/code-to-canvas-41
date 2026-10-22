@@ -282,7 +282,7 @@ export function PackingNovo(p: PackingProps) {
             {passos.map((x) => (
               <div key={x.nome} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <i style={{ height: 4, borderRadius: 2, background: x.bar }} />
-                <span style={{ fontSize: 11, color: x.cor, fontWeight: x.fw, whiteSpace: "nowrap" }}>{x.nome}</span>
+                <span style={{ fontSize: 11, lineHeight: 1.25, color: x.cor, fontWeight: x.fw, textWrap: "balance" }}>{x.nome}</span>
               </div>
             ))}
           </div>
@@ -584,7 +584,8 @@ function CartaoItem({ it, foto, semCad, temEtiqueta, imprimindo, onSet, onCorrig
           </span>
         )}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <button type="button" aria-label="Menos um" disabled={it.qtd_separada <= 0} onClick={() => onSet(it.qtd_separada - 1)} style={{ ...btnQuad(44), color: "var(--pm-t)", opacity: it.qtd_separada <= 0 ? 0.45 : 1 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round"><path d="M5 12h14" /></svg>
         </button>
@@ -598,7 +599,8 @@ function CartaoItem({ it, foto, semCad, temEtiqueta, imprimindo, onSet, onCorrig
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round"><path d="M5 12h14" /><path d="M12 5v14" /></svg>
         </button>
         <span className={MONO} style={{ fontSize: 13, color: "var(--pm-t2)", whiteSpace: "nowrap" }}>de {int(it.qtd_planejada)}</span>
-        <div style={{ flex: 1 }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
         {!ok && it.qtd_planejada > 0 && (
           <button type="button" onClick={() => onSet(it.qtd_planejada)}
             style={{ height: 44, padding: "0 12px", borderRadius: 10, border: "1px solid var(--pm-a)", background: "var(--pm-s)", color: "var(--pm-at)", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
@@ -610,6 +612,7 @@ function CartaoItem({ it, foto, semCad, temEtiqueta, imprimindo, onSet, onCorrig
           style={{ ...btnQuad(44), opacity: temEtiqueta ? 1 : 0.4, cursor: temEtiqueta ? "pointer" : "default" }}>
           {imprimindo ? <Spin /> : <IcImp s={17} />}
         </button>
+        </div>
       </div>
     </div>
   );
