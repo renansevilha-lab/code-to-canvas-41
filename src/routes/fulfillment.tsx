@@ -43,6 +43,7 @@ import { EncaixotamentoAmazon } from "@/components/fulfillment/EncaixotamentoAma
 import { PackingNovo, ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
 import { NovoEnvioNovo } from "@/components/fulfillment/ui/NovoEnvio";
 import { ReposicaoNova } from "@/components/fulfillment/ui/Reposicao";
+import { InventarioNovo } from "@/components/fulfillment/ui/Inventario";
 import { confirmarSep, temHostSep } from "@/components/separacao/ui/dialogos";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -271,16 +272,24 @@ function FulfillmentPage() {
   const invQuery = useQuery({
     queryKey: ["fulfillment", "inventario", mkt],
     queryFn: async (): Promise<InventarioRow[]> => {
-      let query = supabaseExternal
-        .from("estoque_fulfillment")
-        .select(
-          "marketplace,shop_id,warehouse,sku_marketplace,sku,titulo,sellable,reserved,in_transit,unsellable,atualizado_em",
-        )
-        .order("sellable", { ascending: false });
-      if (mkt !== "todos") query = query.eq("marketplace", mkt);
-      const { data, error } = await query;
-      if (error) throw error;
-      return (data ?? []) as InventarioRow[];
+      // paginado: o PostgREST corta em 1.000 linhas (eram 899 em 22/out e crescendo)
+      const todas: InventarioRow[] = [];
+      for (let de = 0; ; de += 1000) {
+        let query = supabaseExternal
+          .from("estoque_fulfillment")
+          .select(
+            "marketplace,shop_id,warehouse,sku_marketplace,sku,titulo,sellable,reserved,in_transit,unsellable,atualizado_em",
+          )
+          .order("sellable", { ascending: false })
+          .order("sku_marketplace")
+          .range(de, de + 999);
+        if (mkt !== "todos") query = query.eq("marketplace", mkt);
+        const { data, error } = await query;
+        if (error) throw error;
+        todas.push(...((data ?? []) as InventarioRow[]));
+        if ((data ?? []).length < 1000) break;
+      }
+      return todas;
     },
     enabled: tab === "inventario",
   });
@@ -398,6 +407,8 @@ function FulfillmentPage() {
             error={(invQuery.error as Error | null)?.message ?? null}
             busca={q}
             tiny={tinyQuery.data}
+            mkt={mkt}
+            emp={search.emp}
           />
         )}
 
@@ -885,12 +896,16 @@ function InventarioTab({
   error,
   busca,
   tiny,
+  mkt,
+  emp,
 }: {
   rows: InventarioRow[];
   loading: boolean;
   error: string | null;
   busca: string;
   tiny?: Map<string, TinyDisp>;
+  mkt: string;
+  emp: string;
 }) {
   // quando o Tiny foi lido por último (a leitura roda de manhã, 05h–08h)
   const tinyLidoEm = useMemo(() => {
@@ -939,6 +954,15 @@ function InventarioTab({
     );
   }
 
+  // visual novo (design "Inventário"); a tabela antiga fica de reserva se o novo quebrar
+  const filtroBusca = busca.trim().toLowerCase();
+  return (
+    <ProtecaoPacking antigo={antigo()}>
+      <InventarioNovo rows={filtroBusca ? filtradas : rows} loading={loading} mkt={mkt} emp={emp} fotos={fotos} tiny={tiny} />
+    </ProtecaoPacking>
+  );
+
+  function antigo() {
   return (
     <div className="flex flex-col gap-4">
       <section className="grid grid-cols-2 md:grid-cols-4 gap-[14px]">
@@ -1104,6 +1128,7 @@ function InventarioTab({
       </Card>
     </div>
   );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

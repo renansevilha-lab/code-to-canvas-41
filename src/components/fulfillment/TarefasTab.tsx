@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Archive, ArchiveRestore, CalendarClock, Check, ChevronLeft, ChevronRight, ClipboardCheck,
@@ -26,6 +26,7 @@ import { formatNumber } from "@/lib/format";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { FotosTarefa, apagarFotosTarefa, enviarFotosTarefa } from "./FotosTarefa";
+import { ProtecaoPacking } from "./ui/Packing";
 
 // ============================================================================
 // Fulfillment › Tarefas (06/out/2026, pedido do dono): quadro A fazer /
@@ -180,7 +181,7 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
     { rotulo: "Feitas", valor: contagem("feito").length, cor: "#0E8A5F" },
   ];
 
-  return (
+  const antigo = (
     <div className="flex flex-col gap-4">
       {!arquivadas && (
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
@@ -303,6 +304,235 @@ export function TarefasTab({ ativo }: { ativo: boolean }) {
         />
       )}
       {abertaId && <DetalheTarefa id={abertaId} onFechar={() => setAbertaId(null)} />}
+    </div>
+  );
+
+  return (
+    <ProtecaoPacking antigo={antigo}>
+      <QuadroNovo
+        todas={q.data ?? []} lista={lista} carregando={q.isLoading} erro={q.error ? (q.error as Error).message : null} atualizando={q.isFetching}
+        filtroTipo={filtroTipo} setFiltroTipo={setFiltroTipo} filtroResp={filtroResp} setFiltroResp={setFiltroResp} responsaveis={responsaveis}
+        arquivadas={arquivadas} setArquivadas={setArquivadas}
+        onAtualizar={() => void q.refetch()} onNova={() => setNova(true)} onAbrir={setAbertaId} onMover={(t, para) => void mover(t, para)}
+      />
+      {nova && (
+        <NovaTarefa
+          onFechar={() => setNova(false)}
+          onCriada={(id) => { setNova(false); setAbertaId(id); void qc.invalidateQueries({ queryKey: ["fulfillment", "tarefas"] }); }}
+          criadoPor={perfil?.nome ?? "app"}
+        />
+      )}
+      {abertaId && <DetalheTarefa id={abertaId} onFechar={() => setAbertaId(null)} />}
+    </ProtecaoPacking>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visual novo (Claude Design, Fulfillment-Tarefas e Fulfillment-Contagem, 22/out/2026).
+// Só apresentação: os dados, o mover e os diálogos são os de sempre. Tokens --pm-* (.pm-ui).
+// Se quebrar, a tela antiga aparece no lugar (ProtecaoPacking).
+
+const MONO_T = "pm-mono";
+const iniciais = (nome: string | null | undefined) =>
+  (nome ?? "?").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().slice(0, 2).toUpperCase() || "?";
+const segBtn = (on: boolean): CSSProperties => ({
+  border: 0, cursor: "pointer", height: 28, padding: "0 11px", borderRadius: 6, fontSize: 12.5,
+  fontWeight: on ? 600 : 500, background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t2)",
+});
+
+function IcTipo({ tipo }: { tipo: Tipo }) {
+  const p = { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (tipo === "contagem") return <svg {...p}><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M12 11h4" /><path d="M12 16h4" /><path d="M8 11h.01" /><path d="M8 16h.01" /></svg>;
+  if (tipo === "organizacao") return <svg {...p}><path d="m12 2 10 5-10 5L2 7z" /><path d="m2 17 10 5 10-5" /><path d="m2 12 10 5 10-5" /></svg>;
+  return <svg {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /></svg>;
+}
+
+function QuadroNovo({ todas, lista, carregando, erro, atualizando, filtroTipo, setFiltroTipo, filtroResp, setFiltroResp, responsaveis,
+  arquivadas, setArquivadas, onAtualizar, onNova, onAbrir, onMover }: {
+  todas: Tarefa[]; lista: Tarefa[]; carregando: boolean; erro: string | null; atualizando: boolean;
+  filtroTipo: "todos" | Tipo; setFiltroTipo: (t: "todos" | Tipo) => void;
+  filtroResp: string; setFiltroResp: (r: string) => void; responsaveis: string[];
+  arquivadas: boolean; setArquivadas: (v: boolean) => void;
+  onAtualizar: () => void; onNova: () => void; onAbrir: (id: string) => void; onMover: (t: Tarefa, para: Status) => void;
+}) {
+  const [drag, setDrag] = useState<string | null>(null);
+  const [over, setOver] = useState<Status | null>(null);
+  const [verFeitas, setVerFeitas] = useState(false);
+  const abertas = (s: Status) => lista.filter((t) => t.status === s);
+  const aFazer = todas.filter((t) => t.status === "a_fazer");
+  const fazendo = todas.filter((t) => t.status === "fazendo");
+  const atrasadas = todas.filter((t) => t.atrasada && t.status !== "feito").length;
+  const feitas = todas.filter((t) => t.status === "feito").length;
+  const nomesFazendo = [...new Set(fazendo.map((t) => t.responsavel).filter(Boolean) as string[])];
+  const kpis = [
+    { label: "A fazer", v: aFazer.length, cor: "var(--pm-t)", sub: `${aFazer.filter((t) => !t.prazo).length} sem prazo` },
+    { label: "Fazendo", v: fazendo.length, cor: "var(--pm-t)", sub: nomesFazendo.length ? nomesFazendo.join(nomesFazendo.length === 2 ? " e " : ", ") : "ninguém agora" },
+    { label: "Atrasadas", v: atrasadas, cor: atrasadas ? "var(--pm-r)" : "var(--pm-t)", sub: "prazo vencido" },
+    { label: "Feitas", v: feitas, cor: "var(--pm-t)", sub: "concluídas, no quadro" },
+  ];
+  const semResp = todas.some((t) => !t.responsavel);
+  const pessoas = [
+    { id: "todos", nome: "Todos", ini: "Todos" },
+    ...responsaveis.map((r) => ({ id: r, nome: r, ini: iniciais(r) })),
+    ...(semResp ? [{ id: "_sem", nome: "Sem responsável", ini: "—" }] : []),
+  ];
+
+  const card = (t: Tarefa, idx: number) => {
+    const contagem = t.tipo === "contagem";
+    const total = contagem ? n(t.n_itens) : n(t.n_checklist);
+    const feitos = contagem ? n(t.n_contados) : n(t.n_checklist_feitos);
+    const atras = t.atrasada && t.status !== "feito";
+    const prog = !total ? "" : contagem
+      ? `${feitos} de ${total} SKUs contados${n(t.n_divergentes) > 0 ? ` · ${t.n_divergentes} ${n(t.n_divergentes) === 1 ? "divergência" : "divergências"}` : ""}${t.ajuste_em ? " · ajuste lançado" : ""}`
+      : `${feitos} de ${total} itens do checklist`;
+    return (
+      <div key={t.id} draggable={!arquivadas}
+        onDragStart={(e) => { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move"; setDrag(t.id); }}
+        onDragEnd={() => { setDrag(null); setOver(null); }}
+        style={{ background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 12, boxShadow: "var(--pm-sh)", padding: 10, display: "flex", flexDirection: "column", gap: 7, cursor: arquivadas ? "default" : "grab", opacity: drag === t.id ? 0.45 : 1 }}>
+        <button type="button" onClick={() => { if (!drag) onAbrir(t.id); }}
+          style={{ border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column", gap: 7, color: "inherit" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 24, height: 24, borderRadius: 7, background: "var(--pm-s2)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)", flex: "none" }}><IcTipo tipo={t.tipo} /></span>
+            <span style={{ fontSize: 11.5, color: "var(--pm-t3)", fontWeight: 500 }}>{tipoDe(t.tipo).label}</span>
+            <div style={{ flex: 1 }} />
+            {contagem && t.contagem_cega && <span style={{ fontSize: 10.5, fontWeight: 600, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--pm-bs)", color: "var(--pm-t2)" }}>cega</span>}
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, textWrap: "pretty" }}>{t.titulo}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ width: 24, height: 24, borderRadius: "50%", background: "var(--pm-s2)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 600, color: "var(--pm-t2)", flex: "none" }}>{t.responsavel ? iniciais(t.responsavel) : "—"}</span>
+            <span style={{ fontSize: 12, color: "var(--pm-t2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.responsavel ?? "sem responsável"}</span>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 11.5, fontWeight: atras ? 600 : 400, color: atras ? "var(--pm-r)" : "var(--pm-t3)", whiteSpace: "nowrap" }}>
+              {t.status === "feito" && t.concluido_em ? `feita ${ddmm(t.concluido_em)}` : t.prazo ? `prazo ${ddmm(t.prazo)}${atras ? " · atrasada" : ""}` : "sem prazo"}
+            </span>
+          </div>
+          {!!total && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ height: 5, borderRadius: 3, background: "var(--pm-sk)", overflow: "hidden" }}>
+                <i style={{ display: "block", height: "100%", width: `${Math.min(100, (feitos / total) * 100)}%`, background: feitos >= total ? "var(--pm-g)" : "var(--pm-a)" }} />
+              </div>
+              <span style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>{prog}</span>
+            </div>
+          )}
+        </button>
+        {!arquivadas && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" onClick={() => { if (idx > 0) onMover(t, STATUS[idx - 1].id); }} disabled={idx === 0} title="Voltar etapa" aria-label="Voltar etapa"
+              style={{ width: 34, height: 34, borderRadius: 8, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: idx === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: idx === 0 ? 0.4 : 1, color: "var(--pm-t2)" }}>
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {idx < 2 && (
+              <button type="button" onClick={() => onMover(t, STATUS[idx + 1].id)}
+                style={{ flex: 1, height: 34, borderRadius: 8, border: "1px solid var(--pm-bs)", background: "var(--pm-s2)", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--pm-t)" }}>
+                {idx === 0 ? "Começar ›" : "Concluir ›"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 12, color: "var(--pm-t)", fontSize: 13, lineHeight: 1.4, fontVariantNumeric: "tabular-nums" }}>
+      {!arquivadas && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,160px),1fr))", gap: 10 }}>
+          {kpis.map((k) => (
+            <div key={k.label} style={{ background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderRadius: 14, boxShadow: "var(--pm-sh)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--pm-t2)" }}>{k.label}</span>
+              <span className={MONO_T} style={{ fontSize: 21, fontWeight: 600, color: carregando ? "var(--pm-t3)" : k.cor }}>{carregando ? "—" : k.v}</span>
+              <span style={{ fontSize: 11.5, color: "var(--pm-t3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.sub}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+        <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", borderRadius: 8, flexWrap: "wrap" }}>
+          {([["todos", "Todas"], ["contagem", "Contagem"], ["organizacao", "Organização"], ["outro", "Outra"]] as const).map(([id, nome]) => (
+            <button key={id} type="button" onClick={() => setFiltroTipo(id)} style={segBtn(filtroTipo === id)}>{nome}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+          {pessoas.map((p) => {
+            const on = filtroResp === p.id;
+            return (
+              <button key={p.id} type="button" onClick={() => setFiltroResp(p.id)} title={p.nome}
+                style={{ height: 30, minWidth: 30, padding: "0 8px", borderRadius: 15, border: `1.5px solid ${on ? "var(--pm-a)" : "var(--pm-bs)"}`, background: on ? "var(--pm-a)" : "var(--pm-s)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: on ? "var(--pm-oa)" : "var(--pm-t2)" }}>
+                {p.ini}
+              </button>
+            );
+          })}
+        </div>
+        <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>Tarefas são do galpão: o filtro de empresa e marketplace não se aplica.</span>
+        <div style={{ flex: 1 }} />
+        <button type="button" onClick={() => setArquivadas(!arquivadas)}
+          style={{ height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 12.5, color: "var(--pm-t2)", display: "flex", alignItems: "center", gap: 6 }}>
+          {arquivadas ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}{arquivadas ? "Voltar ao quadro" : "Arquivadas"}
+        </button>
+        <button type="button" onClick={onAtualizar} disabled={atualizando} title="Atualizar" aria-label="Atualizar"
+          style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--pm-t2)" }}>
+          <RefreshCw className={cn("h-4 w-4", atualizando && "animate-spin")} />
+        </button>
+        <button type="button" onClick={onNova}
+          style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 9, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+          <Plus className="h-4 w-4" /> Nova tarefa
+        </button>
+      </div>
+
+      {erro ? (
+        <div style={{ padding: 14, borderRadius: 12, background: "var(--pm-rs)", color: "var(--pm-r)", fontSize: 12.5, fontWeight: 500 }}>{erro}</div>
+      ) : carregando ? (
+        <div style={{ height: 360, borderRadius: 14, background: "var(--pm-s2)", border: "1px solid var(--pm-b)" }} />
+      ) : arquivadas ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,280px),1fr))", gap: 10, alignItems: "start" }}>
+          {lista.length === 0
+            ? <span style={{ fontSize: 12.5, color: "var(--pm-t3)" }}>Nenhuma tarefa arquivada.</span>
+            : lista.map((t) => card(t, Math.max(0, STATUS.findIndex((s) => s.id === t.status))))}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,280px),1fr))", gap: 10, alignItems: "start" }}>
+          {STATUS.map((s, idx) => {
+            const cs = abertas(s.id);
+            const ehFeito = s.id === "feito";
+            const alvo = !!drag && over === s.id;
+            return (
+              <div key={s.id}
+                onDragOver={(e) => { e.preventDefault(); if (over !== s.id) setOver(s.id); }}
+                onDragLeave={() => { if (over === s.id) setOver(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain") || drag;
+                  setDrag(null); setOver(null);
+                  const t = lista.find((x) => x.id === id);
+                  if (t) onMover(t, s.id);
+                }}
+                style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 14, background: alvo ? "var(--pm-as)" : "var(--pm-s2)", border: `1px ${alvo ? "dashed" : "solid"} ${alvo ? "var(--pm-a)" : "var(--pm-b)"}`, minHeight: 260 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "4px 4px 2px" }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{s.label}</span>
+                  <span className={MONO_T} style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>{cs.length}</span>
+                </div>
+                {ehFeito ? (
+                  <>
+                    <button type="button" onClick={() => setVerFeitas((v) => !v)} disabled={cs.length === 0}
+                      style={{ textAlign: "left", cursor: cs.length ? "pointer" : "default", padding: 10, borderRadius: 12, border: "1px dashed var(--pm-bs)", background: "transparent", display: "flex", flexDirection: "column", gap: 2, color: "inherit" }}>
+                      <span className={MONO_T} style={{ fontSize: 15, fontWeight: 600 }}>{cs.length}</span>
+                      <span style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>{cs.length === 1 ? "tarefa feita" : "tarefas feitas"} · arraste para cá para concluir</span>
+                      {cs.length > 0 && <span style={{ fontSize: 11.5, color: "var(--pm-at)", fontWeight: 600 }}>{verFeitas ? "Esconder ↑" : "Ver todas →"}</span>}
+                    </button>
+                    {verFeitas && cs.map((t) => card(t, idx))}
+                  </>
+                ) : cs.length === 0 ? (
+                  <div style={{ padding: "18px 10px", borderRadius: 12, border: "1px dashed var(--pm-bs)", textAlign: "center", fontSize: 12, color: "var(--pm-t3)" }}>
+                    Nenhuma tarefa{s.id === "a_fazer" ? " · clique em Nova tarefa para criar" : ""}
+                  </div>
+                ) : cs.map((t) => card(t, idx))}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -896,7 +1126,9 @@ function Contagem({ tarefa, onMudou }: { tarefa: Tarefa; onMudou: () => void }) 
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const [cega, setCega] = useState(tarefa.contagem_cega);
-  const [filtro, setFiltro] = useState<FiltroItens>("todos");
+  const [filtro, setFiltro] = useState<FiltroItens>(tarefa.status === "feito" ? "todos" : "faltam");
+  // no filtro "Faltam", o item que acabou de ser contado fica na tela até ir ao próximo
+  const [recente, setRecente] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
   const [adicionar, setAdicionar] = useState(false);
   const [novos, setNovos] = useState<Map<string, ProdutoInv>>(new Map());
@@ -969,7 +1201,165 @@ function Contagem({ tarefa, onMudou }: { tarefa: Tarefa; onMudou: () => void }) 
 
   const contados = itens.filter((i) => i.qtd_contada != null).length;
 
-  return (
+  // ── visual novo (design "Contagem"): cartões grandes para o celular, Enter vai ao próximo
+  const faltam = itens.length - contados;
+  const nDiv = itens.filter((i) => i.diferenca != null && i.diferenca !== 0).length;
+  const visNovo = itens.filter((i) =>
+    (filtro === "todos" || (filtro === "faltam" ? i.qtd_contada == null || i.id === recente : i.diferenca != null && i.diferenca !== 0)) &&
+    (!termo || i.sku.toLowerCase().includes(termo) || (i.nome ?? "").toLowerCase().includes(termo)),
+  );
+  function proximoNovo(idx: number) {
+    const prox = visNovo[idx + 1];
+    if (prox) { setRecente(prox.id); inputs.current.get(prox.id)?.focus(); } else setRecente(null);
+  }
+  const btnLinha: CSSProperties = { height: 36, padding: "0 12px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: "pointer", fontSize: 12.5, color: "var(--pm-t)", display: "flex", alignItems: "center", gap: 6 };
+  const novo = (
+    <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 10, color: "var(--pm-t)", fontSize: 13, lineHeight: 1.4, fontVariantNumeric: "tabular-nums", background: "transparent" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Contagem</span>
+        <span style={{ fontSize: 10.5, fontWeight: 600, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--pm-bs)", color: "var(--pm-t2)" }}>
+          {mostrarSistema ? "sistema visível" : "contagem cega"}
+        </span>
+        <div style={{ flex: 1 }} />
+        {tarefa.status !== "feito" && (
+          <button type="button" onClick={() => void alternarCega(!cega)} title="Contagem cega: quem conta não vê o saldo do sistema" style={btnLinha}>
+            <span style={{ width: 30, height: 18, borderRadius: 9, background: cega ? "var(--pm-bs)" : "var(--pm-a)", position: "relative", flex: "none" }}>
+              <i style={{ position: "absolute", top: 2, left: cega ? 2 : 14, width: 14, height: 14, borderRadius: "50%", background: "#fff", boxShadow: "var(--pm-sh)" }} />
+            </span>
+            Mostrar sistema
+          </button>
+        )}
+        {tarefa.status !== "feito" && (
+          <button type="button" onClick={() => setAdicionar((a) => !a)} style={btnLinha}><Plus className="h-4 w-4" /> Produtos</button>
+        )}
+        {contados > 0 && (
+          <button type="button" onClick={() => setAjuste(true)}
+            style={{ ...btnLinha, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", fontWeight: 600 }}>
+            Conferir com o Tiny e ajustar
+          </button>
+        )}
+      </div>
+
+      {adicionar && (
+        <div style={{ borderRadius: 12, border: "1px solid var(--pm-b)", background: "var(--pm-s2)", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <SeletorProdutos selecionados={novos} onChange={setNovos} jaNaTarefa={new Set(itens.map((i) => i.sku))} />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button type="button" style={btnLinha} onClick={() => { setAdicionar(false); setNovos(new Map()); }}>Cancelar</button>
+            <button type="button" disabled={novos.size === 0} onClick={() => void adicionarProdutos()}
+              style={{ ...btnLinha, border: 0, background: novos.size ? "var(--pm-a)" : "var(--pm-bs)", color: "var(--pm-oa)", fontWeight: 600 }}>
+              Adicionar {novos.size || ""}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ position: "sticky", top: 0, zIndex: 4, background: "var(--pm-s)", padding: "8px 0", display: "flex", flexDirection: "column", gap: 8, borderBottom: "1px solid var(--pm-b)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span className={MONO_T} style={{ fontSize: 22, fontWeight: 600 }}>{contados}</span>
+          <span style={{ fontSize: 13, color: "var(--pm-t2)" }}>de {itens.length} contados</span>
+          {mostrarSistema && nDiv > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: "var(--pm-am)" }}>· {nDiv} {nDiv === 1 ? "divergente" : "divergentes"}</span>}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: faltam ? "var(--pm-t)" : "var(--pm-g)" }}>{faltam ? `faltam ${faltam}` : "tudo contado ✓"}</span>
+        </div>
+        <div style={{ height: 8, borderRadius: 4, background: "var(--pm-sk)", overflow: "hidden" }}>
+          <i style={{ display: "block", height: "100%", width: `${itens.length ? Math.round((contados / itens.length) * 100) : 0}%`, background: faltam ? "var(--pm-a)" : "var(--pm-g)" }} />
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", borderRadius: 10, flex: "1 1 300px" }}>
+            {([["faltam", `Faltam ${faltam}`], ["todos", `Todos ${itens.length}`], ["divergentes", mostrarSistema ? `Divergentes ${nDiv}` : "Divergentes"]] as const).map(([id, nome]) => {
+              const off = id === "divergentes" && !mostrarSistema;
+              const on = filtro === id;
+              return (
+                <button key={id} type="button" disabled={off} onClick={() => { setFiltro(id); setRecente(null); }}
+                  title={off ? "Ligue Mostrar sistema para ver as divergências" : undefined}
+                  style={{ flex: 1, border: 0, cursor: off ? "default" : "pointer", height: 40, borderRadius: 8, fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t2)", opacity: off ? 0.45 : 1 }}>
+                  {nome}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, height: 40, padding: "0 10px", borderRadius: 10, border: "1px solid var(--pm-b)", background: "var(--pm-s)", flex: "0 1 220px", minWidth: 160 }}>
+            <Search className="h-3.5 w-3.5" style={{ color: "var(--pm-t3)" }} />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar na lista"
+              style={{ border: 0, outline: "none", background: "transparent", flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--pm-t)" }} />
+          </div>
+        </div>
+      </div>
+
+      {itensQ.isLoading ? (
+        <div style={{ height: 200, borderRadius: 14, background: "var(--pm-sk)" }} />
+      ) : visNovo.length === 0 ? (
+        <div style={{ padding: "24px 14px", borderRadius: 14, border: "1px dashed var(--pm-bs)", textAlign: "center", fontSize: 13, color: "var(--pm-t2)" }}>
+          {filtro === "faltam" && itens.length ? "Tudo contado. Pode concluir a tarefa." : "Nada nesta lista."}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,300px),1fr))", gap: 10 }}>
+          {visNovo.map((i, idx) => {
+            const ok = i.qtd_contada != null;
+            const dif = i.diferenca;
+            const travado = !!i.ajuste_status && i.ajuste_status !== "erro";
+            return (
+              <div key={i.id} style={{ background: "var(--pm-s)", border: `1.5px solid ${ok ? "var(--pm-g)" : "var(--pm-b)"}`, borderRadius: 16, boxShadow: "var(--pm-sh)", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  {i.foto
+                    ? <img src={i.foto} alt="" loading="lazy" style={{ width: 72, height: 72, flex: "none", borderRadius: 12, objectFit: "cover", background: "#fff", border: "1px solid var(--pm-b)" }} />
+                    : <span style={{ width: 72, height: 72, flex: "none", borderRadius: 12, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 600, color: "var(--pm-t3)" }}>{iniciais(i.nome)}</span>}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3, textWrap: "pretty" }}>{i.nome ?? "—"}</span>
+                    <span className={MONO_T} style={{ fontSize: 12, color: "var(--pm-t3)" }}>SKU {i.sku}</span>
+                    {mostrarSistema && (
+                      <span style={{ fontSize: 12, color: "var(--pm-t2)" }} title="Saldo no depósito Geral quando a tarefa foi criada (espelho do Tiny)">
+                        sistema <b className={MONO_T} style={{ fontWeight: 600 }}>{fmtQtd(i.qtd_sistema)}</b> ·{" "}
+                        <b className={MONO_T} style={{ fontWeight: 600, color: dif == null ? "var(--pm-t3)" : dif === 0 ? "var(--pm-g)" : "var(--pm-r)" }}>
+                          {dif == null ? "não contado" : dif === 0 ? "bate" : `${dif > 0 ? "+" : "−"}${fmtQtd(Math.abs(dif))}`}
+                        </b>
+                      </span>
+                    )}
+                    {i.ajuste_status === "lancado" && <span style={{ fontSize: 11.5, color: "var(--pm-g)", fontWeight: 600 }}>ajustado no Tiny ({fmtQtd(i.ajuste_saldo_antes)} → {fmtQtd(i.qtd_contada)})</span>}
+                    {i.ajuste_status === "igual" && <span style={{ fontSize: 11.5, color: "var(--pm-g)", fontWeight: 600 }}>Tiny já batia</span>}
+                    {i.ajuste_status === "erro" && <span style={{ fontSize: 11.5, color: "var(--pm-r)", fontWeight: 600 }} title={i.ajuste_erro ?? ""}>erro no ajuste</span>}
+                  </div>
+                  {ok ? (
+                    <span style={{ width: 26, height: 26, flex: "none", borderRadius: "50%", background: "var(--pm-g)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Check className="h-3.5 w-3.5" strokeWidth={3} /></span>
+                  ) : tarefa.status !== "feito" ? (
+                    <button type="button" onClick={() => void removerItem(i)} aria-label={`Tirar ${i.sku} da contagem`} title="Tirar da contagem"
+                      style={{ width: 28, height: 28, flex: "none", borderRadius: 7, border: 0, background: "transparent", cursor: "pointer", color: "var(--pm-t3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12.5, color: "var(--pm-t2)", width: 60 }}>Contado</span>
+                  <input
+                    ref={(el) => { if (el) inputs.current.set(i.id, el); else inputs.current.delete(i.id); }}
+                    key={`${i.id}-${i.qtd_contada ?? ""}`}
+                    defaultValue={i.qtd_contada ?? ""}
+                    inputMode="decimal"
+                    enterKeyHint="next"
+                    placeholder="—"
+                    disabled={travado}
+                    onFocus={(e) => { setRecente(i.id); e.target.select(); }}
+                    onBlur={(e) => void salvarContagem(i, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); proximoNovo(idx); } }}
+                    className={MONO_T}
+                    style={{ flex: 1, minWidth: 0, height: 56, borderRadius: 12, border: `1.5px solid ${ok ? "var(--pm-g)" : "var(--pm-bs)"}`, background: travado ? "var(--pm-s2)" : "var(--pm-s)", padding: "0 14px", fontSize: 26, fontWeight: 600, textAlign: "center", color: "var(--pm-t)", outline: "none" }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {mostrarSistema && (
+        <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>
+          "Sistema" é o saldo do depósito Geral quando a tarefa foi criada. Antes de ajustar, o app relê o saldo atual no Tiny.
+        </span>
+      )}
+      {ajuste && <AjusteTiny tarefa={tarefa} onFechar={() => setAjuste(false)} onAplicado={() => { void itensQ.refetch(); onMudou(); }} />}
+    </div>
+  );
+
+  const antigo = (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm">
@@ -1083,6 +1473,7 @@ function Contagem({ tarefa, onMudou }: { tarefa: Tarefa; onMudou: () => void }) 
       {ajuste && <AjusteTiny tarefa={tarefa} onFechar={() => setAjuste(false)} onAplicado={() => { void itensQ.refetch(); onMudou(); }} />}
     </div>
   );
+  return <ProtecaoPacking antigo={antigo}>{novo}</ProtecaoPacking>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
