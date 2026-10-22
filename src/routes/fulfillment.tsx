@@ -39,6 +39,7 @@ import { TarefasTab } from "@/components/fulfillment/TarefasTab";
 import { CabecalhoFulfillment, Migalhas, nomeConta, usePainelFulfillment, type Destino } from "@/components/fulfillment/ui/Cabecalho";
 import { ConfirmacaoPm, ETAPAS, QuadroEnvios, idxEtapa, type EnvioQ } from "@/components/fulfillment/ui/QuadroEnvios";
 import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
+import { EncaixotamentoAmazon } from "@/components/fulfillment/EncaixotamentoAmazon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2640,6 +2641,10 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         </Card>
       )}
 
+
+      {envio?.marketplace === "amazon" && /^FBA[0-9A-Z]{6,}$/.test(envio.numero ?? "") && envio.status !== "enviado" && (
+        <EncaixotamentoAmazon numero={envio.numero!} />
+      )}
 
       {envio?.marketplace === "amazon" && /^FBA[0-9A-Z]{6,}$/.test(envio.numero ?? "") && envio.status === "enviado" && (
         <RecebimentoAmazon numero={envio.numero!} empresa={envio.empresa} />

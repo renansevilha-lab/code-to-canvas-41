@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v10 (21/out/2026; NF de remessa + DANFE em PDF + coleta reservada) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v11 (22/out/2026; NF de remessa, DANFE, coleta reservada e encaixotamento) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -62,6 +62,10 @@
 //   própria: "Selected carrier was not self-ship carrier"), mas a opção de transporte escolhida passa a trazer o dia
 //   reservado em carrierAppointment. A rodada relê isso (`transportationOptions?shipmentId=`, até 3 envios, a cada 3 h por
 //   envio) e grava em envios_amazon[].coleta + fulfillment_envios.data_envio_agendada.
+// v11 (22/out/2026, pedido do dono): ENCAIXOTAMENTO no envio (o que a "folha da remessa" do Seller Central mostra, para a
+//   equipe montar as caixas): `listShipmentBoxes` (nome "P1 - B13", ID, peso, medidas, conteúdo) + `listShipmentItems`
+//   (ASIN, FNSKU, preparo exigido) → envios_amazon[].encaixotamento. Gravado no envios-app e, para envio que ainda não
+//   tem, pela rodada do nf-remessa (até 3 por rodada; com plano, todos). A tela do envio agrupa as caixas iguais.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { gerarDanfe } from "../_shared/danfe.ts";
@@ -318,6 +322,40 @@ async function v0Itens(token: string, fba: string): Promise<any[] | null> {
   }
   return out;
 }
+/** v11: caixas e itens de um envio (para a tela de encaixotamento). */
+async function lerEncaixotamento(token: string, planoId: string, shipmentId: string) {
+  const base = `${API}/inboundPlans/${encodeURIComponent(planoId)}/shipments/${encodeURIComponent(shipmentId)}`;
+  const todos = async (caminho: string, campo: string) => {
+    const out: any[] = [];
+    let tk = "";
+    for (let k = 0; k < 10; k++) {
+      const r = await sp(token, "GET", `${base}/${caminho}?pageSize=100${tk ? `&paginationToken=${encodeURIComponent(tk)}` : ""}`);
+      if (!ok(r)) throw new Error(`${caminho}: ${motivo(r)}`);
+      out.push(...((r.body?.[campo] ?? []) as any[]));
+      tk = String(r.body?.pagination?.nextToken ?? "");
+      if (!tk) break;
+      await sleep(300);
+    }
+    return out;
+  };
+  const caixas = await todos("boxes", "boxes");
+  const itens = await todos("items", "items");
+  return {
+    lido_em: new Date().toISOString(),
+    caixas: caixas.map((bx) => ({
+      id: bx.boxId ?? null, nome: bx.templateName ?? null, qtd: Number(bx.quantity) || 1,
+      kg: bx.weight?.value != null ? Number(bx.weight.value) * (String(bx.weight.unit ?? "KG").toUpperCase() === "LB" ? 0.453592 : 1) : null,
+      c: bx.dimensions?.length ?? null, l: bx.dimensions?.width ?? null, a: bx.dimensions?.height ?? null, unidade: bx.dimensions?.unitOfMeasurement ?? "CM",
+      itens: ((bx.items ?? []) as any[]).map((i) => ({ msku: String(i.msku), q: Number(i.quantity) || 0 })),
+    })),
+    itens: itens.map((i) => ({
+      msku: String(i.msku), asin: i.asin ?? null, fnsku: i.fnsku ?? null, q: Number(i.quantity) || 0, etiqueta: i.labelOwner ?? null,
+      validade: i.expiration ?? null,
+      preparo: ((i.prepInstructions ?? []) as any[]).map((p) => ({ tipo: String(p.prepType ?? ""), quem: p.prepOwner ?? null })),
+    })),
+  };
+}
+
 /** SKU da Amazon → nosso SKU: estoque do FBA da conta (o mesmo de-para da reposição), senão tira _FBA/FBA-. */
 async function mapaSkus(shopId: number) {
   const { data } = await db.from("estoque_fulfillment").select("sku, sku_marketplace").eq("marketplace", "amazon").eq("shop_id", shopId);
@@ -582,8 +620,10 @@ Deno.serve(async (req) => {
       const cands: { p: Record<string, any>; e: Record<string, any> }[] = [];
       const semPdf: { p: Record<string, any>; e: Record<string, any> }[] = [];
       const coletas: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      const semEnc: { p: Record<string, any>; e: Record<string, any> }[] = [];
       for (const p of (planos ?? []) as Record<string, any>[]) {
         for (const e of ((p.envios_amazon ?? []) as Record<string, any>[])) {
+          if (e.id && e.envio_app_id && !e.encaixotamento) semEnc.push({ p, e });
           if (e.id && e.envio_app_id && !e.nf?.chave) cands.push({ p, e });
           if (e.envio_app_id && e.nf?.chave && !e.nf?.danfe && !e.nf?.danfe_erro) semPdf.push({ p, e });
           const passou = e.coleta?.inicio && Date.parse(e.coleta.inicio) < Date.now() - 86400000;
@@ -615,6 +655,15 @@ Deno.serve(async (req) => {
         const erro = await anexarDanfe(e, await arq.text());
         await salvar(String(p.id), { envios_amazon: p.envios_amazon }, erro ? undefined : { acao: "DANFE gerado", fba: e.fba });
         extras.push({ fba: e.fba, danfe: erro ?? "anexado" });
+      }
+      // v11: encaixotamento de quem ainda não tem
+      for (const { p, e } of semEnc.slice(0, b.plano ? 10 : 3)) {
+        if (dry || Date.now() > ate - 8000) break;
+        try {
+          e.encaixotamento = await lerEncaixotamento(await tokenConta(Number(p.shop_id)), String(p.plano_id), String(e.id));
+          await salvar(String(p.id), { envios_amazon: p.envios_amazon });
+          extras.push({ fba: e.fba, caixas: e.encaixotamento.caixas.length });
+        } catch (x) { extras.push({ fba: e.fba, encaixotamento: String((x as Error).message ?? x) }); }
       }
       // v10: coleta reservada no Seller Central → dia da coleta no envio
       for (const { p, e } of coletas.slice(0, b.plano ? 10 : 3)) {
@@ -954,6 +1003,7 @@ Deno.serve(async (req) => {
             r.criado = true;
           } else r.criado = false;
           r.envio_id = envioId;
+          if (!e.encaixotamento) { try { e.encaixotamento = await lerEncaixotamento(token, String(planoRow.plano_id), String(e.id)); } catch (x) { r.avisos.push(`encaixotamento: ${(x as Error).message}`); } }
           if (pdfCaixas) r.doc_caixas = await anexarDoc(envioId, "etiquetas", `Etiquetas das caixas ${e.fba}.pdf`, pdfCaixas, quem.nome);
           if (pdfProduto) r.doc_produto = await anexarDoc(envioId, "etiqueta_produto", `Etiquetas de produto ${e.fba}.pdf`, pdfProduto, quem.nome);
           e.envio_app_id = envioId;
