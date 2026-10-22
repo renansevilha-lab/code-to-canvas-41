@@ -1,9 +1,10 @@
 // Encaixotamento do envio da Amazon (22/out/2026, pedido do dono): o mesmo conteúdo da "folha da remessa" do Seller
 // Central, direto no envio — caixas iguais agrupadas (quantas, o que vai em cada, medidas, peso, nomes) e o preparo que a
 // Amazon exige por produto. Os dados vêm de amazon_envio_plano.envios_amazon[].encaixotamento, gravado pela
-// amazon-inbound (v11) ao criar o envio ou na rodada de 10 min.
+// amazon-inbound (v11) ao criar o envio ou na rodada de 10 min. v12: a folha de encaixotamento em PDF vai junto nos
+// documentos do envio, e envio criado no Seller Central (sem plano do app) ganha o botão "Buscar na Amazon" (vincular).
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Boxes, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,7 +39,20 @@ function faixas(nomes: string[]): string {
   return partes.join(", ");
 }
 
+async function chamarInbound(corpo: Record<string, unknown>) {
+  const { data } = await supabaseExternal.auth.getSession();
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/amazon-inbound`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+  });
+  const j = (await r.json().catch(() => ({}))) as Record<string, any>;
+  if (!r.ok) throw new Error(j.erro ?? `HTTP ${r.status}`);
+  return j;
+}
+
 export function EncaixotamentoAmazon({ numero }: { numero: string }) {
+  const qc = useQueryClient();
   const [lendo, setLendo] = useState(false);
   const q = useQuery({
     queryKey: ["fulfillment", "encaixotamento-amazon", numero],
@@ -55,19 +69,40 @@ export function EncaixotamentoAmazon({ numero }: { numero: string }) {
     },
   });
   if (q.isLoading) return null;
-  if (!q.data) return null; // envio que não nasceu de um plano do app (importado do Seller Central): sem estes dados
+
+  // envio criado no Seller Central: o app ainda não conhece o plano da Amazon
+  async function vincular() {
+    setLendo(true);
+    try {
+      const j = await chamarInbound({ modulo: "vincular", numeros: [numero] });
+      const r = ((j.resultado ?? []) as Record<string, any>[])[0];
+      if (r?.erro || r?.pendente) throw new Error(r.erro ?? r.pendente);
+      if (r && !r.achado) throw new Error("não achei o plano deste envio na Amazon");
+      toast.success("Envio ligado à Amazon", { description: "Caixas, etiquetas e folha de encaixotamento anexadas. A NF chega sozinha quando for gerada no Seller Central." });
+      await q.refetch();
+      void qc.invalidateQueries({ queryKey: ["fulfillment"] });
+    } catch (e) { toast.error("Não consegui buscar na Amazon", { description: (e as Error).message }); } finally { setLendo(false); }
+  }
+  if (!q.data) {
+    return (
+      <Card className="flex flex-wrap items-center justify-between gap-2 p-3">
+        <div className="text-sm">
+          <div className="flex items-center gap-1.5 font-semibold"><Boxes className="h-4 w-4" /> Encaixotamento (Amazon)</div>
+          <div className="text-muted-foreground">Envio criado no Seller Central: busque o plano na Amazon para trazer as caixas, as etiquetas, a folha de encaixotamento e a NF.</div>
+        </div>
+        <Button size="sm" variant="outline" className="gap-1" disabled={lendo} onClick={() => void vincular()}>
+          {lendo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Buscar na Amazon
+        </Button>
+      </Card>
+    );
+  }
 
   async function lerAgora() {
     setLendo(true);
     try {
-      const { data } = await supabaseExternal.auth.getSession();
-      const r = await fetch(`${EXTERNAL_URL}/functions/v1/amazon-inbound`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ modulo: "nf-remessa", plano: q.data!.plano }),
-      });
-      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { erro?: string }).erro ?? `HTTP ${r.status}`);
+      await chamarInbound({ modulo: "nf-remessa", plano: q.data!.plano, reler: true });
       await q.refetch();
+      void qc.invalidateQueries({ queryKey: ["fulfillment"] });
     } catch (e) { toast.error("Não consegui ler da Amazon", { description: (e as Error).message }); } finally { setLendo(false); }
   }
 
@@ -94,7 +129,7 @@ export function EncaixotamentoAmazon({ numero }: { numero: string }) {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {enc && <span>{formatNumber(totalCaixas)} caixas · {formatNumber(totalUn)} un · {formatNumber(Math.round(totalKg))} kg</span>}
           <Button size="sm" variant="ghost" className="h-7 gap-1" disabled={lendo} onClick={() => void lerAgora()}
-            title="Relê as caixas, a NF e a coleta na Amazon">
+            title="Relê as caixas, a NF e a coleta na Amazon e refaz a folha de encaixotamento (PDF nos documentos do envio)">
             {lendo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Ler da Amazon
           </Button>
         </div>

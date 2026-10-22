@@ -1868,6 +1868,19 @@ concluir.
   agrupadas (quantas, o que vai em cada, medidas, peso, nomes "B1–B26"), alerta âmbar para preparo além da etiqueta (saco
   plástico, bolha…), FNSKU/validade por item e botão "Ler da Amazon". Envio importado do Seller Central (sem plano do app)
   não mostra o cartão. Preenchido em 22/out: FBA19TZFT26Z 26 cx (= folha da Amazon), FBA19TPQXVN9 24, FBA19TPSZTVN 6.
+- **Folha de encaixotamento em PDF + envios do Seller Central (22/out, `amazon-inbound` v12, deploy 16, sha256 conferido dos 3
+  arquivos; pedido do dono):** `_shared/folha-caixas.ts` (pdf-lib) monta a folha A4 — totais, alerta de preparo, "Como montar as
+  caixas" (iguais agrupadas, nomes B1–B26), produtos (FNSKU, validade, preparo, quem etiqueta) e conferência caixa a caixa com
+  [ ] — anexada no envio como tipo `preparacao` ("Folha de encaixotamento FBA….pdf") sempre que o encaixotamento é lido; o
+  `nf-remessa` faz a de quem já tem caixas (até 5/rodada) e `{plano, reler: true}` relê caixas e refaz a folha (botão "Ler da
+  Amazon"). **Envio criado no Seller Central** (sem plano do app): `vincular {numeros?}` (login) acha o plano pela API —
+  `listInboundPlans` ACTIVE+SHIPPED por `LAST_UPDATED_TIME` e `getShipment.shipmentConfirmationId` = FBA. **Armadilha:** a data do
+  nome v0 "FBA STA (MM/DD/AAAA …)" é a da confirmação do destino, não a criação do plano (FBA19TL1K4ZJ: plano de 09/10, nome
+  18/10) — o filtro é criado ≤ nome+1,5 d e atualizado ≥ nome−1,5 d. Grava `amazon_envio_plano` (passo `transporte_confirmado`,
+  log "vinculado do Seller Central") e anexa etiquetas das caixas, de produto e a folha; daí NF/DANFE/coleta seguem pelo cron
+  169, que também vincula sozinho 1 envio FBA por rodada (tentativa em `debug_fulfillment` `modulo='amazon-vincular'`; não achado
+  = nova tentativa em 6 h). Tela: envio sem plano mostra "Buscar na Amazon". 22/out: FBA19TM3DJHC e FBA19TL1K4ZJ (ACZ) com tudo
+  (NF 7348/25 e 7333/25, coleta 29/10); FBA19V284QY0/V28KLCM (SVL) com etiquetas e folha, NF aguardando a etapa 3 do Seller Central.
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
@@ -3810,7 +3823,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v11 (deploy 14; 22/out: encaixotamento do envio — caixas e preparo — na tela do envio) · v10 (deploy 13; 21/out: DANFE em PDF do XML via `_shared/danfe.ts` + coleta reservada lida da Amazon) · v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v12 (deploy 16; 22/out: folha de encaixotamento em PDF + `vincular` envios do Seller Central, também automático no cron 169) · v11 (deploy 14; 22/out: encaixotamento do envio — caixas e preparo — na tela do envio) · v10 (deploy 13; 21/out: DANFE em PDF do XML via `_shared/danfe.ts` + coleta reservada lida da Amazon) · v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `envios-app`, `nf-remessa`, `vincular`, `cancelar`; JWT de usuário + módulo galpao; as duas contas — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v5 (deploy 7; 20/out: termos reais de busca no texto, §5.11.13); v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |

@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v11 (22/out/2026; NF de remessa, DANFE, coleta reservada e encaixotamento) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v12 (22/out/2026; NF de remessa, DANFE, coleta, encaixotamento e folha em PDF) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -66,9 +66,16 @@
 //   equipe montar as caixas): `listShipmentBoxes` (nome "P1 - B13", ID, peso, medidas, conteúdo) + `listShipmentItems`
 //   (ASIN, FNSKU, preparo exigido) → envios_amazon[].encaixotamento. Gravado no envios-app e, para envio que ainda não
 //   tem, pela rodada do nf-remessa (até 3 por rodada; com plano, todos). A tela do envio agrupa as caixas iguais.
+// v12 (22/out/2026, pedido do dono): FOLHA DE ENCAIXOTAMENTO em PDF (../_shared/folha-caixas.ts), anexada no envio (tipo
+//   preparacao) sempre que o encaixotamento é lido; `reler: true` no nf-remessa com plano relê caixas e refaz a folha. E os
+//   envios criados no SELLER CENTRAL (sem plano do app): `vincular {numeros?}` acha o plano/envio da Amazon pelo número FBA
+//   (planos ACTIVE + SHIPPED criados perto da data do nome "FBA STA (MM/DD/AAAA …)"), grava o plano em amazon_envio_plano
+//   (log "vinculado do Seller Central") e anexa etiquetas das caixas, de produto e a folha; daí em diante NF/DANFE/coleta
+//   seguem pela rodada do nf-remessa, que também vincula sozinha 1 envio por rodada (não achado = nova tentativa em 6 h).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { gerarDanfe } from "../_shared/danfe.ts";
+import { gerarFolhaCaixas } from "../_shared/folha-caixas.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -258,9 +265,14 @@ async function etiquetasProduto(token: string, mskus: { msku: string; quantity: 
   if (!ok(r) || !url) throw new Error(`etiquetas de produto: ${motivo(r)}`);
   return await baixarPdf(String(url));
 }
-async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uint8Array, por: string | null, mime = "application/pdf") {
-  const { data: ja } = await db.from("fulfillment_envio_docs").select("id").eq("envio_id", envioId).eq("nome", nome).limit(1);
-  if (ja?.length) return "ja_tinha";
+async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uint8Array, por: string | null, mime = "application/pdf", substituir = false) {
+  const { data: ja } = await db.from("fulfillment_envio_docs").select("id, storage_path").eq("envio_id", envioId).eq("nome", nome);
+  if (ja?.length && !substituir) return "ja_tinha";
+  if (ja?.length) {
+    const caminhos = ja.map((d) => d.storage_path).filter(Boolean) as string[];
+    if (caminhos.length) await db.storage.from(DOCS_BUCKET).remove(caminhos);
+    await db.from("fulfillment_envio_docs").delete().in("id", ja.map((d) => d.id));
+  }
   const caminho = `${envioId}/${crypto.randomUUID().slice(0, 8)}-${nome.replace(/[^A-Za-z0-9._-]+/g, "_")}`;
   const { error: eUp } = await db.storage.from(DOCS_BUCKET).upload(caminho, bytes, { contentType: mime, upsert: false });
   if (eUp) throw new Error(`storage: ${eUp.message}`);
@@ -354,6 +366,137 @@ async function lerEncaixotamento(token: string, planoId: string, shipmentId: str
       preparo: ((i.prepInstructions ?? []) as any[]).map((p) => ({ tipo: String(p.prepType ?? ""), quem: p.prepOwner ?? null })),
     })),
   };
+}
+
+/** v12: folha de encaixotamento em PDF, anexada no envio da aba Envios. */
+async function anexarFolha(p: Record<string, any>, e: Record<string, any>, substituir = false) {
+  if (!e.envio_app_id || !e.encaixotamento) return null;
+  const nomes: Record<string, { sku?: string | null; titulo?: string | null }> = {};
+  for (const l of ((p.itens ?? []) as any[])) if (l?.msku) nomes[String(l.msku)] = { sku: l.sku ?? null, titulo: l.titulo ?? null };
+  const pdf = await gerarFolhaCaixas({
+    fba: String(e.fba), empresa: p.empresa ?? null, cd: e.cd ?? null, coleta: e.coleta?.inicio ?? null, plano: p.plano_id ?? null,
+    caixas: e.encaixotamento.caixas ?? [], itens: e.encaixotamento.itens ?? [], nomes,
+  });
+  const r = await anexarDoc(String(e.envio_app_id), "preparacao", `Folha de encaixotamento ${e.fba}.pdf`, pdf, "gerado pelo app", "application/pdf", substituir);
+  e.folha = { gerada_em: new Date().toISOString() };
+  return r;
+}
+
+/** v12: envio criado no Seller Central → plano e envio da Amazon (v2024-03-20) pelo número FBA. */
+async function acharNaAmazon(token: string, fba: string, ate: number) {
+  const v0 = await v0Envios(token, `QueryType=SHIPMENT&ShipmentIdList=${fba}`, ate);
+  if (v0 === null) throw new Error(SEM_PAPEL);
+  const s0 = v0[0];
+  if (!s0) throw new Error("a Amazon não devolveu este envio nesta conta");
+  // o nome traz a data em que o destino foi confirmado ("FBA STA (10/18/2026 18:39)-XCV9"), que pode ser dias depois da
+  // criação do plano (FBA19TL1K4ZJ: plano de 09/10, nome de 18/10): o plano foi criado ATÉ essa data e atualizado DEPOIS dela
+  const m = String(s0.ShipmentName ?? "").match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  const dataNome = m ? Date.parse(`${m[3]}-${m[1]}-${m[2]}T12:00:00Z`) : null;
+  const DIA = 86400000;
+  const planos: any[] = [];
+  for (const st of ["ACTIVE", "SHIPPED"]) {
+    let tk = "";
+    for (let pag = 0; pag < 4 && Date.now() < ate - 5000; pag++) {
+      const r = await sp(token, "GET", `${API}/inboundPlans?status=${st}&pageSize=30&sortBy=LAST_UPDATED_TIME&sortOrder=DESC${tk ? `&paginationToken=${encodeURIComponent(tk)}` : ""}`);
+      if (!ok(r)) break;
+      const lista = (r.body?.inboundPlans ?? []) as any[];
+      planos.push(...lista);
+      tk = String(r.body?.pagination?.nextToken ?? "");
+      const ultimo = lista[lista.length - 1];
+      if (!tk || (dataNome && ultimo && Date.parse(ultimo.lastUpdatedAt ?? ultimo.createdAt) < dataNome - 2 * DIA)) break;
+      await sleep(400);
+    }
+  }
+  const dist = (p: any) => (dataNome ? Math.abs(Date.parse(p.createdAt) - dataNome) : 0);
+  const perto = planos.filter((p) => !dataNome || (Date.parse(p.createdAt) <= dataNome + 1.5 * DIA && Date.parse(p.lastUpdatedAt ?? p.createdAt) >= dataNome - 1.5 * DIA))
+    .sort((a, b) => dist(a) - dist(b));
+  for (const p of perto) {
+    if (Date.now() > ate - 6000) throw new Error("sem tempo para procurar todos os planos: tente de novo");
+    const rp = await sp(token, "GET", `${API}/inboundPlans/${encodeURIComponent(String(p.inboundPlanId))}`);
+    for (const s of ((rp.body?.shipments ?? []) as any[])) {
+      const rs = await sp(token, "GET", `${API}/inboundPlans/${encodeURIComponent(String(p.inboundPlanId))}/shipments/${encodeURIComponent(String(s.shipmentId))}`);
+      if (String(rs.body?.shipmentConfirmationId ?? "") === fba) {
+        return { planoId: String(p.inboundPlanId), shipmentId: String(s.shipmentId), cd: rs.body?.destination?.warehouseId ?? s0.DestinationFulfillmentCenterId ?? null,
+          status: rs.body?.status ?? s.status ?? null, transporte: rs.body?.selectedTransportationOptionId ?? null };
+      }
+      await sleep(250);
+    }
+    await sleep(300);
+  }
+  return null;
+}
+
+/** v12: grava no app o plano de um envio do Seller Central e anexa etiquetas e folha. */
+async function vincularEnvio(envio: Record<string, any>, quem: string | null, ate: number) {
+  const fba = String(envio.numero);
+  const empresa = CONTA[String(envio.empresa ?? "")] ? String(envio.empresa) : "ACZ Pet";
+  const conta = CONTA[empresa];
+  const token = await tokenConta(conta.shop_id);
+  let achado: Awaited<ReturnType<typeof acharNaAmazon>> = null;
+  try { achado = await acharNaAmazon(token, fba, ate); } catch (x) {
+    await db.from("debug_fulfillment").insert({ modulo: "amazon-vincular", etapa: fba, status_http: 500, resultado: { erro: String((x as Error).message ?? x) } });
+    throw x;
+  }
+  if (!achado) {
+    await db.from("debug_fulfillment").insert({ modulo: "amazon-vincular", etapa: fba, status_http: 404, resultado: { erro: "plano não encontrado" } });
+    return { fba, achado: false, erro: "não achei o plano deste envio na Amazon (planos ativos e enviados perto da data do nome)" };
+  }
+  const enc = await lerEncaixotamento(token, achado.planoId, achado.shipmentId);
+  const skuDe = await mapaSkus(conta.shop_id);
+  const skus = [...new Set(enc.itens.map((i) => skuDe(i.msku)))];
+  const { data: prods } = await db.from("produtos").select("sku, nome").in("sku", skus.length ? skus : ["-"]);
+  const nomeDe = new Map(((prods ?? []) as any[]).map((x) => [String(x.sku), x.nome as string | null]));
+  const itens = enc.itens.map((i) => ({ sku: skuDe(i.msku), msku: i.msku, titulo: nomeDe.get(skuDe(i.msku)) ?? null, quantidade: i.q }));
+  const novo = { id: achado.shipmentId, fba, cd: achado.cd, status: achado.status, envio_app_id: String(envio.id), transporte_escolhido: achado.transporte,
+    encaixotamento: enc, vinculado_em: new Date().toISOString() };
+  const registro = { acao: "envio do Seller Central vinculado ao app", por: quem, fba, shipment: achado.shipmentId };
+  const { data: ja } = await db.from("amazon_envio_plano").select("*").eq("plano_id", achado.planoId).maybeSingle();
+  let p: Record<string, any>;
+  if (ja) {
+    const envios = ((ja.envios_amazon ?? []) as any[]).filter((x) => x.fba !== fba);
+    const itensJa = ((ja.itens ?? []) as any[]);
+    const mskusJa = new Set(itensJa.map((x) => String(x.msku)));
+    p = await salvar(String(ja.id), { envios_amazon: [...envios, novo], itens: [...itensJa, ...itens.filter((x) => !mskusJa.has(x.msku))] }, registro);
+  } else {
+    const { data, error } = await db.from("amazon_envio_plano").insert({
+      shop_id: conta.shop_id, empresa, itens_origem: itens.map(({ sku, msku, titulo, quantidade }) => ({ sku, msku, titulo, quantidade })), itens,
+      plano_id: achado.planoId, passo: "transporte_confirmado", envios_amazon: [novo], criado_por: quem,
+      log: [{ em: new Date().toISOString(), ...registro }],
+    }).select("*").single();
+    if (error || !data) throw new Error(`banco (plano): ${error?.message}`);
+    p = data as Record<string, any>;
+  }
+  // documentos: etiquetas das caixas, de produto e a folha
+  const docs: Record<string, string> = {};
+  const caixas = enc.caixas.map((c) => String(c.id ?? "")).filter(Boolean);
+  if (caixas.length) {
+    try { docs.caixas = await anexarDoc(String(envio.id), "etiquetas", `Etiquetas das caixas ${fba}.pdf`, await etiquetasCaixas(token, fba, caixas), quem); }
+    catch (x) { docs.caixas = String((x as Error).message ?? x); }
+  }
+  const rotular = enc.itens.filter((i) => i.etiqueta === "SELLER").map((i) => ({ msku: i.msku, quantity: i.q }));
+  if (rotular.length) {
+    try { docs.produto = await anexarDoc(String(envio.id), "etiqueta_produto", `Etiquetas de produto ${fba}.pdf`, await etiquetasProduto(token, rotular), quem); }
+    catch (x) { docs.produto = String((x as Error).message ?? x); }
+  }
+  const e = ((p.envios_amazon ?? []) as any[]).find((x) => x.fba === fba);
+  if (e) {
+    try { docs.folha = (await anexarFolha(p, e)) ?? "-"; } catch (x) { docs.folha = String((x as Error).message ?? x); }
+    await salvar(String(p.id), { envios_amazon: p.envios_amazon });
+  }
+  if (!envio.centro && achado.cd) await db.from("fulfillment_envios").update({ centro: achado.cd, atualizado_em: new Date().toISOString() }).eq("id", String(envio.id));
+  await db.from("debug_fulfillment").insert({ modulo: "amazon-vincular", etapa: fba, status_http: 200, resultado: { plano: achado.planoId, shipment: achado.shipmentId, docs } });
+  return { fba, achado: true, plano: achado.planoId, shipment: achado.shipmentId, caixas: enc.caixas.length, docs };
+}
+
+/** v12: envios FBA da aba Envios (ainda não enviados) que nenhum plano do app conhece. */
+async function enviosSemPlano(numeros: string[] | null) {
+  let q = db.from("fulfillment_envios").select("id, numero, empresa, centro, status, criado_em").eq("marketplace", "amazon").like("numero", "FBA%");
+  q = numeros?.length ? q.in("numero", numeros) : q.is("arquivado_em", null).neq("status", "enviado")
+    .gte("criado_em", new Date(Date.now() - 45 * 86400000).toISOString()).order("criado_em", { ascending: false }).limit(30);
+  const { data: envios } = await q;
+  const { data: planos } = await db.from("amazon_envio_plano").select("envios_amazon").gte("criado_em", new Date(Date.now() - 120 * 86400000).toISOString());
+  const conhecidos = new Set(((planos ?? []) as any[]).flatMap((p) => ((p.envios_amazon ?? []) as any[]).map((e) => String(e.fba))));
+  return ((envios ?? []) as any[]).filter((e) => /^FBA[0-9A-Z]{6,}$/.test(String(e.numero)) && !conhecidos.has(String(e.numero)));
 }
 
 /** SKU da Amazon → nosso SKU: estoque do FBA da conta (o mesmo de-para da reposição), senão tira _FBA/FBA-. */
@@ -612,6 +755,21 @@ Deno.serve(async (req) => {
     // v9: NF de remessa emitida pela Amazon → anexada ao envio da aba Envios
     if (modulo === "nf-remessa") {
       const dry = b.dry === true;
+      // v12: um envio do Seller Central por rodada ganha o plano (quem não foi achado espera 6 h)
+      const vinculados: Record<string, unknown>[] = [];
+      if (!b.plano && !dry) {
+        const pend = await enviosSemPlano(null);
+        if (pend.length) {
+          const { data: tent } = await db.from("debug_fulfillment").select("etapa").eq("modulo", "amazon-vincular")
+            .gte("criado_em", new Date(Date.now() - 6 * 3600000).toISOString());
+          const tentados = new Set(((tent ?? []) as any[]).map((t) => String(t.etapa)));
+          const alvo = pend.find((e) => !tentados.has(String(e.numero)));
+          if (alvo) {
+            try { vinculados.push(await vincularEnvio(alvo, "robô", ate - 4000)); }
+            catch (x) { vinculados.push({ fba: alvo.numero, erro: String((x as Error).message ?? x) }); }
+          }
+        }
+      }
       const sel = db.from("amazon_envio_plano").select("*").eq("passo", "transporte_confirmado");
       const { data: planos, error: eP } = b.plano
         ? await sel.eq("id", String(b.plano))
@@ -621,9 +779,12 @@ Deno.serve(async (req) => {
       const semPdf: { p: Record<string, any>; e: Record<string, any> }[] = [];
       const coletas: { p: Record<string, any>; e: Record<string, any> }[] = [];
       const semEnc: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      const semFolha: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      const reler = !!b.plano && b.reler === true;
       for (const p of (planos ?? []) as Record<string, any>[]) {
         for (const e of ((p.envios_amazon ?? []) as Record<string, any>[])) {
-          if (e.id && e.envio_app_id && !e.encaixotamento) semEnc.push({ p, e });
+          if (e.id && e.envio_app_id && (!e.encaixotamento || reler)) semEnc.push({ p, e });
+          else if (e.envio_app_id && e.encaixotamento && !e.folha) semFolha.push({ p, e });
           if (e.id && e.envio_app_id && !e.nf?.chave) cands.push({ p, e });
           if (e.envio_app_id && e.nf?.chave && !e.nf?.danfe && !e.nf?.danfe_erro) semPdf.push({ p, e });
           const passou = e.coleta?.inicio && Date.parse(e.coleta.inicio) < Date.now() - 86400000;
@@ -661,9 +822,20 @@ Deno.serve(async (req) => {
         if (dry || Date.now() > ate - 8000) break;
         try {
           e.encaixotamento = await lerEncaixotamento(await tokenConta(Number(p.shop_id)), String(p.plano_id), String(e.id));
+          let folha: string | null = null;
+          try { folha = await anexarFolha(p, e, reler); } catch (x) { folha = String((x as Error).message ?? x); }
           await salvar(String(p.id), { envios_amazon: p.envios_amazon });
-          extras.push({ fba: e.fba, caixas: e.encaixotamento.caixas.length });
+          extras.push({ fba: e.fba, caixas: e.encaixotamento.caixas.length, folha });
         } catch (x) { extras.push({ fba: e.fba, encaixotamento: String((x as Error).message ?? x) }); }
+      }
+      // v12: folha de encaixotamento de quem já tem as caixas lidas (não consulta a Amazon)
+      for (const { p, e } of semFolha.slice(0, 5)) {
+        if (dry || Date.now() > ate - 8000) break;
+        try {
+          const folha = await anexarFolha(p, e);
+          await salvar(String(p.id), { envios_amazon: p.envios_amazon });
+          extras.push({ fba: e.fba, folha });
+        } catch (x) { extras.push({ fba: e.fba, folha: String((x as Error).message ?? x) }); }
       }
       // v10: coleta reservada no Seller Central → dia da coleta no envio
       for (const { p, e } of coletas.slice(0, b.plano ? 10 : 3)) {
@@ -747,7 +919,22 @@ Deno.serve(async (req) => {
           resultado.push({ fba: e.fba, erro });
         }
       }
-      return json({ ok: true, dry, candidatos: cands.length, resultado, extras });
+      return json({ ok: true, dry, candidatos: cands.length, resultado, extras, vinculados });
+    }
+
+    // v12: envio criado no Seller Central → plano no app, etiquetas e folha
+    if (modulo === "vincular") {
+      const numeros = Array.isArray(b.numeros) ? (b.numeros as unknown[]).map(String).filter((x) => /^FBA[0-9A-Z]{6,}$/.test(x)).slice(0, 4) : null;
+      const pend = await enviosSemPlano(numeros);
+      if (b.dry === true) return json({ ok: true, dry: true, sem_plano: pend.map((e) => ({ numero: e.numero, empresa: e.empresa, status: e.status })) });
+      const resultado: Record<string, unknown>[] = [];
+      for (const envio of pend.slice(0, numeros ? 4 : 1)) {
+        if (Date.now() > ate - 8000) { resultado.push({ fba: envio.numero, pendente: "sem tempo: chame de novo" }); continue; }
+        try { resultado.push(await vincularEnvio(envio, quem.nome, ate)); }
+        catch (x) { resultado.push({ fba: envio.numero, erro: String((x as Error).message ?? x) }); }
+      }
+      const ja = numeros ? numeros.filter((n) => !pend.some((e) => e.numero === n)) : [];
+      return json({ ok: !resultado.some((r) => r.erro), resultado, ja_vinculados: ja });
     }
 
     if (modulo === "amazon-envios" || modulo === "importar" || modulo === "recebimento") {
@@ -1004,6 +1191,7 @@ Deno.serve(async (req) => {
           } else r.criado = false;
           r.envio_id = envioId;
           if (!e.encaixotamento) { try { e.encaixotamento = await lerEncaixotamento(token, String(planoRow.plano_id), String(e.id)); } catch (x) { r.avisos.push(`encaixotamento: ${(x as Error).message}`); } }
+          if (e.encaixotamento && !e.folha) { e.envio_app_id = envioId; try { r.doc_folha = await anexarFolha(planoRow, e); } catch (x) { r.avisos.push(`folha: ${(x as Error).message}`); } }
           if (pdfCaixas) r.doc_caixas = await anexarDoc(envioId, "etiquetas", `Etiquetas das caixas ${e.fba}.pdf`, pdfCaixas, quem.nome);
           if (pdfProduto) r.doc_produto = await anexarDoc(envioId, "etiqueta_produto", `Etiquetas de produto ${e.fba}.pdf`, pdfProduto, quem.nome);
           e.envio_app_id = envioId;
@@ -1020,7 +1208,7 @@ Deno.serve(async (req) => {
       return json({ ...resumo(p), ok: !resultado.some((r) => r.erro), dry, faltam, envios_app: resultado });
     }
 
-    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app, nf-remessa, amazon-envios, importar, recebimento ou cancelar" }, 400);
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app, nf-remessa, vincular, amazon-envios, importar, recebimento ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }
