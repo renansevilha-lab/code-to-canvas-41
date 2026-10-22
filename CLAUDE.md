@@ -2930,6 +2930,11 @@ faltou no anúncio criado direto na Shopee).
   situação escolhida. Na tela, segunda fileira de botões em `/ia/anuncios` (`?tipo=`).
   **Quem mexer na `ia_catalogo` precisa manter os parâmetros** — desde 19/out são **9** (`p_giro` no fim,
   §5.11.11.15); a fonte única é `docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql` (`versao: 6`).
+  **Busca sem acento e por palavras (22/out/2026, relato do dono: "silica" dava 0):** a busca era `ilike` do texto inteiro — acento
+  contava e as palavras tinham de vir coladas e na ordem. Agora `ia_bate_busca(sku, nome, busca)` (migração
+  `ia_catalogo_busca_sem_acento`): SKU por prefixo OU todas as palavras da busca, em qualquer ordem, no nome sem acento
+  (`ia_norm`); vale também para o nome das variações. "silica" = as mesmas 21 linhas de "Sílica"; "areia great 2kg" 0 → 28;
+  com "Sílica", "14426" e "Great Pets" o resultado ficou idêntico (md5).
 
 ## 5.11.9 Catálogo = espelho do Tiny (aplicado em 12/out/2026, 19h50–20h10)
 

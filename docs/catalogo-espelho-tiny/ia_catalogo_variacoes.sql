@@ -18,6 +18,17 @@
 --   em estoque parado. Cada linha ganha `giro` (lista dos produtos físicos parados) e `giro_valor`; a resposta
 --   ganha `giro` (contagem) e `giro_em`; `versao` 6. A de 8 parâmetros é removida na migração (chamada com
 --   argumentos nomeados continua valendo: p_giro tem default).
+-- 22/out/2026: busca sem acento e por palavras (todas, qualquer ordem); SKU por prefixo. Migração ia_catalogo_busca_sem_acento.
+create or replace function public.ia_bate_busca(p_sku text, p_nome text, p_busca text)
+returns boolean language sql immutable set search_path = public as $$
+  select coalesce(p_sku, '') ilike btrim(p_busca) || '%'
+      or not exists (
+        select 1 from regexp_split_to_table(ia_norm(btrim(p_busca)), 's+') w
+        where w <> '' and position(w in ia_norm(p_nome)) = 0)
+$$;
+revoke all on function public.ia_bate_busca(text, text, text) from public, anon;
+grant execute on function public.ia_bate_busca(text, text, text) to authenticated, service_role;
+
 create or replace function public.ia_catalogo(
   p_busca text default null, p_marca text default null, p_situacao text default 'todos',
   p_sem_canal text default null, p_ordem text default 'vendas', p_offset integer default 0, p_limit integer default 50,
@@ -89,7 +100,7 @@ begin
     -- o que as variações somam ao pai
     select i.pai as sku, count(*) as n, sum(i.un30) as un30, sum(i.un120) as un120, max(i.ultimo) as ultimo,
            bool_or(i.situacao = 'pronto') as pronto, bool_or(i.situacao <> 'sem') as tem, bool_or(i.sem_capa) as sem_capa,
-           bool_or(v_b is not null and (i.sku ilike v_b || '%' or i.nome ilike '%' || v_b || '%')) as bate,
+           bool_or(v_b is not null and ia_bate_busca(i.sku, i.nome, v_b)) as bate,
            bool_or(i.sg) as sg, bool_or(i.ex) as ex
     from it i where i.pai is not null group by 1
   ), fam_giro as (
@@ -119,7 +130,7 @@ begin
                 else (select jsonb_agg(distinct e) from jsonb_array_elements(i.fis || fg.fis) e) end as fis
     from it i left join fam fm on fm.sku = i.sku left join fam_canais fc on fc.sku = i.sku left join fam_giro fg on fg.sku = i.sku
     where i.pai is null
-      and (v_b is null or i.sku ilike v_b || '%' or i.nome ilike '%' || v_b || '%' or coalesce(fm.bate, false))
+      and (v_b is null or ia_bate_busca(i.sku, i.nome, v_b) or coalesce(fm.bate, false))
       and (coalesce(p_marca, '') = '' or i.marca = p_marca)
       and (coalesce(p_sem_canal, '') = '' or not (p_sem_canal = any (i.vende || coalesce(fc.vende, '{}'::text[]))))
   ), f2 as (
