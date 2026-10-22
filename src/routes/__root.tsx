@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Component, useEffect, useState, type ReactNode } from "react";
 
 
-import { LogOut, PanelLeft } from "lucide-react";
+import { LogOut, Moon, PanelLeft, Sun } from "lucide-react";
+import { SCRIPT_TEMA, useTema } from "@/lib/tema";
 import appCss from "../styles.css?url";
 import { AbasDaTela, AppSidebar, crumbDaRota } from "@/components/AppSidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -106,8 +107,9 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { erro: Erro
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_TEMA }} />
         <HeadContent />
       </head>
       <body>
@@ -142,11 +144,33 @@ function RootComponent() {
           <AppShell />
         </PerfilProvider>
       </AuthGate>
-      <Toaster position="top-right" richColors />
+      <ToasterComTema />
     </QueryClientProvider>
   );
 }
 
+
+function ToasterComTema() {
+  const [tema] = useTema();
+  return <Toaster position="top-right" richColors theme={tema === "escuro" ? "dark" : "light"} />;
+}
+
+function BotaoTema() {
+  const [tema, setTema] = useTema();
+  const escuro = tema === "escuro";
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setTema(escuro ? "claro" : "escuro")}
+      title={escuro ? "Usar o tema claro" : "Usar o tema escuro"}
+      aria-label={escuro ? "Usar o tema claro" : "Usar o tema escuro"}
+      className="shrink-0 h-9 w-9"
+    >
+      {escuro ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+    </Button>
+  );
+}
 
 function AppShell() {
   const { user, signOut } = useAuth();
@@ -199,6 +223,7 @@ function AppShell() {
             <span className="h-1.5 w-1.5 rounded-full bg-success" />
             <span className="hidden sm:inline">Sincronizado</span>
           </div>
+          <BotaoTema />
           {user && (
             <Button variant="ghost" size="sm" onClick={() => signOut()}>
               <LogOut className="h-4 w-4" />
