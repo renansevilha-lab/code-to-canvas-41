@@ -72,10 +72,15 @@
 //   (planos ACTIVE + SHIPPED criados perto da data do nome "FBA STA (MM/DD/AAAA …)"), grava o plano em amazon_envio_plano
 //   (log "vinculado do Seller Central") e anexa etiquetas das caixas, de produto e a folha; daí em diante NF/DANFE/coleta
 //   seguem pela rodada do nf-remessa, que também vincula sozinha 1 envio por rodada (não achado = nova tentativa em 6 h).
+// v13 (22/out/2026, relato do dono "os arquivos da Amazon estão sendo baixados invertidos"): nas etiquetas das caixas a
+//   página da transportadora (Total Express) é uma imagem 4×6 em pé que o PDF da Amazon desenha DEITADA e encolhida;
+//   ../_shared/etiqueta-amazon.ts a redesenha em pé, ocupando a página, antes de anexar. `endireitar-etiquetas {dry?}`
+//   corrige os PDFs já salvos.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { gerarDanfe } from "../_shared/danfe.ts";
 import { gerarFolhaCaixas } from "../_shared/folha-caixas.ts";
+import { endireitarEtiquetasAmazon } from "../_shared/etiqueta-amazon.ts";
 import { Image } from "https://deno.land/x/imagescript@1.2.17/mod.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -255,7 +260,9 @@ async function etiquetasCaixas(token: string, fba: string, caixas: string[]): Pr
   const r = await sp(token, "GET", `/fba/inbound/v0/shipments/${encodeURIComponent(fba)}/labels?${q}`);
   const url = r.body?.payload?.DownloadURL;
   if (!ok(r) || !url) throw new Error(`etiquetas das caixas: ${motivo(r)}`);
-  return await baixarPdf(String(url));
+  const pdf = await baixarPdf(String(url));
+  // v13: a página da transportadora vem deitada e encolhida; se o ajuste falhar, segue o PDF da Amazon como veio
+  try { return (await endireitarEtiquetasAmazon(pdf)).bytes; } catch { return pdf; }
 }
 /** Etiquetas de produto (FNSKU), térmicas 50×25 mm, das unidades que o vendedor etiqueta. */
 async function etiquetasProduto(token: string, mskus: { msku: string; quantity: number }[]): Promise<Uint8Array> {
@@ -701,6 +708,31 @@ Deno.serve(async (req) => {
   const ate = Date.now() + 22000;
 
   try {
+    // v13: põe em pé a página da transportadora nos PDFs de etiquetas das caixas JÁ salvos (idempotente: página já em
+    // pé não muda). {dry?} só conta. Regrava o arquivo no mesmo caminho do Storage.
+    if (modulo === "endireitar-etiquetas") {
+      const { data: docs, error } = await db.from("fulfillment_envio_docs")
+        .select("id, nome, storage_path").eq("tipo", "etiquetas").like("nome", "Etiquetas das caixas FBA%")
+        .not("storage_path", "is", null).order("criado_em", { ascending: false }).limit(200);
+      if (error) return json({ ok: false, erro: error.message }, 500);
+      const res: any[] = [];
+      for (const d of docs ?? []) {
+        if (Date.now() > ate) { res.push({ nome: d.nome, situacao: "faltou tempo" }); continue; }
+        try {
+          const { data: blob, error: eB } = await db.storage.from(DOCS_BUCKET).download(String(d.storage_path));
+          if (eB || !blob) throw new Error(eB?.message ?? "sem arquivo");
+          const r = await endireitarEtiquetasAmazon(new Uint8Array(await blob.arrayBuffer()));
+          if (r.corrigidas && !b.dry) {
+            const { error: eU } = await db.storage.from(DOCS_BUCKET).update(String(d.storage_path), r.bytes, { contentType: "application/pdf", upsert: true });
+            if (eU) throw new Error(eU.message);
+            await db.from("fulfillment_envio_docs").update({ tamanho: r.bytes.length }).eq("id", d.id);
+          }
+          res.push({ nome: d.nome, paginas_corrigidas: r.corrigidas });
+        } catch (x) { res.push({ nome: d.nome, erro: String((x as Error).message) }); }
+      }
+      return json({ ok: true, dry: !!b.dry, arquivos: res.length, corrigidos: res.filter((x) => x.paginas_corrigidas > 0).length, res });
+    }
+
     if (modulo === "lista") {
       const desde = new Date(Date.now() - 30 * 86400000).toISOString();
       const { data } = await db.from("amazon_envio_plano")
