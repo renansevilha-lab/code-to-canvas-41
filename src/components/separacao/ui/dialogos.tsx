@@ -13,9 +13,9 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 /** true quando a Separação está no visual novo (o SeparacaoPage provê). */
 export const VisualNovoSep = createContext(false);
 
-export function DialogoPm({ aberto, onFechar, perigo, kicker, titulo, children, rodape, largura = 540 }: {
+export function DialogoPm({ aberto, onFechar, perigo, kicker, titulo, children, rodape, largura = 540, corKicker }: {
   aberto: boolean; onFechar: () => void; perigo?: boolean; kicker: string; titulo: ReactNode;
-  children?: ReactNode; rodape: ReactNode; largura?: number;
+  children?: ReactNode; rodape: ReactNode; largura?: number; corKicker?: string;
 }) {
   useEffect(() => {
     if (!aberto) return;
@@ -32,7 +32,7 @@ export function DialogoPm({ aberto, onFechar, perigo, kicker, titulo, children, 
         style={{ width: "100%", maxWidth: largura, maxHeight: "calc(100vh - 24px)", background: "var(--pm-s)", border: "1px solid var(--pm-b)", borderTop: `4px solid ${perigo ? "var(--pm-r)" : "var(--pm-a)"}`, borderRadius: 16, boxShadow: "var(--pm-shl)", display: "flex", flexDirection: "column", color: "var(--pm-t)", fontSize: 13 }}
       >
         <div style={{ padding: "14px 18px 6px", display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 11.5, fontWeight: 700, color: perigo ? "var(--pm-r)" : "var(--pm-t3)", letterSpacing: "0.02em", textTransform: "uppercase" }}>{kicker}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: corKicker ?? (perigo ? "var(--pm-r)" : "var(--pm-t3)"), letterSpacing: "0.02em", textTransform: "uppercase" }}>{kicker}</span>
           <b style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em" }}>{titulo}</b>
         </div>
         <div style={{ padding: "6px 18px 12px", display: "flex", flexDirection: "column", gap: 10, overflow: "auto", minHeight: 0 }}>{children}</div>
@@ -102,6 +102,12 @@ export interface OptsConfirmar {
   okTxt: string;
   /** caixa que precisa ser marcada antes do OK (ações perigosas) */
   check?: string;
+  /** tabela Item / Un / situação (Fulfillment: faltando, transfere, fica de fora) */
+  lista?: { colSit: string; itens: Array<{ nome: string; sku: string; un: string; sit: string; cor?: string; fundo?: string }> };
+  /** só um botão (diálogo de resultado) */
+  semCancelar?: boolean;
+  /** cor do rótulo de cima (ex.: âmbar = escreve no Tiny, verde = feito) */
+  corKicker?: string;
 }
 export interface OptsTexto { kicker: string; titulo: string; atual?: string; placeholder?: string; ajuda?: string; okTxt?: string }
 
@@ -112,7 +118,13 @@ type Pedido =
 let host: ((p: Pedido) => void) | null = null;
 
 const textoPlano = (o: OptsConfirmar) =>
-  [o.perigo ? `ATENÇÃO — ${o.titulo}` : o.titulo, o.resumo, ...(o.linhas ?? []), o.aviso].filter(Boolean).join("\n\n");
+  [
+    o.perigo ? `ATENÇÃO — ${o.titulo}` : o.titulo, o.resumo, ...(o.linhas ?? []), o.aviso,
+    o.lista ? o.lista.itens.map((x) => `• ${x.sku} — ${x.un} · ${x.sit}`).join("\n") : null,
+  ].filter(Boolean).join("\n\n");
+
+/** true quando há uma tela com o visual novo montada (os diálogos desenhados estão disponíveis). */
+export const temHostSep = () => host !== null;
 
 export function confirmarSep(opts: OptsConfirmar): Promise<boolean> {
   if (!host) return Promise.resolve(window.confirm(textoPlano(opts)));
@@ -168,21 +180,43 @@ export function HostDialogosSep() {
   }
   const o = pedido.opts;
   const ok = !o.check || check;
+  const grade = "minmax(0,1fr) 76px 120px";
   return (
     <DialogoPm
       aberto
       perigo={o.perigo}
+      corKicker={o.corKicker}
+      largura={o.lista ? 580 : 540}
       onFechar={() => fechar(false)}
       kicker={o.kicker}
       titulo={o.titulo}
       rodape={<>
-        <BotaoPm onClick={() => fechar(false)}>Cancelar</BotaoPm>
+        {!o.semCancelar && <BotaoPm onClick={() => fechar(false)}>Cancelar</BotaoPm>}
         <BotaoPm tipo={o.perigo ? "perigo" : "primario"} disabled={!ok} onClick={() => ok && fechar(true)}>{o.okTxt}</BotaoPm>
       </>}
     >
       {o.resumo && <CaixaPm tom={o.perigo ? "r" : "n"}>{o.resumo}</CaixaPm>}
       {(o.linhas ?? []).map((l) => <span key={l} style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>{l}</span>)}
       {o.aviso && <CaixaPm tom="a"><span style={{ fontSize: 12.5, fontWeight: 500 }}>{o.aviso}</span></CaixaPm>}
+      {o.lista && o.lista.itens.length > 0 && (
+        <div style={{ border: "1px solid var(--pm-b)", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: grade, gap: 8, padding: "6px 10px", background: "var(--pm-s2)", fontSize: 11, color: "var(--pm-t3)", fontWeight: 500 }}>
+            <span>Item</span><span style={{ textAlign: "right" }}>Un</span><span style={{ textAlign: "right" }}>{o.lista.colSit}</span>
+          </div>
+          <div style={{ maxHeight: 240, overflow: "auto" }}>
+            {o.lista.itens.map((x, i) => (
+              <div key={`${x.sku}-${i}`} style={{ display: "grid", gridTemplateColumns: grade, gap: 8, alignItems: "center", padding: "6px 10px", borderTop: "1px solid var(--pm-b)", fontSize: 12, background: x.fundo ?? "transparent" }}>
+                <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.nome}</span>
+                  <span className="pm-mono" style={{ fontSize: 10.5, color: "var(--pm-t3)" }}>{x.sku}</span>
+                </span>
+                <span className="pm-mono" style={{ textAlign: "right" }}>{x.un}</span>
+                <span style={{ textAlign: "right", fontSize: 11.5, fontWeight: 600, color: x.cor ?? "var(--pm-t2)" }}>{x.sit}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {o.check && <MarcaPm perigo={o.perigo} marcado={check} onClick={() => setCheck((v) => !v)}>{o.check}</MarcaPm>}
     </DialogoPm>
   );

@@ -40,6 +40,8 @@ import { CabecalhoFulfillment, Migalhas, nomeConta, usePainelFulfillment, type D
 import { ConfirmacaoPm, ETAPAS, QuadroEnvios, idxEtapa, type EnvioQ } from "@/components/fulfillment/ui/QuadroEnvios";
 import { ImportarEnviosAmazon, NotaRemessaML, RecebimentoAmazon } from "@/components/fulfillment/EnviosIntegracao";
 import { EncaixotamentoAmazon } from "@/components/fulfillment/EncaixotamentoAmazon";
+import { PackingNovo, ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
+import { confirmarSep, temHostSep } from "@/components/separacao/ui/dialogos";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -414,6 +416,8 @@ function FulfillmentPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Reposição
 
+type ColRepo = "produto" | "canal" | "vendas" | "mc" | "estoque" | "transito" | "envio" | "cobertura" | "necessidade" | "sugestao" | "tiny";
+
 function ReposicaoTab({
   rows,
   loading,
@@ -440,9 +444,14 @@ function ReposicaoTab({
   const { data: caixas } = useCaixasAmazon();
   const caixaDe = (r: ReposicaoRow) => (r.marketplace === "amazon" ? caixas?.get(chaveCaixa(r.shop_id, r.sku)) : undefined);
 
+  // ordenar por coluna (clique no título; de novo inverte; 3º clique volta à ordem do motor)
+  const [ordem, setOrdem] = useState<{ col: ColRepo; dir: 1 | -1 } | null>(null);
+  const clicarOrdem = (col: ColRepo) =>
+    setOrdem((o) => (!o || o.col !== col ? { col, dir: col === "produto" || col === "canal" ? 1 : -1 } : o.dir === -1 && col !== "produto" && col !== "canal" ? { col, dir: 1 } : o.dir === 1 && (col === "produto" || col === "canal") ? { col, dir: -1 } : null));
+
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    return rows.filter((r) => {
+    const lista = rows.filter((r) => {
       if (somenteSugestao && num(r.sugestao_envio) <= 0) return false;
       if (!termo) return true;
       return (
@@ -450,7 +459,40 @@ function ReposicaoTab({
         (r.sku ?? "").toLowerCase().includes(termo)
       );
     });
-  }, [rows, busca, somenteSugestao]);
+    if (!ordem) return lista;
+    const val = (r: ReposicaoRow): number | string => {
+      switch (ordem.col) {
+        case "produto": return (r.produto ?? "").toLowerCase();
+        case "canal": return `${MKT_LABEL[r.marketplace] ?? r.marketplace} ${r.empresa ?? ""}`;
+        case "vendas": return num(r.unidades_30d);
+        case "mc": { const m = margens?.get(chaveMargem(r.shop_id, r.sku)); return m?.mc_pct_full != null ? Number(m.mc_pct_full) : -1e9; }
+        case "estoque": return num(r.estoque_full);
+        case "transito": return num(r.em_transito);
+        case "envio": return num(r.em_envio_aberto);
+        case "cobertura": return num(r.cobertura_atual_dias);
+        case "necessidade": return num(r.necessidade);
+        case "sugestao": return num(r.sugestao_envio);
+        case "tiny": return num(r.estoque_empresa);
+      }
+    };
+    return [...lista].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      const c = typeof va === "string" ? va.localeCompare(vb as string) : (va as number) - (vb as number);
+      return c * ordem.dir;
+    });
+  }, [rows, busca, somenteSugestao, ordem, margens]);
+  const th = (col: ColRepo, rotulo: string, alinhar: "left" | "right", dica?: string) => (
+    <th className={cn("font-semibold px-3 py-3", alinhar === "right" ? "text-right" : "text-left")} title={dica} aria-sort={ordem?.col === col ? (ordem.dir === 1 ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={() => clicarOrdem(col)}
+        className={cn("inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground", ordem?.col === col && "text-foreground")}
+      >
+        {rotulo}
+        <span className={cn("text-[10px]", ordem?.col === col ? "opacity-100" : "opacity-35")}>{ordem?.col === col ? (ordem.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+      </button>
+    </th>
+  );
 
   const valorAEnviar = (r: ReposicaoRow) => {
     const k = rowKey(r);
@@ -523,26 +565,18 @@ function ReposicaoTab({
                     aria-label="Selecionar todos"
                   />
                 </th>
-                <th className="text-left font-semibold px-3 py-3">Produto</th>
-                <th className="text-left font-semibold px-3 py-3">Canal</th>
-                <th className="text-right font-semibold px-3 py-3"
-                  title="Unidades vendidas nos últimos 30 dias NESTE canal e conta, só as que saíram do CD (Full/FBA) — a mesma base da cobertura e da sugestão. Embaixo, a média por dia.">Vendas 30d</th>
-                <th className="text-right font-semibold px-3 py-3"
-                  title="Margem de contribuição média dos últimos 30 dias nas vendas que saíram do Full/FBA nesta conta (recebido − custo − imposto, sem ADS e sem armazenagem). Embaixo: margem por unidade e a margem das vendas FORA do Full, para comparar.">MC 30d Full</th>
-                <th className="text-right font-semibold px-3 py-3">Estoque CD</th>
-                <th className="text-right font-semibold px-3 py-3">Em trânsito</th>
-                <th className="text-right font-semibold px-3 py-3"
-                  title="Unidades planejadas nos envios ABERTOS da aba Envios (separando/embalar/etiquetas/pronto) — já descontadas da necessidade e da sugestão. Envio marcado como enviado sai daqui e vira Em trânsito no sync.">Em envio</th>
-                <th className="text-right font-semibold px-3 py-3">Cobertura</th>
-                <th className="text-right font-semibold px-3 py-3">Necessidade</th>
-                <th className="text-right font-semibold px-3 py-3">Sugestão</th>
+                {th("produto", "Produto", "left")}
+                {th("canal", "Canal", "left")}
+                {th("vendas", "Vendas 30d", "right", "Unidades vendidas nos últimos 30 dias NESTE canal e conta, só as que saíram do CD (Full/FBA) — a mesma base da cobertura e da sugestão. Embaixo, a média por dia.")}
+                {th("mc", "MC 30d Full", "right", "Margem de contribuição média dos últimos 30 dias nas vendas que saíram do Full/FBA nesta conta (recebido − custo − imposto, sem ADS e sem armazenagem). Embaixo: margem por unidade e a margem das vendas FORA do Full, para comparar.")}
+                {th("estoque", "Estoque CD", "right")}
+                {th("transito", "Em trânsito", "right")}
+                {th("envio", "Em envio", "right", "Unidades planejadas nos envios ABERTOS da aba Envios (separando/embalar/etiquetas/pronto) — já descontadas da necessidade e da sugestão. Envio marcado como enviado sai daqui e vira Em trânsito no sync.")}
+                {th("cobertura", "Cobertura", "right")}
+                {th("necessidade", "Necessidade", "right")}
+                {th("sugestao", "Sugestão", "right")}
                 <th className="text-right font-semibold px-3 py-3">A enviar</th>
-                <th
-                  className="text-right font-semibold px-3 py-3"
-                  title="Disponível no depósito Geral do Tiny (saldo − reservado). Kit = quantos dá para montar com os componentes."
-                >
-                  Disponível Tiny
-                </th>
+                {th("tiny", "Disponível Tiny", "right", "Disponível no depósito Geral do Tiny (saldo − reservado). Kit = quantos dá para montar com os componentes.")}
               </tr>
             </thead>
             <tbody>
@@ -2208,10 +2242,17 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
    * Caso real: etiqueta de produtos da AMAZON só existe em PDF — o time abria
    * o arquivo e imprimia na mão ("quebra um galho"); agora é um clique.
    */
-  async function imprimirDoc(d: EnvioDoc) {
-    if (!printerId) { toast.warning("Escolha a impressora (no rodapé do envio)."); return; }
+  async function imprimirDoc(d: EnvioDoc): Promise<boolean> {
+    if (!printerId) { toast.warning("Escolha a impressora."); return false; }
     const imp = impressoras.find((p) => p.printer_id === printerId);
-    if (!window.confirm(`Imprimir "${d.nome ?? "documento"}" na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    const ok = await confirmarSep({
+      kicker: `Impressão · ${imp?.nome ?? `impressora ${printerId}`}`,
+      titulo: `Imprimir "${d.nome ?? "documento"}"?`,
+      resumo: `${DOC_TIPO_LABEL[d.tipo] ?? "Documento"} em PDF, direto na ${imp?.nome ?? `impressora ${printerId}`}.`,
+      okTxt: "Imprimir",
+    });
+    if (!ok) return false;
+    let impresso = false;
     setImprimindoDoc(d.id);
     try {
       const { bytes } = await baixarDocBytes(d);
@@ -2221,11 +2262,13 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       if (e2) throw new Error(e2.message);
       if (!(r as { ok?: boolean })?.ok) throw new Error(JSON.stringify((r as { resposta?: unknown })?.resposta ?? r));
       toast.success(`"${d.nome}" enviado à impressora`);
+      impresso = true;
     } catch (e) {
       toast.error("Falha ao imprimir", { description: (e as Error).message });
     } finally {
       setImprimindoDoc(null);
     }
+    return impresso;
   }
 
   async function abrirDoc(d: EnvioDoc) {
@@ -2239,8 +2282,8 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       toast.error("Falha ao abrir", { description: (e as Error).message });
     }
   }
-  async function excluirDoc(d: EnvioDoc) {
-    if (!window.confirm(`Excluir "${d.nome ?? "documento"}"?`)) return;
+  async function excluirDoc(d: EnvioDoc, jaConfirmado = false) {
+    if (!jaConfirmado && !window.confirm(`Excluir "${d.nome ?? "documento"}"?`)) return;
     const { error } = await supabaseExternal.from("fulfillment_envio_docs").delete().eq("id", d.id);
     if (error) { toast.error("Falha ao excluir", { description: error.message }); return; }
     if (d.storage_path) await supabaseExternal.storage.from(DOCS_BUCKET).remove([d.storage_path]);
@@ -2253,10 +2296,24 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   const sep = itens.reduce((s, i) => s + i.qtd_separada, 0);
   const tudoSeparado = plan > 0 && sep >= plan;
 
+  // SKUs sem id_tiny no cadastro: não entram no lançamento de estoque (o cartão avisa)
+  const skusItens = useMemo(() => [...new Set(itens.map((i) => i.sku).filter((s): s is string => !!s))].sort(), [itens]);
+  const cadastroQ = useQuery({
+    queryKey: ["fulfillment", "envio-cadastro", skusItens.join(",")],
+    enabled: skusItens.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<Set<string>> => {
+      const { data, error } = await supabaseExternal.from("produtos").select("sku, id_tiny").in("sku", skusItens);
+      if (error) throw error;
+      const comTiny = new Set(((data ?? []) as Array<{ sku: string; id_tiny: number | null }>).filter((r) => r.id_tiny).map((r) => r.sku));
+      return new Set(skusItens.filter((s) => !comTiny.has(s)));
+    },
+  });
+
   const zplPorSku = useMemo(() => dividirZplPorSku(envioQ.data?.etiquetas_zpl), [envioQ.data?.etiquetas_zpl]);
   const [imprimindoSku, setImprimindoSku] = useState<string | null>(null);
 
-  async function imprimirSku(sku: string | null, qty: number) {
+  async function imprimirSku(sku: string | null, qty: number, jaConfirmado = false) {
     if (!sku) return;
     const bloco = zplPorSku.get(sku);
     if (!bloco) {
@@ -2269,7 +2326,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     }
     if (qty <= 0) return;
     const imp = impressoras.find((p) => p.printer_id === printerId);
-    if (!window.confirm(`Imprimir ${qty} etiqueta(s) do SKU ${sku} na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    if (!jaConfirmado && !window.confirm(`Imprimir ${qty} etiqueta(s) do SKU ${sku} na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
     setImprimindoSku(sku);
     try {
       const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
@@ -2331,7 +2388,28 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     else toast.success(`SKU alterado para ${novoSku}.`);
   }
 
-  async function marcarEnviado() {
+  /** ficar = visual novo: confirma no diálogo e continua no envio (próximo passo: lançar no Tiny). */
+  async function marcarEnviado(ficar = false) {
+    if (ficar) {
+      const faltando = itens.filter((i) => i.qtd_separada < i.qtd_planejada);
+      const falta = faltando.reduce((s, i) => s + (i.qtd_planejada - i.qtd_separada), 0);
+      const completos = itens.length - faltando.length;
+      const rot = envio?.numero ? (/^\d+$/.test(envio.numero) ? `#${envio.numero}` : envio.numero) : "este envio";
+      const ok = await confirmarSep({
+        kicker: `${nomeConta(envio?.marketplace ?? "", envio?.empresa)}${envio?.data_envio_agendada ? ` · coleta ${format(parseISO(envio.data_envio_agendada), "dd/MM")}` : ""}`,
+        titulo: falta > 0 ? "Marcar enviado com itens faltando?" : `Marcar ${rot} como enviado?`,
+        resumo: `${formatNumber(sep)} un em ${completos}${falta > 0 ? ` de ${itens.length} itens completos` : " itens"} saem na coleta.`,
+        aviso: falta > 0 ? `Faltam ${formatNumber(falta)} un em ${faltando.length} ${faltando.length === 1 ? "item" : "itens"}. Elas vão constar como não enviadas e ficam no depósito Geral.` : undefined,
+        lista: falta > 0 ? {
+          colSit: "Falta",
+          itens: faltando.map((i) => ({ nome: i.titulo ?? "—", sku: `SKU ${i.sku ?? "—"}`, un: `${formatNumber(i.qtd_separada)} / ${formatNumber(i.qtd_planejada)}`, sit: `−${formatNumber(i.qtd_planejada - i.qtd_separada)} un`, cor: "var(--pm-r)" })),
+        } : undefined,
+        linhas: ["Depois, o próximo passo é lançar o estoque no Tiny."],
+        perigo: falta > 0,
+        okTxt: falta > 0 ? `Marcar enviado com ${formatNumber(falta)} un faltando` : "Marcar enviado",
+      });
+      if (!ok) return;
+    }
     setEnviando(true);
     try {
       const { error } = await supabaseExternal
@@ -2340,7 +2418,11 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         .eq("id", envioId);
       if (error) throw error;
       toast.success("Envio marcado como enviado ✈️");
-      onVoltar();
+      if (ficar) {
+        qc.setQueryData<Envio | null>(["fulfillment", "envio", envioId], (o) => (o ? { ...o, status: "enviado" } : o));
+        qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+        qc.invalidateQueries({ queryKey: ["fulfillment", "envios-progresso"] });
+      } else onVoltar();
     } catch (e) {
       toast.error("Erro ao marcar enviado", { description: (e as Error).message });
     } finally {
@@ -2408,16 +2490,26 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         return;
       }
       const totalUn = plano.reduce((s, it) => s + (it.entrada_full || 0), 0);
-      const linhas = plano.map((it) => `• ${it.sku} — ${it.embalado} un`).join("\n");
-      const avisoTxt = avisos.length
-        ? `\n\nIgnorados:\n${avisos.map((a) => `• ${a.sku}: ${a.motivo}`).join("\n")}`
-        : "";
-      const msg =
-        `Lançar estoque no Tiny para o envio ${envio?.numero ?? ""}?\n\n` +
-        `Transferência Geral → ${pv?.deposito_full?.nome}:\n${linhas}\n\n` +
-        `Total: ${totalUn} un em ${plano.length} SKU(s). A mesma quantidade é baixada do Geral.` +
-        `${avisoTxt}\n\nGrava no Tiny e não tem desfazer automático.`;
-      if (!window.confirm(msg)) return;
+      const nomeSku = (sku: string) => itens.find((i) => i.sku === sku)?.titulo ?? sku;
+      const dep = pv?.deposito_full?.nome ?? "depósito Full";
+      const ok = await confirmarSep({
+        kicker: "Escreve no Tiny · não dá para desfazer pelo app",
+        corKicker: "var(--pm-am)",
+        titulo: "Lançar estoque no Tiny",
+        resumo: `Vai transferir ${formatNumber(totalUn)} un de ${plano.length} ${plano.length === 1 ? "item" : "itens"} do depósito Geral para o ${dep}. A mesma quantidade é baixada do Geral.`,
+        aviso: avisos.length
+          ? `${avisos.length} ${avisos.length === 1 ? "item fica" : "itens ficam"} de fora: ${avisos.map((a) => `${nomeSku(a.sku)} (${a.motivo})`).join("; ")}. Corrija e lance esses depois.`
+          : undefined,
+        lista: {
+          colSit: "No Tiny",
+          itens: [
+            ...avisos.map((a) => ({ nome: nomeSku(a.sku), sku: `SKU ${a.sku}`, un: formatNumber(itens.find((i) => i.sku === a.sku)?.qtd_separada ?? 0), sit: "fica de fora", cor: "var(--pm-r)", fundo: "var(--pm-rs)" })),
+            ...plano.map((it) => ({ nome: nomeSku(it.sku), sku: `SKU ${it.sku}`, un: formatNumber(it.entrada_full || it.embalado), sit: "transfere" })),
+          ],
+        },
+        okTxt: `Lançar ${formatNumber(totalUn)} un no Tiny`,
+      });
+      if (!ok) return;
 
       const { data: res, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-estoque", {
         body: { modulo: "lancar", envio_id: envioId, confirmar: 1, forcar: 1, lancado_por: "app" },
@@ -2427,6 +2519,26 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       if (r?.ok) toast.success(`Estoque lançado · ${r.movimentos} movimento(s) no Tiny`);
       else toast.error("Lançamento com erros", { description: (r?.erros ?? []).slice(0, 3).join(" | ") });
       envioQ.refetch();
+      if (temHostSep()) {
+        const hora = new Date().toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+        void confirmarSep({
+          kicker: `Tiny · lançado às ${hora}`,
+          corKicker: r?.ok ? "var(--pm-g)" : "var(--pm-r)",
+          titulo: r?.ok ? `${formatNumber(totalUn)} un transferidas para o ${dep}` : "O Tiny recusou parte do lançamento",
+          resumo: r?.ok
+            ? `${r.movimentos ?? plano.length} movimento(s) gravados no Tiny.${avisos.length ? ` ${avisos.length} ${avisos.length === 1 ? "item ficou" : "itens ficaram"} de fora.` : ""}`
+            : (r?.erros ?? []).slice(0, 5).join(" · ") || "Sem detalhe do erro.",
+          lista: {
+            colSit: "Resultado",
+            itens: [
+              ...avisos.map((a) => ({ nome: nomeSku(a.sku), sku: `SKU ${a.sku}`, un: formatNumber(itens.find((i) => i.sku === a.sku)?.qtd_separada ?? 0), sit: "fora", cor: "var(--pm-r)", fundo: "var(--pm-rs)" })),
+              ...plano.map((it) => ({ nome: nomeSku(it.sku), sku: `SKU ${it.sku}`, un: formatNumber(it.entrada_full || it.embalado), sit: r?.ok ? "✓ lançado" : "conferir", cor: r?.ok ? "var(--pm-g)" : "var(--pm-am)" })),
+            ],
+          },
+          semCancelar: true,
+          okTxt: "Fechar",
+        });
+      }
     } catch (e) {
       toast.error("Falha ao lançar estoque", { description: (e as Error).message });
     } finally {
@@ -2449,19 +2561,27 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     }
   }
 
-  async function imprimirEtiquetas() {
+  async function imprimirEtiquetas(): Promise<boolean> {
     const zpl = envioQ.data?.etiquetas_zpl;
     if (!zpl) {
       toast.warning("Este envio não tem etiquetas anexadas.");
-      return;
+      return false;
     }
     if (!printerId) {
       toast.warning("Escolha a impressora.");
-      return;
+      return false;
     }
     const copias = contarCopiasZpl(zpl);
     const imp = impressoras.find((p) => p.printer_id === printerId);
-    if (!window.confirm(`Imprimir ${copias} etiquetas na ${imp?.nome ?? `impressora ${printerId}`}?`)) return;
+    const ok = await confirmarSep({
+      kicker: `Impressão em massa · ${imp?.nome ?? `impressora ${printerId}`}`,
+      titulo: `Imprimir ${copias} etiquetas de volume?`,
+      resumo: `Vai mandar o arquivo de etiquetas do envio, com ${copias} etiquetas, para a ${imp?.nome ?? `impressora ${printerId}`}.`,
+      linhas: ["As etiquetas de produto saem por item, pelo botão de impressora em cada cartão."],
+      okTxt: `Imprimir ${copias} etiquetas`,
+    });
+    if (!ok) return false;
+    let impresso = false;
     setImprimindo(true);
     try {
       const { data, error } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
@@ -2472,11 +2592,13 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         throw new Error(JSON.stringify((data as { resposta?: unknown })?.resposta ?? data));
       }
       toast.success(`Enviado à impressora · ${copias} etiquetas`);
+      impresso = true;
     } catch (e) {
       toast.error("Falha ao imprimir", { description: (e as Error).message });
     } finally {
       setImprimindo(false);
     }
+    return impresso;
   }
 
   const envio = envioQ.data;
@@ -2506,11 +2628,14 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
       const avisoNumero = numPdf && envio?.numero && numPdf !== envio.numero
         ? `\n\nATENÇÃO: o PDF é do envio ${numPdf}, mas você está no ${envio.numero}. Confirme se é o arquivo certo.`
         : "";
-      const ok = window.confirm(
-        `Atualizar o envio ${envio?.numero ? `#${envio.numero}` : ""} com este PDF?\n\n` +
-        `${parsed.length} itens · ${d.total ?? "?"} unidades planejadas.\n` +
-        `O que já foi separado é preservado; a equipe recebe no Discord o que mudou.${avisoNumero}`,
-      );
+      const ok = await confirmarSep({
+        kicker: "Atualizar pelo PDF do marketplace",
+        titulo: `Atualizar o envio ${envio?.numero ? `#${envio.numero}` : ""} com este PDF?`,
+        resumo: `${parsed.length} itens · ${d.total ?? "?"} unidades planejadas.`,
+        linhas: ["O que já foi separado é preservado; a equipe recebe no Discord o que mudou."],
+        aviso: avisoNumero ? avisoNumero.trim() : undefined,
+        okTxt: "Atualizar o envio",
+      });
       if (!ok) return;
       const { data: diff, error: e2 } = await supabaseExternal.rpc("fulfillment_atualizar_envio", {
         p_envio_id: envioId,
@@ -2544,7 +2669,16 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
 
   async function excluirEnvio() {
     const rotulo = envio?.numero ? `#${envio.numero}` : "";
-    if (!window.confirm(`Excluir o envio ${rotulo}? Remove também os itens e documentos anexados. Não dá para desfazer.`)) return;
+    const nDocs = docsQ.data?.length ?? 0;
+    const ok = await confirmarSep({
+      kicker: `Apaga no app · não mexe no ${MKT_LABEL[envio?.marketplace ?? ""] ?? "marketplace"} nem no Tiny`,
+      titulo: `Excluir o envio ${rotulo}?`,
+      resumo: `Apaga os ${itens.length} itens, a contagem de ${formatNumber(sep)} un e ${nDocs === 1 ? "o documento" : `os ${nDocs} documentos`} deste envio. Não dá para desfazer.`,
+      linhas: ["O envio continua existindo no painel do marketplace. Para separar de novo, será preciso subir o PDF outra vez."],
+      perigo: true,
+      okTxt: "Excluir envio",
+    });
+    if (!ok) return;
     try {
       await removerArquivosDoEnvio(envioId);
       await supabaseExternal.from("fulfillment_envio_docs").delete().eq("envio_id", envioId);
@@ -2560,7 +2694,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     }
   }
 
-  return (
+  const antigo = (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" className="gap-1 -ml-2" onClick={onVoltar}>
@@ -2883,6 +3017,71 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
         </div>
       )}
     </div>
+  );
+
+  if (!envio) {
+    return envioQ.isError ? antigo : <Skeleton className="h-64 w-full" />;
+  }
+  const amazonFba = envio.marketplace === "amazon" && /^FBA[0-9A-Z]{6,}$/.test(envio.numero ?? "");
+  const docVolumePdf = (docsQ.data ?? []).find((d) => d.tipo === "etiquetas" && (d.mime ?? "").includes("pdf"));
+  return (
+    <ProtecaoPacking antigo={antigo}>
+      <PackingNovo
+        envio={envio}
+        itens={itens}
+        carregandoItens={itensQ.isLoading}
+        fotos={fotos ?? {}}
+        semCadastro={cadastroQ.data ?? new Set<string>()}
+        impressoras={impressoras}
+        printerId={printerId}
+        onPrinter={setPrinterId}
+        onSet={(it, n) => void setSeparada(it as EnvioItem, n)}
+        onTrocarSku={(it, sku) => void trocarSku(it as EnvioItem, sku)}
+        nEtiquetasVolume={temEtiquetas ? contarCopiasZpl(envio.etiquetas_zpl) : 0}
+        temEtiquetaVolume={temEtiquetas || !!docVolumePdf}
+        imprimindoVolume={imprimindo || (!!docVolumePdf && imprimindoDoc === docVolumePdf.id)}
+        onImprimirVolume={() => (temEtiquetas ? imprimirEtiquetas() : docVolumePdf ? imprimirDoc(docVolumePdf) : Promise.resolve(false))}
+        onSubirZpl={(f) => void anexarEtiquetas(f)}
+        temEtiquetaSku={(sku) => !!sku && zplPorSku.has(sku)}
+        imprimindoSku={imprimindoSku}
+        onImprimirSku={(sku, n) => void imprimirSku(sku, n, true)}
+        docs={docsQ.data ?? []}
+        carregandoDocs={docsQ.isLoading}
+        erroDocs={docsQ.isError}
+        onTentarDocs={() => void docsQ.refetch()}
+        subindoDocs={subindoDoc || subindoVarios}
+        onSubirDocs={(fs) => void subirVarios(fs)}
+        tiposDoc={DOC_TIPOS}
+        onTipoDoc={(id, tipo) => void atualizarTipoDoc(id, tipo)}
+        imprimindoDoc={imprimindoDoc}
+        onImprimirDoc={(d) => void imprimirDoc(d as EnvioDoc)}
+        onAbrirDoc={(d) => void abrirDoc(d as EnvioDoc)}
+        onExcluirDoc={(d) => void excluirDoc(d as EnvioDoc, true)}
+        extraDocs={envio.marketplace === "mercadolivre" && envio.numero ? <NotaRemessaML envioId={envioId} onAnexado={() => void docsQ.refetch()} /> : null}
+        obs={obs}
+        onObs={setObs}
+        onSalvarObs={() => { if ((envio.observacao ?? "") !== obs) void salvarMeta({ observacao: obs || null }); }}
+        dataAg={dataAg}
+        onDataAg={setDataAg}
+        onSalvarDataAg={() => { if ((envio.data_envio_agendada ?? "") !== dataAg) void salvarMeta({ data_envio_agendada: dataAg || null }); }}
+        onEtapa={(status) => void salvarMeta({ status })}
+        enviando={enviando}
+        onMarcarEnviado={() => void marcarEnviado(true)}
+        lancando={lancandoEstoque}
+        onLancar={() => void lancarEstoque()}
+        atualizandoPdf={atualizandoPdf}
+        onAtualizarPdf={(f) => void atualizarPorPdf(f)}
+        novoSku={novoSku}
+        onNovoSku={setNovoSku}
+        novoQtd={novoQtd}
+        onNovoQtd={setNovoQtd}
+        adicionando={addingItem}
+        onAdicionar={() => void addItemManual()}
+        onExcluirEnvio={() => void excluirEnvio()}
+        extraTopo={amazonFba && envio.status !== "enviado" ? <EncaixotamentoAmazon numero={envio.numero!} /> : null}
+        extraBaixo={amazonFba && envio.status === "enviado" ? <RecebimentoAmazon numero={envio.numero!} empresa={envio.empresa} /> : null}
+      />
+    </ProtecaoPacking>
   );
 }
 

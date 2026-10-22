@@ -50,7 +50,7 @@ const SEV: Record<string, string> = { r: "var(--pm-r)", a: "var(--pm-am)", n: "v
 
 const seg = (on: boolean): CSSProperties => ({
   border: 0, cursor: "pointer", height: 28, padding: "0 11px", borderRadius: 6, fontSize: 12.5, fontWeight: on ? 600 : 500,
-  background: on ? "var(--pm-s)" : "transparent", color: on ? "var(--pm-t)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none",
+  background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none",
   display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
 });
 const segGrupo: CSSProperties = { display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", borderRadius: 8, flexWrap: "wrap" };
@@ -197,8 +197,8 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
   const grupos = (["ACZ Pet", "SVL Store"] as const).map((e) => ({ emp: e, contas: contas.filter((c) => c.empresa === e) }));
 
   return (
-    <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 14, color: "var(--pm-t)" }}>
-      <header style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: "10px 16px" }}>
+    <>
+      <header className="pm-ui" style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: "10px 16px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em" }}>Fulfillment</h1>
           <p style={{ margin: 0, fontSize: 12.5, color: "var(--pm-t3)" }}>Estoque nos centros de distribuição e sugestão de reposição</p>
@@ -221,7 +221,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </header>
 
       {/* filtro global */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px", padding: "10px 14px", borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", boxShadow: "var(--pm-sh)" }}>
+      <div className="pm-ui" style={{ position: "sticky", top: 69, zIndex: 20, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px", padding: "10px 14px", borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", boxShadow: "var(--pm-shl)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "var(--pm-t3)", fontWeight: 500 }}>Empresa</span>
           <div style={segGrupo}>
@@ -260,7 +260,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </div>
 
       {/* Pede ação */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 12px" }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Pede ação</span>
           <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>por gravidade · vermelho trava a operação ou perde venda agora, âmbar pede atenção{p ? ` · ${idade(p.gerado_em).txt}` : ""}</span>
@@ -321,7 +321,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </div>
 
       {/* abas */}
-      <nav style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--pm-b)", overflowX: "auto" }}>
+      <nav className="pm-ui" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--pm-b)", overflowX: "auto" }}>
         {abas.map((t) => {
           const on = aba === t.id;
           return (
@@ -333,7 +333,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
           );
         })}
       </nav>
-    </div>
+    </>
   );
 }
 

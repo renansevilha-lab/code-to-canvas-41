@@ -240,10 +240,10 @@ export function Segmento<T extends string>({ ops, valor, onValor, altura = 30 }:
             key={o.id}
             type="button"
             onClick={() => onValor(o.id)}
-            style={{ border: 0, cursor: "pointer", height: altura, padding: "0 10px", borderRadius: 7, fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? "var(--pm-s)" : "transparent", color: on ? "var(--pm-t)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+            style={{ border: 0, cursor: "pointer", height: altura, padding: "0 10px", borderRadius: 7, fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
           >
             {o.nome}
-            {o.sub && <span style={{ fontSize: 11, color: "var(--pm-t3)", fontWeight: 500 }}>{o.sub}</span>}
+            {o.sub && <span style={{ fontSize: 11, color: on ? "var(--pm-oa)" : "var(--pm-t3)", opacity: on ? 0.85 : 1, fontWeight: 500 }}>{o.sub}</span>}
           </button>
         );
       })}
