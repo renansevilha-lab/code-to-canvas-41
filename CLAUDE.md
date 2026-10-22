@@ -1773,7 +1773,20 @@ concluir.
 - **"Transporte confirmado" no app × Seller Central (21/out, FBA19TZFT26Z, ACZ):** a API mostrava o envio com
   `selectedTransportationOptionId` (coleta Total Express, janela 23/10) e um rastreio AMZC… por caixa logo depois da
   confirmação, status v0 `WORKING`; o dono não via data nem NF no Seller Central. A NF de remessa é a etapa 3 (Seller
-  Central) e o status só sai de WORKING depois dela.
+  Central) e o status só sai de WORKING depois dela. **A reserva da coleta é um passo à parte no Seller Central**
+  ("Reservar agendamento da transportadora", depois da NF): a data escolhida pela API é só a preferência e pode estar
+  esgotada lá (23/10 estava; 28–30 livres). A tela do plano passou a dizer isso.
+- **NF de remessa importada sozinha (21/out, pedido do dono) — `amazon-inbound` v9 (deploy 12, sha256 conferido):** os
+  apps das DUAS contas já têm o papel de notas (em 19/out dava 403). `GET /tax/invoices/2024-06-19/governmentInvoiceRequests/
+  {shipmentId sh…}?marketplaceId&transactionType=INBOUND_SHIPMENT&invoiceType=REMITTANCE&inboundPlanId=wf…` (sem o
+  `inboundPlanId` = 400) devolve um link de 10 s para o **XML** da NF-e (não há PDF). Módulo `nf-remessa {plano?, dry?}`:
+  anexa o XML no envio da aba Envios (tipo `danfe`, `NF remessa <nº>-<série> <FBA>.xml`), grava `envios_amazon[].nf`
+  (número, série, chave, emissão, valor, emitente) e escreve a nota na observação do envio; sem nota ainda = `nf_erro` e
+  nova tentativa em 25 min. Cota ~1 consulta/min (5 s entre duas = 429): o cron **169** `amazon-nf-remessa`
+  (`6-56/10 * * * *`, chave publicável — o módulo aceita anon) faz UM envio por rodada; o botão "Buscar NF agora" do plano
+  tenta os envios dele. Só envios criados pelo app (plano com `sh…`/`wf…`); importados do Seller Central não têm esses ids.
+  1ª rodada: ACZ FBA19TZFT26Z NF 7541/25 (R$ 1.297,40, emitente ACZ PET); SVL FBA19TPSZTVN NF 6320/5 e FBA19TPQXVN9 NF
+  6321/5 (emitente BMPC). A emitente é a própria empresa (regime especial da Amazon emite em nome dela).
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
@@ -3716,7 +3729,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
-| `amazon-inbound` | v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
+| `amazon-inbound` | v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `cancelar`; JWT de usuário + módulo galpao; só SVL — ver §5.9.4 |
 | `fulfillment-tarefas` | v1 | Tarefas do galpão (§5.9.3): `avisar` (Discord), `ajuste-preview` (saldo do Geral ao vivo) e `ajuste-aplicar&confirmar=1` (balanço = contado). Exige JWT de usuário |
 | `ia-anuncio` | v5 (deploy 7; 20/out: termos reais de busca no texto, §5.11.13); v4 (deploy 6) | IA · Anúncios Fase 2: briefing, texto+preço, prompts de imagem, enfileirar imagens, foto de referência. JWT de usuário + módulo `ia`. Texto pela Anthropic ou, sem a chave dela, pela OpenAI; v4: várias fotos reais e instruções do produto obrigatórias — ver §5.11.1, §5.11.4 e §5.11.11.10 |
 | `ia-imagem-worker` | v5 (deploy 6: capa limpa sem texto na hora de gerar); v4 (deploy 5; 18/out: arquivo novo por versão + "o que mudar?" no topo do prompt, §5.11.11.14); v3 (deploy 4) | Fila de imagens da IA (1 por chamada, encadeada; rede de segurança `ia_fila_vigiar` a cada 5 min); imagens de contexto também para a OpenAI; v3: fotos reais extras e instruções do produto sempre no prompt; `{"status": true}` = diagnóstico das chaves — ver §5.11.1, §5.11.3, §5.11.4 e §5.11.11.10 |
