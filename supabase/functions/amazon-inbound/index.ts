@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v8 (20/out/2026; ACZ liberada + modelos de caixa do histórico) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v9 (21/out/2026; NF de remessa importada da Amazon) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -47,6 +47,15 @@
 // v8.1 (21/out/2026): o items/prepDetails só lia o 1º anúncio — `mskus=a&mskus=b` a Amazon ignora o resto; o certo é
 //   `mskus=a,b` (até 100). Os demais iam com prepOwner NONE e o plano da ACZ com o Xô Gatinho (DF-CLWD-07BZ, LIQUID,
 //   prep SELLER_ONLY: saco plástico) foi recusado. Prep "AMAZON_OR_SELLER" com categoria ≠ NONE vai como SELLER.
+// v9 (21/out/2026, pedido do dono): NF DE REMESSA IMPORTADA. Os apps das duas contas ganharam o papel de notas
+//   (Invoices API): `GET /tax/invoices/2024-06-19/governmentInvoiceRequests/{shipmentId}?marketplaceId&
+//   transactionType=INBOUND_SHIPMENT&invoiceType=REMITTANCE&inboundPlanId` devolve um link (10 s) para o XML da NF-e
+//   que a Amazon emite quando a nota é gerada na etapa 3 do Seller Central.
+//   nf-remessa → {plano?, dry?}: sem plano, pega UM envio (o que está há mais tempo sem tentar) dos planos com transporte
+//                confirmado que já têm envio na aba Envios e ainda não têm a nota — a cota da Amazon é ~1 consulta/min
+//                (cron a cada 10 min); com plano, tenta os envios dele. Baixa o XML, anexa no envio (tipo danfe), grava
+//                número/série/chave em envios_amazon[].nf e escreve a nota na observação do envio. Aceita a chave
+//                publicável (só lê a Amazon e grava o próprio envio).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -101,6 +110,7 @@ async function exigirAcesso(req: Request, modulo = ""): Promise<Quem | Response>
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role === "service_role") return { nome: "sistema" };
   if (pl.role === "anon" && Date.now() < ENSAIO_ATE && ["previa", "amazon-envios", "recebimento", "modelos-importar"].includes(modulo)) return { nome: "ensaio" };
+  if (pl.role === "anon" && modulo === "nf-remessa") return { nome: "robô" }; // v9: cron da NF de remessa
   if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
@@ -237,14 +247,14 @@ async function etiquetasProduto(token: string, mskus: { msku: string; quantity: 
   if (!ok(r) || !url) throw new Error(`etiquetas de produto: ${motivo(r)}`);
   return await baixarPdf(String(url));
 }
-async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uint8Array, por: string | null) {
+async function anexarDoc(envioId: string, tipo: string, nome: string, bytes: Uint8Array, por: string | null, mime = "application/pdf") {
   const { data: ja } = await db.from("fulfillment_envio_docs").select("id").eq("envio_id", envioId).eq("nome", nome).limit(1);
   if (ja?.length) return "ja_tinha";
   const caminho = `${envioId}/${crypto.randomUUID().slice(0, 8)}-${nome.replace(/[^A-Za-z0-9._-]+/g, "_")}`;
-  const { error: eUp } = await db.storage.from(DOCS_BUCKET).upload(caminho, bytes, { contentType: "application/pdf", upsert: false });
+  const { error: eUp } = await db.storage.from(DOCS_BUCKET).upload(caminho, bytes, { contentType: mime, upsert: false });
   if (eUp) throw new Error(`storage: ${eUp.message}`);
   const { error } = await db.from("fulfillment_envio_docs").insert({
-    envio_id: envioId, tipo, nome, mime: "application/pdf", tamanho: bytes.length, storage_path: caminho, criado_por: por,
+    envio_id: envioId, tipo, nome, mime, tamanho: bytes.length, storage_path: caminho, criado_por: por,
   });
   if (error) { await db.storage.from(DOCS_BUCKET).remove([caminho]); throw new Error(`banco: ${error.message}`); }
   return "anexado";
@@ -554,6 +564,81 @@ Deno.serve(async (req) => {
         novos, ja_existiam: jaExistiam, faltou_tempo: lidos < Math.min(planos.length, maxPlanos) });
     }
 
+    // v9: NF de remessa emitida pela Amazon → anexada ao envio da aba Envios
+    if (modulo === "nf-remessa") {
+      const dry = b.dry === true;
+      const sel = db.from("amazon_envio_plano").select("*").eq("passo", "transporte_confirmado");
+      const { data: planos, error: eP } = b.plano
+        ? await sel.eq("id", String(b.plano))
+        : await sel.gte("criado_em", new Date(Date.now() - 60 * 86400000).toISOString());
+      if (eP) return json({ ok: false, erro: `banco: ${eP.message}` }, 500);
+      const cands: { p: Record<string, any>; e: Record<string, any> }[] = [];
+      for (const p of (planos ?? []) as Record<string, any>[]) {
+        for (const e of ((p.envios_amazon ?? []) as Record<string, any>[])) {
+          if (e.id && e.envio_app_id && !e.nf?.chave) cands.push({ p, e });
+        }
+      }
+      // o cron pega o que está há mais tempo sem tentar e espera 25 min entre tentativas do mesmo envio
+      const fila = cands
+        .filter((c) => b.plano || !c.e.nf_tentativa_em || Date.now() - Date.parse(c.e.nf_tentativa_em) > 25 * 60000)
+        .sort((x, y) => String(x.e.nf_tentativa_em ?? "").localeCompare(String(y.e.nf_tentativa_em ?? "")));
+      const resultado: Record<string, unknown>[] = [];
+      for (const { p, e } of fila) {
+        if (resultado.length && !b.plano) break; // ~1 consulta por minuto na Amazon: uma por rodada
+        if (Date.now() > ate - 6000) { resultado.push({ fba: e.fba, pendente: "sem tempo nesta rodada" }); break; }
+        const token = await tokenConta(Number(p.shop_id));
+        const r = await sp(token, "GET", `/tax/invoices/2024-06-19/governmentInvoiceRequests/${encodeURIComponent(String(e.id))}?marketplaceId=${MKT}` +
+          `&transactionType=INBOUND_SHIPMENT&invoiceType=REMITTANCE&inboundPlanId=${encodeURIComponent(String(p.plano_id))}`);
+        if (r.status === 429) { resultado.push({ fba: e.fba, pendente: "a Amazon pediu para esperar (cota): tente em 1 minuto" }); break; }
+        const url = r.body?.invoiceDocument?.invoiceDocumentUrl;
+        const marcar = async (erro: string) => {
+          e.nf_tentativa_em = new Date().toISOString();
+          e.nf_erro = erro;
+          if (!dry) await salvar(String(p.id), { envios_amazon: p.envios_amazon });
+        };
+        if (!ok(r) || !url) {
+          const erro = ok(r) ? "a Amazon ainda não tem a nota (gere a NF na etapa 3 do Seller Central)" : motivo(r);
+          await marcar(erro);
+          resultado.push({ fba: e.fba, pendente: erro, http: r.status });
+          continue;
+        }
+        try {
+          const x = await fetch(String(url));
+          if (!x.ok) throw new Error(`download do XML ${x.status}`);
+          const bytes = new Uint8Array(await x.arrayBuffer());
+          const txt = new TextDecoder().decode(bytes);
+          const tag = (n: string, em = txt) => em.match(new RegExp(`<${n}>([^<]*)</${n}>`))?.[1] ?? null;
+          const chave = tag("chNFe") ?? txt.match(/Id="NFe(\d{44})"/)?.[1] ?? null;
+          if (!chave) throw new Error("o arquivo da Amazon não tem a chave da NF-e");
+          const nf = {
+            numero: tag("nNF"), serie: tag("serie"), chave, emitida_em: tag("dhEmi"), valor: Number(tag("vNF") ?? 0) || null,
+            emitente: tag("xNome", txt.match(/<emit>[\s\S]*?<\/emit>/)?.[0] ?? ""), importada_em: new Date().toISOString(),
+          };
+          if (dry) { resultado.push({ fba: e.fba, nf, dry: true, kb: Math.round(bytes.length / 1024) }); continue; }
+          const doc = await anexarDoc(String(e.envio_app_id), "danfe", `NF remessa ${nf.numero ?? ""}-${nf.serie ?? ""} ${e.fba}.xml`, bytes,
+            "importado da Amazon", "application/xml");
+          const { data: env } = await db.from("fulfillment_envios").select("observacao").eq("id", String(e.envio_app_id)).maybeSingle();
+          const obs = String(env?.observacao ?? "");
+          if (!obs.includes(chave)) {
+            await db.from("fulfillment_envios").update({
+              observacao: `${obs ? `${obs} ` : ""}NF de remessa nº ${nf.numero} série ${nf.serie} (chave ${chave}) importada da Amazon.`,
+              atualizado_em: new Date().toISOString(),
+            }).eq("id", String(e.envio_app_id));
+          }
+          e.nf = nf;
+          delete e.nf_erro;
+          e.nf_tentativa_em = nf.importada_em;
+          await salvar(String(p.id), { envios_amazon: p.envios_amazon }, { acao: "NF de remessa importada", por: quem.nome, fba: e.fba, numero: nf.numero });
+          resultado.push({ fba: e.fba, nf, doc });
+        } catch (x) {
+          const erro = String((x as Error).message ?? x);
+          await marcar(erro);
+          resultado.push({ fba: e.fba, erro });
+        }
+      }
+      return json({ ok: true, dry, candidatos: cands.length, resultado });
+    }
+
     if (modulo === "amazon-envios" || modulo === "importar" || modulo === "recebimento") {
       const conta = CONTA[String(b.empresa ?? "")];
       if (!conta) return json({ ok: false, erro: "informe a empresa (SVL Store ou ACZ Pet)" }, 400);
@@ -823,7 +908,7 @@ Deno.serve(async (req) => {
       return json({ ...resumo(p), ok: !resultado.some((r) => r.erro), dry, faltam, envios_app: resultado });
     }
 
-    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app, amazon-envios, importar, recebimento ou cancelar" }, 400);
+    return json({ ok: false, erro: "use modulo lista, previa, avancar, confirmar-destino, transporte, confirmar-transporte, envios-app, nf-remessa, amazon-envios, importar, recebimento ou cancelar" }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e) }, 500);
   }

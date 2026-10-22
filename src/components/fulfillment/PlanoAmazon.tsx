@@ -35,7 +35,11 @@ interface OpcaoTransporte {
   id: string; transportadora: string | null; modo: string | null; solucao: string | null; custo: number | null;
   coleta_inicio: string | null; coleta_fim: string | null; precondicoes: string[];
 }
-interface EnvioAmazon { id: string; fba: string | null; cd: string | null; status: string | null; transporte_opcoes?: OpcaoTransporte[]; transporte_escolhido?: string | null; envio_app_id?: string | null }
+interface NfRemessa { numero: string | null; serie: string | null; chave: string; emitida_em: string | null; valor: number | null; importada_em: string }
+interface EnvioAmazon {
+  id: string; fba: string | null; cd: string | null; status: string | null; transporte_opcoes?: OpcaoTransporte[]; transporte_escolhido?: string | null; envio_app_id?: string | null;
+  nf?: NfRemessa | null; nf_erro?: string | null; nf_tentativa_em?: string | null;
+}
 // v6: depois do transporte confirmado o servidor cria o envio na aba Envios (itens + etiquetas das caixas e de produto)
 interface EnvioApp { fba: string | null; cd: string | null; envio_id?: string; criado?: boolean; erro?: string; avisos: string[]; caixas?: number; doc_caixas?: string; doc_produto?: string }
 interface Destino { id: string; expira: string | null; taxa: number; desconto: number; envios: { id: string; cd: string | null; cidade: string | null }[] }
@@ -245,6 +249,22 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
       if (r.ok === false) toast.error("Envio na aba Envios: algo falhou", { description: r.erro ?? (r.envios_app ?? []).map((e) => e.erro).filter(Boolean).join(" · ") });
       else toast.success("Envio criado na aba Envios, com as etiquetas");
     } catch (e) { toast.error("Falha ao criar o envio na aba Envios", { description: (e as Error).message }); } finally { setRodando(null); }
+  }
+  // NF de remessa: o cron importa sozinho (amazon-inbound nf-remessa, a cada 10 min); o botão tenta agora
+  async function buscarNf() {
+    if (!planoRef) return;
+    setRodando("Buscando a NF de remessa na Amazon…");
+    try {
+      const r = (await chamar({ modulo: "nf-remessa", plano: planoRef })) as Resposta & { resultado?: { fba: string; nf?: NfRemessa; pendente?: string; erro?: string }[] };
+      const res = r.resultado ?? [];
+      const ok = res.filter((x) => x.nf);
+      if (ok.length) toast.success(`NF de remessa importada: ${ok.map((x) => `${x.fba} nº ${x.nf?.numero}`).join(" · ")}`, { description: "XML anexado no envio da aba Envios." });
+      const falta = res.filter((x) => !x.nf);
+      if (falta.length) toast.message("NF ainda não veio", { description: falta.map((x) => `${x.fba}: ${x.pendente ?? x.erro}`).join(" · ") });
+      if (!res.length) toast.message("Nenhuma NF a buscar neste plano");
+      pronto(await chamar({ modulo: "previa", plano: planoRef }));
+      void qc.invalidateQueries({ queryKey: ["fulfillment", "envios"] });
+    } catch (e) { toast.error("Falha ao buscar a NF", { description: (e as Error).message }); } finally { setRodando(null); }
   }
   const faltaEnvioApp = plano?.passo === "transporte_confirmado" && (plano.envios_amazon ?? []).some((e) => !e.envio_app_id);
   useEffect(() => {
@@ -489,6 +509,12 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                 const o = (e.transporte_opcoes ?? []).find((x) => x.id === e.transporte_escolhido);
                 return `${e.fba ?? e.id} → ${e.cd ?? "?"}${o ? ` (${rotuloOpcao(o)})` : ""}`;
               }).join(" · ")}
+              {enviosTransp.some((e) => (e.transporte_opcoes ?? []).find((x) => x.id === e.transporte_escolhido)?.solucao === "AMAZON_PARTNERED_CARRIER") && (
+                <div className="mt-1 text-[12px] text-emerald-800/90 dark:text-emerald-300/90">
+                  A data é a escolhida no plano, não a coleta reservada: o horário da coleta é reservado no Seller Central
+                  ("Reservar agendamento da transportadora"), e o dia pode estar esgotado lá.
+                </div>
+              )}
             </div>
             <div className="rounded-md border px-3 py-2">
               <div className="mb-1 font-medium">Aba Envios</div>
@@ -500,6 +526,18 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                     <b>{e.fba}</b> → {e.cd ?? "?"}: {e.envio_app_id || r?.envio_id ? "criado na aba Envios" : r?.erro ? `não criado — ${r.erro}` : "ainda não criado"}
                     {r && (r.doc_caixas || r.doc_produto) ? ` · etiquetas: ${[r.doc_caixas ? "caixas" : null, r.doc_produto ? "produto" : null].filter(Boolean).join(" e ")}` : ""}
                     {r?.avisos?.length ? <span className="text-amber-700"> · {r.avisos.join(" · ")}</span> : null}
+                    {(e.envio_app_id || r?.envio_id) && (
+                      <div className="ml-5 text-[12px] text-muted-foreground">
+                        {e.nf ? (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            NF de remessa nº {e.nf.numero} série {e.nf.serie}
+                            {e.nf.valor != null ? ` · ${formatBRL(e.nf.valor)}` : ""} · XML anexado no envio
+                          </span>
+                        ) : (
+                          <>NF de remessa: ainda não importada{e.nf_erro ? ` (${e.nf_erro})` : ""}</>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -515,11 +553,18 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                     <RefreshCw className="h-4 w-4" /> Conferir etiquetas de novo
                   </Button>
                 )}
+                {!faltaEnvioApp && enviosTransp.some((e) => !e.nf) && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!!rodando} onClick={() => void buscarNf()}
+                    title="A Amazon libera uma consulta por minuto: se vier 'esperar', tente de novo daqui a pouco">
+                    <RefreshCw className="h-4 w-4" /> Buscar NF agora
+                  </Button>
+                )}
               </div>
             </div>
             <p className="text-muted-foreground">
-              Falta no Seller Central: a <b>nota fiscal de remessa</b> (etapa 3). Baixe o DANFE e anexe no envio da aba Envios. As
-              etiquetas das caixas e de produto já vão anexadas pelo app.
+              Falta no Seller Central (etapa 3): gerar a <b>nota fiscal de remessa</b> e reservar o horário da coleta. Gerada a NF, o
+              app importa o XML sozinho (a cada 10 min) e anexa no envio da aba Envios. As etiquetas das caixas e de produto já vão
+              anexadas pelo app.
             </p>
             <Button asChild variant="outline" size="sm" className="gap-1.5">
               <a href={`https://sellercentral.amazon.com.br/fba/sendtoamazon?wf=${plano.plano_id}`} target="_blank" rel="noreferrer">
@@ -581,7 +626,7 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                 {enviosTransp.map((e) => {
                   const o = (e.transporte_opcoes ?? []).find((x) => x.id === transp[e.id]);
                   return `${e.fba ?? e.id}: ${o ? rotuloOpcao(o) : "—"}`;
-                }).join(" · ")}. Depois de confirmado, a coleta (se for da parceira) fica agendada e o envio segue para a nota fiscal e as etiquetas no Seller Central.
+                }).join(" · ")}. Depois de confirmado, o envio segue para a nota fiscal e a reserva do horário da coleta no Seller Central (a data escolhida aqui pode estar esgotada lá).
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
