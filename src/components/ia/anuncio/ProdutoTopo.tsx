@@ -20,10 +20,30 @@ export interface ProdutoIa {
 }
 
 /** Cabeçalho do anúncio: produto, canal/empresa, foto real de referência e dados que a gestão não tem. */
-export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, onEmpresa }: {
+export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, onEmpresa, compacto }: {
   produto: ProdutoIa; custo: number | null; extra: IaProdutoExtra | null;
   canal: string; empresa: string; onCanal: (c: string) => void; onEmpresa: (e: string) => void;
+  /** visual novo: nome, SKU, custo e destino já estão no cabeçalho fixo — aqui ficam só as fotos reais, a composição e os dados para a IA */
+  compacto?: boolean;
 }) {
+  if (compacto) {
+    return (
+      <Card>
+        <CardContent className="p-4 flex flex-col lg:flex-row gap-5">
+          <FotoReferencia sku={produto.sku} fotoCatalogo={produto.foto} refPath={extra?.foto_ref_path ?? null} refs={extra?.fotos_ref ?? []} />
+          <div className="flex-1 min-w-0 space-y-3">
+            <div>
+              <h3 className="text-[15px] font-bold">Produto e referências da IA</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">{produto.categoria_caminho ?? "sem categoria no Tiny"}</p>
+              {produto.tipo === "K" && <ComposicaoKit sku={produto.sku} canal={canal} empresa={empresa} />}
+            </div>
+            <DadosExtras sku={produto.sku} extra={extra} />
+            <InstrucoesIa sku={produto.sku} />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card>
       <CardContent className="p-4 flex flex-col lg:flex-row gap-5">

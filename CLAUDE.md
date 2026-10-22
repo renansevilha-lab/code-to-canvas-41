@@ -1215,6 +1215,21 @@ e a "Nova tarefa" ainda são os antigos. **Não conferido na tela** (pede login)
 `<html>`, guarda em `localStorage "tema"` e o `SCRIPT_TEMA` aplica antes da 1ª pintura. **Contraste (22/out, pedido do dono:
 "cores muito parecidas"):** os tokens `--pm-*` (claro e escuro) ficaram mais separados (fundo × cartão × borda × textos).
 Rótulos dos passos do Packing quebram em 2 linhas sem sobrepor, e os botões do cartão (Completar, imprimir) descem de linha.
+**Folha de contraste (pacote "Anúncios", 22/out):** os `--pm-*` seguem a folha do Claude Design (claro: fundo 0,95 · cartão 1 ·
+área interna 0,94 · divisória 0,86 · borda de cartão 0,78; escuro equivalente) e ganharam **`--pm-bc`** (borda de CONTROLE, L 0,6,
+≥ 3:1 — campo, botão secundário, segmento, chip, menu), **`--pm-hv`** (hover), **`--pm-ah`** (acento em hover) e `--pm-shm`. No
+escuro o texto sobre o acento passou a branco. Hover dos controles com estilo inline: classes `pm-hv`, `pm-hv-a`, `pm-linha-hv`
+(styles.css, com `!important`). Telas novas: controle = borda `--pm-bc`; seleção = roxo cheio.
+**IA · Anúncios no design (22/out, pacote "Anúncios"):** fase 1 = lista `/ia/anuncios` (`ListaNova` em `routes/ia.anuncios.tsx`:
+situação em segmento, tipo/ordem em select, "Mais filtros" com estoque parado / ainda não vende em / marca, chips do que está ligado,
+linha produto → onde vende (logo, loja, preço, margem) → progresso texto · fotos · enviado (enviado = lojas com `ia_publicacao`
+publicado) → Abrir/Criar, barra escura de seleção). Fase 2 = tela do anúncio (`ui/TelaAnuncio.tsx`): cabeçalho fixo com o
+**DESTINO** (loja; o que muda com ele × o que é um só), progresso Texto → Fotos → Preço → Enviado do destino, "Conferir envio"
+(abre a conferência no bloco de envio pelo `abrirSinal` do `Publicar`) e abas; aba Anúncio em duas colunas — à esquerda produto/
+referências (`ProdutoTopo compacto`), texto, termos, referências, variações e envio; à direita preço do destino, **capa principal do
+destino** (regra `CAPA_DO_DESTINO` da anuncio-publicar) e **onde está anunciado** (`useExistentesAnuncio`, mesma consulta do envio, +
+último envio pelo app). Telas antigas de reserva (`ProtecaoPacking`). **Fase 3 pendente:** conferência do envio como painel lateral
+em seções, aba Fotos como galeria única com "Adicionar fotos" e revisão foto a foto. **Não conferido na tela** (pede login).
 
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 

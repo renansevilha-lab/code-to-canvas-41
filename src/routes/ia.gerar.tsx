@@ -20,7 +20,10 @@ import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
 import { FotosNovas } from "@/components/ia/anuncio/FotosNovas";
 import { PainelPreco } from "@/components/ia/anuncio/PainelPreco";
 import { Aproveitar } from "@/components/ia/anuncio/Aproveitar";
-import { Publicar } from "@/components/ia/anuncio/Publicar";
+import { Publicar, listaDeExistentes, useExistentesAnuncio } from "@/components/ia/anuncio/Publicar";
+import { CabecalhoAnuncio, CapaDestino, OndeAnunciado, dataCurta, nomeLojaAnuncio, type Passo, type PublicacaoResumo } from "@/components/ia/anuncio/ui/TelaAnuncio";
+import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
+import { formatBRL } from "@/lib/format";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
 import { TermosBusca } from "@/components/ia/anuncio/TermosBusca";
 import {
@@ -147,6 +150,22 @@ function GerarAnuncioPage() {
     },
   });
 
+  // onde o produto já está anunciado (mesma consulta do bloco de envio) e o que foi enviado pela tela
+  const exQ = useExistentesAnuncio(sku);
+  const pubQ = useQuery({
+    queryKey: ["ia-anuncio", "publicacoes", sku],
+    enabled: !!sku,
+    staleTime: 60_000,
+    queryFn: async (): Promise<PublicacaoResumo[]> => {
+      const { data, error } = await supabaseExternal.from("ia_publicacao")
+        .select("canal, empresa, estado, operacao, criado_em, criado_por_nome, item_id, url").eq("sku", sku).order("criado_em", { ascending: false }).limit(100);
+      if (error) throw error;
+      return (data ?? []) as PublicacaoResumo[];
+    },
+  });
+  // "Conferir envio" do cabeçalho: abre a conferência do destino atual no bloco de envio
+  const [abrirEnvio, setAbrirEnvio] = useState(0);
+
   if (!sku) {
     return (
       <div className="p-6 md:p-10 max-w-3xl mx-auto">
@@ -160,7 +179,144 @@ function GerarAnuncioPage() {
 
   const etapas = etapasQ.data?.etapas ?? [];
   const outros = (rascunhosQ.data ?? []).filter((x) => x.id !== rascunho?.id);
-  return (
+
+  // ── progresso do anúncio para o destino escolhido: Texto → Fotos → Preço → Enviado
+  const rasc = r === "novo" ? null : rascunho;
+  const imagens = etapasQ.data?.imagens ?? [];
+  const etapaTexto = etapas.find((e) => e.etapa === "texto");
+  const comArquivo = imagens.filter((i) => i.storage_path);
+  const nOk = comArquivo.filter((i) => etapas.some((e) => e.imagem_id === i.id && e.status === "aprovado")).length;
+  const nRev = comArquivo.filter((i) => etapas.some((e) => e.imagem_id === i.id && e.status === "gerado")).length;
+  const precoDestino: number | null = !rasc ? null
+    : rasc.canal === canal && rasc.empresa === empresa ? rasc.preco_aprovado
+    : (rasc.memoria_calculo?.destinos?.[`${canal}:${empresa}`]?.preco ?? null);
+  const pubs = pubQ.data ?? [];
+  const ultimoDestino = pubs.find((p) => p.canal === canal && p.empresa === empresa);
+  const listaDestino = listaDeExistentes(exQ.data, canal, empresa);
+  const lojaNome = nomeLojaAnuncio(canal, empresa);
+  const textoOk = etapaTexto?.status === "aprovado";
+  const passos: Passo[] = [
+    !rasc ? { nome: "Texto", sub: "sem rascunho", st: "falta" }
+      : textoOk ? { nome: "Texto", sub: `aprovado${etapaTexto?.aprovado_em ? " " + dataCurta(etapaTexto.aprovado_em) : ""}`, st: "feito" }
+      : { nome: "Texto", sub: "falta aprovar", st: "falta" },
+    nRev > 0 ? { nome: "Fotos", sub: `${nOk} aprovadas · ${nRev} para revisar`, st: "aviso" }
+      : nOk > 0 ? { nome: "Fotos", sub: `${nOk} aprovadas`, st: "feito" }
+      : { nome: "Fotos", sub: "nenhuma aprovada", st: "falta" },
+    precoDestino != null ? { nome: "Preço", sub: `${formatBRL(Number(precoDestino))} salvo`, st: "feito" } : { nome: "Preço", sub: "usa o sugerido", st: "falta" },
+    ultimoDestino?.estado === "publicado" ? { nome: "Enviado", sub: `${ultimoDestino.operacao === "criar" ? "criado" : "atualizado"} ${dataCurta(ultimoDestino.criado_em)}`, st: "feito" }
+      : ultimoDestino?.estado === "erro" ? { nome: "Enviado", sub: "erro no último envio", st: "aviso" }
+      : { nome: "Enviado", sub: listaDestino && listaDestino.length ? "falta atualizar" : "falta criar", st: "falta" },
+  ];
+  const falta = !rasc ? { t: "Crie o texto (aba Anúncio) para poder enviar", cor: "var(--pm-t2)" }
+    : !textoOk ? { t: `Falta para enviar à ${lojaNome}: aprovar o texto`, cor: "var(--pm-r)" }
+    : nOk === 0 ? { t: `Falta para enviar à ${lojaNome}: aprovar ao menos uma foto`, cor: "var(--pm-r)" }
+    : { t: `Pronto para conferir o envio à ${lojaNome}`, cor: "var(--pm-g)" };
+  const situacaoLoja = (c: string, e: string) => {
+    const l = listaDeExistentes(exQ.data, c, e);
+    if (exQ.isLoading) return { t: "verificando…", cor: "var(--pm-t2)" };
+    if (l == null) return { t: "não deu para verificar", cor: "var(--pm-t2)" };
+    return l.length ? { t: `já anunciado · ${l[0].item_id}${l.length > 1 ? ` +${l.length - 1}` : ""}`, cor: "var(--pm-g)" } : { t: "não anunciado", cor: "var(--pm-t2)" };
+  };
+  const irEnvio = (c: string, e: string) => { set({ canal: c, empresa: e, r: rascunho?.id, aba: undefined }); setAbrirEnvio((n) => n + 1); };
+
+  // blocos de sempre (iguais no visual novo e no antigo)
+  const blocoOutros = outros.length > 0 && (
+    <Card><CardContent className="p-3 flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted-foreground">Outros rascunhos deste SKU:</span>
+      {outros.slice(0, 8).map((x) => (
+        <Button key={x.id} size="sm" variant="outline" className="h-6 text-[11px]"
+          onClick={() => set({ r: x.id, canal: x.canal, empresa: x.empresa })}>
+          {nomeCanal(x.canal)} · {new Date(x.created_at).toLocaleDateString("pt-BR")}
+        </Button>
+      ))}
+      {rascunho && <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => set({ r: "novo" })}>+ novo rascunho neste canal</Button>}
+    </CardContent></Card>
+  );
+  const blocoPreco = <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={rasc} />;
+  const blocoRefs = <Referencias key={`ref-${sku}`} sku={sku} marca={dados.produto.marca} />;
+  const blocoTermos = <TermosBusca key={`tb-${sku}`} sku={sku} canal={canal} titulo={rasc?.titulo ?? null} />;
+  const blocoTexto = (
+    <EtapaTexto sku={sku} canal={canal} empresa={empresa} rascunho={rasc}
+      etapa={etapaTexto} briefing={apoioQ.data?.briefing ?? null}
+      onCriado={(id) => set({ r: id })} />
+  );
+  const blocoVariacoes = (<>
+    {/* produto pai na Shopee: as opções (variações) que entram no anúncio assim que ele é criado pelo envio */}
+    {dados.produto.tipo === "V" && canal === "shopee" && (
+      <VariacoesShopee key={`vs-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} empresa={empresa} />
+    )}
+    {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
+    {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+    {/* Amazon: pesquisa pelo ASIN e família de tamanhos (18/out) */}
+    {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
+  </>);
+  const blocoEnvio = rascunho && r !== "novo" && (
+    <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} abrirSinal={abrirEnvio}
+      noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />}
+      promoPara={(emp, item) => <PromocaoNoEnvio key={`pe-${sku}-${emp}-${item}`} sku={sku} nome={dados.produto?.nome ?? ""} empresa={emp} comVariacoes={dados.produto?.tipo === "V"} />} />
+  );
+  const abaFotos = (<>
+    {/* 1) o que já existe: fotos da família de kit e de qualquer outro anúncio parecido */}
+    {r !== "novo" && (
+      <Aproveitar key={`apr-${sku}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
+        imagens={imagens} etapas={etapas} onDestino={(id) => set({ r: id })} />
+    )}
+    <FotosDeOutros key={`fo-${sku}`} sku={sku} nome={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+      rascunho={rasc} onDestino={(id) => set({ r: id })} />
+    <FotosNovas key={`fn-${sku}`} sku={sku} canal={canal} empresa={empresa}
+      rascunho={rasc} onDestino={(id) => set({ r: id })} />
+    {/* 2) as fotos deste anúncio: gerar com IA e revisar */}
+    {rascunho && r !== "novo" && apoioQ.data ? (
+      <EtapaFotos key={`ef-${sku}`} sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
+        ehPai={dados.produto.tipo === "V"} nomeProduto={dados.produto.nome ?? ""}
+        briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={imagens} etapas={etapas}
+        tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
+    ) : (
+      <Card><CardContent className="p-4 text-sm text-muted-foreground">
+        Para GERAR fotos com IA, crie antes o texto na aba Anúncio (a IA usa o briefing do produto). Para usar fotos prontas de outro anúncio não precisa: escolha acima e o anúncio é criado com elas.
+      </CardContent></Card>
+    )}
+    {/* produto com variações (pai): uma foto por variação, com a quantidade de embalagens de cada uma */}
+    {dados.produto.tipo === "V" && apoioQ.data && (
+      <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
+        briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
+    )}
+  </>);
+
+  // visual novo (pacote "Anúncios" do Claude Design, fase 2): cabeçalho fixo com destino, progresso e abas; na aba
+  // Anúncio, duas colunas (o trabalho à esquerda; preço, capa e lojas do destino à direita). O antigo fica de reserva.
+  const novo = (
+    <div className="pm-ui" style={{ padding: "14px 24px 80px", maxWidth: 1440, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
+      <CabecalhoAnuncio produto={dados.produto} custo={dados.custo} canal={canal} empresa={empresa}
+        onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho?.id })} situacaoLoja={situacaoLoja}
+        passos={passos} falta={falta} podeConferir={!!rasc} onConferir={() => irEnvio(canal, empresa)}
+        abas={ABAS.map((x) => ({ ...x, n: x.id === "fotos" ? nRev : undefined }))} aba={aba} onAba={(id) => set({ aba: id as Aba | undefined })} />
+      {aba === "fotos" && abaFotos}
+      {aba === "analise" && <AnaliseProduto key={`an-${sku}`} sku={sku} />}
+      {aba === "preco" && <PrecoPromocao key={`pp-${sku}`} sku={sku} empresa={empresa} />}
+      {!aba && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
+          <div style={{ flex: "1 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+            {blocoOutros}
+            <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} extra={dados.extra} canal={canal} empresa={empresa} compacto
+              onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
+            {blocoTexto}
+            {blocoTermos}
+            {blocoRefs}
+            {blocoVariacoes}
+            {blocoEnvio}
+          </div>
+          <div style={{ flex: "0 1 400px", minWidth: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+            {blocoPreco}
+            <CapaDestino canal={canal} empresa={empresa} imagens={imagens} etapas={etapas} onFotos={() => set({ aba: "fotos" })} />
+            <OndeAnunciado canal={canal} empresa={empresa} listaDe={(c, e) => listaDeExistentes(exQ.data, c, e)} carregando={exQ.isLoading}
+              publicacoes={pubs} onEnviar={irEnvio} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  const antigo = (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild size="sm" variant="ghost" className="gap-1"><Link to="/ia/anuncios"><ArrowLeft className="h-4 w-4" />Anúncios</Link></Button>
@@ -180,35 +336,7 @@ function GerarAnuncioPage() {
         ))}
       </div>
 
-      {aba === "fotos" && (<>
-        {/* 1) o que já existe: fotos da família de kit e de qualquer outro anúncio parecido */}
-        {r !== "novo" && (
-          <Aproveitar key={`apr-${sku}`} sku={sku} canal={canal} empresa={empresa} rascunho={rascunho}
-            imagens={etapasQ.data?.imagens ?? []} etapas={etapas} onDestino={(id) => set({ r: id })} />
-        )}
-        <FotosDeOutros key={`fo-${sku}`} sku={sku} nome={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
-          rascunho={r === "novo" ? null : rascunho} onDestino={(id) => set({ r: id })} />
-        <FotosNovas key={`fn-${sku}`} sku={sku} canal={canal} empresa={empresa}
-          rascunho={r === "novo" ? null : rascunho} onDestino={(id) => set({ r: id })} />
-
-        {/* 2) as fotos deste anúncio: gerar com IA e revisar */}
-        {rascunho && r !== "novo" && apoioQ.data ? (
-          <EtapaFotos key={`ef-${sku}`} sku={sku} canal={canal} ehKit={dados.produto.tipo === "K"} rascunho={rascunho}
-            ehPai={dados.produto.tipo === "V"} nomeProduto={dados.produto.nome ?? ""}
-            briefing={apoioQ.data.briefing} prompts={apoioQ.data.prompts} imagens={etapasQ.data?.imagens ?? []} etapas={etapas}
-            tiposAtivos={apoioQ.data.tipos} planoCanal={apoioQ.data.plano} modelos={apoioQ.data.modelos} />
-        ) : (
-          <Card><CardContent className="p-4 text-sm text-muted-foreground">
-            Para GERAR fotos com IA, crie antes o texto na aba Anúncio (a IA usa o briefing do produto). Para usar fotos prontas de outro anúncio não precisa: escolha acima e o anúncio é criado com elas.
-          </CardContent></Card>
-        )}
-
-        {/* produto com variações (pai): uma foto por variação, com a quantidade de embalagens de cada uma */}
-        {dados.produto.tipo === "V" && apoioQ.data && (
-          <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
-            briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
-        )}
-      </>)}
+      {aba === "fotos" && abaFotos}
       {aba === "analise" && <AnaliseProduto key={`an-${sku}`} sku={sku} />}
       {aba === "preco" && <PrecoPromocao key={`pp-${sku}`} sku={sku} empresa={empresa} />}
 
@@ -265,4 +393,5 @@ function GerarAnuncioPage() {
       </>)}
     </div>
   );
+  return <ProtecaoPacking antigo={antigo}>{novo}</ProtecaoPacking>;
 }

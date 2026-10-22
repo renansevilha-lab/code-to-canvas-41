@@ -98,31 +98,41 @@ const LOJAS: Record<string, { rotulo: string; empresa: string }[]> = {
   amazon: [{ rotulo: "ACZ", empresa: "ottz" }, { rotulo: "SVL", empresa: "svl" }],
 };
 
-export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPara }: {
+/** Onde o produto já está anunciado (anuncio-publicar?modulo=existentes). Mesma chave de cache do bloco de envio. */
+export function useExistentesAnuncio(sku: string) {
+  return useQuery({
+    queryKey: ["ia-anuncio", "existentes", sku],
+    staleTime: 5 * 60_000,
+    enabled: !!sku,
+    queryFn: async () => (await chamarPublicar("existentes", { sku })).existentes as Existentes,
+  });
+}
+/** Anúncios que já existem naquela loja (undefined = ainda lendo; null = não deu para consultar). */
+export function listaDeExistentes(ex: Existentes | undefined, c: string, e: string): Existente[] | null | undefined {
+  if (!ex) return undefined;
+  if (c === "shopee") return e === "svl" ? ex.shopee.svl : ex.shopee.ottz;
+  if (c === "mercado_livre") return ex.mercado_livre_lojas ? (e === "svl" ? ex.mercado_livre_lojas.svl : ex.mercado_livre_lojas.ottz) : (e === "svl" ? null : ex.mercado_livre);
+  if (c === "tiktok") return ex.tiktok;
+  if (c === "amazon") return ex.amazon ? (e === "svl" ? ex.amazon.svl : ex.amazon.ottz) : null;
+  return undefined;
+}
+
+export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPara, abrirSinal }: {
   rascunho: IaRascunho; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
+  /** muda de valor = abrir a conferência do destino atual (botão "Conferir envio" do cabeçalho novo) */
+  abrirSinal?: number;
   /** bloco extra dentro da conferência de CRIAR (ex.: cadastrar em Minha Promoção, na Shopee) */
   noEnvio?: ReactNode;
   /** o mesmo bloco de promoção para um anúncio de "Atualizar também" (outra loja) */
   promoPara?: (empresa: string, itemId: string) => ReactNode;
 }) {
-  const exQ = useQuery({
-    queryKey: ["ia-anuncio", "existentes", rascunho.sku],
-    staleTime: 5 * 60_000,
-    queryFn: async () => (await chamarPublicar("existentes", { sku: rascunho.sku })).existentes as Existentes,
-  });
+  const exQ = useExistentesAnuncio(rascunho.sku);
   const ex = exQ.data;
-  /** Anúncios que já existem naquela loja (undefined = ainda lendo; null = não deu para consultar). */
-  const listaDe = (c: string, e: string): Existente[] | null | undefined => {
-    if (!ex) return undefined;
-    if (c === "shopee") return e === "svl" ? ex.shopee.svl : ex.shopee.ottz;
-    if (c === "mercado_livre") return ex.mercado_livre_lojas ? (e === "svl" ? ex.mercado_livre_lojas.svl : ex.mercado_livre_lojas.ottz) : (e === "svl" ? null : ex.mercado_livre);
-    if (c === "tiktok") return ex.tiktok;
-    if (c === "amazon") return ex.amazon ? (e === "svl" ? ex.amazon.svl : ex.amazon.ottz) : null;
-    return undefined;
-  };
+  const listaDe = (c: string, e: string) => listaDeExistentes(ex, c, e);
   const pronto = DESTINOS.find((d) => d.canal === canal)?.pronto === true;
   // clicar em "enviar para cá" já abre a conferência (o número muda a cada clique e remonta o Envio aberto)
   const [abrir, setAbrir] = useState(0);
+  useEffect(() => { if (abrirSinal) setAbrir((n) => n + 1); }, [abrirSinal]);
   // todos os anúncios deste produto no canal escolhido (todas as lojas): servem ao "Atualizar também"
   const outros: Outro[] = (LOJAS[canal] ?? []).flatMap((l) => (listaDe(canal, l.empresa) ?? []).map((e) => ({ empresa: l.empresa, rotulo: l.rotulo, e })));
   // ENVIAR TAMBÉM (13/out, pedido do dono): criado num lugar, a conferência já oferece os outros
