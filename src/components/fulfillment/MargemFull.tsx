@@ -73,13 +73,13 @@ export function MargemFullCell({ m }: { m: MargemFull | undefined }) {
           ) : (
             <div className="text-[11px] text-muted-foreground">sem venda Full</div>
           )}
-          <div className="text-[10.5px] text-muted-foreground whitespace-nowrap">
-            {temFull && <>{formatBRL(porUn)}/un</>}
-            {temFull && temFora && " · "}
+          {/* uma informação por linha: juntas na mesma linha passavam da coluna e invadiam a vizinha */}
+          <div className="text-[10.5px] leading-tight text-muted-foreground whitespace-nowrap">
+            {temFull && <div>{formatBRL(porUn)}/un</div>}
             {temFora && (
-              <span className={cn(Math.abs(diff) >= 0.03 && (diff < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"))}>
+              <div className={cn(Math.abs(diff) >= 0.03 && (diff < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"))}>
                 fora {pct(mcFora)}
-              </span>
+              </div>
             )}
           </div>
         </div>

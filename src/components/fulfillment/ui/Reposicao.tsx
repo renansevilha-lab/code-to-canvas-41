@@ -39,7 +39,7 @@ const d1 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 1, 
 const pct = (v: number) => `${(v * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`;
 const logo = (mkt: string, px: number): CSSProperties => ({ display: "inline-block", width: px, height: px, borderRadius: 3, flex: "none", boxShadow: "0 0 0 1px var(--pm-b)", background: LOGO[mkt] ? `#fff url(${LOGO[mkt]}) center/contain no-repeat` : "var(--pm-s2)" });
 const selo: CSSProperties = { fontSize: 10.5, fontWeight: 600, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--pm-bs)", color: "var(--pm-t2)", whiteSpace: "nowrap", flex: "none" };
-const GRADE = "28px minmax(220px,1.6fr) 150px 70px 92px 128px 150px 62px 128px 116px 30px";
+const GRADE = "28px minmax(220px,1.6fr) 150px 70px 100px 128px 150px 62px 128px 116px 30px";
 const POR_PAGINA = 40;
 
 function grupoDe(r: LinhaRepo): Grupo {
@@ -199,10 +199,13 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
             <span className={MONO} style={{ fontSize: 12.5, color: n(r.und_dia) > 0 ? "var(--pm-t)" : "var(--pm-t3)" }}>{d1(n(r.und_dia))}</span>
             <span style={{ fontSize: 10.5, color: "var(--pm-t3)" }}>{int(n(r.unidades_30d))} em 30 d</span>
           </span>
-          <div style={{ textAlign: "right" }}><MargemFullCell m={m} /></div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ textAlign: "right", minWidth: 0 }}><MargemFullCell m={m} /></div>
+          <div style={{ display: "flex", flexDirection: "column", minWidth: 0, paddingLeft: 6 }}>
             <span className={MONO} style={{ fontSize: 13, fontWeight: 600, color: cd <= 0 ? "var(--pm-r)" : "var(--pm-t)" }}>{int(cd)} no CD</span>
-            <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>{[cam ? `+${int(cam)} a caminho` : "", env ? `+${int(env)} em envio` : ""].filter(Boolean).join(" · ") || "nada a caminho"}</span>
+            {/* a caminho e em envio em linhas separadas: juntos passavam da coluna */}
+            {cam ? <span style={{ fontSize: 11, color: "var(--pm-t3)", lineHeight: 1.25 }}>+{int(cam)} a caminho</span> : null}
+            {env ? <span style={{ fontSize: 11, color: "var(--pm-t3)", lineHeight: 1.25 }}>+{int(env)} em envio</span> : null}
+            {!cam && !env && <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>nada a caminho</span>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ position: "relative", height: 8, borderRadius: 4, background: "var(--pm-sk)" }}>
