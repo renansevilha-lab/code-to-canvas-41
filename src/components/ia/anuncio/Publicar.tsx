@@ -417,6 +417,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})${promoExtra.has(chaveT(o)) ? ` + promoção ${promoExtra.get(chaveT(o))}` : ""}`).join(", ")}.` : "",
       extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
       promoJunto ? `Em seguida: preço promocional na promoção ${promoJunto} — vale na hora.` : "",
+      promoJunto && junto.promocao_aviso ? `\n${junto.promocao_aviso}\n` : "",
       "O anúncio está no ar: a mudança aparece para os compradores na hora.",
     ].filter(Boolean).join("\n") : [
       `Criar o anúncio ${NO} ${p.loja}?`, "",
@@ -430,6 +431,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
           : "Vai nascer NO AR, visível para os compradores.",
       ...(junto.variacoes ? ["Em seguida: cria as variações (bloco Variações deste anúncio)."] : []),
       ...(junto.promocao ? [`Em seguida: cadastra na promoção ${junto.promocao} — o preço promocional vale na hora.`] : []),
+      ...(junto.promocao && junto.promocao_aviso ? ["", junto.promocao_aviso] : []),
       ...(junto.tiny ? [`Também: manda ${junto.tiny} para o produto no Tiny.`] : []),
     ].join("\n");
     if (!window.confirm(aviso)) return;

@@ -37,6 +37,10 @@ const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const NOME_LOJA: Record<string, string> = { ottz: "Ottz", svl: "Bumi" };
 export const FAIXAS_PROMO = [0.1, 0.15, 0.1725, 0.2];
 const FAIXA_PADRAO = 0.1725;
+// A Shopee recusa variações quando o preço promocional da mais cara fica muito acima do da mais barata
+// ("difference between the maximum price and the minimum price"). 22/out/2026: 2 un a R$ 58,85 × 10 un a
+// R$ 270,08 (4,6×) — só as de 4 un entraram, nas duas lojas. O limite exato não é publicado: avisa acima de 4×.
+const LIMITE_DIFERENCA = 4;
 const rotulo = (f: number) => `${(f * 100).toFixed(2).replace(/\.?0+$/, "").replace(".", ",")}%`;
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
@@ -189,6 +193,17 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     if (m != null && m.trim() !== "") { const v = paraNumero(m); return v > 0 ? v : null; }
     return calc[s]?.preco ?? null;
   };
+  // diferença entre o promocional mais caro e o mais barato do anúncio (regra da Shopee, ver LIMITE_DIFERENCA)
+  const comPreco = skus.map((s) => ({ sku: s.sku, nome: s.nome, v: promoDe(s.sku) }))
+    .filter((x): x is { sku: string; nome: string; v: number } => x.v != null && x.v > 0);
+  const diferenca = comPreco.length > 1 ? (() => {
+    const min = comPreco.reduce((a, b) => (b.v < a.v ? b : a));
+    const max = comPreco.reduce((a, b) => (b.v > a.v ? b : a));
+    const piso = Math.ceil((max.v / LIMITE_DIFERENCA) * 100) / 100;
+    return { min, max, razao: max.v / min.v, piso, abaixo: comPreco.filter((x) => x.v < piso) };
+  })() : null;
+  const diferencaAlta = diferenca && diferenca.razao > LIMITE_DIFERENCA ? diferenca : null;
+  const vezes = (r: number) => `${r.toFixed(1).replace(".", ",")}×`;
 
   async function cadastrar(d0: AnuncioPronto) {
     if (!desconto) return;
@@ -253,8 +268,8 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   }
 
   // os avisos do envio leem sempre o estado atual
-  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length, troca: false, alvo });
-  agora.current = { desconto, faixa, cadastrar, skus: skus.length, troca: !!noEscolhido, alvo };
+  const agora = useRef({ desconto, faixa, cadastrar, skus: skus.length, troca: false, alvo, diferencaAlta });
+  agora.current = { desconto, faixa, cadastrar, skus: skus.length, troca: !!noEscolhido, alvo, diferencaAlta };
   useEffect(() => {
     // no atualizar, cada bloco responde só pelo SEU anúncio (o principal e os de "Atualizar também" podem ser da mesma loja)
     const eDaqui = (d: { canal?: string; empresa?: string; sku?: string; item_id?: string | null }) => {
@@ -265,7 +280,12 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     const vaiCriar = (ev: Event) => {
       const d = (ev as CustomEvent).detail as VaiCriar;
       const a = agora.current;
-      if (eDaqui(d) && a.desconto) d.promocao = `"${a.desconto.discount_name}" com margem de ${rotulo(a.faixa)}${a.troca ? " (troca o preço promocional de hoje)" : ""}`;
+      const dif = a.diferencaAlta;
+      if (!eDaqui(d) || !a.desconto) return;
+      d.promocao = `"${a.desconto.discount_name}" com margem de ${rotulo(a.faixa)}${a.troca ? " (troca o preço promocional de hoje)" : ""}`;
+      d.promocao_aviso = dif
+        ? `ATENÇÃO, promoção: o preço promocional mais caro (${dif.max.sku}, ${formatBRL(dif.max.v)}) fica ${vezes(dif.razao)} o mais barato (${dif.min.sku}, ${formatBRL(dif.min.v)}) — a Shopee deve recusar parte das variações. Para evitar, cancele e deixe o mais barato em pelo menos ${formatBRL(dif.piso)} no bloco Minha Promoção.`
+        : null;
     };
     const pronto = (ev: Event) => {
       const d = (ev as CustomEvent).detail as AnuncioPronto;
@@ -338,6 +358,22 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
               );
             })}
           </div>
+          {diferencaAlta && (
+            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs space-y-1.5">
+              <div className="flex items-start gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>A Shopee deve recusar parte das variações: o promocional mais caro ({diferencaAlta.max.sku}, {formatBRL(diferencaAlta.max.v)}) fica {vezes(diferencaAlta.razao)} o mais barato ({diferencaAlta.min.sku}, {formatBRL(diferencaAlta.min.v)}).</span>
+              </div>
+              <p className="text-muted-foreground">
+                Ela limita a diferença de preço entre as variações do mesmo anúncio na promoção (com 4,6× entraram só as do meio). Para passar, deixe {diferencaAlta.abaixo.length > 1 ? "os mais baratos" : "o mais barato"} em pelo menos {formatBRL(diferencaAlta.piso)}
+                {" "}({diferencaAlta.abaixo.map((x) => x.sku).join(", ")}) — ou tire da promoção a variação mais cara.
+              </p>
+              <Button size="sm" variant="outline" className="h-7 text-xs"
+                onClick={() => setMao({ ...mao, ...Object.fromEntries(diferencaAlta.abaixo.map((x) => [x.sku, dinheiro(diferencaAlta.piso)])) })}>
+                Subir {diferencaAlta.abaixo.length > 1 ? "os mais baratos" : "o mais barato"} para {formatBRL(diferencaAlta.piso)}
+              </Button>
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground">
             Preço promocional de cada SKU pela margem escolhida (custo, comissão e imposto do bloco Preço); se você mudar o preço à mão, a margem ao lado mostra quanto ele rende. Quem ficar sem preço, ou com o promocional igual ou acima do preço cheio{atualizar && alvo.precoCheio != null ? ` (${formatBRL(alvo.precoCheio)} depois desta atualização)` : ""}, fica de fora. O preço promocional vale para os compradores assim que é cadastrado.
             {atualizar ? " Vai junto com o botão de atualizar, depois da troca do anúncio. Cada anúncio marcado em “Atualizar também” tem o seu próprio bloco de promoção." : ""}
