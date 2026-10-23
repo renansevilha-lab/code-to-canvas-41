@@ -23,6 +23,8 @@
 // Shopee com volume da API de ADS, Amazon Brand Analytics, termos em alta do Mercado Livre), o canal
 // do anúncio primeiro. Só os "confirmados" (todas as palavras já são do vocabulário do produto) vão
 // como termos a usar; os "a conferir" só se a foto/rótulo confirmar. Marca de concorrente nunca.
+// v6 (23/out/2026, ENSAIO): `?modulo=titulos-ensaio` = títulos por loja (Ottz × Bumi/SVL com pequena diferença),
+// pelos termos mais buscados de cada marketplace; só devolve, não grava.
 // =============================================================================
 import {
   CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, fotosReaisExtras, blocosFotosReais, templatesAtivos, escolherTemplate,
@@ -199,6 +201,102 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
   const { data: salvo, error } = await db.from("ia_rascunho").insert(linha).select("id").single();
   if (error) throw new Error(error.message);
   return { ok: true, rascunho_id: salvo.id, status, avisos, contextos_usados: contextos };
+}
+
+// ---------------------------------------------------------------- títulos por loja (v6, ENSAIO)
+// Pedido do dono (23/out/2026): o título segue o produto E os termos mais buscados de cada marketplace, e as
+// duas lojas do mesmo marketplace (Ottz × Bumi/SVL) recebem títulos com uma pequena diferença (1–2 palavras,
+// só se fizer sentido). Uma chamada só ao modelo para todas as lojas: assim a diferença é deliberada.
+const LOJAS_TITULO = [
+  { chave: "shopee:ottz", canal: "shopee", loja: "Shopee · Ottz Pet" },
+  { chave: "shopee:svl", canal: "shopee", loja: "Shopee · Bumi Pet" },
+  { chave: "mercado_livre:ottz", canal: "mercado_livre", loja: "Mercado Livre · Ottz Pet" },
+  { chave: "mercado_livre:svl", canal: "mercado_livre", loja: "Mercado Livre · SVL Store" },
+  { chave: "amazon:ottz", canal: "amazon", loja: "Amazon · ACZ Pet" },
+  { chave: "amazon:svl", canal: "amazon", loja: "Amazon · SVL Store" },
+];
+const FORMULA_TITULO: Record<string, string> = {
+  shopee: "Shopee: comece pelo termo mais buscado; depois marca, linha do produto, diferencial lido no rotulo e peso/volume/capacidade/quantidade; encaixe 1 ou 2 outros termos buscados. Use bem o espaco: entre 70 e 110 caracteres.",
+  mercado_livre: "Mercado Livre: LIMITE RIGIDO de 60 caracteres. Produto + Marca + Modelo/diferencial + Especificacao (peso/volume). Se estourar, corte o atributo menos relevante, nunca o termo buscado nem o peso.",
+  amazon: "Amazon: ate 150 caracteres. Marca + produto (o termo mais buscado) + diferencial + peso/volume/quantidade; pode terminar com o uso (ex.: para gatos).",
+};
+
+async function gerarTitulosLojas(db: DB, p: Produto, lojas: typeof LOJAS_TITULO) {
+  const [cfgR, gs] = await Promise.all([db.from("ia_canal_config").select("canal, titulo_max_chars"), guardrails(db)]);
+  const limite = new Map(((cfgR.data ?? []) as { canal: string; titulo_max_chars: number }[]).map((c) => [c.canal, Number(c.titulo_max_chars)]));
+  const foto = await fotoReferencia(db, p);
+  if (!foto) throw new Error(`SKU ${p.sku} sem foto de referência`);
+  const extras = await fotosReaisExtras(db, p);
+  const { data: brief } = await db.from("ia_briefing").select("angulo, palavras_chave").eq("sku", p.sku).maybeSingle();
+  const termos = await termosBusca(db, p.sku);
+  const fontes: { k: keyof Termos; canal: string; rotulo: string; fmt: (x: Termo) => string }[] = [
+    { k: "shopee", canal: "shopee", rotulo: "Shopee (volume de buscas/mes, do maior para o menor)", fmt: (x) => `${x.termo}${x.volume ? ` (${Number(x.volume).toLocaleString("pt-BR")})` : ""}` },
+    { k: "ml", canal: "mercado_livre", rotulo: "Mercado Livre (termos em alta, na ordem)", fmt: (x) => x.termo },
+    { k: "amazon", canal: "amazon", rotulo: "Amazon (posicao no ranking de buscas: menor = mais buscado)", fmt: (x) => `${x.termo}${x.rank ? ` (#${x.rank})` : ""}` },
+  ];
+  const canais = new Set(lojas.map((l) => l.canal));
+  const linhasTermos: string[] = []; const conferir: string[] = [];
+  for (const f of fontes) {
+    const lista = (termos?.[f.k] ?? []).filter((x) => !x.concorrente);
+    const ok = lista.filter((x) => x.confirmado).slice(0, 15).map(f.fmt);
+    if (ok.length) linhasTermos.push(`- ${f.rotulo}${canais.has(f.canal) ? "" : " (referencia)"}: ${ok.join("; ")}`);
+    conferir.push(...lista.filter((x) => !x.confirmado).slice(0, 6).map((x) => x.termo));
+  }
+  const unicos = [...new Set(conferir)].slice(0, 12);
+  const prompt = [
+    "Voce esta olhando a FOTO REAL do produto. Leia o rotulo com atencao.",
+    `Produto (cadastro): ${p.nome}`,
+    `Marca: ${p.marca ?? "(sem marca)"} | Categoria: ${p.categoria ?? "(nao informada)"}`,
+    `Dados extras: ${p.atributos ? JSON.stringify(p.atributos) : "(nenhum)"}`,
+    brief ? `Briefing (resumo): angulo ${JSON.stringify(brief.angulo)}; palavras-chave ${JSON.stringify(brief.palavras_chave)}` : "",
+    "",
+    "Escreva o TITULO deste produto para CADA loja abaixo. Temos duas lojas em cada marketplace:",
+    ...lojas.map((l) => `- ${l.chave} = ${l.loja} (maximo ${limite.get(l.canal) ?? 120} caracteres)`),
+    "",
+    "COMO MONTAR:",
+    "1. O titulo tem de descrever ESTE produto com fidelidade: tipo, marca, o diferencial que o rotulo mostra (material, linha, granulometria, fragrancia) e peso/volume/quantidade. Nada que a foto ou o nome nao confirmem.",
+    "2. Use os termos que os compradores mais buscam NAQUELE marketplace (lista abaixo). Comece pelo termo mais buscado que vale exatamente para este produto, escrito como o comprador digita (pode corrigir acento e maiuscula).",
+    "3. Peso, volume, capacidade, medida e quantidade que aparecem no nome do cadastro ou no rotulo SEMPRE entram (ex.: 4kg, 500ml, 15kg, Kit 3). O nome da linha do produto (ex.: Xo Gatinho, Crystalcat, Bento Mix) entra em TODAS as lojas.",
+    "4. Primeira letra das palavras principais em maiuscula, como os titulos dos marketplaces (\"Areia de Mandioca para Gatos\"); nunca tudo minusculo e nunca CAIXA ALTA.",
+    "5. Sem repetir palavra no mesmo titulo, sem emoji, sem palavra promocional, sem frete, sem superlativo, sem marca de outro fabricante.",
+    ...[...canais].map((c) => `- ${FORMULA_TITULO[c] ?? ""}`),
+    "",
+    "DIFERENCA ENTRE AS DUAS LOJAS DO MESMO MARKETPLACE (Ottz x Bumi/SVL):",
+    "- os dois titulos descrevem o mesmo produto, com a mesma marca e o mesmo peso/quantidade, mas NAO podem ser iguais;",
+    "- parta do MESMO titulo-base e troque UMA ou no maximo DUAS palavras (ou inverta a ordem de dois atributos), e so se continuar fazendo sentido. Mais que isso esta errado: as duas lojas vendem o mesmo produto;",
+    "- trocas boas: um sinonimo que o comprador tambem busca (gato/gatos, higienica/sanitaria, pra/para, kit 2/2 unidades, pote/porta), outro termo buscado da lista no lugar de um, ou a ordem de dois atributos;",
+    "- nunca mude nem tire fato (peso, capacidade, quantidade, marca, linha do produto, sabor, cor) nem o termo mais buscado.",
+    "",
+    blocoInstrucoes(gs),
+    "",
+    linhasTermos.length ? `TERMOS QUE OS COMPRADORES REALMENTE BUSCAM:\n${linhasTermos.join("\n")}` : "TERMOS DE BUSCA: nao ha dados deste produto; use os nomes que o comprador usaria.",
+    unicos.length ? `A CONFERIR (use SO se a foto/rotulo/nome confirmarem; na duvida, ignore): ${unicos.join("; ")}` : "",
+    "",
+    `Responda APENAS com JSON, sem comentario: {${lojas.map((l) => `"${l.chave}": "titulo"`).join(", ")}, "termos": {${lojas.map((l) => `"${l.chave}": ["termos buscados usados"]`).join(", ")}}, "diferenca": {"shopee": "o que mudou entre as duas lojas", "mercado_livre": "...", "amazon": "..."}}`,
+  ].filter((x) => x !== "").join("\n");
+  const modelo = await resolverModeloTexto(null);
+  const bruto = await claude(modelo, [...blocosFotosReais(foto, extras, "Leia o rotulo."), { type: "text", text: prompt }], 1500);
+  let j: Record<string, any>;
+  try { j = JSON.parse(bruto.replace(/```json|```/g, "").trim()); }
+  catch { throw new Error("o modelo não devolveu JSON válido: " + bruto.slice(0, 300)); }
+  // quantas palavras mudam entre as duas lojas do mesmo marketplace (o pedido é 1–2; 0 = iguais)
+  const palavras = (s: string) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").split(/[^a-z0-9%,]+/).filter(Boolean);
+  const diferenca = (a: string, b: string) => {
+    const A = palavras(a), B = palavras(b);
+    const so = (x: string[], y: string[]) => x.filter((w) => !y.includes(w));
+    return { trocadas: Math.max(so(A, B).length, so(B, A).length), mesma_ordem: A.join(" ") === B.join(" "), so_na_1: so(A, B), so_na_2: so(B, A) };
+  };
+  const titulos = lojas.map((l) => {
+    const v = validar(String(j[l.chave] ?? "").trim(), gs);
+    const max = limite.get(l.canal) ?? 120;
+    return { loja: l.chave, titulo: v.texto, chars: v.texto.length, max, estourou: v.texto.length > max, termos: j.termos?.[l.chave] ?? [], avisos: v.avisos, bloqueios: v.bloqueios };
+  });
+  const pares: Record<string, unknown> = {};
+  for (const c of canais) {
+    const [a, b] = titulos.filter((x) => x.loja.startsWith(c + ":"));
+    if (a && b) { const d = diferenca(a.titulo, b.titulo); pares[c] = { ...d, ok: !d.mesma_ordem && d.trocadas <= 2 }; }
+  }
+  return { ok: true, sku: p.sku, nome: p.nome, marca: p.marca, modelo, titulos, pares, diferenca: j.diferenca ?? null, termos_disponiveis: linhasTermos };
 }
 
 // ---------------------------------------------------------------- prompts de imagem
@@ -433,6 +531,18 @@ async function trocarFotoRef(db: DB, p: Produto, body: Record<string, any>) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ erro: "use POST" }, 405);
+  // v6 (23/out): ENSAIO dos títulos por loja — só lê e devolve (não grava nada), só com a chave e até o prazo
+  const u0 = new URL(req.url);
+  if (u0.searchParams.get("modulo") === "titulos-ensaio") {
+    if (Date.now() > Date.parse("2026-10-26T03:00:00Z") || u0.searchParams.get("chave") !== "tit-23out-7c41e9") return json({ erro: "encerrado" }, 410);
+    try {
+      const b0 = await req.json().catch(() => ({})) as Record<string, any>;
+      const db0 = sb(); const p0 = await carregarProduto(db0, String(b0.sku ?? "").trim());
+      if (!p0) return json({ erro: "SKU não encontrado" }, 404);
+      const so = Array.isArray(b0.lojas) && b0.lojas.length ? LOJAS_TITULO.filter((l) => b0.lojas.includes(l.chave)) : LOJAS_TITULO;
+      return json(await gerarTitulosLojas(db0, p0, so));
+    } catch (e) { return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500); }
+  }
   const quem = await exigirAcesso(req);
   if (quem instanceof Response) return quem;
   const modulo = new URL(req.url).searchParams.get("modulo") ?? "";

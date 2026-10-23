@@ -3603,6 +3603,17 @@ prompts gravados desses estilos passaram a dizer PREÇO DE / ATACADO (os de tít
 **Capa sem texto centralizada (pedido do dono):** `imagem_capa_ambientada_limpa` **v2** com o bloco CENTRALIZAÇÃO (produto ou conjunto
 no centro do quadro, mesma margem dos dois lados, pet e objetos nas laterais) e a mesma regra acrescentada aos 19 prompts já gravados.
 
+## 5.11.13.1 Títulos por loja — ENSAIO (23/out/2026)
+
+Pedido do dono: título fiel ao produto E puxado pelos termos mais buscados de cada marketplace, e as duas lojas do
+mesmo marketplace (Ottz × Bumi/SVL) com uma pequena diferença (1–2 palavras, só se fizer sentido). `ia-anuncio` **v6
+(deploy 9, conferido idêntico ao repositório)** ganhou `?modulo=titulos-ensaio&chave=tit-23out-7c41e9` {sku, lojas?}
+(expira 26/out 03:00 UTC; só lê e devolve, não grava): UMA chamada ao modelo para as 6 lojas (Shopee, ML e Amazon × Ottz/
+SVL), com os termos de `ia_termos_busca` por marketplace, e uma conferência em código (`pares`: palavras trocadas entre
+as duas lojas; fora da regra = mais de 2 ou iguais). Rodado em 6 SKUs (16640, 16627, 14953, 16637, 15987, 16457): fiel ao
+produto, peso/capacidade e linha mantidos; 3 dos 6 pares da Shopee trocaram um trecho inteiro (3–4 palavras). **Ainda não
+ligado ao fluxo:** a `anuncio-publicar` só lê `ia_rascunho.titulo` (um título para todos os destinos).
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
