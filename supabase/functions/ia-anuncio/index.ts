@@ -207,6 +207,9 @@ async function gerarTexto(db: DB, p: Produto, body: Record<string, any>, quem: Q
 // Pedido do dono (23/out/2026): o título segue o produto E os termos mais buscados de cada marketplace, e as
 // duas lojas do mesmo marketplace (Ottz × Bumi/SVL) recebem títulos com uma pequena diferença (1–2 palavras,
 // só se fizer sentido). Uma chamada só ao modelo para todas as lojas: assim a diferença é deliberada.
+// 2ª rodada (mesmo dia): composição fica junta ("Tofu e Mandioca"), o espaço do título é aproveitado com
+// palavras-chave reais (faixa de tamanho por marketplace) e o código confere tudo — o que sair da regra volta
+// UMA vez ao modelo com a lista dos problemas.
 const LOJAS_TITULO = [
   { chave: "shopee:ottz", canal: "shopee", loja: "Shopee · Ottz Pet" },
   { chave: "shopee:svl", canal: "shopee", loja: "Shopee · Bumi Pet" },
@@ -215,15 +218,26 @@ const LOJAS_TITULO = [
   { chave: "amazon:ottz", canal: "amazon", loja: "Amazon · ACZ Pet" },
   { chave: "amazon:svl", canal: "amazon", loja: "Amazon · SVL Store" },
 ];
+/** Faixa de tamanho que o título deve ocupar (o máximo é o do canal em ia_canal_config). */
+const FAIXA_TITULO: Record<string, [number, number]> = { shopee: [100, 120], mercado_livre: [54, 60], amazon: [130, 180] };
 const FORMULA_TITULO: Record<string, string> = {
-  shopee: "Shopee: comece pelo termo mais buscado; depois marca, linha do produto, diferencial lido no rotulo e peso/volume/capacidade/quantidade; encaixe 1 ou 2 outros termos buscados. Use bem o espaco: entre 70 e 110 caracteres.",
-  mercado_livre: "Mercado Livre: LIMITE RIGIDO de 60 caracteres. Produto + Marca + Modelo/diferencial + Especificacao (peso/volume). Se estourar, corte o atributo menos relevante, nunca o termo buscado nem o peso.",
-  amazon: "Amazon: ate 150 caracteres. Marca + produto (o termo mais buscado) + diferencial + peso/volume/quantidade; pode terminar com o uso (ex.: para gatos).",
+  shopee: "Shopee: termo mais buscado + marca + linha do produto + composicao/material + tipo/uso + beneficio lido no rotulo + peso/volume/capacidade/quantidade, encaixando os outros termos buscados que valem para o produto.",
+  mercado_livre: "Mercado Livre: Produto (termo mais buscado) + Marca + linha/composicao + especificacao (peso/volume). Cada caractere conta: preencha os 60 com o que o comprador busca.",
+  amazon: "Amazon: Marca + produto (termo mais buscado) + linha + composicao/material + beneficio + peso/volume/quantidade + uso (ex.: para gatos).",
 };
+/** Conectivos ficam minúsculos no meio do título ("Mandioca e Minerais", não "Mandioca E Minerais"). */
+const CONECTIVOS = new Set(["e", "de", "da", "do", "das", "dos", "para", "pra", "com", "em", "no", "na", "nos", "nas", "ou", "a", "o", "por", "sem", "ao"]);
+const ajustarConectivos = (s: string) => s.split(" ").map((w, i) => (i > 0 && CONECTIVOS.has(w.toLowerCase()) ? w.toLowerCase() : w)).join(" ");
+const normTitulo = (s: string) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^a-z0-9%]+/g, " ").trim();
+const palavrasTitulo = (s: string) => normTitulo(s).split(" ").filter(Boolean);
 
 async function gerarTitulosLojas(db: DB, p: Produto, lojas: typeof LOJAS_TITULO) {
   const [cfgR, gs] = await Promise.all([db.from("ia_canal_config").select("canal, titulo_max_chars"), guardrails(db)]);
   const limite = new Map(((cfgR.data ?? []) as { canal: string; titulo_max_chars: number }[]).map((c) => [c.canal, Number(c.titulo_max_chars)]));
+  const faixa = (canal: string): [number, number] => {
+    const max = limite.get(canal) ?? 120; const f = FAIXA_TITULO[canal] ?? [Math.round(max * 0.85), max];
+    return [Math.min(f[0], max), Math.min(f[1], max)];
+  };
   const foto = await fotoReferencia(db, p);
   if (!foto) throw new Error(`SKU ${p.sku} sem foto de referência`);
   const extras = await fotosReaisExtras(db, p);
@@ -238,11 +252,11 @@ async function gerarTitulosLojas(db: DB, p: Produto, lojas: typeof LOJAS_TITULO)
   const linhasTermos: string[] = []; const conferir: string[] = [];
   for (const f of fontes) {
     const lista = (termos?.[f.k] ?? []).filter((x) => !x.concorrente);
-    const ok = lista.filter((x) => x.confirmado).slice(0, 15).map(f.fmt);
+    const ok = lista.filter((x) => x.confirmado).slice(0, 20).map(f.fmt);
     if (ok.length) linhasTermos.push(`- ${f.rotulo}${canais.has(f.canal) ? "" : " (referencia)"}: ${ok.join("; ")}`);
-    conferir.push(...lista.filter((x) => !x.confirmado).slice(0, 6).map((x) => x.termo));
+    conferir.push(...lista.filter((x) => !x.confirmado).slice(0, 8).map((x) => x.termo));
   }
-  const unicos = [...new Set(conferir)].slice(0, 12);
+  const unicos = [...new Set(conferir)].slice(0, 15);
   const prompt = [
     "Voce esta olhando a FOTO REAL do produto. Leia o rotulo com atencao.",
     `Produto (cadastro): ${p.nome}`,
@@ -251,52 +265,104 @@ async function gerarTitulosLojas(db: DB, p: Produto, lojas: typeof LOJAS_TITULO)
     brief ? `Briefing (resumo): angulo ${JSON.stringify(brief.angulo)}; palavras-chave ${JSON.stringify(brief.palavras_chave)}` : "",
     "",
     "Escreva o TITULO deste produto para CADA loja abaixo. Temos duas lojas em cada marketplace:",
-    ...lojas.map((l) => `- ${l.chave} = ${l.loja} (maximo ${limite.get(l.canal) ?? 120} caracteres)`),
+    ...lojas.map((l) => { const [mn, mx] = faixa(l.canal); return `- ${l.chave} = ${l.loja}: entre ${mn} e ${mx} caracteres (maximo absoluto ${limite.get(l.canal) ?? 120})`; }),
     "",
-    "COMO MONTAR:",
-    "1. O titulo tem de descrever ESTE produto com fidelidade: tipo, marca, o diferencial que o rotulo mostra (material, linha, granulometria, fragrancia) e peso/volume/quantidade. Nada que a foto ou o nome nao confirmem.",
-    "2. Use os termos que os compradores mais buscam NAQUELE marketplace (lista abaixo). Comece pelo termo mais buscado que vale exatamente para este produto, escrito como o comprador digita (pode corrigir acento e maiuscula).",
-    "3. Peso, volume, capacidade, medida e quantidade que aparecem no nome do cadastro ou no rotulo SEMPRE entram (ex.: 4kg, 500ml, 15kg, Kit 3). O nome da linha do produto (ex.: Xo Gatinho, Crystalcat, Bento Mix) entra em TODAS as lojas.",
-    "4. Primeira letra das palavras principais em maiuscula, como os titulos dos marketplaces (\"Areia de Mandioca para Gatos\"); nunca tudo minusculo e nunca CAIXA ALTA.",
-    "5. Sem repetir palavra no mesmo titulo, sem emoji, sem palavra promocional, sem frete, sem superlativo, sem marca de outro fabricante.",
+    "O TITULO E A PRINCIPAL FORMA DE O COMPRADOR ACHAR O PRODUTO NA BUSCA. Por isso:",
+    "1. Fidelidade: descreva ESTE produto — tipo, marca, linha, composicao/material, o diferencial que o rotulo mostra e peso/volume/quantidade. Nada que a foto ou o nome nao confirmem.",
+    "2. Palavras-chave: comece pelo termo mais buscado que vale exatamente para este produto (lista abaixo, do marketplace daquela loja) e use o MAXIMO de termos buscados que valem para ele, de forma natural. Cada palavra do titulo deve ser algo que o comprador digita: tipo (areia, granulado, higienica, sanitaria), para quem (gatos), material/composicao, linha, beneficio do rotulo (aglomera, controle de odor, biodegradavel), peso.",
+    "3. Espaco: PREENCHA a faixa de caracteres de cada loja. Titulo curto desperdica busca. Se sobrar espaco, acrescente outro termo buscado que vale para o produto (sem repetir palavra).",
+    "4. Composicao fica JUNTA: quando o produto tem composicao, sabor ou material com mais de um item (ex.: \"Tofu e Mandioca\", \"Mandioca e Minerais\", \"Milho e Mandioca\"), ela e um bloco so — sempre inteira, com os itens lado a lado, na mesma ordem e em TODAS as lojas. Nunca separe os itens nem deixe um de fora.",
+    "5. Peso, volume, capacidade, medida e quantidade do nome do cadastro ou do rotulo SEMPRE entram (ex.: 4kg, 500ml, 15kg, Kit 3). O nome da linha do produto (ex.: Xo Gatinho, Crystalcat, Bento Mix) entra em TODAS as lojas.",
+    "6. Primeira letra das palavras principais em maiuscula (\"Areia de Mandioca para Gatos\"); conectivos (e, de, da, do, para, com) em minusculo; nunca tudo minusculo e nunca CAIXA ALTA.",
+    "7. Sem repetir palavra no mesmo titulo, sem emoji, sem palavra promocional, sem frete, sem superlativo, sem marca de outro fabricante.",
     ...[...canais].map((c) => `- ${FORMULA_TITULO[c] ?? ""}`),
     "",
     "DIFERENCA ENTRE AS DUAS LOJAS DO MESMO MARKETPLACE (Ottz x Bumi/SVL):",
-    "- os dois titulos descrevem o mesmo produto, com a mesma marca e o mesmo peso/quantidade, mas NAO podem ser iguais;",
-    "- parta do MESMO titulo-base e troque UMA ou no maximo DUAS palavras (ou inverta a ordem de dois atributos), e so se continuar fazendo sentido. Mais que isso esta errado: as duas lojas vendem o mesmo produto;",
-    "- trocas boas: um sinonimo que o comprador tambem busca (gato/gatos, higienica/sanitaria, pra/para, kit 2/2 unidades, pote/porta), outro termo buscado da lista no lugar de um, ou a ordem de dois atributos;",
-    "- nunca mude nem tire fato (peso, capacidade, quantidade, marca, linha do produto, sabor, cor) nem o termo mais buscado.",
+    "- os dois titulos descrevem o mesmo produto, com a mesma marca, a mesma composicao e o mesmo peso/quantidade, mas NAO podem ser iguais;",
+    "- parta do MESMO titulo-base e troque UMA ou no maximo DUAS PALAVRAS soltas (ou inverta a ordem de dois atributos). Trocar um trecho inteiro (ex.: \"Controle de Odor\" por \"Maior Absorcao\") esta errado;",
+    "- trocas boas: um sinonimo que o comprador tambem busca (gato/gatos, higienica/sanitaria, pra/para, kit 2/2 unidades, pote/porta), outro termo buscado da lista no lugar de UMA palavra, ou a ordem de dois atributos;",
+    "- nunca mude nem tire fato (peso, capacidade, quantidade, marca, linha, composicao, sabor, cor) nem o termo mais buscado.",
     "",
     blocoInstrucoes(gs),
     "",
     linhasTermos.length ? `TERMOS QUE OS COMPRADORES REALMENTE BUSCAM:\n${linhasTermos.join("\n")}` : "TERMOS DE BUSCA: nao ha dados deste produto; use os nomes que o comprador usaria.",
     unicos.length ? `A CONFERIR (use SO se a foto/rotulo/nome confirmarem; na duvida, ignore): ${unicos.join("; ")}` : "",
     "",
-    `Responda APENAS com JSON, sem comentario: {${lojas.map((l) => `"${l.chave}": "titulo"`).join(", ")}, "termos": {${lojas.map((l) => `"${l.chave}": ["termos buscados usados"]`).join(", ")}}, "diferenca": {"shopee": "o que mudou entre as duas lojas", "mercado_livre": "...", "amazon": "..."}}`,
+    `Responda APENAS com JSON, sem comentario: {${lojas.map((l) => `"${l.chave}": "titulo"`).join(", ")}, "composicao": ["blocos de composicao que precisam ficar juntos, ex.: tofu e mandioca (vazio se nao houver)"], "termos": {${lojas.map((l) => `"${l.chave}": ["termos buscados usados"]`).join(", ")}}, "diferenca": {"shopee": "o que mudou entre as duas lojas", "mercado_livre": "...", "amazon": "..."}}`,
   ].filter((x) => x !== "").join("\n");
   const modelo = await resolverModeloTexto(null);
-  const bruto = await claude(modelo, [...blocosFotosReais(foto, extras, "Leia o rotulo."), { type: "text", text: prompt }], 1500);
-  let j: Record<string, any>;
-  try { j = JSON.parse(bruto.replace(/```json|```/g, "").trim()); }
-  catch { throw new Error("o modelo não devolveu JSON válido: " + bruto.slice(0, 300)); }
-  // quantas palavras mudam entre as duas lojas do mesmo marketplace (o pedido é 1–2; 0 = iguais)
-  const palavras = (s: string) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").split(/[^a-z0-9%,]+/).filter(Boolean);
-  const diferenca = (a: string, b: string) => {
-    const A = palavras(a), B = palavras(b);
-    const so = (x: string[], y: string[]) => x.filter((w) => !y.includes(w));
-    return { trocadas: Math.max(so(A, B).length, so(B, A).length), mesma_ordem: A.join(" ") === B.join(" "), so_na_1: so(A, B), so_na_2: so(B, A) };
+  const blocosBase: Bloco[] = [...blocosFotosReais(foto, extras, "Leia o rotulo.")];
+  // o JSON às vezes vem com texto em volta ou cortado: lê do 1º "{" ao último "}" e, falhando, pede de novo uma vez
+  const pedir = async (texto: string) => {
+    let bruto = "";
+    for (let t = 0; t < 2; t++) {
+      bruto = await claude(modelo, [...blocosBase, { type: "text", text: texto }], 2500);
+      const s = bruto.replace(/```json|```/g, ""); const i = s.indexOf("{"), f = s.lastIndexOf("}");
+      try { if (i >= 0 && f > i) return JSON.parse(s.slice(i, f + 1)) as Record<string, any>; } catch { /* tenta de novo */ }
+    }
+    throw new Error(`o modelo não devolveu JSON válido (${bruto.length} caracteres): ` + bruto.slice(-200));
   };
-  const titulos = lojas.map((l) => {
-    const v = validar(String(j[l.chave] ?? "").trim(), gs);
-    const max = limite.get(l.canal) ?? 120;
-    return { loja: l.chave, titulo: v.texto, chars: v.texto.length, max, estourou: v.texto.length > max, termos: j.termos?.[l.chave] ?? [], avisos: v.avisos, bloqueios: v.bloqueios };
-  });
-  const pares: Record<string, unknown> = {};
-  for (const c of canais) {
-    const [a, b] = titulos.filter((x) => x.loja.startsWith(c + ":"));
-    if (a && b) { const d = diferenca(a.titulo, b.titulo); pares[c] = { ...d, ok: !d.mesma_ordem && d.trocadas <= 2 }; }
+  /** Palavra de conteúdo repetida no mesmo título (gato/gatos contam como a mesma; número e conectivo não contam). */
+  const repetidas = (s: string) => {
+    const vistos = new Map<string, number>();
+    for (const w of palavrasTitulo(s)) {
+      if (w.length < 3 || CONECTIVOS.has(w) || /^\d/.test(w)) continue;
+      const r = w.replace(/s$/, ""); vistos.set(r, (vistos.get(r) ?? 0) + 1);
+    }
+    return [...vistos].filter(([, n]) => n > 1).map(([w]) => w);
+  };
+
+  // quantas palavras mudam entre as duas lojas do mesmo marketplace (o pedido é 1–2; 0 = iguais)
+  const diferenca = (a: string, b: string) => {
+    const A = palavrasTitulo(a), B = palavrasTitulo(b);
+    const so = (x: string[], y: string[]) => x.filter((w) => !y.includes(w));
+    return { trocadas: Math.max(so(A, B).length, so(B, A).length), iguais: A.join(" ") === B.join(" "), so_na_1: so(A, B), so_na_2: so(B, A) };
+  };
+  const avaliar = (j: Record<string, any>) => {
+    const composicao = ((Array.isArray(j.composicao) ? j.composicao : []) as unknown[]).map((x) => normTitulo(String(x))).filter((x) => x.split(" ").length >= 3);
+    const problemas: string[] = [];
+    const titulos = lojas.map((l) => {
+      const v = validar(ajustarConectivos(String(j[l.chave] ?? "").replace(/\s+/g, " ").trim()), gs);
+      const [mn] = faixa(l.canal); const max = limite.get(l.canal) ?? 120;
+      const n = v.texto.length;
+      const falta = composicao.filter((c) => !` ${normTitulo(v.texto)} `.includes(` ${c} `));
+      const prob: string[] = [];
+      if (n > max) prob.push(`${l.chave}: tem ${n} caracteres, passa do maximo de ${max}`);
+      else if (n < mn) prob.push(`${l.chave}: tem so ${n} caracteres; preencha ate pelo menos ${mn} com termos buscados que valem para o produto`);
+      for (const c of falta) prob.push(`${l.chave}: a composicao "${c}" tem de aparecer inteira e junta`);
+      const rep = repetidas(v.texto);
+      if (rep.length) prob.push(`${l.chave}: repete a palavra ${rep.map((w) => `"${w}"`).join(", ")}; use cada palavra uma vez so (reorganize, ex.: "Areia para Gatos Tofu e Mandioca" em vez de "Areia de Mandioca ... Tofu e Mandioca") e use o espaco com outro termo buscado`);
+      problemas.push(...prob);
+      return { loja: l.chave, titulo: v.texto, chars: n, faixa: faixa(l.canal), max, termos: j.termos?.[l.chave] ?? [], problemas: prob, avisos: v.avisos, bloqueios: v.bloqueios };
+    });
+    const pares: Record<string, unknown> = {};
+    for (const c of canais) {
+      const [a, b] = titulos.filter((x) => x.loja.startsWith(c + ":"));
+      if (!a || !b) continue;
+      const d = diferenca(a.titulo, b.titulo);
+      const ok = !d.iguais && d.trocadas <= 2;
+      if (!ok) problemas.push(d.iguais
+        ? `${a.loja} e ${b.loja} estao iguais: troque UMA palavra (ou a ordem de dois atributos) em um deles`
+        : `${a.loja} x ${b.loja}: mudaram ${d.trocadas} palavras (${d.so_na_1.join(" ")} -> ${d.so_na_2.join(" ")}); deixe so 1 ou 2 palavras diferentes`);
+      pares[c] = { ...d, ok };
+    }
+    return { titulos, pares, problemas, composicao };
+  };
+
+  const j1 = await pedir(prompt);
+  const r1 = avaliar(j1);
+  let j = j1, r = r1, corrigido = false;
+  if (r1.problemas.length) {
+    // uma correção só, com a resposta anterior e a lista do que saiu da regra
+    const j2 = await pedir(`${prompt}\n\nSUA RESPOSTA ANTERIOR:\n${JSON.stringify(j1)}\n\nPROBLEMAS ENCONTRADOS (corrija TODOS, mantendo o que estava certo, e devolva o JSON completo):\n${r1.problemas.map((x) => "- " + x).join("\n")}`);
+    const r2 = avaliar(j2);
+    if (r2.problemas.length <= r1.problemas.length) { j = j2; r = r2; corrigido = true; }
   }
-  return { ok: true, sku: p.sku, nome: p.nome, marca: p.marca, modelo, titulos, pares, diferenca: j.diferenca ?? null, termos_disponiveis: linhasTermos };
+  return {
+    ok: true, sku: p.sku, nome: p.nome, marca: p.marca, modelo, titulos: r.titulos, pares: r.pares, composicao: r.composicao,
+    problemas: r.problemas, corrigido, problemas_1a_versao: corrigido ? r1.problemas : undefined,
+    diferenca: j.diferenca ?? null, termos_disponiveis: linhasTermos,
+  };
 }
 
 // ---------------------------------------------------------------- prompts de imagem

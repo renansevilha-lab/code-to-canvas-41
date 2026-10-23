@@ -3611,8 +3611,14 @@ mesmo marketplace (Ottz × Bumi/SVL) com uma pequena diferença (1–2 palavras,
 (expira 26/out 03:00 UTC; só lê e devolve, não grava): UMA chamada ao modelo para as 6 lojas (Shopee, ML e Amazon × Ottz/
 SVL), com os termos de `ia_termos_busca` por marketplace, e uma conferência em código (`pares`: palavras trocadas entre
 as duas lojas; fora da regra = mais de 2 ou iguais). Rodado em 6 SKUs (16640, 16627, 14953, 16637, 15987, 16457): fiel ao
-produto, peso/capacidade e linha mantidos; 3 dos 6 pares da Shopee trocaram um trecho inteiro (3–4 palavras). **Ainda não
-ligado ao fluxo:** a `anuncio-publicar` só lê `ia_rascunho.titulo` (um título para todos os destinos).
+produto, peso/capacidade e linha mantidos; 3 dos 6 pares da Shopee trocaram um trecho inteiro (3–4 palavras).
+**2ª rodada (deploy 11, idêntico ao repositório; regras do dono):** composição com mais de um item ("Tofu e Mandioca",
+"Mandioca e Minerais") é um bloco só, inteiro e junto em todas as lojas; o título PREENCHE a faixa do marketplace com
+palavras-chave reais (Shopee 100–120, ML 54–60, Amazon 130–180; `FAIXA_TITULO`); conectivos em minúsculo (corrigido no
+código); palavra repetida no mesmo título (gato/gatos contam igual) é recusada. O código confere tamanho, composição,
+repetição e a diferença entre as lojas e, se algo sair da regra, devolve UMA vez ao modelo com a lista dos problemas.
+Resultado: 6 de 6 sem problema no fim (ex.: 16457 ML 44 → 60 caracteres, "Granulado Higiênico Gatos Bento Mix Mandioca e
+Minerais 10kg"). Na Amazon alguns títulos ficam com cara de lista de palavras no fim. **Ainda não ligado ao fluxo:** a `anuncio-publicar` só lê `ia_rascunho.titulo` (um título para todos os destinos).
 
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
