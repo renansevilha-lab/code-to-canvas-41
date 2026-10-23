@@ -137,6 +137,8 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data]);
 
+  const [aprovandoTodas, setAprovandoTodas] = useState(false);
+
   if (!vars.length) return null;
 
   const tipo = comSelo && tiposAtivos.includes(COM_SELO) ? COM_SELO : LIMPA;
@@ -244,7 +246,16 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
     try { await decidirEtapa(v.etapa.id, true); void qc.invalidateQueries({ queryKey: chave }); }
     catch (e) { toast.error("Não consegui aprovar", { description: (e as Error).message }); }
   }
-  const ocupado = Object.keys(rodando).length > 0 || copiando;
+  const paraRevisar = vars.filter((v) => v.etapa?.status === "gerado");
+  async function aprovarTodas() {
+    setAprovandoTodas(true);
+    let falhas = 0;
+    for (const v of paraRevisar) { try { await decidirEtapa(v.etapa!.id, true); } catch { falhas++; } }
+    setAprovandoTodas(false);
+    void qc.invalidateQueries({ queryKey: chave });
+    if (falhas) toast.error(`${falhas} foto(s) não foram aprovadas`); else toast.success(`${paraRevisar.length} foto(s) aprovada(s)`);
+  }
+  const ocupado = Object.keys(rodando).length > 0 || copiando || aprovandoTodas;
 
   return (
     <Card>
@@ -263,6 +274,11 @@ export function FotosVariacoes({ sku, nomePai, canal, empresa, briefing, tiposAt
               onChange={(e) => setComSelo(e.target.checked)} />
             Selo só com o peso/quantidade da variação (ex.: {vars[Math.min(1, vars.length - 1)].rotulo})
           </label>
+          {paraRevisar.length > 0 && (
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={ocupado} onClick={() => void aprovarTodas()}>
+              {aprovandoTodas ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Aprovar todas ({paraRevisar.length})
+            </Button>
+          )}
           <Button size="sm" className="gap-1.5" disabled={ocupado || !faltam.length || !estiloAtivo} onClick={() => void gerar(faltam)}>
             {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {faltam.length ? `Gerar as ${faltam.length} que faltam · ${custo(faltam.length)}` : "Todas as variações têm foto"}

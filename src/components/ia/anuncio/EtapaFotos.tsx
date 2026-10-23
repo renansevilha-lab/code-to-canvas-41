@@ -222,6 +222,9 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+        <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={sel.size === outros.length + capas.length}
+          onClick={() => setSel(new Set([...outros, ...capas]))}>Marcar todas</Button>
+        <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" disabled={!sel.size} onClick={() => setSel(new Set())}>Desmarcar todas</Button>
         <Button size="sm" variant="outline" className="gap-1.5" disabled={preparando || !sel.size} onClick={() => void prepararPrompts()}>
           {preparando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}Preparar prompts das marcadas ({sel.size})
         </Button>
@@ -296,12 +299,32 @@ function GradeImagens({ imagens, etapaPorImagem, onRefazer }: {
     queryFn: () => urlsAssinadas(paths),
   });
   const [obsPor, setObsPor] = useState<Record<string, string>>({});
+  const [aprovandoTodas, setAprovandoTodas] = useState(false);
   if (!imagens.length) return null;
   async function decidir(etapa: IaEtapa, aprovar: boolean) {
     try { await decidirEtapa(etapa.id, aprovar); void qc.invalidateQueries({ queryKey: ["ia-anuncio"] }); }
     catch (e) { toast.error("Não foi possível", { description: (e as Error).message }); }
   }
+  // "aprovar todas" = as que estão para revisar; rejeitada continua rejeitada (foi decisão de alguém)
+  const paraRevisar = imagens.filter((i) => i.storage_path && etapaPorImagem.get(i.id)?.status === "gerado").map((i) => etapaPorImagem.get(i.id)!);
+  async function aprovarTodas() {
+    setAprovandoTodas(true);
+    let falhas = 0;
+    for (const et of paraRevisar) { try { await decidirEtapa(et.id, true); } catch { falhas++; } }
+    setAprovandoTodas(false);
+    void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+    if (falhas) toast.error(`${falhas} foto(s) não foram aprovadas`); else toast.success(`${paraRevisar.length} foto(s) aprovada(s)`);
+  }
   return (
+    <div className="space-y-2">
+    {paraRevisar.length > 0 && (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground flex-1">{paraRevisar.length} foto(s) para revisar</span>
+        <Button size="sm" className="h-7 gap-1 text-xs" disabled={aprovandoTodas} onClick={() => void aprovarTodas()}>
+          {aprovandoTodas ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Aprovar todas ({paraRevisar.length})
+        </Button>
+      </div>
+    )}
     <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
       {[...imagens].sort((a, b) => a.ordem - b.ordem).map((img) => {
         const et = etapaPorImagem.get(img.id);
@@ -340,6 +363,7 @@ function GradeImagens({ imagens, etapaPorImagem, onRefazer }: {
           </div>
         );
       })}
+    </div>
     </div>
   );
 }
