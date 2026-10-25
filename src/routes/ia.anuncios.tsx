@@ -636,7 +636,28 @@ function AnunciosDoCanal({ canal, empresa, skus }: { canal: string; empresa: str
         const porId = new Map(((data ?? []) as { product_id: string; seller_sku: string; titulo: string | null }[]).map((x) => [String(x.product_id), x]));
         return { aviso: null, lista: [...porId.values()].map((x) => ({ id: String(x.product_id), nome: x.titulo, status: null, url: null, painel: null, detalhe: `SKU ${x.seller_sku}` })) };
       }
-      return { lista: [], aviso: "A Amazon não tem espelho dos anúncios no app: confira no Seller Central." };
+      if (canal === "amazon") {
+        // nossos SKUs da Amazon (lidos pela Pesquisa de produtos) + o estoque no CD (FBA) de cada um
+        const [a, e] = await Promise.all([
+          supabaseExternal.from("pesquisa_amz_meus_skus").select("sku_amazon, asin, sku, nome").eq("conta", empresa).in("sku", skus).limit(50),
+          supabaseExternal.from("estoque_fulfillment").select("sku_marketplace, sellable, in_transit").eq("marketplace", "amazon").eq("shop_id", empresa === "svl" ? 900002 : 900001).in("sku", skus).limit(50),
+        ]);
+        const est = new Map(((e.data ?? []) as { sku_marketplace: string; sellable: number; in_transit: number }[]).map((x) => [x.sku_marketplace, x]));
+        return {
+          aviso: null,
+          lista: ((a.data ?? []) as { sku_amazon: string; asin: string | null; sku: string; nome: string | null }[]).map((x) => {
+            const s = est.get(x.sku_amazon);
+            const cd = s ? Number(s.sellable) || 0 : null;
+            return {
+              id: x.sku_amazon, nome: x.nome, status: cd == null ? null : cd > 0 ? `${int(cd)} no CD` : "sem estoque no CD",
+              url: x.asin ? `https://www.amazon.com.br/dp/${x.asin}` : null,
+              painel: `https://sellercentral.amazon.com.br/myinventory/inventory?searchField=all&searchTerm=${encodeURIComponent(x.sku_amazon)}`,
+              detalhe: [x.asin ? `ASIN ${x.asin}` : null, s && Number(s.in_transit) > 0 ? `${int(Number(s.in_transit))} a caminho` : null].filter(Boolean).join(" · ") || null,
+            };
+          }),
+        };
+      }
+      return { lista: [], aviso: "Este canal não tem espelho dos anúncios no app." };
     },
   });
   return (
@@ -653,12 +674,12 @@ function AnunciosDoCanal({ canal, empresa, skus }: { canal: string; empresa: str
                 <div className="text-[12px] leading-snug line-clamp-2" title={a.nome ?? ""}>{a.nome ?? "(sem título)"}</div>
                 <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2">
                   <span className="font-mono">{a.id}</span>
-                  {a.status && <span className={a.status === "NORMAL" || a.status === "active" ? "text-emerald-600" : "text-amber-600"}>{a.status}</span>}
+                  {a.status && <span className={a.status === "NORMAL" || a.status === "active" || / no CD$/.test(a.status) && !a.status.startsWith("sem") ? "text-emerald-600" : "text-amber-600"}>{a.status}</span>}
                   {a.detalhe && <span>{a.detalhe}</span>}
                 </div>
                 <div className="flex gap-3 text-[11px]">
                   {a.url && <a className="underline" href={a.url} target="_blank" rel="noreferrer">ver o anúncio</a>}
-                  {a.painel && <a className="underline" href={a.painel} target="_blank" rel="noreferrer">abrir no Seller Center</a>}
+                  {a.painel && <a className="underline" href={a.painel} target="_blank" rel="noreferrer">{canal === "amazon" ? "abrir no Seller Central" : "abrir no Seller Center"}</a>}
                 </div>
               </div>
             ))}
@@ -753,6 +774,41 @@ function usePublicadas(skus: string[]) {
   });
 }
 
+/** Onde o produto está ANUNCIADO (mesmo sem venda): a Amazon pelos nossos SKUs de lá (`pesquisa_amz_meus_skus`) e as
+ *  demais lojas pelos envios feitos pelo app. "Onde vende hoje" vem só dos pedidos; sem isto, anúncio novo não aparece. */
+type Anunciado = { canal: string; empresa: string };
+function useAnunciados(skus: string[]) {
+  return useQuery({
+    queryKey: ["ia-anuncio", "anunciados", skus.join(",")],
+    enabled: skus.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<Record<string, Anunciado[]>> => {
+      const [p, a] = await Promise.all([
+        supabaseExternal.from("ia_publicacao").select("sku, canal, empresa").eq("estado", "publicado").in("sku", skus).limit(2000),
+        supabaseExternal.from("pesquisa_amz_meus_skus").select("sku, conta").in("sku", skus).limit(2000),
+      ]);
+      const out: Record<string, Anunciado[]> = {};
+      const por = (sku: string, canal: string, empresa: string) => {
+        const l = (out[sku] ??= []);
+        if (!l.some((x) => x.canal === canal && x.empresa === empresa)) l.push({ canal, empresa });
+      };
+      for (const x of (p.data ?? []) as { sku: string; canal: string; empresa: string }[]) por(x.sku, x.canal, x.empresa);
+      for (const x of (a.data ?? []) as { sku: string; conta: string }[]) por(x.sku, "amazon", x.conta);
+      return out;
+    },
+  });
+}
+/** Canais do selo: os que vendem (pedidos) + os anunciados que ainda não venderam (sem preço/margem → "sem venda"). */
+function canaisComAnunciados(x: IaCatalogoLinha, anunciados?: Record<string, Anunciado[]>): IaCanalHist[] {
+  const extras = [x.sku, ...(x.variacoes ?? []).map((v) => v.sku)].flatMap((s) => anunciados?.[s] ?? []);
+  const novos: IaCanalHist[] = [];
+  for (const a of extras) {
+    if (x.canais.some((c) => c.canal === a.canal && c.empresa === a.empresa) || novos.some((c) => c.canal === a.canal && c.empresa === a.empresa)) continue;
+    novos.push({ canal: a.canal, empresa: a.empresa, un30: 0, un120: 0, preco: null, mc_pct: null });
+  }
+  return [...x.canais, ...novos];
+}
+
 function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDigitado, filtros, set, escolherGiro, pagina, paginas, total,
   composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, onVariacoes, onImportar }: {
   cat: IaCatalogo | undefined; carregando: boolean; erro: string | null; onTentar: () => void; buscando: boolean;
@@ -769,6 +825,7 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
   const resumoQ = useResumoIa();
   const linhas = cat?.linhas ?? [];
   const pubQ = usePublicadas(linhas.flatMap((x) => [x.sku, ...(x.variacoes ?? []).map((v) => v.sku)]));
+  const anunQ = useAnunciados(linhas.flatMap((x) => [x.sku, ...(x.variacoes ?? []).map((v) => v.sku)]));
   const canalPadrao = sem ?? "shopee";
   const giroEm = cat?.giro_em ? idade(cat.giro_em) : null;
   const nMais = [giro, sem, marca].filter(Boolean).length;
@@ -929,7 +986,7 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
               </div>
             ) : linhas.map((x0) => {
               const x = comCapa(x0);
-              return <LinhaNova key={x.sku} x={x} canalPadrao={canalPadrao} composicao={composicoes?.[x.sku]} publicadas={pubQ.data}
+              return <LinhaNova key={x.sku} x={x} canalPadrao={canalPadrao} composicao={composicoes?.[x.sku]} publicadas={pubQ.data} anunciados={anunQ.data}
                 selecionado={selecionados.includes(x.sku)} onSelecionar={alternar} onVariacoes={onVariacoes} />;
             })}
           </div>
@@ -980,13 +1037,14 @@ function estadoIa(x: IaCatalogoLinha, publicadas: number) {
   return { cores: [texto, fotos, envio], txt: partes.join(" · "), r, outros: x.rascunhos.length - 1 };
 }
 
-function LinhaNova({ x, canalPadrao, composicao, publicadas, variacao, selecionado, onSelecionar, onVariacoes }: {
-  x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; publicadas?: Record<string, number>; variacao?: boolean;
+function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variacao, selecionado, onSelecionar, onVariacoes }: {
+  x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; publicadas?: Record<string, number>; anunciados?: Record<string, Anunciado[]>; variacao?: boolean;
   selecionado?: boolean; onSelecionar?: (sku: string) => void; onVariacoes: (sku: string) => void;
 }) {
   const qc = useQueryClient();
   const [aberto, setAberto] = useState(false);
   const filhas = x.variacoes ?? [];
+  const canais = canaisComAnunciados(x, anunciados);
   const podeSel = !variacao && x.tipo === "S";
   const ia = estadoIa(x, publicadas?.[x.sku] ?? 0);
   const fotoW = variacao ? 32 : 44;
@@ -1039,9 +1097,9 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, variacao, seleciona
         </span>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, minWidth: 0 }}>
-          {x.canais.length === 0
+          {canais.length === 0
             ? <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>ainda não vende em nenhum canal</span>
-            : x.canais.slice(0, 6).map((c) => <CanalNovo key={`${c.canal}-${c.empresa}`} c={c} skus={[x.sku, ...filhas.map((v) => v.sku)]} />)}
+            : canais.slice(0, 7).map((c) => <CanalNovo key={`${c.canal}-${c.empresa}`} c={c} skus={[x.sku, ...filhas.map((v) => v.sku)]} />)}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
@@ -1086,7 +1144,7 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, variacao, seleciona
           )}
         </div>
       </div>
-      {aberto && filhas.map((v) => <LinhaNova key={v.sku} x={v} canalPadrao={canalPadrao} publicadas={publicadas} variacao onVariacoes={onVariacoes} />)}
+      {aberto && filhas.map((v) => <LinhaNova key={v.sku} x={v} canalPadrao={canalPadrao} publicadas={publicadas} anunciados={anunciados} variacao onVariacoes={onVariacoes} />)}
     </>
   );
 }
@@ -1140,7 +1198,7 @@ function CanalNovo({ c, skus }: { c: IaCanalHist; skus: string[] }) {
   return (
     <Popover open={aberto} onOpenChange={setAberto}>
       <PopoverTrigger asChild>
-        <button type="button" title={`${int(Number(c.un30))} un. em 30 dias · ${int(Number(c.un120))} un. em 120 dias — clique para ver o anúncio`}
+        <button type="button" title={Number(c.un120) > 0 ? `${int(Number(c.un30))} un. em 30 dias · ${int(Number(c.un120))} un. em 120 dias — clique para ver o anúncio` : "anunciado, ainda sem venda — clique para ver o anúncio"}
           style={{ display: "flex", alignItems: "center", gap: 6, height: 28, padding: "0 8px 0 5px", borderRadius: 7, border: `1px solid ${aberto ? "var(--pm-a)" : "var(--pm-bc)"}`, background: aberto ? "var(--pm-as)" : "var(--pm-s)", cursor: "pointer", fontSize: 11.5, color: "var(--pm-t)", whiteSpace: "nowrap" }}>
           <span style={{ width: 16, height: 16, borderRadius: 4, flex: "none", border: "1px solid var(--pm-b)", background: LOGO_CANAL[c.canal] ? `#fff url(${LOGO_CANAL[c.canal]}) center/contain no-repeat` : "var(--pm-s2)" }} />
           <span style={{ fontWeight: 600 }}>{LOGO_CANAL[c.canal] ? "" : `${NOME_CURTO[c.canal] ?? nomeCanal(c.canal)} `}{nomeLoja(c.canal, c.empresa)}</span>

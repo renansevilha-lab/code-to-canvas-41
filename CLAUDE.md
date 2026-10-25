@@ -3603,6 +3603,15 @@ prompts gravados desses estilos passaram a dizer PREÇO DE / ATACADO (os de tít
 **Capa sem texto centralizada (pedido do dono):** `imagem_capa_ambientada_limpa` **v2** com o bloco CENTRALIZAÇÃO (produto ou conjunto
 no centro do quadro, mesma margem dos dois lados, pet e objetos nas laterais) e a mesma regra acrescentada aos 19 prompts já gravados.
 
+## 5.11.13.2 "Onde vende hoje" também mostra onde está anunciado sem venda (25/out/2026)
+
+Relato do dono: o 16457 (ASIN B0HNKZD9BN, criado pela tela em 19/out) não aparecia ligado à Amazon em `/ia/anuncios`.
+Causa: os selos da coluna vinham só de `ia_hist_sku_canal` (pedidos dos últimos 120 dias) — anúncio sem venda não
+aparece (na Amazon ele está DISCOVERABLE, 0 no CD, e a SP-API acusa "18076 outras limitações de listagem"). Agora
+(`useAnunciados` + `canaisComAnunciados`, só front) o selo também vem dos envios do app (`ia_publicacao` publicado) e,
+na Amazon, dos nossos SKUs de lá (`pesquisa_amz_meus_skus`, com ASIN); sem venda mostra "sem venda". O selo da Amazon
+abre o anúncio pelo ASIN, o estoque no CD (`estoque_fulfillment`) e a busca do SKU no Seller Central.
+
 ## 5.11.13.1 Títulos por loja — ENSAIO (23/out/2026)
 
 Pedido do dono: título fiel ao produto E puxado pelos termos mais buscados de cada marketplace, e as duas lojas do
