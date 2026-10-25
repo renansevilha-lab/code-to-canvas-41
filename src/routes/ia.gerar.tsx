@@ -16,6 +16,7 @@ import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
 import { VariacoesAmazon } from "@/components/ia/anuncio/VariacoesAmazon";
 import { FiscalAmazon } from "@/components/ia/anuncio/FiscalAmazon";
+import { FiscalML } from "@/components/ia/anuncio/FiscalML";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { FotosDeOutros } from "@/components/ia/anuncio/FotosDeOutros";
 import { FotosNovas } from "@/components/ia/anuncio/FotosNovas";
@@ -252,6 +253,8 @@ function GerarAnuncioPage() {
     {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
     {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
     {canal === "amazon" && <FiscalAmazon key={`fa-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
+    {/* Mercado Livre: só os dados fiscais (NCM, origem, CEST) do produto, por SKU (25/out) */}
+    {canal === "mercado_livre" && <FiscalML key={`fm-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
   </>);
   const blocoEnvio = rascunho && r !== "novo" && (
     <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} abrirSinal={abrirEnvio}
@@ -389,6 +392,8 @@ function GerarAnuncioPage() {
       {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
       {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
       {canal === "amazon" && <FiscalAmazon key={`fa-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
+    {/* Mercado Livre: só os dados fiscais (NCM, origem, CEST) do produto, por SKU (25/out) */}
+    {canal === "mercado_livre" && <FiscalML key={`fm-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
 
       {rascunho && r !== "novo" && (
         <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}

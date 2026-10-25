@@ -216,6 +216,8 @@ export async function chamarAmazonVariacoes(modulo: "ler" | "previa" | "aplicar"
   if (!r.ok && !j.envios && !j.feitos) throw new Error((j.erro ?? `HTTP ${r.status}`) + (Array.isArray(j.pendencias) && j.pendencias.length ? `: ${j.pendencias.join("; ")}` : ""));
   return j;
 }
+/** Dados fiscais no Mercado Livre (NCM, origem, CEST por SKU): `previa` só lê; `aplicar` grava (edge fn `ml-fiscal`). */
+export const chamarMlFiscal = (modulo: "previa" | "aplicar", body: Record<string, unknown>) => chamarFuncao("ml-fiscal", modulo, body);
 /** Envio do anúncio ao marketplace: `existentes` e `previa` só leem; `enviar` cria ou atualiza o anúncio. */
 export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
 

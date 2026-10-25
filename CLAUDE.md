@@ -3626,6 +3626,14 @@ banco); nada gravado. Leitura LIBERADA nas duas contas:
   tributária** (0). Divergência vista: **16069** ML 11081400 × Tiny 11062000 (a mesma da varredura Amazon).
   Comparação com o Tiny limitada (`produtos_fiscal` só tem 22 SKUs).
 - Escrita (`POST/PUT /items/fiscal_information`) NÃO testada.
+- **Botão (25/out, pedido do dono): edge fn `ml-fiscal` v1** (função NOVA — o limite de funções deixou criar) + bloco
+  "Dados fiscais no Mercado Livre" (`FiscalML.tsx`) na aba Anúncio com destino ML. `previa` {empresa, sku, valores?} lê o
+  ML e o Tiny (NCM e origem pela v3, CEST pela v2) e mostra hoje × vai ficar por SKU; kit = os componentes (o ML guarda o
+  fiscal por SKU; vale para todo anúncio do produto); pai com variações = recusa (escolher a variação). `aplicar`
+  {…, confirmar} = cadastro existente → PUT `/items/fiscal_information/{sku}` com o registro inteiro trocando só NCM/
+  origem/CEST; SKU sem cadastro → POST com a regra da conta (Ottz `tax_rule_id 838502`, SVL `csosn 102`, como os que já
+  existem). Um envio por SKU, sem repetição; só 405 (nada gravado) troca o verbo. Relê depois; registro em
+  `debug_fulfillment` (`modulo ml-fiscal`). **Nenhum envio real ainda** (1º sugerido: 16069, depois do contador).
 
 ## 5.11.13.1 Títulos por loja — ENSAIO (23/out/2026)
 
@@ -3932,6 +3940,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
+| `ml-fiscal` | v1 | Dados fiscais do produto no Mercado Livre (NCM, origem, CEST por SKU): `previa` (só lê ML e Tiny) e `aplicar` (PUT/POST `/items/fiscal_information`, com confirmação). JWT de usuário + módulo `ia` — ver §5.11.13.3 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `shopee-flashsale-probe` | v21 (= `shopee-ads-gestao` v5: + `palavras` / `palavras-sku`, sugestão de palavras com volume, §5.11.13); v19 (v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |
 | `amazon-lwa-debug` | v20 (= `amazon-anuncio-sonda` v4) | Sonda da Amazon (só leitura + VALIDATION_PREVIEW): anúncio por SKU, busca, ensaio de criar, v3 pesquisa pelo ASIN + ensaio de variação, v4 dados fiscais (`teste=fiscal`) — ver §5.11.12, §5.11.12.1 e §5.11.12.3 |
