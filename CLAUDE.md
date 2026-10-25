@@ -3612,6 +3612,21 @@ aparece (na Amazon ele está DISCOVERABLE, 0 no CD, e a SP-API acusa "18076 outr
 na Amazon, dos nossos SKUs de lá (`pesquisa_amz_meus_skus`, com ASIN); sem venda mostra "sem venda". O selo da Amazon
 abre o anúncio pelo ASIN, o estoque no CD (`estoque_fulfillment`) e a busca do SKU no Seller Central.
 
+## 5.11.13.3 Dados fiscais no Mercado Livre — teste de leitura (25/out/2026)
+
+Pedido do dono (opção A: só testar). Feito por `net.http_get` no banco com o token de cada conta (o token não sai do
+banco); nada gravado. Leitura LIBERADA nas duas contas:
+- `GET /items/fiscal_information/{sku}` (produto simples) e `GET /items/{MLB}/fiscal_information/detail` (kit = `type
+  bundle`, SKU `MLKIT_<MLB>` com o componente e a quantidade; variação por `variations[]`). `GET /items/{MLB}/
+  fiscal_information` = 403.
+- `GET /users/{id}/invoices/tax_rules` (lista) e `…/tax_rules/{id}` (detalhe por UF).
+- **Os dados já existem no ML.** Ottz: 9 dos 20 SKUs mais vendidos são simples e todos têm NCM/origem, `can_invoice
+  true`, regra **838502 "PRODUTO ICMS NORMAL"** (ICMS CST 00, criada por `batch-frule`) + 23 "Regra_recomendada_N" de
+  jan/2024; os kits têm o bundle com os dados do componente. SVL: dados nos itens, `can_invoice true`, **sem regra
+  tributária** (0). Divergência vista: **16069** ML 11081400 × Tiny 11062000 (a mesma da varredura Amazon).
+  Comparação com o Tiny limitada (`produtos_fiscal` só tem 22 SKUs).
+- Escrita (`POST/PUT /items/fiscal_information`) NÃO testada.
+
 ## 5.11.13.1 Títulos por loja — ENSAIO (23/out/2026)
 
 Pedido do dono: título fiel ao produto E puxado pelos termos mais buscados de cada marketplace, e as duas lojas do
