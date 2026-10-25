@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Boxes, CheckCircle2, ExternalLink, Loader2, PackagePlus, RefreshCw, Send, XCircle } from "lucide-react";
+import { AlertTriangle, Boxes, CheckCircle2, ChevronRight, ExternalLink, Loader2, PackagePlus, RefreshCw, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -106,13 +106,22 @@ export function PlanosAmazonLista({ onAbrir }: { onAbrir: (planoId: string, empr
     staleTime: 30_000,
   });
   const planos = (q.data ?? []).filter((p) => p.passo !== "cancelado");
+  // recolhido por padrão (pedido do dono): a lista ocupa muito espaço no topo da Reposição; o resumo diz se há erro
+  const [aberto, setAberto] = useState(false);
   if (!planos.length) return null;
+  const comErro = planos.filter((p) => p.passo === "erro").length;
+  const parados = planos.filter((p) => p.passo !== "erro" && p.passo !== "transporte_confirmado").length;
   return (
-    <Card className="p-3 space-y-2 border-[#FF9900]/40">
-      <div className="flex items-center gap-2 text-sm font-semibold">
+    <Card className="px-3 py-2 space-y-2 border-[#FF9900]/40">
+      <button type="button" onClick={() => setAberto((v) => !v)} className="flex w-full items-center gap-2 text-left text-[13px] font-semibold">
+        <ChevronRight className={cn("h-4 w-4 transition-transform", aberto && "rotate-90")} />
         <Send className="h-4 w-4 text-[#FF9900]" /> Envios criados na Amazon pelo app (30 dias)
-      </div>
-      <div className="flex flex-wrap gap-2">
+        <span className="text-muted-foreground font-normal">· {planos.length}</span>
+        {comErro > 0 && <Badge variant="secondary" className={cn("h-5 px-1.5 text-[10.5px]", corPasso("erro"))}>{comErro} com erro</Badge>}
+        {parados > 0 && <Badge variant="secondary" className="h-5 px-1.5 text-[10.5px] bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">{parados} no meio</Badge>}
+        <span className="ml-auto text-[11.5px] font-normal text-muted-foreground">{aberto ? "recolher" : "ver"}</span>
+      </button>
+      {aberto && <div className="flex flex-wrap gap-2">
         {planos.map((p) => {
           const un = (p.itens_origem ?? []).reduce((s, i) => s + Number(i.quantidade ?? 0), 0);
           return (
@@ -129,7 +138,7 @@ export function PlanosAmazonLista({ onAbrir }: { onAbrir: (planoId: string, empr
             </button>
           );
         })}
-      </div>
+      </div>}
     </Card>
   );
 }

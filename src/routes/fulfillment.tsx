@@ -44,6 +44,7 @@ import { PackingNovo, ProtecaoPacking } from "@/components/fulfillment/ui/Packin
 import { NovoEnvioNovo } from "@/components/fulfillment/ui/NovoEnvio";
 import { ReposicaoNova } from "@/components/fulfillment/ui/Reposicao";
 import { InventarioNovo } from "@/components/fulfillment/ui/Inventario";
+import { chaveIds, useIdsAnuncio } from "@/components/fulfillment/idsAnuncio";
 import { confirmarSep, temHostSep } from "@/components/separacao/ui/dialogos";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -374,12 +375,12 @@ function FulfillmentPage() {
             onAba={(a) => { setDestaque(null); update({ tab: a }); }}
             onIr={irPara}
             busca={(tab === "reposicao" || tab === "inventario") ? (
-              <div className="relative w-full max-w-[240px]">
+              <div className="relative w-full max-w-[300px]">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   value={q}
                   onChange={(e) => update({ q: e.target.value })}
-                  placeholder="Buscar por produto ou SKU..."
+                  placeholder="Produto, SKU ou nº do anúncio (MLB, ASIN…)"
                   className="pl-8 h-8 bg-card text-[12.5px]"
                 />
               </div>
@@ -469,14 +470,18 @@ function ReposicaoTab({
   const clicarOrdem = (col: ColRepo) =>
     setOrdem((o) => (!o || o.col !== col ? { col, dir: col === "produto" || col === "canal" ? 1 : -1 } : o.dir === -1 && col !== "produto" && col !== "canal" ? { col, dir: 1 } : o.dir === 1 && (col === "produto" || col === "canal") ? { col, dir: -1 } : null));
 
+  // busca também pelo número do anúncio no marketplace (MLB, ASIN, SKU da Amazon, id da Shopee)
+  const idsQ = useIdsAnuncio(busca.trim().length > 0);
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
+    const ids = idsQ.data;
     const lista = rows.filter((r) => {
       if (somenteSugestao && num(r.sugestao_envio) <= 0) return false;
       if (!termo) return true;
       return (
         (r.produto ?? "").toLowerCase().includes(termo) ||
-        (r.sku ?? "").toLowerCase().includes(termo)
+        (r.sku ?? "").toLowerCase().includes(termo) ||
+        (ids?.get(chaveIds(r.shop_id, r.sku)) ?? "").includes(termo)
       );
     });
     if (!ordem) return lista;
@@ -500,7 +505,7 @@ function ReposicaoTab({
       const c = typeof va === "string" ? va.localeCompare(vb as string) : (va as number) - (vb as number);
       return c * ordem.dir;
     });
-  }, [rows, busca, somenteSugestao, ordem, margens]);
+  }, [rows, busca, somenteSugestao, ordem, margens, idsQ.data]);
   const th = (col: ColRepo, rotulo: string, alinhar: "left" | "right", dica?: string) => (
     <th className={cn("font-semibold px-3 py-3", alinhar === "right" ? "text-right" : "text-left")} title={dica} aria-sort={ordem?.col === col ? (ordem.dir === 1 ? "ascending" : "descending") : "none"}>
       <button

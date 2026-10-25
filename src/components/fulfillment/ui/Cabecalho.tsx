@@ -50,10 +50,10 @@ const SEV: Record<string, string> = { r: "var(--pm-r)", a: "var(--pm-am)", n: "v
 
 const seg = (on: boolean): CSSProperties => ({
   border: 0, cursor: "pointer", height: 28, padding: "0 11px", borderRadius: 6, fontSize: 12.5, fontWeight: on ? 600 : 500,
-  background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t2)", boxShadow: on ? "var(--pm-sh)" : "none",
+  background: on ? "var(--pm-a)" : "transparent", color: on ? "var(--pm-oa)" : "var(--pm-t)", boxShadow: on ? "var(--pm-sh)" : "none",
   display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
 });
-const segGrupo: CSSProperties = { display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", borderRadius: 8, flexWrap: "wrap" };
+const segGrupo: CSSProperties = { display: "flex", gap: 2, padding: 2, background: "var(--pm-s2)", border: "1px solid var(--pm-bc)", borderRadius: 8, flexWrap: "wrap" };
 const logoMini = (mkt: string, px = 15): CSSProperties => ({
   display: "inline-block", width: px, height: px, borderRadius: 3, flex: "none",
   background: `#fff url(${LOGO[mkt] ?? LOGO.shopee}) center/contain no-repeat`,
@@ -200,8 +200,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
     <>
       <header className="pm-ui" style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: "10px 16px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em" }}>Fulfillment</h1>
-          <p style={{ margin: 0, fontSize: 12.5, color: "var(--pm-t3)" }}>Estoque nos centros de distribuição e sugestão de reposição</p>
+          <h1 style={{ margin: 0, fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em" }}>Fulfillment</h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
@@ -213,7 +212,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
           </div>
           <button type="button" onClick={() => void sincronizar()} disabled={rodando}
             title="Puxa agora o estoque de Amazon FBA, Shopee SBS e ML Full das duas empresas — leva ~1 min"
-            style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid var(--pm-b)", background: "var(--pm-s)", cursor: rodando ? "default" : "pointer", fontSize: 12.5, fontWeight: 500, color: "var(--pm-t)" }}>
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "1px solid var(--pm-bc)", background: "var(--pm-s)", cursor: rodando ? "default" : "pointer", fontSize: 12.5, fontWeight: 500, color: "var(--pm-t)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={rodando ? "animate-spin" : undefined}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></svg>
             {rodando ? "Sincronizando…" : "Sincronizar"}
           </button>
@@ -221,12 +220,12 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </header>
 
       {/* filtro global */}
-      <div className="pm-ui" style={{ position: "sticky", top: 69, zIndex: 20, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 18px", padding: "10px 14px", borderRadius: 14, background: "var(--pm-s)", border: "1px solid var(--pm-b)", boxShadow: "var(--pm-shl)" }}>
+      <div className="pm-ui" style={{ position: "sticky", top: 69, zIndex: 20, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", padding: "7px 12px", borderRadius: 12, background: "var(--pm-s)", border: "1px solid var(--pm-bs)", boxShadow: "var(--pm-shl)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "var(--pm-t3)", fontWeight: 500 }}>Empresa</span>
           <div style={segGrupo}>
             {([["todas", "Ambas"], ["ACZ Pet", "Ottz Pet"], ["SVL Store", "Bumi Pet"]] as const).map(([id, nome]) => (
-              <button key={id} type="button" style={seg(emp === id)} onClick={() => onEmp(id)}>{nome}</button>
+              <button key={id} type="button" className={emp === id ? undefined : "pm-hv"} style={seg(emp === id)} onClick={() => onEmp(id)}>{nome}</button>
             ))}
           </div>
         </div>
@@ -234,7 +233,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
           <span style={{ fontSize: 12, color: "var(--pm-t3)", fontWeight: 500 }}>Marketplace</span>
           <div style={segGrupo}>
             {([["todos", "Todos"], ["amazon", "Amazon"], ["mercadolivre", "Mercado Livre"], ["shopee", "Shopee"]] as const).map(([id, nome]) => (
-              <button key={id} type="button" style={seg(mkt === id)} onClick={() => onMkt(id)}>
+              <button key={id} type="button" className={mkt === id ? undefined : "pm-hv"} style={seg(mkt === id)} onClick={() => onMkt(id)}>
                 {id !== "todos" && <span style={logoMini(id)} />}{nome}
               </button>
             ))}
@@ -243,13 +242,12 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
         {busca}
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 8px" }}>
-          <span style={{ fontSize: 11.5, color: "var(--pm-t3)", maxWidth: 210, textWrap: "pretty" }}>O estoque no CD é de cada empresa e conta. O que está numa não atende a outra.</span>
           {grupos.map((g) => (
-            <div key={g.emp} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 9, border: "1px dashed var(--pm-bs)" }}>
+            <div key={g.emp} title="O estoque no CD é de cada empresa e conta. O que está numa não atende a outra." style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 8px", borderRadius: 9, border: "1px dashed var(--pm-bs)" }}>
               <span style={{ fontSize: 10.5, fontWeight: 600, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--pm-bs)", color: "var(--pm-t2)", whiteSpace: "nowrap" }}>{NOME_EMP[g.emp]}</span>
               {g.contas.map((c) => (
                 <span key={c.shop_id} title={`${nomeConta(c.marketplace, c.empresa)} · ${int(c.anuncios)} anúncios no CD`}
-                  style={{ display: "flex", alignItems: "center", gap: 4, height: 22, padding: "0 6px", borderRadius: 6, background: "var(--pm-s2)", fontSize: 11, color: "var(--pm-t2)", opacity: c.no_filtro ? 1 : 0.35, textDecoration: c.no_filtro ? "none" : "line-through" }}>
+                  style={{ display: "flex", alignItems: "center", gap: 4, height: 20, padding: "0 5px", borderRadius: 6, background: "var(--pm-s2)", fontSize: 11, color: "var(--pm-t2)", opacity: c.no_filtro ? 1 : 0.35, textDecoration: c.no_filtro ? "none" : "line-through" }}>
                   <span style={logoMini(c.marketplace, 13)} />
                   {c.marketplace === "shopee" ? nomeConta(c.marketplace, c.empresa) : c.marketplace === "mercadolivre" ? "ML" : "Amazon"}
                 </span>
@@ -260,7 +258,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </div>
 
       {/* Pede ação */}
-      <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 12px" }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Pede ação</span>
           <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>por gravidade · vermelho trava a operação ou perde venda agora, âmbar pede atenção{p ? ` · ${idade(p.gerado_em).txt}` : ""}</span>
@@ -274,7 +272,7 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
         ) : !p ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,170px),1fr))", gap: 8 }}>
             {[0, 1, 2, 3, 4].map((k) => (
-              <div key={k} style={{ height: 104, borderRadius: 12, background: "var(--pm-s)", border: "1px solid var(--pm-b)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div key={k} style={{ height: 60, borderRadius: 12, background: "var(--pm-s)", border: "1px solid var(--pm-b)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ width: "40%", height: 18, borderRadius: 6, background: "var(--pm-sk)" }} />
                 <div style={{ width: "80%", height: 10, borderRadius: 5, background: "var(--pm-sk)" }} />
                 <div style={{ width: "60%", height: 10, borderRadius: 5, background: "var(--pm-sk)" }} />
@@ -291,17 +289,16 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
           </div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,170px),1fr))", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))", gap: 8 }}>
               {itens.map((c) => (
                 <button key={c.id} type="button" onClick={() => onIr(c.destino)} className="hover:border-[var(--pm-a)]"
-                  style={{ textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column", gap: 3, padding: "10px 12px", borderRadius: 12, border: "1px solid var(--pm-b)", background: "var(--pm-s)", boxShadow: "var(--pm-sh)", minHeight: 104, color: "inherit" }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <i style={{ width: 7, height: 7, borderRadius: "50%", background: SEV[c.sev], flex: "none" }} />
-                    <span className="pm-mono" style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", color: SEV[c.sev], whiteSpace: "nowrap" }}>{c.n}</span>
+                  style={{ textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, padding: "7px 12px", borderRadius: 10, border: "1px solid var(--pm-bs)", borderLeft: `3px solid ${SEV[c.sev]}`, background: "var(--pm-s)", color: "inherit", minWidth: 0 }}>
+                  <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                    <span className="pm-mono" style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.02em", color: SEV[c.sev], whiteSpace: "nowrap" }}>{c.n}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--pm-t)" }}>{c.label}</span>
+                    <span style={{ fontSize: 11.5, color: "var(--pm-at)", fontWeight: 500, marginLeft: "auto", whiteSpace: "nowrap" }}>{c.link} →</span>
                   </span>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--pm-t)" }}>{c.label}</span>
-                  <span style={{ fontSize: 11.5, color: "var(--pm-t2)", textWrap: "pretty" }}>{c.ctx}</span>
-                  <span style={{ fontSize: 11.5, color: "var(--pm-at)", fontWeight: 500, marginTop: "auto" }}>{c.link} →</span>
+                  <span title={c.ctx} style={{ fontSize: 11.5, color: "var(--pm-t2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.ctx}</span>
                 </button>
               ))}
             </div>
@@ -321,14 +318,14 @@ export function CabecalhoFulfillment({ emp, mkt, aba, onEmp, onMkt, onAba, onIr,
       </div>
 
       {/* abas */}
-      <nav className="pm-ui" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--pm-b)", overflowX: "auto" }}>
+      <nav className="pm-ui" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--pm-bs)", overflowX: "auto" }}>
         {abas.map((t) => {
           const on = aba === t.id;
           return (
             <button key={t.id} type="button" onClick={() => onAba(t.id)}
-              style={{ border: 0, background: "transparent", cursor: "pointer", padding: "10px 12px 9px", marginBottom: -1, borderBottom: `2px solid ${on ? "var(--pm-a)" : "transparent"}`, display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: on ? 600 : 500, color: on ? "var(--pm-t)" : "var(--pm-t2)", whiteSpace: "nowrap" }}>
+              style={{ border: 0, background: "transparent", cursor: "pointer", padding: "8px 12px 7px", marginBottom: -1, borderBottom: `3px solid ${on ? "var(--pm-a)" : "transparent"}`, display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: on ? 700 : 500, color: on ? "var(--pm-at)" : "var(--pm-t)", whiteSpace: "nowrap" }}>
               {t.nome}
-              {t.n != null && <span style={{ fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 10, background: on ? "var(--pm-as)" : "var(--pm-s2)", color: on ? "var(--pm-at)" : "var(--pm-t2)" }}>{t.n}</span>}
+              {t.n != null && <span style={{ fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 10, background: on ? "var(--pm-a)" : "var(--pm-s2)", color: on ? "var(--pm-oa)" : "var(--pm-t2)", border: on ? "none" : "1px solid var(--pm-b)" }}>{t.n}</span>}
             </button>
           );
         })}
