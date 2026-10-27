@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-anuncio-sonda v5 (19/out/2026) — IA · Anúncios
+// Edge Function: amazon-anuncio-sonda v6 (27/out/2026) — IA · Anúncios
 // (publicada no slot `amazon-lwa-debug`: criar função nova no projeto falha — ver CLAUDE.md §5.11)
 // ----------------------------------------------------------------------------
 // DIAGNÓSTICO do envio de anúncio para a Amazon (SP-API, Listings Items). NÃO altera nada:
@@ -26,6 +26,8 @@
 // GET ?conta=ottz&teste=fiscal-aplicar&sku_amazon=X&ncm=&origem=&papel=[&confirmar=1]
 //       v5: ÚNICA ESCRITA REAL desta sonda — autorizada pelo dono em 19/out para 15984_FBA e 16457_FBA, só os
 //       campos fiscais, até 20/out 03:00 UTC. Lê antes, valida, aplica UMA vez, relê e grava em debug_fulfillment.
+// GET ?conta=ottz&teste=medidas-aplicar&sku_amazon=15180|15181[&confirmar=1]
+//       v6 (27/out/2026): medidas da embalagem dos kits Tofu 16 kg = 50×40×30 cm, 16 kg (OK do dono), até 28/out 03:00 UTC.
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -184,6 +186,52 @@ Deno.serve(async (req) => {
       await sleep(4000);
       registro.depois = await ler();
       await sb.from("debug_fulfillment").insert({ modulo: "amazon-fiscal-aplicar", etapa: skuAmz, status_http: r.status, resultado: registro });
+      return json({ ...registro, aplicado: r.ok && corpoR?.status === "ACCEPTED" });
+    } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
+  }
+  // ------------------------------------------------------------ v6: MEDIDAS DA EMBALAGEM (escrita real autorizada)
+  // 27/out/2026, OK do dono: o plano ACZ wfb39520f2 foi recusado com FBA_INB_0050 ("nenhum centro recebe") no 15181,
+  // cadastrado com 40×20×15 cm e 16 kg (12 L para 16 kg de areia). Os dois kits Tofu 16 kg passam a ter a caixa real
+  // (modelo de caixa da Reposição): 50 × 40 × 30 cm, 16 kg. Só estes SKUs, só estes campos, até 28/out 03:00 UTC.
+  if (teste === "medidas-aplicar") {
+    try {
+      const LIBERADOS = new Set(["15180", "15181"]);
+      if (conta !== "ottz") return json({ erro: "só a conta ACZ" }, 403);
+      if (Date.now() > Date.parse("2026-10-28T03:00:00Z")) return json({ erro: "rota de correção encerrada" }, 403);
+      const skuAmz = (u.searchParams.get("sku_amazon") || "").trim();
+      if (!LIBERADOS.has(skuAmz)) return json({ erro: `SKU ${skuAmz} não está liberado para correção` }, 403);
+      const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token, merchant_token, marketplace_id").eq("shop_id", SHOP[conta]).maybeSingle();
+      if (!tk?.merchant_token) return json({ erro: "conta sem Merchant Token" }, 400);
+      const mkt = tk.marketplace_id || MKT_BR; const token = String(tk.access_token);
+      const caminho = `/listings/2021-08-01/items/${encodeURIComponent(String(tk.merchant_token))}/${encodeURIComponent(skuAmz)}`;
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const ler = async () => {
+        const r = await sp(token, "GET", caminho, { marketplaceIds: mkt, includedData: "summaries,attributes" });
+        const a = r.body?.attributes ?? {};
+        return { http: r.status, tipo: r.body?.summaries?.[0]?.productType ?? null, item_package_dimensions: a.item_package_dimensions ?? null, item_package_weight: a.item_package_weight ?? null };
+      };
+      const antes = await ler();
+      if (!antes.tipo) return json({ erro: "não consegui ler o anúncio", antes }, 400);
+      const cm = (v: number) => ({ unit: "centimeters", value: v });
+      const corpo = { productType: antes.tipo, patches: [
+        { op: "replace", path: "/attributes/item_package_dimensions", value: [{ length: cm(50), width: cm(40), height: cm(30), marketplace_id: mkt }] },
+        { op: "replace", path: "/attributes/item_package_weight", value: [{ unit: "kilograms", value: 16, marketplace_id: mkt }] },
+      ] };
+      const pv = await sp(token, "PATCH", caminho, { marketplaceIds: mkt, mode: "VALIDATION_PREVIEW", issueLocale: "pt_BR" }, corpo);
+      const registro: Record<string, unknown> = { sku_amazon: skuAmz, antes, enviado: corpo, previa: { http: pv.status, situacao: pv.body?.status ?? null, pendencias: pend(pv.body, 20) } };
+      if (pv.body?.status !== "VALID" || u.searchParams.get("confirmar") !== "1") {
+        await sb.from("debug_fulfillment").insert({ modulo: "amazon-medidas-aplicar", etapa: `${skuAmz}:previa`, status_http: pv.status, resultado: registro });
+        return json({ ...registro, aplicado: false, motivo: pv.body?.status !== "VALID" ? "a validação não passou" : "sem confirmar=1" });
+      }
+      // escrita real: uma vez só, sem repetição automática
+      const r = await fetch(`${SPAPI}${caminho}?marketplaceIds=${mkt}&issueLocale=pt_BR`, {
+        method: "PATCH", headers: { "x-amz-access-token": token, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(corpo),
+      });
+      const txt = await r.text(); let corpoR: any = null; try { corpoR = JSON.parse(txt); } catch { corpoR = { bruto: txt.slice(0, 300) }; }
+      registro.resposta = { http: r.status, situacao: corpoR?.status ?? null, submissionId: corpoR?.submissionId ?? null, pendencias: pend(corpoR, 20) };
+      await sleep(4000);
+      registro.depois = await ler();
+      await sb.from("debug_fulfillment").insert({ modulo: "amazon-medidas-aplicar", etapa: skuAmz, status_http: r.status, resultado: registro });
       return json({ ...registro, aplicado: r.ok && corpoR?.status === "ACCEPTED" });
     } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
   }
