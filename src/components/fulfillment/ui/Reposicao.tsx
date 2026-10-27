@@ -23,6 +23,8 @@ export interface LinhaRepo {
   cobertura_atual_dias: number | string | null; cobertura_alvo_dias: number | string | null;
   estoque_empresa: number | string | null; estoque_sincronizado: boolean | null;
   necessidade: number | string | null; sugestao_envio: number | string | null; estoque_atualizado_em: string | null;
+  /** dias até o envio chegar ao CD (agendamento; Amazon pesado = 14) — já somados em cobertura_alvo_dias e na sugestão */
+  prazo_envio_dias?: number | string | null; cobertura_base_dias?: number | string | null; peso_kg?: number | string | null;
 }
 
 type Col = "produto" | "canal" | "vendas" | "mc" | "cd" | "cobertura" | "sugestao" | "tiny";
@@ -42,9 +44,11 @@ const selo: CSSProperties = { fontSize: 10.5, fontWeight: 600, padding: "1px 6px
 const GRADE = "28px minmax(220px,1.6fr) 150px 70px 100px 128px 150px 62px 128px 116px 30px";
 const POR_PAGINA = 40;
 
+/** abaixo disto é urgente: 7 dias, ou o prazo até um envio novo chegar ao CD (o que for maior) */
+const limiteUrgente = (r: LinhaRepo) => Math.max(7, n(r.prazo_envio_dias));
 function grupoDe(r: LinhaRepo): Grupo {
   const vende = n(r.und_dia) > 0;
-  if (vende && (n(r.estoque_full) <= 0 || n(r.cobertura_atual_dias) < 7)) return "u";
+  if (vende && (n(r.estoque_full) <= 0 || n(r.cobertura_atual_dias) < limiteUrgente(r))) return "u";
   if (n(r.sugestao_envio) > 0) return "s";
   return "o";
 }
@@ -168,7 +172,7 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
     const cob = n(r.cobertura_atual_dias);
     const alvoR = n(r.cobertura_alvo_dias) || alvo;
     const vende = n(r.und_dia) > 0;
-    const cobCor = !vende ? "var(--pm-t3)" : cob < 7 ? "var(--pm-r)" : cob < alvoR ? "var(--pm-am)" : "var(--pm-g)";
+    const cobCor = !vende ? "var(--pm-t3)" : cob < limiteUrgente(r) ? "var(--pm-r)" : cob < alvoR ? "var(--pm-am)" : "var(--pm-g)";
     const cobW = Math.min(cob / (alvoR * 1.5), 1) * 100;
     const naoFecha = !!cx && cx.un > 1 && v > 0 && v % cx.un !== 0;
     const cd = n(r.estoque_full), cam = n(r.em_transito), env = n(r.em_envio_aberto);
@@ -245,7 +249,8 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
             <Det k="A caminho" v={int(cam)} />
             <Det k="Em envio aberto" v={int(env)} />
             <Det k="Necessidade" v={int(n(r.necessidade))} />
-            <Det k="Cobertura-alvo" v={`${int(alvoR)} d`} />
+            <Det k="Cobertura-alvo" v={n(r.prazo_envio_dias) > 0 ? `${int(alvoR)} d (${int(n(r.cobertura_base_dias))} + ${int(n(r.prazo_envio_dias))} de agendamento)` : `${int(alvoR)} d`} />
+            {n(r.peso_kg) > 0 && <Det k="Peso" v={`${d1(n(r.peso_kg))} kg`} />}
             {m && m.mc_pct_full != null && <Det k="MC 30 d pelo Full" v={pct(n(m.mc_pct_full))} />}
             {m && m.mc_pct_fora != null && <Det k="fora do Full" v={pct(n(m.mc_pct_fora))} />}
             {cx && <Det k="Modelo" v={cx.nome ?? `caixa com ${cx.un}`} />}
@@ -257,7 +262,7 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
   }
 
   const GRUPOS: Array<{ id: Grupo; nome: string; cor: string; desc: string }> = [
-    { id: "u", nome: "Urgente", cor: "var(--pm-r)", desc: "zerado no CD e vendendo, ou cobertura abaixo de 7 dias" },
+    { id: "u", nome: "Urgente", cor: "var(--pm-r)", desc: "zerado no CD e vendendo, ou cobertura abaixo de 7 dias (Amazon pesado: abaixo do prazo de agendamento)" },
     { id: "s", nome: "Sugerido", cor: "var(--pm-am)", desc: `com sugestão de envio para chegar a ${int(alvo)} dias` },
     { id: "o", nome: "Ok / excesso", cor: "var(--pm-g)", desc: "no alvo ou acima, ou sem venda · recolhido" },
   ];

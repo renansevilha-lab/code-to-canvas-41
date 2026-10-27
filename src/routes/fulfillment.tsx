@@ -320,7 +320,7 @@ function FulfillmentPage() {
       let query = supabaseExternal
         .from("view_reposicao_full")
         .select(
-          "marketplace,shop_id,empresa,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,em_envio_aberto,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em",
+          "marketplace,shop_id,empresa,sku,produto,eh_kit,und_dia,unidades_30d,estoque_full,em_transito,em_envio_aberto,cobertura_atual_dias,cobertura_alvo_dias,estoque_empresa,estoque_sincronizado,necessidade,sugestao_envio,estoque_atualizado_em,prazo_envio_dias,cobertura_base_dias,peso_kg",
         )
         .order("sugestao_envio", { ascending: false });
       if (mkt !== "todos") query = query.eq("marketplace", mkt);
