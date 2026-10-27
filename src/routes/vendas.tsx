@@ -17,7 +17,7 @@ interface MarcaRow {
 }
 
 // ---------------------------------------------------------------- design tokens (do handoff)
-const ACCENT = "#6E56CF";
+const ACCENT = "var(--primary)";
 const PALETTE = ["#6E56CF", "#2E9E8F", "#E0A72E", "#4A7BD9", "#C9432F"];
 const VERDE = "#0E8A5F";
 const VERMELHO = "#C9432F";

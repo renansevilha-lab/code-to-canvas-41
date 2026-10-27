@@ -322,14 +322,14 @@ export function AppSidebar() {
         <Link
           to={it.url}
           className={cn(
-            "flex items-center gap-2.5 px-3 py-2 pr-8 rounded-[9px] text-[13.5px] font-medium tracking-tight transition-colors",
+            "flex items-center gap-2.5 px-3 py-2 pr-8 rounded-[9px] text-[13.5px] font-normal transition-colors",
             ativo
-              ? "bg-primary text-white font-semibold"
+              ? "bg-accent text-accent-foreground font-semibold"
               : "text-[color:var(--sb-txt)] hover:bg-[var(--sb-hv)]",
           )}
           style={{ "--cor": cor } as CSSProperties}
         >
-          <it.icon className="h-4 w-4 shrink-0" style={{ color: ativo ? "#FFFFFF" : "var(--sb-icone)" }} />
+          <it.icon className="h-4 w-4 shrink-0" style={{ color: ativo ? "currentColor" : "var(--sb-icone)" }} />
           <span className="flex-1 truncate">{it.title}</span>
           {badge != null && (
             <span className="bg-[var(--sb-badge-bg)] text-[color:var(--sb-badge-t)] text-[10px] font-semibold px-1.5 py-0.5 rounded-full font-mono">
