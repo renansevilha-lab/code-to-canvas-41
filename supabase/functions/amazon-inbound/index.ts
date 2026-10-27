@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v12 (22/out/2026; NF de remessa, DANFE, coleta, encaixotamento e folha em PDF) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v14 (27/out/2026; conferência dos anúncios na prévia; NF de remessa, DANFE, coleta, encaixotamento e folha em PDF) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -76,6 +76,12 @@
 //   página da transportadora (Total Express) é uma imagem 4×6 em pé que o PDF da Amazon desenha DEITADA e encolhida;
 //   ../_shared/etiqueta-amazon.ts a redesenha em pé, ocupando a página, antes de anexar. `endireitar-etiquetas {dry?}`
 //   corrige os PDFs já salvos.
+// v14 (27/out/2026, pedido do dono): CONFERÊNCIA DOS ANÚNCIOS na prévia (e antes de criar o plano). A API de elegibilidade
+//   (fba/inbound/v1/eligibility) NÃO serve no Brasil: devolve FBA_INB_0050 para TUDO, inclusive o que já enviamos. O que
+//   separa o recusado é o anúncio (Listings `issues` + `attributes`): pendência de QUALIFICAÇÃO que não seja a 18076 (que
+//   todos os nossos têm) = a Amazon exige aprovação (11113 com 100332 → FBA_INB_0021) e BLOQUEIA o plano; anúncio que não
+//   existe também. Aviso: ficha de segurança (18616). O "nenhum CD recebe" (FBA_INB_0050, 15181 em 27/out) NÃO aparece no
+//   anúncio nem nas medidas (15742 e 15063 vão com 40×20×15 a 20 kg; FBA-15825 nem tem medida) — não dá para prever.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { gerarDanfe } from "../_shared/danfe.ts";
@@ -540,6 +546,33 @@ async function mapaSkus(shopId: number) {
   const { data } = await db.from("estoque_fulfillment").select("sku, sku_marketplace").eq("marketplace", "amazon").eq("shop_id", shopId);
   const m = new Map(((data ?? []) as any[]).filter((x) => x.sku).map((x) => [String(x.sku_marketplace), String(x.sku)]));
   return (cru: string) => m.get(cru) ?? cru.replace(/^FBA-/i, "").replace(/[-_](FBA|FBAA|FBM)$/i, "").trim();
+}
+
+/** v14: confere o ANÚNCIO de cada item antes de criar o plano (a API de elegibilidade não serve no Brasil). */
+async function conferirAnuncios(token: string, shopId: number, linhas: Linha[], ate: number) {
+  const pendencias: string[] = [];
+  const avisos: string[] = [];
+  const { data: conta } = await db.from("oauth_tokens_amazon").select("merchant_token").eq("shop_id", shopId).maybeSingle();
+  const merchant = String(conta?.merchant_token ?? "");
+  if (!merchant) return { pendencias, avisos: ["não conferi os anúncios: a conta está sem o Merchant Token"] };
+  const alvo = linhas.filter((l) => l.msku);
+  for (let i = 0; i < alvo.length; i += 5) {
+    if (Date.now() > ate - 4000) { avisos.push(`não deu tempo de conferir ${alvo.length - i} anúncio(s): confira de novo`); break; }
+    await Promise.all(alvo.slice(i, i + 5).map(async (l) => {
+      const msku = String(l.msku);
+      const caminho = `/listings/2021-08-01/items/${merchant}/${encodeURIComponent(msku)}?marketplaceIds=${MKT}&includedData=summaries,issues&issueLocale=pt_BR`;
+      let r = await sp(token, "GET", caminho);
+      if (r.status === 429) { await sleep(1200); r = await sp(token, "GET", caminho); }
+      if (r.status === 404) { pendencias.push(`${l.sku}: o anúncio ${msku} não existe na Amazon nesta conta`); return; }
+      if (!ok(r)) { avisos.push(`${l.sku}: não consegui conferir o anúncio ${msku} (${motivo(r)})`); return; }
+      const issues = (r.body?.issues ?? []) as any[];
+      const aprov = issues.filter((x) => x.severity === "ERROR" && String(x.code) !== "18076" && ((x.categories ?? []) as string[]).includes("QUALIFICATION_REQUIRED"));
+      if (aprov.length) pendencias.push(`${l.sku}: a Amazon exige aprovação para este produto (${aprov.map((x) => `código ${x.code}`).join(", ")}) e recusa o plano com ele — tire do envio ou resolva em Saúde da conta › Solicitações de conformidade do produto`);
+      if (issues.some((x) => String(x.code) === "18616")) avisos.push(`${l.sku}: a Amazon pede a ficha de dados de segurança (FDS) deste produto — sem ela pode recusar o envio`);
+    }));
+    await sleep(1000); // cota do Listings: 5 por segundo
+  }
+  return { pendencias, avisos };
 }
 
 // ---------------------------------------------------------------- passos
@@ -1083,9 +1116,18 @@ Deno.serve(async (req) => {
       ok: true, conta: m.conta.nome, empresa, linhas: plano?.itens ?? m.linhas, pendencias: plano ? [] : m.pendencias, avisos: plano ? [] : m.avisos,
       plano: plano ? { ...plano, log: undefined, ultimos: Array.isArray(plano.log) ? plano.log.slice(-8) : [] } : null,
     });
+    let token = "";
+    try { token = await tokenConta(m.conta.shop_id); } catch (x) {
+      if (modulo !== "previa") throw x;
+      m.avisos.push(`não conferi os anúncios: ${(x as Error).message}`);
+    }
+    // v14: sem plano ainda, confere os anúncios (aprovação, medidas) — pendência aqui bloqueia a criação
+    if (token && !planoRow && (modulo === "previa" || modulo === "avancar") && !m.pendencias.length) {
+      const c = await conferirAnuncios(token, m.conta.shop_id, m.linhas, ate);
+      m.pendencias.push(...c.pendencias);
+      m.avisos.push(...c.avisos);
+    }
     if (modulo === "previa") return json(resumo(planoRow));
-
-    const token = await tokenConta(m.conta.shop_id);
 
     if (modulo === "avancar") {
       let plano = planoRow;
