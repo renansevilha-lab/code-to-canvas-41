@@ -73,23 +73,24 @@
 
   /* Superfícies — app bg #F4F5F7, cards #FFF, borda #E6E8EC */
   --background: oklch(0.966 0.003 264);
-  --foreground: oklch(0.205 0.008 264);
+  /* Direção A (26/out, quadro "direções de design"): texto mais escuro, bordas de controle visíveis, roxo mais fechado */
+  --foreground: oklch(0.18 0.016 285);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.205 0.008 264);
+  --card-foreground: oklch(0.18 0.016 285);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.205 0.008 264);
+  --popover-foreground: oklch(0.18 0.016 285);
 
-  /* Acento roxo #6E56CF */
-  --primary: oklch(0.525 0.185 293);
+  /* Acento roxo — #4B32C3 (era #6E56CF): texto branco sobre ele passa de 7:1 */
+  --primary: oklch(0.45 0.2 285);
   --primary-foreground: oklch(0.99 0 0);
   --primary-glow: oklch(0.63 0.17 293);
 
   --secondary: oklch(0.965 0.004 264);
   --secondary-foreground: oklch(0.3 0.01 264);
   --muted: oklch(0.966 0.004 264);
-  --muted-foreground: oklch(0.53 0.02 258);
-  --accent: oklch(0.955 0.014 293);
-  --accent-foreground: oklch(0.4 0.14 293);
+  --muted-foreground: oklch(0.44 0.02 285);
+  --accent: oklch(0.94 0.03 288);
+  --accent-foreground: oklch(0.36 0.17 285);
 
   /* Status — verde #0E8A5F, âmbar #E0A72E, vermelho #C9432F */
   --destructive: oklch(0.555 0.18 27);
@@ -99,9 +100,9 @@
   --warning: oklch(0.76 0.14 80);
   --warning-foreground: oklch(0.24 0.05 80);
 
-  --border: oklch(0.924 0.004 264);
-  --input: oklch(0.924 0.004 264);
-  --ring: oklch(0.525 0.185 293);
+  --border: oklch(0.86 0.008 285);
+  --input: oklch(0.62 0.014 285);
+  --ring: oklch(0.45 0.2 285);
 
   /* Charts — paleta do design (roxo, teal, âmbar, azul, vermelho) */
   --chart-1: oklch(0.525 0.185 293);
@@ -113,12 +114,24 @@
   /* Sidebar escura #0E1114 (sempre escura, como no design) */
   --sidebar: oklch(0.165 0.008 264);
   --sidebar-foreground: oklch(0.72 0.012 264);
-  --sidebar-primary: oklch(0.525 0.185 293);
+  --sidebar-primary: oklch(0.45 0.2 285);
   --sidebar-primary-foreground: oklch(0.99 0 0);
   --sidebar-accent: oklch(0.235 0.012 264);
   --sidebar-accent-foreground: oklch(0.92 0.008 264);
   --sidebar-border: oklch(0.26 0.012 264);
   --sidebar-ring: oklch(0.525 0.185 293);
+
+  /* Menu lateral (AppSidebar): branco no claro, escuro no tema escuro. --cor = cor do grupo, só usada no escuro */
+  --sb-bg: oklch(1 0 0);
+  --sb-borda: oklch(0.86 0.008 285);
+  --sb-txt: oklch(0.18 0.016 285);
+  --sb-txt2: oklch(0.44 0.02 285);
+  --sb-hv: oklch(0.94 0.008 285);
+  --sb-grupo: oklch(0.44 0.02 285);
+  --sb-icone: oklch(0.38 0.03 285);
+  --sb-avatar: oklch(0.93 0.008 285);
+  --sb-badge-bg: oklch(0.93 0.05 25);
+  --sb-badge-t: oklch(0.45 0.17 27);
 
   --gradient-subtle: linear-gradient(180deg, oklch(0.99 0.003 264) 0%, oklch(0.966 0.004 264) 100%);
   --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-glow) 100%);
@@ -129,6 +142,16 @@
 }
 
 .dark {
+  --sb-bg: #0E1114;
+  --sb-borda: #1C2027;
+  --sb-txt: #E2E6EC;
+  --sb-txt2: #9AA3B2;
+  --sb-hv: #1F252E;
+  --sb-grupo: var(--cor);
+  --sb-icone: var(--cor);
+  --sb-avatar: #232A33;
+  --sb-badge-bg: #3A1D1D;
+  --sb-badge-t: #F08A7A;
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);
   --card: oklch(0.208 0.042 265.755);
