@@ -1908,6 +1908,20 @@ concluir.
   tamanho que cabe; página já em pé não muda. `amazon-inbound` v13 (deploy 19) aplica antes de anexar; `endireitar-etiquetas {dry?}`
   corrigiu os 9 PDFs já salvos (FBA19TL1K4ZJ, TM3DJHC, V28KLCM, V284QY0, V2BCY49, V25J44S, TZFT26Z, TPQXVN9, TPSZTVN). O download
   pelo SDK pode trazer a versão antiga do cache do navegador por até 1 h (cache-control do Storage).
+- **Conferência dos anúncios antes do plano (27/out, pedido do dono, `amazon-inbound` v14, deploy 20, sha256 conferido dos 4
+  arquivos):** o plano wfb39520f2 (ACZ) foi recusado na criação: 11113 FBA_INB_0021/0197 (aprovação) e 15181 FBA_INB_0050 ("nenhum
+  CD recebe"). A **API de elegibilidade (`/fba/inbound/v1/eligibility/itemPreview?program=INBOUND`) NÃO serve no Brasil**: devolve
+  inelegível 0050 para TUDO, até 15627/15742/15984 que enviamos sempre. O que separa o recusado é o anúncio
+  (`GET /listings/2021-08-01/items/{merchant}/{msku}?includedData=summaries,issues`): o **18076** (QUALIFICATION_REQUIRED, "outras
+  limitações") aparece em TODOS os nossos e não diz nada; o 11113 tem também o **100332** (QUALIFICATION_REQUIRED) + 18616 (FDS). Regra
+  na prévia e antes de criar: issue ERROR com categoria QUALIFICATION_REQUIRED e código ≠ 18076 = **pendência** (bloqueia o plano);
+  anúncio 404 = pendência; 18616 = aviso. Restrições (`/listings/2021-08-01/restrictions`) vieram vazias. O 0050 do 15181 NÃO é
+  previsível: não está no anúncio e não é medida (15742/15063 vão com 40×20×15 a 20 kg; FBA-15825 e 15625 nem têm medida) — a troca de
+  medidas do 15181/15180 para 50×40×30 (27/out, sonda) provavelmente não era a causa. Listings tem cota de 5/s (12 em paralelo = 429).
+- **Importar envio do Seller Central sem a tela:** FBA19VG6SNDM (ACZ, criado 27/out 13h37, XCV9, 67 un) foi gravado direto em
+  `fulfillment_envios`/`_itens` reproduzindo o `importar` (v0 `shipments` + `shipments/{id}/items`, SKU pelo `estoque_fulfillment`) e o
+  `nf-remessa` com a chave publicável vinculou o plano (wfc97b12da) e anexou etiquetas das caixas, de produto e a folha. Pela tela é
+  Fulfillment › Envios › Novo envio › "Importar da Amazon" e depois "Buscar na Amazon" no envio (ou esperar o cron 169).
 
 ## 5.9.4.1 Mercado Livre Full — criar envio pela API? NÃO (testado 19/out/2026)
 
