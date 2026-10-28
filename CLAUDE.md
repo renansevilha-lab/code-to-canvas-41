@@ -1277,6 +1277,13 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   outro tamanho já marcado), aberto com o que o chão de fábrica marcou; mostra fardos, sacos em fardo e soltos, e recusa
   fardos que somem mais sacos que os bons. Ao encerrar grava em `producao_fardo` só a DIFERENÇA por tamanho (negativo =
   desfazer, pessoa = a da etapa fardos) e depois chama `producao_encerrar_lote`.
+- **Farinha pelo produzido (28/out, dono: "não tem como pesar um big bag de 1.000 kg"):** migração
+  `producao_consumo_pelo_produzido` — `producao_encerrar_lote` ganhou `p_bag_acabou` (8º parâmetro; a de 7 foi removida).
+  Farinha do lote = (bons + refugo) × `producao_parametros.consumo_padrao_kg`, limitada ao saldo do bag; com "o big bag
+  acabou" (caixa no encerramento) entra o saldo inteiro — é no último lote do bag que aparece o rendimento real.
+  `p_sobra_kg > 0` ainda vale (sobra pesada). `producao_ordem.sobra_kg` = o que ficou no bag. Testado (desfeito): 107 +
+  3 refugo → 451,22 kg, bag com 548,78. O lote de teste BUMIM4-20261028-01 (id 2) foi CANCELADO e o consumo apagado
+  (o 1º encerramento lançou os 1.000 kg porque a sobra veio 0).
 - **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.

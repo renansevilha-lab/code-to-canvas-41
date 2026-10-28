@@ -244,7 +244,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   const [refugo, setRefugo] = useState("");
   const [embs, setEmbs] = useState("");
   const [etiq, setEtiq] = useState("");
-  const [sobra, setSobra] = useState("0");
+  const [bagAcabou, setBagAcabou] = useState(false);
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
   // Fardos prontos por tamanho (sacos por fardo → quantos fardos). Abre com o que foi marcado no chão de fábrica.
@@ -256,7 +256,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   if (aberto && abriuPara !== lote.id) {
     setAbriuPara(lote.id);
     setBoas(String(lote.boas)); setRefugo(String(lote.refugo)); setEmbs(String(lote.envasados));
-    setEtiq(lote.precisa_etiqueta ? String(lote.envasados) : "0"); setSobra("0"); setObs("");
+    setEtiq(lote.precisa_etiqueta ? String(lote.envasados) : "0"); setBagAcabou(false); setObs("");
     setFardos(Object.fromEntries(tamanhos.map((s) => [s, String(lote.fardos?.[String(s)] ?? 0)])));
   }
   if (!aberto && abriuPara !== null) setAbriuPara(null);
@@ -265,6 +265,8 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   const sacosEmFardo = tamanhos.reduce((t, s) => t + s * n(fardos[s]), 0);
   const totalFardos = tamanhos.reduce((t, s) => t + n(fardos[s]), 0);
   const soltos = n(boas) - sacosEmFardo;
+  // Farinha do lote = sacos envasados × consumo padrão (o big bag não é pesado); "acabou" lança o saldo inteiro.
+  const farinhaKg = (n(boas) + n(refugo)) * lote.consumo_padrao_kg;
 
   async function encerrar() {
     if (soltos < 0) return toast.error(`Os fardos somam ${sacosEmFardo} sacos, mais que os ${n(boas)} sacos bons.`);
@@ -272,7 +274,12 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
     if (!window.confirm(
       `Encerrar o lote ${lote.codigo} com ${n(boas)} sacos bons?\n\n` +
       `Fardos prontos: ${resumoFardos || "nenhum"}${soltos > 0 ? ` · ${soltos} saco(s) soltos` : ""}.\n\n` +
-      "Depois de encerrado, o consumo do big bag fica gravado.",
+      (bagAcabou ? `O big bag ${lote.big_bag} acabou: todo o saldo dele entra neste lote.
+
+` : `Sai do big bag ${lote.big_bag}: ${kg(farinhaKg, 0)} de farinha.
+
+`) +
+      "Depois de encerrado, o consumo fica gravado.",
     )) return;
     setSalvando(true);
     // Acerta os fardos ao que foi apontado agora: grava só a diferença de cada tamanho (negativo = desfazer).
@@ -286,7 +293,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
     }
     const { error } = await supabaseExternal.rpc("producao_encerrar_lote" as never, {
       p_ordem: lote.id, p_boas: n(boas), p_refugo: n(refugo), p_embalagens: n(embs),
-      p_etiquetas: n(etiq), p_sobra_kg: n(sobra), p_obs: obs || null,
+      p_etiquetas: n(etiq), p_sobra_kg: 0, p_bag_acabou: bagAcabou, p_obs: obs || null,
     } as never);
     setSalvando(false);
     if (error) return toast.error(erroMsg(error));
@@ -304,9 +311,17 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
           <Campo rotulo="Refugo"><Entrada inputMode="numeric" value={refugo} onChange={(e) => setRefugo(e.target.value)} /></Campo>
           <Campo rotulo="Embalagens usadas"><Entrada inputMode="numeric" value={embs} onChange={(e) => setEmbs(e.target.value)} /></Campo>
           {lote.precisa_etiqueta && <Campo rotulo="Etiquetas usadas"><Entrada inputMode="numeric" value={etiq} onChange={(e) => setEtiq(e.target.value)} /></Campo>}
-          <Campo rotulo="Sobrou no big bag (kg)" dica="0 = o big bag acabou">
-            <Entrada inputMode="decimal" value={sobra} onChange={(e) => setSobra(e.target.value)} />
-          </Campo>
+          <label style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={bagAcabou} onChange={(e) => setBagAcabou(e.target.checked)} style={{ width: 18, height: 18, marginTop: 1 }} />
+            <span>
+              <b>O big bag {lote.big_bag} acabou neste lote</b>
+              <span style={{ display: "block", fontSize: 12, color: "var(--pm-t3)" }}>
+                {bagAcabou
+                  ? "Todo o saldo que restava no big bag entra neste lote: é aqui que aparece o rendimento real do bag."
+                  : `Sai do big bag ≈ ${kg(farinhaKg, 0)} (${int(n(boas) + n(refugo))} sacos × ${kg(lote.consumo_padrao_kg, 3)}).`}
+              </span>
+            </span>
+          </label>
           <div style={{ gridColumn: "1 / -1", border: "1px solid var(--pm-bs)", borderRadius: 10, padding: 10 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 650 }}>Fardos prontos</span>
@@ -330,7 +345,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
           </div>
         </div>
         <p style={{ fontSize: 12, color: "var(--pm-t3)", margin: "4px 0 0" }}>
-          O consumo de farinha é o saldo do big bag menos a sobra.
+          A farinha sai do big bag pela quantidade produzida (sacos × consumo padrão da ficha). Marque "acabou" no último lote do bag.
         </p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
           <Botao onClick={onFechar}>Voltar</Botao>
