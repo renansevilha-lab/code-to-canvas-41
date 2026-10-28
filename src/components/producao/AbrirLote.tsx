@@ -1,4 +1,4 @@
-// Abrir lote: SKU → big bag da farinha dele (só os com saldo) → embalagem → quem está em cada etapa.
+// Iniciar produção (abre o lote): SKU → big bag da farinha dele (só os com saldo) → embalagem → quem está em cada etapa.
 // O código do lote (prefixo-AAAAMMDD-NN) nasce no banco (producao_abrir_lote).
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -67,7 +67,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && onFechar()}>
       <DialogContent className="pm-ui max-w-lg" style={{ background: "var(--pm-s)", color: "var(--pm-t)" }}>
-        <DialogHeader><DialogTitle>Abrir lote</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Iniciar produção</DialogTitle></DialogHeader>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <Campo rotulo="Produto">
             <Escolha value={sku} onChange={(e) => setSku(e.target.value)}>
@@ -110,7 +110,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <Botao onClick={onFechar}>Cancelar</Botao>
-            <Botao tom="primario" onClick={abrir} disabled={salvando || !bagSel}>{salvando ? "Abrindo…" : "Abrir lote"}</Botao>
+            <Botao tom="primario" onClick={abrir} disabled={salvando || !bagSel}>{salvando ? "Iniciando…" : "Iniciar produção"}</Botao>
           </div>
         </div>
       </DialogContent>

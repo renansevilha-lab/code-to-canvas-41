@@ -1267,6 +1267,12 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   no lote. Botão "Lançar no Tiny" no fechamento do lote. O `precoCusto` do Tiny NÃO é mexido (custo médio em aberto). A v1 (mesmo
   dia) também criava/ligava matéria-prima no Tiny e lançava as entradas e a baixa do consumo — retirado a pedido do dono; as
   colunas `producao_insumo.tiny_*` e `producao_entrada.tiny_*` ficaram sem uso. **Nenhum lançamento real feito ainda.**
+- **Etiqueta do big bag (28/out, pedido do dono):** Zebra 10×15 de controle interno — código grande + Code128, tipo
+  da farinha (em branco para escrever à mão se o bag não foi classificado), SKU que ela vira, peso, NF, fornecedor,
+  recebido em e campos à mão (aberto em / finalizado em / lote). `src/components/producao/EtiquetaBigBag.tsx`
+  (`gerarZplBigBag`), pelo mesmo caminho da identificadora (`fulfillment-inbound?modulo=imprimir`, impressora de
+  `separacao.printerId`, 1 ou 2 cópias por bag). Botão "Etiqueta" por linha e "Etiquetas dos N com saldo" em Entradas ›
+  Big bags. **Não impressa na Zebra ainda** — calibrar o layout na 1ª impressão. O botão "Abrir lote" virou "Iniciar produção".
 - **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.

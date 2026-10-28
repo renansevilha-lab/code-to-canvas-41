@@ -31,7 +31,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
         </div>
       )}
 
-      <Cartao titulo="Rodando agora" direita={<Botao tom="primario" onClick={onAbrirLote}>Abrir lote</Botao>}>
+      <Cartao titulo="Rodando agora" direita={<Botao tom="primario" onClick={onAbrirLote}>Iniciar produção</Botao>}>
         {!(abertos.data ?? []).length ? (
           <p style={{ margin: 0, fontSize: 13, color: "var(--pm-t3)" }}>Nenhum lote aberto.</p>
         ) : (

@@ -48,7 +48,7 @@ const identImpressoEm = new Map<string, number>();
 
 // Sanitiza texto pra ZPL: tira os caracteres de controle (^ ~) e troca o "·"
 // (que a fonte da Zebra não tem) por "-". ^CI28 cuida dos acentos.
-function zplSan(s: string): string {
+export function zplSan(s: string): string {
   return (s || "").replace(/[\^~]/g, " ").replace(/·/g, "-").replace(/\s+/g, " ").trim();
 }
 

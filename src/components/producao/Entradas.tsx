@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
+import { useImpressaoBigBag } from "./EtiquetaBigBag";
 import { brl, dataBR, erroMsg, hojeSP, int, kg, useBigBags, useEntradas, useEstoqueMp, useInsumos, type BigBag } from "@/lib/producao";
 
 const ACLASSIFICAR = "farinha:?";
@@ -15,6 +16,8 @@ export function Entradas() {
   const insumos = useInsumos();
   const bags = useBigBags();
   const estoque = useEstoqueMp();
+  const etiqueta = useImpressaoBigBag();
+  const bagsComSaldo = (bags.data ?? []).filter((b) => b.saldo_kg > 0);
 
   const [insumoSel, setInsumoSel] = useState<string>("");
   const [qtd, setQtd] = useState("");
@@ -113,8 +116,17 @@ export function Entradas() {
 
       <EntradasRecebidas />
 
-      <Cartao titulo="Big bags" direita={<span style={{ fontSize: 12, color: "var(--pm-t3)" }}>um lote de produção = um big bag</span>}>
-        <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar} />
+      <Cartao titulo="Big bags" direita={
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>um lote de produção = um big bag</span>
+          {etiqueta.seletor}
+          <Botao onClick={() => etiqueta.imprimir(bagsComSaldo)} disabled={!bagsComSaldo.length || etiqueta.imprimindo}>
+            {etiqueta.imprimindo ? "Imprimindo…" : `Etiquetas dos ${bagsComSaldo.length} com saldo`}
+          </Botao>
+        </span>
+      }>
+        <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar}
+          onEtiqueta={(b) => etiqueta.imprimir([b])} imprimindo={etiqueta.imprimindo} />
       </Cartao>
 
       <Cartao titulo="Saldo das matérias-primas">
@@ -148,7 +160,10 @@ export function Entradas() {
   );
 }
 
-function TabelaBigBags({ bags, farinhas, onMudou }: { bags: BigBag[]; farinhas: Array<{ id: number; nome: string }>; onMudou: () => void }) {
+function TabelaBigBags({ bags, farinhas, onMudou, onEtiqueta, imprimindo }: {
+  bags: BigBag[]; farinhas: Array<{ id: number; nome: string }>; onMudou: () => void;
+  onEtiqueta: (b: BigBag) => void; imprimindo: boolean;
+}) {
   const [salvando, setSalvando] = useState<number | null>(null);
   async function atualizar(id: number, campos: Record<string, unknown>) {
     setSalvando(id);
@@ -164,7 +179,7 @@ function TabelaBigBags({ bags, farinhas, onMudou }: { bags: BigBag[]; farinhas: 
         <thead><tr>
           <th style={th}>Código</th><th style={th}>Farinha</th><th style={th}>NF</th>
           <th style={{ ...th, textAlign: "right" }}>Saldo</th><th style={{ ...th, textAlign: "right" }}>Rende</th>
-          <th style={th}>Densidade (g/cm³)</th><th style={th}>Situação</th>
+          <th style={th}>Densidade (g/cm³)</th><th style={th}>Situação</th><th style={th}></th>
         </tr></thead>
         <tbody>
           {bags.map((b) => {
@@ -207,6 +222,9 @@ function TabelaBigBags({ bags, farinhas, onMudou }: { bags: BigBag[]; farinhas: 
                     : b.a_classificar ? <Selo tom="a">classificar a farinha</Selo>
                     : b.saldo_kg <= 0 ? <Selo>vazio</Selo>
                     : <Selo tom="g">disponível</Selo>}
+                </td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  <Botao onClick={() => onEtiqueta(b)} disabled={imprimindo} style={{ height: 30 }}>Etiqueta</Botao>
                 </td>
               </tr>
             );
