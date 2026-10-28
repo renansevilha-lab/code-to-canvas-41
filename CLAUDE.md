@@ -1273,6 +1273,10 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   (`gerarZplBigBag`), pelo mesmo caminho da identificadora (`fulfillment-inbound?modulo=imprimir`, impressora de
   `separacao.printerId`, 1 ou 2 cópias por bag). Botão "Etiqueta" por linha e "Etiquetas dos N com saldo" em Entradas ›
   Big bags. **Não impressa na Zebra ainda** — calibrar o layout na 1ª impressão. O botão "Abrir lote" virou "Iniciar produção".
+- **Fardos no encerramento (28/out, pedido do dono):** o diálogo "Encerrar" tem "Fardos prontos" (de 2, 3, 5 e qualquer
+  outro tamanho já marcado), aberto com o que o chão de fábrica marcou; mostra fardos, sacos em fardo e soltos, e recusa
+  fardos que somem mais sacos que os bons. Ao encerrar grava em `producao_fardo` só a DIFERENÇA por tamanho (negativo =
+  desfazer, pessoa = a da etapa fardos) e depois chama `producao_encerrar_lote`.
 - **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.

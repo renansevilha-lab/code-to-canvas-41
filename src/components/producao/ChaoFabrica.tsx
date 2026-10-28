@@ -247,6 +247,9 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   const [sobra, setSobra] = useState("0");
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // Fardos prontos por tamanho (sacos por fardo → quantos fardos). Abre com o que foi marcado no chão de fábrica.
+  const [fardos, setFardos] = useState<Record<number, string>>({});
+  const tamanhos = [...new Set([2, 3, 5, ...Object.keys(lote.fardos ?? {}).map(Number)])].filter((s) => s > 0).sort((a, b) => a - b);
 
   // Abre sempre com o que o chão de fábrica contou.
   const [abriuPara, setAbriuPara] = useState<number | null>(null);
@@ -254,13 +257,33 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
     setAbriuPara(lote.id);
     setBoas(String(lote.boas)); setRefugo(String(lote.refugo)); setEmbs(String(lote.envasados));
     setEtiq(lote.precisa_etiqueta ? String(lote.envasados) : "0"); setSobra("0"); setObs("");
+    setFardos(Object.fromEntries(tamanhos.map((s) => [s, String(lote.fardos?.[String(s)] ?? 0)])));
   }
   if (!aberto && abriuPara !== null) setAbriuPara(null);
 
+  const n = (s: string | undefined) => Number((s ?? "").replace(",", ".") || 0);
+  const sacosEmFardo = tamanhos.reduce((t, s) => t + s * n(fardos[s]), 0);
+  const totalFardos = tamanhos.reduce((t, s) => t + n(fardos[s]), 0);
+  const soltos = n(boas) - sacosEmFardo;
+
   async function encerrar() {
-    const n = (s: string) => Number(s.replace(",", ".") || 0);
-    if (!window.confirm(`Encerrar o lote ${lote.codigo} com ${n(boas)} sacos bons? Depois de encerrado, o consumo do big bag fica gravado.`)) return;
+    if (soltos < 0) return toast.error(`Os fardos somam ${sacosEmFardo} sacos, mais que os ${n(boas)} sacos bons.`);
+    const resumoFardos = tamanhos.filter((s) => n(fardos[s]) > 0).map((s) => `${n(fardos[s])} de ${s}`).join(", ");
+    if (!window.confirm(
+      `Encerrar o lote ${lote.codigo} com ${n(boas)} sacos bons?\n\n` +
+      `Fardos prontos: ${resumoFardos || "nenhum"}${soltos > 0 ? ` · ${soltos} saco(s) soltos` : ""}.\n\n` +
+      "Depois de encerrado, o consumo do big bag fica gravado.",
+    )) return;
     setSalvando(true);
+    // Acerta os fardos ao que foi apontado agora: grava só a diferença de cada tamanho (negativo = desfazer).
+    const ajustes = tamanhos
+      .map((s) => ({ s, dif: n(fardos[s]) - Number(lote.fardos?.[String(s)] ?? 0) }))
+      .filter((a) => a.dif !== 0)
+      .map((a) => ({ ordem_id: lote.id, sacos_por_fardo: a.s, qtd_fardos: a.dif, pessoa_id: lote.pessoas?.fardos ?? null }));
+    if (ajustes.length) {
+      const { error: ef } = await supabaseExternal.from("producao_fardo" as never).insert(ajustes as never);
+      if (ef) { setSalvando(false); return toast.error(`Não gravei os fardos: ${erroMsg(ef)}`); }
+    }
     const { error } = await supabaseExternal.rpc("producao_encerrar_lote" as never, {
       p_ordem: lote.id, p_boas: n(boas), p_refugo: n(refugo), p_embalagens: n(embs),
       p_etiquetas: n(etiq), p_sobra_kg: n(sobra), p_obs: obs || null,
@@ -274,7 +297,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && onFechar()}>
-      <DialogContent className="pm-ui max-w-md" style={{ background: "var(--pm-s)", color: "var(--pm-t)" }}>
+      <DialogContent className="pm-ui max-w-md" style={{ background: "var(--pm-s)", color: "var(--pm-t)", maxHeight: "92vh", overflowY: "auto" }}>
         <DialogHeader><DialogTitle>Encerrar {lote.codigo}</DialogTitle></DialogHeader>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Campo rotulo="Sacos bons"><Entrada inputMode="numeric" value={boas} onChange={(e) => setBoas(e.target.value)} /></Campo>
@@ -284,6 +307,24 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
           <Campo rotulo="Sobrou no big bag (kg)" dica="0 = o big bag acabou">
             <Entrada inputMode="decimal" value={sobra} onChange={(e) => setSobra(e.target.value)} />
           </Campo>
+          <div style={{ gridColumn: "1 / -1", border: "1px solid var(--pm-bs)", borderRadius: 10, padding: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 650 }}>Fardos prontos</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: soltos < 0 ? "var(--pm-r)" : "var(--pm-t3)" }}>
+                {int(totalFardos)} fardo(s) · {int(sacosEmFardo)} sacos
+                {soltos > 0 ? ` · ${int(soltos)} soltos` : soltos < 0 ? ` · ${int(-soltos)} a mais que os bons` : " · nenhum solto"}
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${tamanhos.length}, 1fr)`, gap: 8 }}>
+              {tamanhos.map((s) => (
+                <Campo key={s} rotulo={`Fardos de ${s}`}>
+                  <Entrada inputMode="numeric" value={fardos[s] ?? "0"}
+                    onChange={(e) => setFardos((f) => ({ ...f, [s]: e.target.value.replace(/\D/g, "") }))} />
+                </Campo>
+              ))}
+            </div>
+          </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <Campo rotulo="Observação"><Entrada value={obs} onChange={(e) => setObs(e.target.value)} /></Campo>
           </div>
