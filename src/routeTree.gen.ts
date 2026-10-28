@@ -32,6 +32,7 @@ import { Route as PedidosRouteImport } from './routes/pedidos'
 import { Route as PedidosIntegradosRouteImport } from './routes/pedidos-integrados'
 import { Route as PesquisaProdutosRouteImport } from './routes/pesquisa-produtos'
 import { Route as ProcessosRouteImport } from './routes/processos'
+import { Route as ProducaoRouteImport } from './routes/producao'
 import { Route as ProdutosRouteImport } from './routes/produtos'
 import { Route as ProdutosMargemRouteImport } from './routes/produtos-margem'
 import { Route as PromocoesRouteImport } from './routes/promocoes'
@@ -167,6 +168,11 @@ const ProcessosRoute = ProcessosRouteImport.update({
   path: '/processos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProducaoRoute = ProducaoRouteImport.update({
+  id: '/producao',
+  path: '/producao',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProdutosRoute = ProdutosRouteImport.update({
   id: '/produtos',
   path: '/produtos',
@@ -287,6 +293,7 @@ export interface FileRoutesByFullPath {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/pesquisa-produtos': typeof PesquisaProdutosRoute
   '/processos': typeof ProcessosRoute
+  '/producao': typeof ProducaoRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
@@ -331,6 +338,7 @@ export interface FileRoutesByTo {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/pesquisa-produtos': typeof PesquisaProdutosRoute
   '/processos': typeof ProcessosRoute
+  '/producao': typeof ProducaoRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
@@ -376,6 +384,7 @@ export interface FileRoutesById {
   '/pedidos-integrados': typeof PedidosIntegradosRoute
   '/pesquisa-produtos': typeof PesquisaProdutosRoute
   '/processos': typeof ProcessosRoute
+  '/producao': typeof ProducaoRoute
   '/produtos': typeof ProdutosRoute
   '/produtos-margem': typeof ProdutosMargemRoute
   '/promocoes': typeof PromocoesRoute
@@ -422,6 +431,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/pesquisa-produtos'
     | '/processos'
+    | '/producao'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
@@ -466,6 +476,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/pesquisa-produtos'
     | '/processos'
+    | '/producao'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
@@ -510,6 +521,7 @@ export interface FileRouteTypes {
     | '/pedidos-integrados'
     | '/pesquisa-produtos'
     | '/processos'
+    | '/producao'
     | '/produtos'
     | '/produtos-margem'
     | '/promocoes'
@@ -555,6 +567,7 @@ export interface RootRouteChildren {
   PedidosIntegradosRoute: typeof PedidosIntegradosRoute
   PesquisaProdutosRoute: typeof PesquisaProdutosRoute
   ProcessosRoute: typeof ProcessosRoute
+  ProducaoRoute: typeof ProducaoRoute
   ProdutosRoute: typeof ProdutosRoute
   ProdutosMargemRoute: typeof ProdutosMargemRoute
   PromocoesRoute: typeof PromocoesRoute
@@ -739,6 +752,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProcessosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/producao': {
+      id: '/producao'
+      path: '/producao'
+      fullPath: '/producao'
+      preLoaderRoute: typeof ProducaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/produtos': {
       id: '/produtos'
       path: '/produtos'
@@ -899,6 +919,7 @@ const rootRouteChildren: RootRouteChildren = {
   PedidosIntegradosRoute: PedidosIntegradosRoute,
   PesquisaProdutosRoute: PesquisaProdutosRoute,
   ProcessosRoute: ProcessosRoute,
+  ProducaoRoute: ProducaoRoute,
   ProdutosRoute: ProdutosRoute,
   ProdutosMargemRoute: ProdutosMargemRoute,
   PromocoesRoute: PromocoesRoute,

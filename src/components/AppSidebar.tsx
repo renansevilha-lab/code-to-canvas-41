@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   BarChart3,
+  Factory,
   Calculator,
   Megaphone,
   Wallet,
@@ -93,6 +94,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { title: "Fulfillment", url: "/fulfillment", icon: Warehouse, modulo: "galpao" },
       { title: "Compras & Recebimento", url: "/compras", icon: PackagePlus, modulo: "galpao" },
+      { title: "Produção", url: "/producao", icon: Factory, modulo: "galpao" },
       { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "devolucoes" },
       {
         title: "Equipe", url: "/processos", icon: ClipboardCheck, modulo: "galpao",

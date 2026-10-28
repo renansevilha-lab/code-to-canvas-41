@@ -1231,6 +1231,39 @@ destino** (regra `CAPA_DO_DESTINO` da anuncio-publicar) e **onde está anunciado
 último envio pelo app). Telas antigas de reserva (`ProtecaoPacking`). **Fase 3 pendente:** conferência do envio como painel lateral
 em seções, aba Fotos como galeria única com "Adicionar fotos" e revisão foto a foto. **Não conferido na tela** (pede login).
 
+## 5.5.2 Produção — envase da areia Bumi a partir do big bag (28/out/2026)
+
+A ACZ passou a FABRICAR: farinha de mandioca em big bag de 1.000 kg (Lotus, NF 19532, 4 bags, R$ 2,548/kg) envasada em
+sacos de 4 kg. SKUs fabricados: **16581** (grãos médios, lote `BUMIM4-AAAAMMDD-NN`) e **16678** (grossa, `BUMIG4-…`), cada
+um com a sua farinha. Decisões do dono: **1 lote = 1 big bag**; etapas com quem fez cada uma (etiquetagem — só se a
+embalagem precisa —, envase e pesagem, selagem, fechamento de fardos de 2/3/5 sacos); pessoas = Vinicius, Nikolas, Tânia,
+Kevin; saco transparente R$ 0,70 + etiqueta R$ 0,40 (o Gesoplast impresso, R$ 1,12, não usa etiqueta); entrada de
+matéria-prima (farinha, sacos, etiquetas) na própria Produção.
+- **Banco** (migração `producao_mvp`; SQL comentado + rollback em `docs/producao-mvp.sql`): `producao_config` (MOD R$ 5.500 +
+  CIF R$ 3.436 ÷ capacidade normal 10.000 un = R$ 0,89/un, CPC 16 — da PLANTA, não por SKU), `producao_insumo` (tipo
+  farinha/embalagem/etiqueta, `precisa_etiqueta`, `etiqueta_id`), `producao_parametros` (ficha por SKU: farinha, embalagem
+  padrão, prefixo, consumo padrão gerado = nominal × 1,005 ÷ 0,98 = 4,102 kg, T Inmetro 60 g, `pesar_cada`/`pesar_primeiros`,
+  `meta_estoque_un`, NCM do acabado a definir), `producao_entrada` (farinha = 1 linha por big bag; NF/CFOP/CST guardados, sem
+  assumir crédito; `insumo_id` nulo = farinha a classificar — a NF trouxe as duas com o mesmo código 02557), `producao_ordem`,
+  `producao_etapa`, `producao_contagem` (+1/+10/−1), `producao_pesagem` (g), `producao_refugo`, `producao_parada`,
+  `producao_fardo`, `producao_consumo` (gravado no encerramento). Views `view_producao_big_bag` (saldo = entrada − consumo),
+  `view_producao_estoque` (saldo e custo médio por matéria-prima), `view_producao_lote` (ao vivo e fechamento: boas, fardos,
+  peso média/desvio/mín/máx/abaixo de T e `alerta_peso`, un/h, minutos parados, consumo real × padrão, custo real × padrão).
+  RPCs `producao_abrir_lote` (código do dia com advisory lock; recusa big bag a classificar, de outra farinha ou já em lote) e
+  `producao_encerrar_lote` (farinha = saldo do bag − sobra; saco/etiqueta ao custo médio). RLS: ler/operar = `tem_modulo
+  ('galpao')`; config, insumos, ficha e equipe = só `todos`. Custo padrão do 16581 com saco transparente: **R$ 12,45**.
+  Testado (transação desfeita): abrir → contar → pesar → refugo → fardo → encerrar.
+- **Tela `/producao`** (menu Pedidos & Operação, módulo galpao): Painel do dia (lotes abertos, o que produzir — estoque/venda
+  30 d pela `view_cobertura_fornecedor` + meta —, lotes encerrados), Entradas de matéria-prima (registrar, classificar o big
+  bag, densidade aparente, saldos) e, com `?lote=<id>`, o **chão de fábrica** para o celular (+1 / +10 / desfazer, peso em
+  gramas com "pese agora", fardo de 2/3/5, refugo e parada por motivo em botões, troca de pessoa por etapa, encerrar). Busca
+  por código do lote = rastreabilidade (big bag, NF). `src/lib/producao.ts`, `src/components/producao/*`. **Não conferida na
+  tela** (pede login).
+- **Pendente (decisão do dono):** integração com o Tiny (recomendado: lançamentos de estoque pela API ao encerrar — exige
+  cadastrar farinha e saco no Tiny), custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
+  SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
+  fornecedor no Tiny.
+
 ## 5.6 Ponto (registro de horas da equipe) — 16/set/2026
 
 Rota `/ponto` (módulo `galpao`), quiosque: a pessoa escolhe o nome, digita a
