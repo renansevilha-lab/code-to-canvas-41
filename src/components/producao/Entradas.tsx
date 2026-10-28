@@ -1,12 +1,12 @@
 // Entradas de matéria-prima: farinha (um registro por big bag — é o lote rastreável),
 // sacos e etiquetas (um registro por recebimento). O saldo é calculado no banco (entrada − consumo).
+// Matéria-prima fica só no app: nada daqui vai ao Tiny (decisão do dono, 28/out/2026).
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
-import { EntradasNoTiny, InsumosNoTiny } from "./TinyProducao";
-import { brl, dataBR, erroMsg, hojeSP, int, kg, useBigBags, useEstoqueMp, useInsumos, type BigBag } from "@/lib/producao";
+import { brl, dataBR, erroMsg, hojeSP, int, kg, useBigBags, useEntradas, useEstoqueMp, useInsumos, type BigBag } from "@/lib/producao";
 
 const ACLASSIFICAR = "farinha:?";
 
@@ -111,7 +111,7 @@ export function Entradas() {
         </div>
       </Cartao>
 
-      <EntradasNoTiny />
+      <EntradasRecebidas />
 
       <Cartao titulo="Big bags" direita={<span style={{ fontSize: 12, color: "var(--pm-t3)" }}>um lote de produção = um big bag</span>}>
         <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar} />
@@ -144,7 +144,6 @@ export function Entradas() {
         </p>
       </Cartao>
 
-      <InsumosNoTiny />
     </div>
   );
 }
@@ -215,5 +214,43 @@ function TabelaBigBags({ bags, farinhas, onMudou }: { bags: BigBag[]; farinhas: 
         </tbody>
       </table>
     </div>
+  );
+}
+
+function EntradasRecebidas() {
+  const entradas = useEntradas();
+  const insumos = useInsumos();
+  const lista = entradas.data ?? [];
+  return (
+    <Cartao titulo="Entradas recebidas">
+      {!lista.length ? <p style={{ fontSize: 13, color: "var(--pm-t3)", margin: 0 }}>Nenhuma entrada.</p> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={tabela}>
+            <thead><tr>
+              <th style={th}>Código</th><th style={th}>Matéria-prima</th><th style={th}>Recebido</th><th style={th}>Fornecedor</th><th style={th}>NF</th>
+              <th style={{ ...th, textAlign: "right" }}>Quantidade</th><th style={{ ...th, textAlign: "right" }}>R$/un</th><th style={{ ...th, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {lista.map((e) => {
+                const ins = insumos.data?.find((i) => i.id === e.insumo_id);
+                const un = ins?.unidade ?? "kg";
+                return (
+                  <tr key={e.id}>
+                    <td style={{ ...td, fontWeight: 600 }}>{e.codigo}</td>
+                    <td style={td}>{ins?.nome ?? <Selo tom="a">farinha a classificar</Selo>}</td>
+                    <td style={td}>{dataBR(e.recebido_em)}</td>
+                    <td style={td}>{e.fornecedor_nome ?? "—"}</td>
+                    <td style={td}>{e.nf_numero ?? "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{un === "kg" ? kg(e.quantidade, 0) : int(e.quantidade)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{brl(e.custo_un, 3)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{brl(e.quantidade * e.custo_un)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Cartao>
   );
 }

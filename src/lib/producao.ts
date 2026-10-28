@@ -4,7 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 
-// --- Tiny (edge fn producao-tiny, opção B do dono: lançamentos de estoque no depósito Geral) ---
+// --- Tiny (edge fn producao-tiny): só a entrada do produto acabado no depósito Geral; matéria-prima fica no app ---
 export interface ItemTiny {
   papel: "acabado" | "farinha" | "embalagem" | "etiqueta" | "entrada"; tipo: "E" | "S"; nome: string;
   tiny_produto_id: number | null; sku: string | null; quantidade: number; unidade: string; preco_un: number;

@@ -289,7 +289,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
           </div>
         </div>
         <p style={{ fontSize: 12, color: "var(--pm-t3)", margin: "4px 0 0" }}>
-          O consumo de farinha é o saldo do big bag menos a sobra. O estoque no Tiny ainda é lançado à parte.
+          O consumo de farinha é o saldo do big bag menos a sobra.
         </p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
           <Botao onClick={onFechar}>Voltar</Botao>
@@ -323,12 +323,12 @@ function Fechamento({ l }: { l: Lote }) {
         ) : (
           <>
             <Botao tom="primario" onClick={() => setTiny(true)}>Lançar no Tiny</Botao>
-            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>entrada dos sacos bons e baixa da farinha, do saco e da etiqueta no depósito Geral</span>
+            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>entrada dos sacos bons no depósito Geral (as matérias-primas ficam só no app)</span>
           </>
         )}
       </div>
       {tiny && (
-        <DialogoLancarTiny aberto onFechar={() => setTiny(false)} modulo="lote" refId={l.id} titulo={`Lote ${l.codigo} no Tiny`}
+        <DialogoLancarTiny aberto onFechar={() => setTiny(false)} refId={l.id} titulo={`Lote ${l.codigo} no Tiny`}
           onFeito={() => void qc.invalidateQueries({ queryKey: ["producao"] })} />
       )}
     </Cartao>

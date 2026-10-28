@@ -1,15 +1,10 @@
 // ============================================================================
-// producao-tiny v1 (28/out/2026) — Produção × Tiny, opção B do dono: lançamentos de estoque pela API
-// no depósito GERAL (604130012, conta ottz). Os depósitos Full nunca são tocados.
-//   POST ?modulo=status                         → matérias-primas e SKUs fabricados com a ligação no Tiny
-//   POST ?modulo=cadastrar {insumo_id, confirmar?}  → cria a matéria-prima no Tiny (produto simples, SKU livre)
-//   POST ?modulo=ligar {insumo_id, sku}          → liga a matéria-prima a um produto que JÁ existe no Tiny
-//   POST ?modulo=entrada {entrada_id, confirmar?}   → E da matéria-prima recebida (quantidade × custo)
-//   POST ?modulo=lote {ordem_id, confirmar?}        → lote encerrado: E do acabado (sacos bons × custo real)
-//                                                     + S da farinha, do saco e da etiqueta (o consumo gravado)
-// Sem `confirmar` = prévia (lê o saldo do Geral ao vivo e mostra o que vai ser lançado). Com `confirmar`:
-// cada lançamento UMA vez (registro em producao_tiny_lanc, ok nunca repete); erro em um não apaga os outros;
-// chamar de novo lança só o que faltou. Cadastrar/ligar = administrador (módulo `todos`); lançar = `galpao`.
+// producao-tiny v2 (28/out/2026) — Produção × Tiny. Decisão do dono (28/out): as matérias-primas (farinha,
+// saco, etiqueta) ficam SÓ no app; ao Tiny vai apenas a ENTRADA do produto acabado no depósito GERAL
+// (604130012, conta ottz) quando o lote é encerrado. Os depósitos Full nunca são tocados.
+//   POST ?modulo=lote {ordem_id, confirmar?} → E do acabado (sacos bons × custo real do lote)
+// Sem `confirmar` = prévia (lê o saldo do Geral ao vivo). Com `confirmar`: lança UMA vez (registro em
+// producao_tiny_lanc, ok nunca repete). Acesso = módulo `galpao`.
 // O custo do produto no Tiny (precoCusto) NÃO é alterado aqui — decisão do dono ainda em aberto.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -34,20 +29,17 @@ const num = (v: unknown): number | null => {
 };
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
-type Quem = { id: string; nome: string | null; admin: boolean };
+type Quem = { id: string; nome: string | null };
 async function exigirAcesso(req: Request): Promise<Quem | Response> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   let pl: Record<string, unknown> = {};
   try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
   if (pl.role !== "authenticated") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
   const doUsuario = createClient(SB_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
-  const [g, t] = await Promise.all([
-    doUsuario.rpc("tem_modulo", { p_modulo: "galpao" }),
-    doUsuario.rpc("tem_modulo", { p_modulo: "todos" }),
-  ]);
+  const g = await doUsuario.rpc("tem_modulo", { p_modulo: "galpao" });
   if (g.error || g.data !== true) return json({ erro: "sem acesso à Produção (módulo galpão)" }, 403);
   const { data: perfil } = await db.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
-  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null, admin: t.data === true };
+  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null };
 }
 
 /** Token da conta principal do Tiny (sempre `ottz`: nunca "o mais recente"). Leitura com 3 tentativas (504 no minuto cheio). */
@@ -93,20 +85,8 @@ async function saldoGeral(token: string, idProduto: number): Promise<number | nu
   return dep ? num(dep.saldo) : null;
 }
 
-/** Próximo SKU numérico de 5 dígitos LIVRE (maior do espelho + 1…, conferido no Tiny). */
-async function skuLivre(token: string): Promise<string | null> {
-  const { data: maior } = await db.from("produtos").select("sku").filter("sku", "match", "^[0-9]{5}$").order("sku", { ascending: false }).limit(1);
-  const ini = Number(maior?.[0]?.sku ?? 0) + 1;
-  for (let s = ini; s < ini + 30; s++) {
-    const r = await v3(token, "GET", `/produtos?codigo=${s}&limit=1`);
-    if (r.status !== 200) return null;
-    if (String(r.body?.itens?.[0]?.sku ?? "") !== String(s)) return String(s);
-  }
-  return null;
-}
-
 type Item = {
-  papel: "acabado" | "farinha" | "embalagem" | "etiqueta" | "entrada"; tipo: "E" | "S"; nome: string;
+  papel: "acabado"; tipo: "E" | "S"; nome: string;
   tiny_produto_id: number | null; sku: string | null; quantidade: number; unidade: string; preco_un: number;
   ja_lancado?: boolean; saldo_hoje?: number | null; saldo_depois?: number | null; problema?: string | null;
 };
@@ -127,38 +107,10 @@ async function itensDoLote(ordemId: number): Promise<{ codigo: string; itens: It
     quantidade: Number(o.qtd_boa_final ?? 0), unidade: p?.unidade ?? "UN", preco_un: Number(num(l?.custo_real_un) ?? 0),
     problema: p?.id_tiny ? null : `o SKU ${o.sku} não tem o código do Tiny no catálogo`,
   }];
-  const { data: cons } = await db.from("producao_consumo")
-    .select("quantidade, custo_un, insumo:producao_insumo(id, nome, tipo, unidade, tiny_produto_id, tiny_sku)").eq("ordem_id", ordemId);
-  for (const c of (cons ?? []) as any[]) {
-    const ins = c.insumo;
-    if (!ins || Number(c.quantidade) <= 0) continue;
-    const papel = (ins.tipo === "farinha" ? "farinha" : ins.tipo === "etiqueta" ? "etiqueta" : "embalagem") as Item["papel"];
-    itens.push({
-      papel, tipo: "S", nome: ins.nome, tiny_produto_id: num(ins.tiny_produto_id), sku: ins.tiny_sku ?? null,
-      quantidade: r3(Number(c.quantidade)), unidade: ins.unidade === "kg" ? "KG" : "UN", preco_un: Number(c.custo_un),
-      problema: ins.tiny_produto_id ? null : `"${ins.nome}" ainda não está ligado a um produto do Tiny`,
-    });
-  }
   return { codigo: o.codigo, itens };
 }
 
-async function itensDaEntrada(entradaId: number): Promise<{ codigo: string; itens: Item[]; erro?: string }> {
-  const { data: e } = await db.from("producao_entrada")
-    .select("id, codigo, quantidade, custo_un, insumo:producao_insumo(id, nome, unidade, tiny_produto_id, tiny_sku)").eq("id", entradaId).maybeSingle();
-  if (!e) return { codigo: "", itens: [], erro: "entrada não encontrada" };
-  const ins = (e as any).insumo;
-  if (!ins) return { codigo: e.codigo, itens: [], erro: `classifique a farinha do big bag ${e.codigo} antes de lançar no Tiny` };
-  return {
-    codigo: e.codigo,
-    itens: [{
-      papel: "entrada", tipo: "E", nome: ins.nome, tiny_produto_id: num(ins.tiny_produto_id), sku: ins.tiny_sku ?? null,
-      quantidade: r3(Number(e.quantidade)), unidade: ins.unidade === "kg" ? "KG" : "UN", preco_un: Number(e.custo_un),
-      problema: ins.tiny_produto_id ? null : `"${ins.nome}" ainda não está ligado a um produto do Tiny`,
-    }],
-  };
-}
-
-async function lancar(token: string, origem: "lote" | "entrada", refId: number, codigo: string, itens: Item[], quem: Quem, confirmar: boolean) {
+async function lancar(token: string, origem: "lote", refId: number, codigo: string, itens: Item[], quem: Quem, confirmar: boolean) {
   const ja = await jaLancados(origem, refId);
   const t0 = Date.now();
   for (const it of itens) {
@@ -192,11 +144,7 @@ async function lancar(token: string, origem: "lote" | "entrada", refId: number, 
   const tudo = itens.every((i) => i.ja_lancado);
   if (tudo) {
     const quando = new Date().toISOString();
-    if (origem === "lote") {
-      await db.from("producao_ordem").update({ tiny_lancado_em: quando, tiny_lancado_por: quem.nome, tiny_resultado: { itens } }).eq("id", refId);
-    } else {
-      await db.from("producao_entrada").update({ tiny_lancado_em: quando, tiny_lancado_por: quem.nome }).eq("id", refId);
-    }
+    await db.from("producao_ordem").update({ tiny_lancado_em: quando, tiny_lancado_por: quem.nome, tiny_resultado: { itens } }).eq("id", refId);
   }
   return { ok: falhas === 0, previa: false, codigo, itens, falhas, completo: tudo };
 }
@@ -212,62 +160,15 @@ Deno.serve(async (req) => {
   const confirmar = body.confirmar === true || url.searchParams.get("confirmar") === "1";
 
   try {
-    if (modulo === "status") {
-      const { data: insumos } = await db.from("producao_insumo").select("id, nome, tipo, unidade, ncm, tiny_produto_id, tiny_sku").eq("ativo", true).order("tipo");
-      const { data: pars } = await db.from("producao_parametros").select("sku").eq("ativo", true);
-      const skus = ((pars ?? []) as any[]).map((p) => p.sku);
-      const { data: prods } = skus.length ? await db.from("produtos").select("sku, nome, id_tiny").in("sku", skus) : { data: [] };
-      return json({ ok: true, admin: quem.admin, insumos, acabados: prods });
-    }
-
-    if (modulo === "cadastrar" || modulo === "ligar") {
-      if (!quem.admin) return json({ erro: "só o administrador cadastra ou liga matéria-prima no Tiny" }, 403);
-      const { data: ins } = await db.from("producao_insumo").select("*").eq("id", Number(body.insumo_id)).maybeSingle();
-      if (!ins) return json({ erro: "matéria-prima não encontrada" }, 404);
-      if (ins.tiny_produto_id && modulo === "cadastrar") return json({ erro: `já está ligada ao produto ${ins.tiny_sku} do Tiny` }, 409);
-      const token = await tokenTiny();
-
-      if (modulo === "ligar") {
-        const sku = String(body.sku ?? "").trim();
-        if (!sku) return json({ erro: "informe o SKU do produto no Tiny" }, 400);
-        const r = await v3(token, "GET", `/produtos?codigo=${encodeURIComponent(sku)}&limit=1`);
-        const it = (r.body?.itens ?? [])[0];
-        if (!it || String(it.sku) !== sku) return json({ erro: `não achei o produto ${sku} no Tiny` }, 404);
-        await db.from("producao_insumo").update({ tiny_produto_id: Number(it.id), tiny_sku: sku }).eq("id", ins.id);
-        return json({ ok: true, ligado: { sku, id: it.id, nome: it.descricao } });
-      }
-
-      const sku = String(body.sku ?? "").trim() || await skuLivre(token);
-      if (!sku) return json({ erro: "não consegui achar um SKU livre no Tiny agora; tente de novo" }, 502);
-      const corpo: Record<string, unknown> = {
-        tipo: "S", sku, descricao: String(ins.nome).slice(0, 120), unidade: ins.unidade === "kg" ? "KG" : "UN", origem: 0,
-        ...(ins.ncm ? { ncm: ins.ncm } : {}),
-        precos: { preco: 0, ...(ins.custo_referencia != null ? { precoCusto: Number(ins.custo_referencia) } : {}) },
-      };
-      if (!confirmar) return json({ ok: true, previa: true, corpo });
-      let cr = await v3(token, "POST", "/produtos", corpo);
-      if (cr.status === 400) {
-        // 400 = o Tiny não criou nada: tenta uma vez sem os campos opcionais
-        const { ncm: _n, ...semNcm } = corpo as any;
-        cr = await v3(token, "POST", "/produtos", { ...semNcm, precos: { preco: 0 } });
-      }
-      await db.from("debug_fulfillment").insert({ modulo: "producao-tiny", etapa: `cadastrar:${sku}`, status_http: cr.status, resultado: { enviado: corpo, resposta: cr.body, por: quem.nome } }).then(() => {}, () => {});
-      const id = num(cr.body?.id);
-      if (cr.status >= 300 || !id) return json({ erro: `o Tiny recusou: ${erroV3(cr.body) || cr.status}`, corpo }, 422);
-      await db.from("producao_insumo").update({ tiny_produto_id: id, tiny_sku: sku }).eq("id", ins.id);
-      return json({ ok: true, criado: { sku, id } });
-    }
-
-    if (modulo === "entrada" || modulo === "lote") {
-      const refId = Number(body.entrada_id ?? body.ordem_id);
-      if (!(refId > 0)) return json({ erro: "informe o lote ou a entrada" }, 400);
-      const dados = modulo === "lote" ? await itensDoLote(refId) : await itensDaEntrada(refId);
+    if (modulo === "lote") {
+      const refId = Number(body.ordem_id);
+      if (!(refId > 0)) return json({ erro: "informe o lote" }, 400);
+      const dados = await itensDoLote(refId);
       if (dados.erro) return json({ erro: dados.erro }, 409);
       const token = await tokenTiny();
-      return json(await lancar(token, modulo, refId, dados.codigo, dados.itens, quem, confirmar));
+      return json(await lancar(token, "lote", refId, dados.codigo, dados.itens, quem, confirmar));
     }
-
-    return json({ erro: "módulo desconhecido (status, cadastrar, ligar, entrada, lote)" }, 400);
+    return json({ erro: "módulo desconhecido (lote)" }, 400);
   } catch (e) {
     return json({ erro: e instanceof Error ? e.message : String(e) }, 500);
   }
