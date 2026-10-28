@@ -94,8 +94,8 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
                       <td style={td}>{dataBR(l.data)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{int(l.boas)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{int(l.refugo)}</td>
-                      <td style={{ ...td, textAlign: "right", color: porSaco != null && porSaco > l.consumo_padrao_kg * 1.01 ? "var(--pm-r)" : undefined }}>
-                        {porSaco != null ? kg(porSaco, 3) : "—"} <span style={{ color: "var(--pm-t3)" }}>/ {kg(l.consumo_padrao_kg, 3)}</span>
+                      <td style={{ ...td, textAlign: "right", color: porSaco != null && porSaco > l.farinha_padrao_kg * 1.01 ? "var(--pm-r)" : undefined }}>
+                        {porSaco != null ? kg(porSaco, 3) : "—"} <span style={{ color: "var(--pm-t3)" }}>/ {kg(l.farinha_padrao_kg, 3)}</span>
                       </td>
                       <td style={{ ...td, textAlign: "right" }}>
                         {brl(l.custo_real_un)} <span style={{ color: "var(--pm-t3)" }}>/ {brl(l.custo_padrao_un)}</span>

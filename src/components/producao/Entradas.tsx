@@ -77,7 +77,7 @@ export function Entradas() {
               <option value="">Escolha…</option>
               {farinhas.map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
               <option value={ACLASSIFICAR}>Farinha — classificar depois</option>
-              {(insumos.data ?? []).filter((i) => i.tipo !== "farinha" && i.ativo).map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
+              {(insumos.data ?? []).filter((i) => i.tipo !== "farinha" && i.tipo !== "produto" && i.ativo).map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
             </Escolha>
           </Campo>
           {ehFarinha && (

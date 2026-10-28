@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
-import { ETAPAS, erroMsg, int, kg, useBigBags, useInsumos, useParametros, usePessoas, type Etapa } from "@/lib/producao";
+import { ETAPAS, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useParametros, usePessoas, type Etapa } from "@/lib/producao";
 
 export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onFechar: () => void; onAberto: (id: number) => void }) {
   const qc = useQueryClient();
@@ -28,7 +28,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
   const embalagens = (insumos.data ?? []).filter((i) => i.tipo === "embalagem" && i.ativo);
   const embSel = embalagens.find((e) => String(e.id) === emb) ?? null;
   const bagsDoSku = useMemo(
-    () => (bags.data ?? []).filter((b) => par && b.insumo_id === par.farinha_id && !b.lote_aberto && b.saldo_kg >= (par.consumo_padrao_kg ?? 0)),
+    () => (bags.data ?? []).filter((b) => par && b.insumo_id === par.farinha_id && !b.lote_aberto && b.saldo_kg >= farinhaPorSaco(par)),
     [bags.data, par],
   );
   const aClassificar = (bags.data ?? []).filter((b) => b.a_classificar).length;
@@ -43,7 +43,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
     setBag("");
   }, [par?.sku]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (bagSel && par) setQtd(String(Math.floor(bagSel.saldo_kg / par.consumo_padrao_kg)));
+    if (bagSel && par) setQtd(String(Math.floor(bagSel.saldo_kg / farinhaPorSaco(par))));
   }, [bagSel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function abrir() {
@@ -82,7 +82,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
             <Escolha value={bag} onChange={(e) => setBag(e.target.value)} disabled={!par}>
               <option value="">Escolha…</option>
               {bagsDoSku.map((b) => (
-                <option key={b.id} value={b.id}>{b.codigo} · {kg(b.saldo_kg, 0)} · rende {int(b.sacos_possiveis)} sacos</option>
+                <option key={b.id} value={b.id}>{b.codigo} · {kg(b.saldo_kg, 0)} · rende {int(Math.floor(b.saldo_kg / farinhaPorSaco(par!)))} sacos</option>
               ))}
             </Escolha>
           </Campo>
@@ -96,6 +96,16 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
               <Entrada inputMode="numeric" value={qtd} onChange={(e) => setQtd(e.target.value)} />
             </Campo>
           </div>
+          {par?.mistura_insumo_id && par.mistura_un_kg && par.mistura_farinha_kg ? (
+            <div style={{ fontSize: 12.5, border: "1px solid var(--pm-bs)", borderRadius: 10, padding: "8px 10px", background: "var(--pm-s2)" }}>
+              <b>Mistura:</b> cada {kg(par.mistura_farinha_kg, 0)} de farinha vão com 1 pacote de{" "}
+              {(insumos.data ?? []).find((i) => i.id === par.mistura_insumo_id)?.nome ?? "componente"}.
+              {Number(qtd) > 0 && (
+                <> Para {int(Number(qtd))} sacos: ≈ {int(Math.ceil((Number(qtd) * par.consumo_padrao_kg) / (par.mistura_farinha_kg + par.mistura_un_kg)))} pacotes
+                  e {kg(Number(qtd) * farinhaPorSaco(par), 0)} de farinha.</>
+              )}
+            </div>
+          ) : null}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: "var(--pm-t2)" }}>Quem está em cada etapa</span>
             {etapas.map((e) => (

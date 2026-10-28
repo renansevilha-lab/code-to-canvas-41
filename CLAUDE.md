@@ -1284,6 +1284,20 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   `p_sobra_kg > 0` ainda vale (sobra pesada). `producao_ordem.sobra_kg` = o que ficou no bag. Testado (desfeito): 107 +
   3 refugo → 451,22 kg, bag com 548,78. O lote de teste BUMIM4-20261028-01 (id 2) foi CANCELADO e o consumo apagado
   (o 1º encerramento lançou os 1.000 kg porque a sobra veio 0).
+- **Ficha com MISTURA — 16640 "Tofu e Mandioca 4 kg" (28/out, decisões do dono):** receita = 4 kg de farinha média do big
+  bag + 1 pacote de 2,5 kg da areia de tofu Elo Lavanda **16080** (produto comprado, estoque no Tiny), misturados e
+  envasados em sacos de **4 kg** (saco R$ 0,90 + etiqueta adesiva R$ 0,40; prefixo `BUMITM4`). Por saco (consumo 4,102 kg):
+  2,524 kg de farinha + 0,631 pacote. Migração `producao_mistura_tofu` (SQL + rollback em `docs/producao-mistura.sql`):
+  `producao_insumo.tipo` ganhou **`produto`** (o 16080, `tiny_sku`/`tiny_produto_id`; fica FORA da
+  `view_producao_estoque` — o estoque dele é o do Tiny); `producao_parametros.mistura_insumo_id/_un_kg/_farinha_kg`;
+  `producao_ordem.mistura_un`; `producao_encerrar_lote` ganhou **`p_mistura_un`** (9º parâmetro; a de 8 foi removida) =
+  pacotes abertos (padrão = sacos × 0,631) e, com mistura, **farinha = pacotes × 4 kg**; custo do pacote = `produtos.custo`
+  do 16080 na hora. `view_producao_lote`: `consumo_padrao_total_kg`/`variacao_kg` passaram a comparar só a farinha
+  (`farinha_padrao_kg` por saco; sem mistura = igual ao de antes) e o custo padrão inclui o pacote (16640 = R$ 19,28);
+  colunas novas no fim `farinha_padrao_kg`, `mistura_*`. `producao_abrir_lote` mede o bag pela farinha por saco.
+  **`producao-tiny` v3:** além da entrada do 16640, **saída dos pacotes de 16080** no Geral (papel `mistura`). Tela:
+  aviso da receita no "Iniciar produção", campo "Pacotes … abertos" no encerramento, "Farinha por saco" e "Pacotes 16080"
+  no fechamento. Testado (desfeito): 100 sacos → 63 pacotes + 252 kg, R$ 19,26/saco. Não conferido na tela.
 - **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.
@@ -4011,7 +4025,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
-| `producao-tiny` | v2 | Produção × Tiny: só a entrada do produto acabado no depósito Geral ao encerrar o lote (matéria-prima fica no app), com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |
+| `producao-tiny` | v3 (28/out: + saída do componente da mistura, tofu 16080 no 16640) · v2 | Produção × Tiny: a entrada do produto acabado no depósito Geral ao encerrar o lote (matéria-prima fica no app), com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |
 | `ml-fiscal` | v1 | Dados fiscais do produto no Mercado Livre (NCM, origem, CEST por SKU): `previa` (só lê ML e Tiny) e `aplicar` (PUT/POST `/items/fiscal_information`, com confirmação). JWT de usuário + módulo `ia` — ver §5.11.13.3 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `shopee-flashsale-probe` | v21 (= `shopee-ads-gestao` v5: + `palavras` / `palavras-sku`, sugestão de palavras com volume, §5.11.13); v19 (v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |

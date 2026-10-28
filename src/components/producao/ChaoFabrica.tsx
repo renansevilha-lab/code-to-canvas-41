@@ -245,6 +245,8 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   const [embs, setEmbs] = useState("");
   const [etiq, setEtiq] = useState("");
   const [bagAcabou, setBagAcabou] = useState(false);
+  // Pacotes do componente da mistura (16640: tofu 16080). null = acompanha o padrão da receita até alguém digitar.
+  const [pacotes, setPacotes] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
   // Fardos prontos por tamanho (sacos por fardo → quantos fardos). Abre com o que foi marcado no chão de fábrica.
@@ -256,7 +258,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   if (aberto && abriuPara !== lote.id) {
     setAbriuPara(lote.id);
     setBoas(String(lote.boas)); setRefugo(String(lote.refugo)); setEmbs(String(lote.envasados));
-    setEtiq(lote.precisa_etiqueta ? String(lote.envasados) : "0"); setBagAcabou(false); setObs("");
+    setEtiq(lote.precisa_etiqueta ? String(lote.envasados) : "0"); setBagAcabou(false); setPacotes(null); setObs("");
     setFardos(Object.fromEntries(tamanhos.map((s) => [s, String(lote.fardos?.[String(s)] ?? 0)])));
   }
   if (!aberto && abriuPara !== null) setAbriuPara(null);
@@ -266,7 +268,11 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   const totalFardos = tamanhos.reduce((t, s) => t + n(fardos[s]), 0);
   const soltos = n(boas) - sacosEmFardo;
   // Farinha do lote = sacos envasados × consumo padrão (o big bag não é pesado); "acabou" lança o saldo inteiro.
-  const farinhaKg = (n(boas) + n(refugo)) * lote.consumo_padrao_kg;
+  // Com mistura, a equipe conta os pacotes do componente abertos e a farinha = pacotes × kg de farinha por pacote.
+  const mistura = !!(lote.mistura_un_kg && lote.mistura_farinha_kg);
+  const pacotesPadrao = mistura ? Math.round((n(boas) + n(refugo)) * (lote.mistura_un_por_saco ?? 0)) : 0;
+  const pacotesN = pacotes == null ? pacotesPadrao : n(pacotes);
+  const farinhaKg = mistura ? pacotesN * (lote.mistura_farinha_kg ?? 0) : (n(boas) + n(refugo)) * lote.consumo_padrao_kg;
 
   async function encerrar() {
     if (soltos < 0) return toast.error(`Os fardos somam ${sacosEmFardo} sacos, mais que os ${n(boas)} sacos bons.`);
@@ -274,12 +280,10 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
     if (!window.confirm(
       `Encerrar o lote ${lote.codigo} com ${n(boas)} sacos bons?\n\n` +
       `Fardos prontos: ${resumoFardos || "nenhum"}${soltos > 0 ? ` · ${soltos} saco(s) soltos` : ""}.\n\n` +
-      (bagAcabou ? `O big bag ${lote.big_bag} acabou: todo o saldo dele entra neste lote.
-
-` : `Sai do big bag ${lote.big_bag}: ${kg(farinhaKg, 0)} de farinha.
-
-`) +
-      "Depois de encerrado, o consumo fica gravado.",
+      (bagAcabou ? `O big bag ${lote.big_bag} acabou: todo o saldo dele entra neste lote.\n`
+        : `Sai do big bag ${lote.big_bag}: ${kg(farinhaKg, 0)} de farinha.\n`) +
+      (mistura ? `Pacotes de ${lote.mistura_nome} usados: ${int(pacotesN)} (saem do Tiny ao lançar o lote).\n` : "") +
+      "\nDepois de encerrado, o consumo fica gravado.",
     )) return;
     setSalvando(true);
     // Acerta os fardos ao que foi apontado agora: grava só a diferença de cada tamanho (negativo = desfazer).
@@ -294,6 +298,7 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
     const { error } = await supabaseExternal.rpc("producao_encerrar_lote" as never, {
       p_ordem: lote.id, p_boas: n(boas), p_refugo: n(refugo), p_embalagens: n(embs),
       p_etiquetas: n(etiq), p_sobra_kg: 0, p_bag_acabou: bagAcabou, p_obs: obs || null,
+      p_mistura_un: mistura ? pacotesN : null,
     } as never);
     setSalvando(false);
     if (error) return toast.error(erroMsg(error));
@@ -311,6 +316,15 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
           <Campo rotulo="Refugo"><Entrada inputMode="numeric" value={refugo} onChange={(e) => setRefugo(e.target.value)} /></Campo>
           <Campo rotulo="Embalagens usadas"><Entrada inputMode="numeric" value={embs} onChange={(e) => setEmbs(e.target.value)} /></Campo>
           {lote.precisa_etiqueta && <Campo rotulo="Etiquetas usadas"><Entrada inputMode="numeric" value={etiq} onChange={(e) => setEtiq(e.target.value)} /></Campo>}
+          {mistura && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Campo rotulo={`Pacotes de ${lote.mistura_nome ?? "componente"} abertos`}
+                dica={`padrão para ${int(n(boas) + n(refugo))} sacos: ${int(pacotesPadrao)} · cada pacote vai com ${kg(lote.mistura_farinha_kg, 0)} de farinha`}>
+                <Entrada inputMode="numeric" value={pacotes ?? String(pacotesPadrao)}
+                  onChange={(e) => setPacotes(e.target.value.replace(/D/g, ""))} />
+              </Campo>
+            </div>
+          )}
           <label style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, cursor: "pointer" }}>
             <input type="checkbox" checked={bagAcabou} onChange={(e) => setBagAcabou(e.target.checked)} style={{ width: 18, height: 18, marginTop: 1 }} />
             <span>
@@ -318,7 +332,9 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
               <span style={{ display: "block", fontSize: 12, color: "var(--pm-t3)" }}>
                 {bagAcabou
                   ? "Todo o saldo que restava no big bag entra neste lote: é aqui que aparece o rendimento real do bag."
-                  : `Sai do big bag ≈ ${kg(farinhaKg, 0)} (${int(n(boas) + n(refugo))} sacos × ${kg(lote.consumo_padrao_kg, 3)}).`}
+                  : mistura
+                    ? `Sai do big bag ≈ ${kg(farinhaKg, 0)} (${int(pacotesN)} pacotes × ${kg(lote.mistura_farinha_kg, 0)}).`
+                    : `Sai do big bag ≈ ${kg(farinhaKg, 0)} (${int(n(boas) + n(refugo))} sacos × ${kg(lote.consumo_padrao_kg, 3)}).`}
               </span>
             </span>
           </label>
@@ -366,8 +382,12 @@ function Fechamento({ l }: { l: Lote }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
         <Numero rotulo="Sacos bons" valor={int(l.boas)} sub={`${int(l.refugo)} refugo`} />
         <Numero rotulo="Farinha usada" valor={kg(l.consumo_real_kg, 0)} sub={`padrão ${kg(l.consumo_padrao_total_kg, 0)}`} />
-        <Numero rotulo="Por saco" valor={rend != null ? kg(rend, 3) : "—"} sub={`padrão ${kg(l.consumo_padrao_kg, 3)}`}
-          tom={rend != null && rend > l.consumo_padrao_kg * 1.01 ? "r" : rend != null ? "g" : undefined} />
+        <Numero rotulo="Farinha por saco" valor={rend != null ? kg(rend, 3) : "—"} sub={`padrão ${kg(l.farinha_padrao_kg, 3)}`}
+          tom={rend != null && rend > l.farinha_padrao_kg * 1.01 ? "r" : rend != null ? "g" : undefined} />
+        {l.mistura_sku && (
+          <Numero rotulo={`Pacotes ${l.mistura_sku}`} valor={int(l.mistura_un_usadas)}
+            sub={`padrão ${int(Math.round(l.boas * (l.mistura_un_por_saco ?? 0)))} · ${brl(l.mistura_custo_un)}/un`} />
+        )}
         <Numero rotulo="Custo por saco" valor={brl(l.custo_real_un)} sub={`padrão ${brl(l.custo_padrao_un)}`}
           tom={difCusto != null ? (difCusto > 0.05 ? "r" : "g") : undefined} />
         <Numero rotulo="Peso médio" valor={l.media_g != null ? `${int(l.media_g)} g` : "—"} sub={`${int(l.abaixo_t)} abaixo do limite`} tom={l.abaixo_t ? "r" : undefined} />
@@ -379,7 +399,9 @@ function Fechamento({ l }: { l: Lote }) {
         ) : (
           <>
             <Botao tom="primario" onClick={() => setTiny(true)}>Lançar no Tiny</Botao>
-            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>entrada dos sacos bons no depósito Geral (as matérias-primas ficam só no app)</span>
+            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>
+              entrada dos sacos bons no depósito Geral{l.mistura_sku ? ` e saída dos pacotes do ${l.mistura_sku}` : ""} (as outras matérias-primas ficam só no app)
+            </span>
           </>
         )}
       </div>

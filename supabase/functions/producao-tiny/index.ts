@@ -1,8 +1,10 @@
 // ============================================================================
-// producao-tiny v2 (28/out/2026) — Produção × Tiny. Decisão do dono (28/out): as matérias-primas (farinha,
-// saco, etiqueta) ficam SÓ no app; ao Tiny vai apenas a ENTRADA do produto acabado no depósito GERAL
-// (604130012, conta ottz) quando o lote é encerrado. Os depósitos Full nunca são tocados.
-//   POST ?modulo=lote {ordem_id, confirmar?} → E do acabado (sacos bons × custo real do lote)
+// producao-tiny v3 (28/out/2026) — Produção × Tiny. Decisão do dono (28/out): as matérias-primas (farinha,
+// saco, etiqueta) ficam SÓ no app; ao Tiny vai a ENTRADA do produto acabado no depósito GERAL (604130012,
+// conta ottz) quando o lote é encerrado e, na ficha com mistura (16640 = mandioca + tofu 16080), a SAÍDA do
+// componente que é produto do Tiny. Os depósitos Full nunca são tocados.
+//   POST ?modulo=lote {ordem_id, confirmar?} → E do acabado (sacos bons × custo real do lote) + S do componente
+//   da mistura que é produto do Tiny (producao_insumo.tipo = 'produto', pacotes usados × custo gravado no consumo)
 // Sem `confirmar` = prévia (lê o saldo do Geral ao vivo). Com `confirmar`: lança UMA vez (registro em
 // producao_tiny_lanc, ok nunca repete). Acesso = módulo `galpao`.
 // O custo do produto no Tiny (precoCusto) NÃO é alterado aqui — decisão do dono ainda em aberto.
@@ -86,7 +88,7 @@ async function saldoGeral(token: string, idProduto: number): Promise<number | nu
 }
 
 type Item = {
-  papel: "acabado"; tipo: "E" | "S"; nome: string;
+  papel: "acabado" | "mistura"; tipo: "E" | "S"; nome: string;
   tiny_produto_id: number | null; sku: string | null; quantidade: number; unidade: string; preco_un: number;
   ja_lancado?: boolean; saldo_hoje?: number | null; saldo_depois?: number | null; problema?: string | null;
 };
@@ -107,6 +109,19 @@ async function itensDoLote(ordemId: number): Promise<{ codigo: string; itens: It
     quantidade: Number(o.qtd_boa_final ?? 0), unidade: p?.unidade ?? "UN", preco_un: Number(num(l?.custo_real_un) ?? 0),
     problema: p?.id_tiny ? null : `o SKU ${o.sku} não tem o código do Tiny no catálogo`,
   }];
+  // Mistura (ex.: 16640 = mandioca + tofu 16080): o componente é produto do Tiny e sai do depósito Geral.
+  const { data: cons } = await db.from("producao_consumo")
+    .select("quantidade, custo_un, producao_insumo!inner(nome, tipo, tiny_sku, tiny_produto_id)")
+    .eq("ordem_id", ordemId).eq("producao_insumo.tipo", "produto");
+  for (const c of (cons ?? []) as any[]) {
+    const ins = c.producao_insumo;
+    if (!(Number(c.quantidade) > 0)) continue;
+    itens.push({
+      papel: "mistura", tipo: "S", nome: ins.nome, tiny_produto_id: num(ins.tiny_produto_id), sku: ins.tiny_sku,
+      quantidade: Number(c.quantidade), unidade: "UN", preco_un: Number(num(c.custo_un) ?? 0),
+      problema: ins.tiny_produto_id ? null : `o componente ${ins.nome} não tem o código do Tiny`,
+    });
+  }
   return { codigo: o.codigo, itens };
 }
 

@@ -56,7 +56,7 @@ export const MOTIVOS_PARADA: Array<{ id: string; nome: string }> = [
 export const nomeMotivoParada = (id: string | null) => MOTIVOS_PARADA.find((m) => m.id === id)?.nome ?? id ?? "";
 
 export interface Insumo {
-  id: number; nome: string; tipo: "farinha" | "embalagem" | "etiqueta" | "outro"; unidade: "kg" | "un";
+  id: number; nome: string; tipo: "farinha" | "embalagem" | "etiqueta" | "outro" | "produto"; unidade: "kg" | "un";
   ncm: string | null; custo_referencia: number | null; precisa_etiqueta: boolean; etiqueta_id: number | null; ativo: boolean;
   tiny_produto_id: number | null; tiny_sku: string | null;
 }
@@ -64,6 +64,8 @@ export interface Parametro {
   sku: string; farinha_id: number | null; embalagem_padrao_id: number | null; prefixo_lote: string;
   peso_nominal_kg: number; consumo_padrao_kg: number; tolerancia_g: number; custo_insumo_kg: number;
   pesar_cada: number | null; pesar_primeiros: number; meta_estoque_un: number | null; ativo: boolean;
+  // mistura (16640): pacotes de um produto do Tiny entram junto com a farinha; null = só farinha
+  mistura_insumo_id: number | null; mistura_un_kg: number | null; mistura_farinha_kg: number | null;
 }
 export interface BigBag {
   id: number; codigo: string; insumo_id: number | null; insumo: string | null; a_classificar: boolean;
@@ -98,7 +100,14 @@ export interface Lote {
   consumo_padrao_kg: number; consumo_padrao_total_kg: number; consumo_real_kg: number | null; variacao_kg: number | null;
   custo_padrao_un: number; custo_real_un: number | null; sobra_kg: number | null; embalagens_usadas: number | null;
   etiquetas_usadas: number | null; tiny_lancado_em: string | null;
+  /** farinha por saco: o saco inteiro sem mistura; só a parte de farinha da receita com mistura */
+  farinha_padrao_kg: number;
+  mistura_sku: string | null; mistura_nome: string | null; mistura_un_kg: number | null; mistura_farinha_kg: number | null;
+  mistura_un_por_saco: number | null; mistura_un_usadas: number | null; mistura_custo_un: number | null;
 }
+/** Farinha por saco pela ficha: o saco inteiro, ou a parte de farinha da receita quando há mistura. */
+export const farinhaPorSaco = (p: Pick<Parametro, "consumo_padrao_kg" | "mistura_un_kg" | "mistura_farinha_kg">) =>
+  p.mistura_un_kg && p.mistura_farinha_kg ? (p.consumo_padrao_kg * p.mistura_farinha_kg) / (p.mistura_farinha_kg + p.mistura_un_kg) : p.consumo_padrao_kg;
 export interface Pessoa { id: string; nome: string }
 
 const ler = async <T>(q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T> => {
