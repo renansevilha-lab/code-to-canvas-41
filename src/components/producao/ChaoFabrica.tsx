@@ -7,8 +7,9 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
+import { DialogoLancarTiny } from "./TinyProducao";
 import {
-  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada,
+  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
 } from "@/lib/producao";
 
@@ -300,6 +301,8 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
 }
 
 function Fechamento({ l }: { l: Lote }) {
+  const qc = useQueryClient();
+  const [tiny, setTiny] = useState(false);
   const rend = l.consumo_real_kg && l.boas ? l.consumo_real_kg / l.boas : null;
   const difCusto = l.custo_real_un != null ? l.custo_real_un - l.custo_padrao_un : null;
   return (
@@ -314,9 +317,20 @@ function Fechamento({ l }: { l: Lote }) {
         <Numero rotulo="Peso médio" valor={l.media_g != null ? `${int(l.media_g)} g` : "—"} sub={`${int(l.abaixo_t)} abaixo do limite`} tom={l.abaixo_t ? "r" : undefined} />
         <Numero rotulo="Ritmo" valor={l.un_hora != null ? `${int(l.un_hora)}/h` : "—"} sub={`${minutos(l.minutos_total)} · parado ${minutos(l.minutos_parados)}`} />
       </div>
-      <p style={{ fontSize: 12, color: "var(--pm-t3)", margin: "10px 0 0" }}>
-        {l.tiny_lancado_em ? `Lançado no Tiny em ${horaBR(l.tiny_lancado_em)}.` : "Estoque ainda não lançado no Tiny: lance a entrada dos sacos e a baixa da farinha manualmente por enquanto."}
-      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        {l.tiny_lancado_em ? (
+          <Selo tom="g">lançado no Tiny em {dataBR(l.tiny_lancado_em)} {horaBR(l.tiny_lancado_em)}</Selo>
+        ) : (
+          <>
+            <Botao tom="primario" onClick={() => setTiny(true)}>Lançar no Tiny</Botao>
+            <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>entrada dos sacos bons e baixa da farinha, do saco e da etiqueta no depósito Geral</span>
+          </>
+        )}
+      </div>
+      {tiny && (
+        <DialogoLancarTiny aberto onFechar={() => setTiny(false)} modulo="lote" refId={l.id} titulo={`Lote ${l.codigo} no Tiny`}
+          onFeito={() => void qc.invalidateQueries({ queryKey: ["producao"] })} />
+      )}
     </Cartao>
   );
 }

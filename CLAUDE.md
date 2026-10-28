@@ -1259,8 +1259,17 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   gramas com "pese agora", fardo de 2/3/5, refugo e parada por motivo em botões, troca de pessoa por etapa, encerrar). Busca
   por código do lote = rastreabilidade (big bag, NF). `src/lib/producao.ts`, `src/components/producao/*`. **Não conferida na
   tela** (pede login).
-- **Pendente (decisão do dono):** integração com o Tiny (recomendado: lançamentos de estoque pela API ao encerrar — exige
-  cadastrar farinha e saco no Tiny), custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
+- **Tiny = opção B (28/out, dono):** edge fn **`producao-tiny`** v1 (fonte em `supabase/functions/producao-tiny/`; JWT de usuário
+  + `galpao`; criar/ligar = `todos`). `status` · `cadastrar {insumo_id, sku?, confirmar}` (produto simples no Tiny com o próximo
+  SKU livre; a API não apaga produto) · `ligar {insumo_id, sku}` (produto que já existe) · `entrada {entrada_id, confirmar}` (E da
+  matéria-prima) · `lote {ordem_id, confirmar}` (lote encerrado: E do acabado × custo real + S da farinha, do saco e da etiqueta
+  pelo consumo gravado). Tudo no depósito **Geral 604130012**; sem `confirmar` = prévia com o saldo ao vivo (hoje → depois). Cada
+  lançamento uma vez: **`producao_tiny_lanc`** (unique origem+ref+papel onde ok; resposta crua guardada); chamar de novo lança só
+  o que faltou; completo grava `tiny_lancado_em/_por` no lote/entrada. `producao_insumo.tiny_produto_id/tiny_sku` = a ligação.
+  O `precoCusto` do Tiny NÃO é mexido (custo médio ainda em aberto). Telas: Entradas (cartões "Entradas recebidas" com
+  "Lançar no Tiny" e "Matérias-primas no Tiny" com criar/ligar) e o fechamento do lote no chão de fábrica. **Nenhum lançamento
+  real feito ainda**; em 28/out nenhuma farinha/saco/etiqueta existia no Tiny.
+- **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.
 
@@ -3987,6 +3996,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
+| `producao-tiny` | v1 | Produção × Tiny (opção B): cadastrar/ligar matéria-prima, lançar entrada de matéria-prima e lote encerrado no depósito Geral, com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |
 | `ml-fiscal` | v1 | Dados fiscais do produto no Mercado Livre (NCM, origem, CEST por SKU): `previa` (só lê ML e Tiny) e `aplicar` (PUT/POST `/items/fiscal_information`, com confirmação). JWT de usuário + módulo `ia` — ver §5.11.13.3 |
 | `ia-aproveitar` | v2 (18/out: `subir`, `no-ar`, `copiar-no-ar` — fotos à mão e de anúncio no ar, §5.11.11.13) | Aproveita texto e fotos já gerados, sem chamar IA: o mesmo produto em outro canal e a família de kit. `fontes`, `destinos`, `aplicar`, `aplicar-lote`. Só banco e Storage da gestão. JWT de usuário + módulo `ia` — ver §5.11.6 |
 | `shopee-flashsale-probe` | v21 (= `shopee-ads-gestao` v5: + `palavras` / `palavras-sku`, sugestão de palavras com volume, §5.11.13); v19 (v4: + `historico-desempenho`) | Shopee Ads: meta de ROAS, orçamento, impulsionados e saldo ao vivo (`config`), alteração de meta/orçamento (`editar`, com login) e captura do histórico de configuração (`capturar`, crons 164/165) — ver §5.9.4.4 |

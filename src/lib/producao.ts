@@ -2,7 +2,30 @@
 // Toda a regra mora no banco (docs/producao-mvp.sql): saldo dos big bags e das matérias-primas,
 // código do lote, custo padrão × real, peso Inmetro. Aqui só tipos, leituras e textos.
 import { useQuery } from "@tanstack/react-query";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
+
+// --- Tiny (edge fn producao-tiny, opção B do dono: lançamentos de estoque no depósito Geral) ---
+export interface ItemTiny {
+  papel: "acabado" | "farinha" | "embalagem" | "etiqueta" | "entrada"; tipo: "E" | "S"; nome: string;
+  tiny_produto_id: number | null; sku: string | null; quantidade: number; unidade: string; preco_un: number;
+  ja_lancado?: boolean; saldo_hoje?: number | null; saldo_depois?: number | null; problema?: string | null;
+}
+export interface RespostaTiny { ok: boolean; previa: boolean; codigo: string; itens: ItemTiny[]; bloqueio?: string | null; falhas?: number; completo?: boolean }
+
+/** Chama a producao-tiny com a sessão do usuário. Erro vira exceção com a mensagem da função. */
+export async function chamarProducaoTiny<T = any>(modulo: string, body: Record<string, unknown>): Promise<T> {
+  const { data } = await supabaseExternal.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Faça login de novo.");
+  const r = await fetch(`${EXTERNAL_URL}/functions/v1/producao-tiny?modulo=${modulo}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, apikey: EXTERNAL_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.erro) throw new Error(j.erro ?? `HTTP ${r.status}`);
+  return j as T;
+}
 
 export const ETAPAS = [
   { id: "etiquetagem", nome: "Etiquetagem" },
@@ -35,6 +58,7 @@ export const nomeMotivoParada = (id: string | null) => MOTIVOS_PARADA.find((m) =
 export interface Insumo {
   id: number; nome: string; tipo: "farinha" | "embalagem" | "etiqueta" | "outro"; unidade: "kg" | "un";
   ncm: string | null; custo_referencia: number | null; precisa_etiqueta: boolean; etiqueta_id: number | null; ativo: boolean;
+  tiny_produto_id: number | null; tiny_sku: string | null;
 }
 export interface Parametro {
   sku: string; farinha_id: number | null; embalagem_padrao_id: number | null; prefixo_lote: string;
@@ -47,6 +71,17 @@ export interface BigBag {
   custo_kg: number; densidade_aparente: number | null; densidade_pendente: boolean; consumido_kg: number;
   saldo_kg: number; lote_aberto: string | null; sku: string | null; consumo_padrao_kg: number | null; sacos_possiveis: number | null;
 }
+export interface EntradaLinha {
+  id: number; codigo: string; insumo_id: number | null; fornecedor_nome: string | null; nf_numero: string | null;
+  recebido_em: string; quantidade: number; custo_un: number; tiny_lancado_em: string | null; tiny_lancado_por: string | null;
+}
+export const useEntradas = () =>
+  useQuery({
+    queryKey: ["producao", "entradas"],
+    queryFn: () => ler<EntradaLinha[]>(supabaseExternal.from("producao_entrada")
+      .select("id, codigo, insumo_id, fornecedor_nome, nf_numero, recebido_em, quantidade, custo_un, tiny_lancado_em, tiny_lancado_por")
+      .order("recebido_em", { ascending: false }).order("codigo").limit(60)),
+  });
 export interface EstoqueMp {
   insumo_id: number; nome: string; tipo: string; unidade: string; custo_referencia: number | null;
   entradas: number; consumido: number; saldo: number; custo_medio: number | null; ultima_entrada: string | null;

@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
+import { EntradasNoTiny, InsumosNoTiny } from "./TinyProducao";
 import { brl, dataBR, erroMsg, hojeSP, int, kg, useBigBags, useEstoqueMp, useInsumos, type BigBag } from "@/lib/producao";
 
 const ACLASSIFICAR = "farinha:?";
@@ -110,6 +111,8 @@ export function Entradas() {
         </div>
       </Cartao>
 
+      <EntradasNoTiny />
+
       <Cartao titulo="Big bags" direita={<span style={{ fontSize: 12, color: "var(--pm-t3)" }}>um lote de produção = um big bag</span>}>
         <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar} />
       </Cartao>
@@ -140,6 +143,8 @@ export function Entradas() {
           A farinha "a classificar" não entra nesta conta até o big bag ser classificado. Saldo negativo = foi usado sem entrada registrada.
         </p>
       </Cartao>
+
+      <InsumosNoTiny />
     </div>
   );
 }
