@@ -1,5 +1,6 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v9 (29/out/2026; v8 28/out)
+// Edge Function: tiny-produto-variacoes v10 (29/out/2026; v9 29/out; v8 28/out)
+// v10 (29/out, pedido do dono): `kit-avulso` — kit simples (tipo K) com a composição N× o produto base, sem pai.
 // v9 (29/out, pedido do dono): aceita produto com UMA variação só (antes exigia 2).
 // v8 (28/out): nome da opção até 30 letras (get_item_limit da Shopee: tier_variation_option_length_limit = 30;
 //   antes barrava em 20). Serve ao formato de uma grade só ("4 pacotes | Fina | 8kg").
@@ -581,11 +582,102 @@ Deno.serve(async (req) => {
       return json({ ok: true, sku_pai: skuPai, ja_eram_kit: feitos.size, itens, pendentes: itens.filter((i: any) => i.pendente).length });
     }
 
+    // v10 (29/out, pedido do dono): KIT AVULSO — um produto tipo K, sem pai nem variação, com a composição
+    // N× o produto base. A v3 do Tiny cria kit direto (POST /produtos com tipo "K" + kit), o mesmo caminho da
+    // tiny-kits-escrita (29/set). Sem `confirmar` = prévia. Uma chamada de criação, sem repetição.
+    if (modulo === "kit-avulso") {
+      const baseSku = String(body.base_sku ?? "").trim();
+      const nome = String(body.nome ?? "").trim();
+      const sku = String(body.sku ?? "").trim();
+      const qtd = Math.floor(num(body.quantidade) ?? 0);
+      const preco = num(body.preco) ?? 0;
+      const base = await carregarBase(token, baseSku);
+      const d = base.det;
+      const pend: string[] = []; const avisos: string[] = [];
+      if (d.tipo !== "S") pend.push(`o produto base precisa ser SIMPLES no Tiny (é do tipo ${d.tipo})`);
+      if (d.tipoVariacao && d.tipoVariacao !== "N") pend.push("o produto base já é pai ou variação de outro produto");
+      if (!nome) pend.push("dê um nome ao kit");
+      else if (nome.length > 120) pend.push(`o nome tem ${nome.length} caracteres (o Tiny aceita até 120)`);
+      if (!/^[A-Za-z0-9._-]{1,30}$/.test(sku)) pend.push("informe o SKU do kit (letras, números, ponto ou hífen)");
+      else if (sku === baseSku) pend.push("o SKU do kit não pode ser o do produto base");
+      if (!(qtd >= 1)) pend.push("a quantidade do produto base no kit precisa ser 1 ou mais");
+      if (!(preco > 0)) pend.push("informe o preço");
+      if (!pend.length) {
+        for (const [s, motivo] of await skusOcupados(token, [sku])) pend.push(`SKU ${s} ${motivo}`);
+        // nome repetido no Tiny barra mudanças depois (aconteceu no 16523): confere antes
+        const dup = await v3(token, "GET", `/produtos?nome=${encodeURIComponent(nome)}&situacao=A&limit=5`);
+        const iguais = ((dup.body?.itens ?? []) as any[]).filter((i) => String(i.descricao ?? "").trim().toLowerCase() === nome.toLowerCase());
+        if (iguais.length) pend.push(`já existe produto ativo no Tiny com este nome (SKU ${iguais.map((i) => i.sku).join(", ")}): mude o nome`);
+      }
+      if (base.custo == null) avisos.push("o produto base está sem custo na gestão: o kit vai ficar sem CMV");
+      avisos.push(fotoPrincipal(d) ? "o kit recebe a foto principal do produto base" : "o produto base não tem foto no Tiny: o kit nasce sem foto");
+      avisos.push("o kit não leva o código de barras do produto base (na Amazon, um EAN é um produto só)");
+      avisos.push("o produto é criado no Tiny e fica ATIVO; excluir pela API não funciona — se criar por engano, apague na tela do Tiny");
+      const dim = d.dimensoes ?? {};
+      const r3 = (n: number) => Math.round(n * 1000) / 1000;
+      const pesoBruto = num(dim.pesoBruto) ? r3(Number(dim.pesoBruto) * qtd) : null;
+      const corpo: Record<string, unknown> = {
+        tipo: "K", sku, descricao: nome, unidade: d.unidade || "UN", origem: Number(d.origem ?? 0), gtin: "",
+        ...(d.ncm ? { ncm: d.ncm } : {}),
+        ...(d.marca?.id ? { marca: { id: d.marca.id } } : {}), ...(d.categoria?.id ? { categoria: { id: d.categoria.id } } : {}),
+        precos: { preco },
+        dimensoes: {
+          pesoBruto, pesoLiquido: num(dim.pesoLiquido) ? r3(Number(dim.pesoLiquido) * qtd) : null,
+          largura: dim.largura ?? null, altura: dim.altura ?? null, comprimento: dim.comprimento ?? null,
+        },
+        kit: [{ produto: { id: Number(base.espelho.id_tiny) }, quantidade: qtd }],
+      };
+      const previa = {
+        base: { sku: baseSku, nome: d.descricao, preco: num(d.precos?.preco), custo: base.custo },
+        kit: { sku, nome, quantidade: qtd, preco, custo: base.custo != null ? Number((base.custo * qtd).toFixed(2)) : null, peso_kg: pesoBruto },
+      };
+      if (body.confirmar !== true) return json({ ok: true, previa, pendencias: [...new Set(pend)], avisos });
+      if (pend.length) return json({ ok: false, erro: "há pendências", pendencias: pend }, 400);
+
+      const registrar = (status: number, resultado: unknown) => db.from("debug_fulfillment").insert({ modulo: "tiny-produto-variacoes", etapa: `${sku}:kit-avulso`, status_http: status, resultado });
+      let cr = await v3(token, "POST", "/produtos", corpo);
+      if (cr.status === 400 && (corpo.marca || corpo.categoria)) {
+        // 400 = nada foi criado: tenta uma vez sem marca/categoria
+        const { marca: _m, categoria: _c, ...semExtras } = corpo;
+        cr = await v3(token, "POST", "/produtos", semExtras);
+      }
+      const id = Number(cr.body?.id ?? 0);
+      if (cr.status !== 201 || !id) {
+        await registrar(cr.status, { quem: quem.nome, enviado: corpo, resposta: cr.body });
+        return json({ ok: false, erro: `o Tiny recusou criar o kit: ${erroV3(cr.body) || cr.status}` }, 200);
+      }
+      // conferência: tipo K e a composição certa (o Tiny pode levar 1–2 s para refletir)
+      let g = { status: 0, body: null as any }; let certo = false;
+      for (let i = 0; i < 3 && !certo; i++) {
+        if (i) await sleep(1500);
+        g = await v3(token, "GET", `/produtos/${id}`);
+        const k = (g.body?.kit ?? []) as any[];
+        certo = g.body?.tipo === "K" && k.length === 1 && Number(k[0]?.produto?.id) === Number(base.espelho.id_tiny) && Number(k[0]?.quantidade) === qtd;
+      }
+      const foto = fotoPrincipal(d);
+      const f = foto ? await porFoto(token, id, foto) : null;
+      const agora = new Date().toISOString();
+      const up = await db.from("produtos").upsert({
+        sku, id_tiny: id, nome, tipo: "K", preco, ativo: true, situacao: "A", tipo_variacao: "N", sku_pai: null, id_tiny_pai: null,
+        foto_capa: f?.ok ? f.url : null, criado_app_em: agora, sku_base: baseSku, atualizado_em: agora,
+        ...(pesoBruto ? { peso_bruto: pesoBruto } : {}),
+      }, { onConflict: "sku" });
+      if (certo) await gravarKit(sku, base, qtd);
+      await registrar(201, { quem: quem.nome, base: baseSku, kit: { sku, id, quantidade: qtd, preco }, conferido: certo, foto: f?.ok ?? false, espelho: up.error?.message ?? "ok" });
+      return json({
+        ok: true, kit: { sku, id, nome, quantidade: qtd, preco }, base_sku: baseSku, conferido: certo, foto: f?.ok ?? false,
+        aviso: [
+          certo ? null : "o Tiny criou o produto, mas a composição não conferiu: abra o kit no Tiny e confira",
+          foto && !f?.ok ? `a foto não foi: ${f?.erro}` : null,
+        ].filter(Boolean).join(" · ") || null,
+      });
+    }
+
     const pd = lerPedido(body);
     if (!pd.baseSku) return json({ ok: false, erro: "informe base_sku" }, 400);
     const c = await conferir(token, pd);
     if (modulo === "previa") return json({ ok: true, previa: c.previa, pendencias: c.pendencias, avisos: c.avisos });
-    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar, kit, foto, fotos-anuncio ou grade" }, 400);
+    if (modulo !== "criar") return json({ ok: false, erro: "use ?modulo=sugerir, previa, criar, kit, kit-avulso, foto, fotos-anuncio ou grade" }, 400);
     if (body.confirmar !== true) return json({ ok: false, erro: "criar exige confirmar: true" }, 400);
     if (c.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: c.pendencias }, 400);
 

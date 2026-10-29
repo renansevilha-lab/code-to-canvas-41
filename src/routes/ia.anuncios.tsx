@@ -485,7 +485,7 @@ function Linha({ x, canalPadrao, composicao, variacao, onVariacoes, selecionado,
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem disabled={x.tipo !== "S" || variacao} onSelect={() => onVariacoes(x.sku)}>
-              <Layers className="h-4 w-4 mr-2" />Criar produto com variações
+              <Layers className="h-4 w-4 mr-2" />Criar kit ou produto com variações
               {x.tipo !== "S" && <span className="ml-2 text-[10px] text-muted-foreground">só produto simples</span>}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void atualizarDoTiny(x.sku, qc)}>
@@ -1122,8 +1122,8 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[280px]">
                 <DropdownMenuItem disabled={x.tipo !== "S"} onSelect={() => onVariacoes(x.sku)} className="flex flex-col items-start gap-0">
-                  <span className="font-semibold">Criar produto com variações</span>
-                  <span className="text-[11px] text-muted-foreground">{x.tipo === "S" ? "usa este como base (quantidades)" : "só produto simples"}</span>
+                  <span className="font-semibold">Criar kit ou produto com variações</span>
+                  <span className="text-[11px] text-muted-foreground">{x.tipo === "S" ? "usa este como base: kit avulso ou variações" : "só produto simples"}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void atualizarDoTiny(x.sku, qc)} className="flex flex-col items-start gap-0">
                   <span className="font-semibold">Atualizar do Tiny</span>

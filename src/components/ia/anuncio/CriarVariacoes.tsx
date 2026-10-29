@@ -16,6 +16,8 @@ import { extrairPeso } from "@/lib/prazo";
 // (1 unidades, 2 unidades…) — a estrutura que a equipe montava à mão. A pessoa
 // escolhe as variações aqui; a edge fn `tiny-produto-variacoes` confere e cria.
 // O anúncio é enviado depois pelo Tiny (já nasce ligado ao produto).
+// "Kit avulso" (29/out/2026, pedido do dono): um produto KIT só, sem pai nem variação, com a
+// composição N× o produto base (módulo `kit-avulso` da mesma função).
 // ============================================================================
 
 interface Sugestao {
@@ -31,6 +33,11 @@ interface Resultado {
   pai: { sku: string; id: number; nome: string }; base_sku: string; aviso: string | null;
   variacoes: { sku: string; rotulo: string; quantidade: number; preco: number; id?: number; ok: boolean; erro: string | null }[];
 }
+interface PreviaKit {
+  previa: { kit: { sku: string; nome: string; quantidade: number; preco: number; custo: number | null; peso_kg: number | null } };
+  pendencias: string[]; avisos: string[];
+}
+interface ResultadoKit { kit: { sku: string; id: number; nome: string; quantidade: number; preco: number }; base_sku: string; conferido: boolean; aviso: string | null }
 
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
@@ -86,7 +93,57 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
     if (!sugQ.data) return;
     setSkuPai(sugQ.data.skus[0] ?? "");
     montar(porPeso ? [1, 2, 3, 4, 5] : [1, 2, 3]);
+    setKitSku(sugQ.data.skus[0] ?? "");
+    acertarKit(2);
   }, [sugQ.data]);
+
+  // ---------------------------------------------------------------- kit avulso
+  const [modo, setModo] = useState<"variacoes" | "kit">("variacoes");
+  const [kitNome, setKitNome] = useState("");
+  const [kitNomeEditado, setKitNomeEditado] = useState(false);
+  const [kitSku, setKitSku] = useState("");
+  const [kitQtd, setKitQtd] = useState("2");
+  const [kitPreco, setKitPreco] = useState("");
+  const [kitPrevia, setKitPrevia] = useState<{ chave: string; dados: PreviaKit } | null>(null);
+  const [kitResultado, setKitResultado] = useState<ResultadoKit | null>(null);
+  /** Nome do kit: na areia, o peso do nome vira o total ("… 8kg"); nos outros, "Kit N …". */
+  const nomeDoKit = (n: number) => {
+    if (!base) return "";
+    if (porPeso) return `${base.nome.slice(0, peso!.inicio)}${kg(peso!.kg * n)}kg${base.nome.slice(peso!.fim)}`.replace(/\s+/g, " ").trim();
+    return `Kit ${n} ${base.nome}`.slice(0, 120);
+  };
+  function acertarKit(n: number) {
+    setKitQtd(String(n));
+    if (!kitNomeEditado) setKitNome(nomeDoKit(n));
+    if (base?.preco) setKitPreco(dinheiro(base.preco * n));
+    setKitPrevia(null);
+  }
+  const corpoKit = () => ({ base_sku: sku, nome: kitNome.trim(), sku: kitSku.trim(), quantidade: Number(kitQtd) || 0, preco: paraNumero(kitPreco) || 0 });
+  const chaveKit = JSON.stringify(corpoKit());
+  const kitConferido = kitPrevia?.chave === chaveKit ? kitPrevia.dados : null;
+  async function conferirKit() {
+    setOcupado("conferindo");
+    try { setKitPrevia({ chave: chaveKit, dados: (await chamarVariacoes("kit-avulso", corpoKit())) as PreviaKit }); }
+    catch (e) { toast.error("Não consegui conferir", { description: (e as Error).message, duration: 12000 }); }
+    finally { setOcupado(""); }
+  }
+  async function criarKit() {
+    if (!kitConferido || kitConferido.pendencias.length) return;
+    if (!window.confirm([
+      `Criar no Tiny o kit "${kitNome.trim()}" (SKU ${kitSku.trim()})?`, "",
+      `Composição: ${kitQtd}× ${sku} · preço R$ ${kitPreco}`, "",
+      "O produto fica ATIVO no Tiny. Excluir pela API não funciona: se errar, é preciso apagar na tela do Tiny.",
+    ].join("\n"))) return;
+    setOcupado("criando");
+    try {
+      const r = (await chamarVariacoes("kit-avulso", { ...corpoKit(), confirmar: true })) as ResultadoKit & { ok?: boolean; erro?: string };
+      if (r.ok === false) throw new Error(r.erro ?? "recusado");
+      setKitResultado(r);
+      (r.aviso ? toast.warning : toast.success)(`Kit ${r.kit.sku} criado no Tiny`, { description: r.aviso ?? `${r.kit.quantidade}× ${sku}`, duration: 12000 });
+      void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+    } catch (e) { toast.error("O Tiny não criou o kit", { description: (e as Error).message, duration: 15000 }); }
+    finally { setOcupado(""); }
+  }
 
   const mudar = (i: number, x: Partial<Linha>) => {
     setLinhas((ls) => ls.map((l, j) => {
@@ -150,16 +207,30 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
     <Dialog open onOpenChange={(v) => { if (!v && !ocupado) onFechar(); }}>
       <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Criar produto com variações</DialogTitle>
+          <DialogTitle>{modo === "kit" ? "Criar kit" : "Criar produto com variações"}</DialogTitle>
           <DialogDescription>
-            Cria no Tiny um produto novo em que cada variação é um kit deste produto. O estoque de cada variação sai do produto base.
-            Depois, envie para a Shopee pelo Tiny: o anúncio já nasce ligado.
+            {modo === "kit"
+              ? "Cria no Tiny um produto KIT, sem variações, com a composição em quantidades deste produto. O estoque do kit sai do produto base."
+              : "Cria no Tiny um produto novo em que cada variação é um kit deste produto. O estoque de cada variação sai do produto base."}
+            {" "}Depois, envie para os marketplaces pelo Tiny: o anúncio já nasce ligado.
           </DialogDescription>
         </DialogHeader>
 
         {sugQ.isLoading ? <div className="p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Lendo o produto no Tiny…</div>
           : sugQ.isError ? <p className="text-sm text-destructive">Não consegui ler o produto: {(sugQ.error as Error).message}</p>
-          : resultado ? (
+          : kitResultado ? (
+            <div className="rounded-md border p-3 text-sm space-y-1">
+              <div className="flex items-start gap-2">
+                {kitResultado.conferido ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" /> : <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />}
+                <div>
+                  <b>{kitResultado.kit.nome}</b>
+                  <div className="text-xs text-muted-foreground">SKU <span className="font-mono">{kitResultado.kit.sku}</span> · {formatBRL(kitResultado.kit.preco)} · kit de {kitResultado.kit.quantidade}× {kitResultado.base_sku} · criado no Tiny</div>
+                </div>
+              </div>
+              {kitResultado.aviso && <p className="text-xs text-amber-600">{kitResultado.aviso}</p>}
+              <p className="text-xs text-muted-foreground">O kit já aparece na lista de anúncios.</p>
+            </div>
+          ) : resultado ? (
             <div className="space-y-3">
               <div className="rounded-md border p-3 text-sm">
                 <b>{resultado.pai.nome}</b>
@@ -195,6 +266,66 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
                 {naoSimples && <p className="text-xs text-destructive mt-1">Este produto não é simples no Tiny (é kit, pai ou variação): só produto simples pode ser a base.</p>}
               </div>
 
+              <div className="flex flex-wrap gap-1.5">
+                {([["variacoes", "Produto com variações"], ["kit", "Kit avulso (sem variações)"]] as const).map(([m, r]) => (
+                  <Button key={m} size="sm" variant={modo === m ? "default" : "outline"} className="h-7 text-xs" disabled={!!ocupado} onClick={() => setModo(m)}>{r}</Button>
+                ))}
+              </div>
+
+              {modo === "kit" ? (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-[1fr_120px] gap-2">
+                    <label className="block">
+                      <span className="text-[11px] text-muted-foreground">Nome do kit</span>
+                      <Input className="h-8 mt-1" value={kitNome} onChange={(e) => { setKitNome(e.target.value); setKitNomeEditado(true); setKitPrevia(null); }} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] text-muted-foreground">SKU do kit</span>
+                      <Input className="h-8 mt-1 font-mono" value={kitSku} onChange={(e) => { setKitSku(e.target.value); setKitPrevia(null); }} />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-[160px_130px_1fr] gap-2 items-end">
+                    <label className="block">
+                      <span className="text-[11px] text-muted-foreground">Quantidade de {sku} no kit</span>
+                      <Input className="h-8 mt-1 font-mono" value={kitQtd} onChange={(e) => { const v = e.target.value.replace(/\D/g, ""); if (Number(v) >= 1) acertarKit(Number(v)); else { setKitQtd(v); setKitPrevia(null); } }} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] text-muted-foreground">Preço</span>
+                      <Input className="h-8 mt-1 font-mono" value={kitPreco} onChange={(e) => { setKitPreco(e.target.value); setKitPrevia(null); }} placeholder="0,00" />
+                    </label>
+                    <div className="flex flex-wrap gap-1 pb-0.5">
+                      {[2, 3, 4, 5].map((n) => (
+                        <Button key={n} size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => acertarKit(n)}>{porPeso ? `${kg(peso!.kg * n)}kg` : `${n} un.`}</Button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    O SKU sugerido é o próximo número livre, conferido agora no Tiny. O preço sugerido é o do produto base × a quantidade; o peso do kit sai do peso do produto base × a quantidade.
+                  </p>
+                  {kitConferido && (
+                    <div className="space-y-2">
+                      {kitConferido.pendencias.length > 0 ? (
+                        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+                          <b className="text-destructive flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />Falta resolver antes de criar</b>
+                          {kitConferido.pendencias.map((x) => <div key={x}>• {x}</div>)}
+                        </div>
+                      ) : (
+                        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
+                          <b className="text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" />Conferido: SKU e nome livres, pronto para criar</b>
+                          <div className="text-xs mt-0.5">
+                            <span className="font-mono">{kitConferido.previa.kit.sku}</span> · {formatBRL(kitConferido.previa.kit.preco)}
+                            {kitConferido.previa.kit.custo != null && <span className="text-muted-foreground"> · custo {formatBRL(kitConferido.previa.kit.custo)}</span>}
+                            {kitConferido.previa.kit.peso_kg != null && <span className="text-muted-foreground"> · {kg(kitConferido.previa.kit.peso_kg)} kg</span>}
+                          </div>
+                        </div>
+                      )}
+                      <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs space-y-0.5 text-amber-700 dark:text-amber-400">
+                        {kitConferido.avisos.map((x) => <div key={x}>• {x}</div>)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (<>
               <div className="grid sm:grid-cols-[1fr_130px_150px] gap-2">
                 <label className="block">
                   <span className="text-[11px] text-muted-foreground">Nome do produto com variações</span>
@@ -261,11 +392,23 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
                   </div>
                 </div>
               )}
+              </>)}
             </div>
           )}
 
         <DialogFooter>
-          {resultado ? <Button onClick={onFechar}>Fechar</Button> : (
+          {resultado || kitResultado ? <Button onClick={onFechar}>Fechar</Button> : modo === "kit" ? (
+            <>
+              <Button variant="ghost" disabled={!!ocupado} onClick={onFechar}>Cancelar</Button>
+              <Button variant="outline" disabled={!!ocupado || !base || !!naoSimples} onClick={() => void conferirKit()} className="gap-1.5">
+                {ocupado === "conferindo" && <Loader2 className="h-4 w-4 animate-spin" />}Conferir
+              </Button>
+              <Button disabled={!!ocupado || !kitConferido || kitConferido.pendencias.length > 0} onClick={() => void criarKit()} className="gap-1.5">
+                {ocupado === "criando" && <Loader2 className="h-4 w-4 animate-spin" />}
+                {ocupado === "criando" ? "Criando no Tiny…" : "Criar kit no Tiny"}
+              </Button>
+            </>
+          ) : (
             <>
               <Button variant="ghost" disabled={!!ocupado} onClick={onFechar}>Cancelar</Button>
               <Button variant="outline" disabled={!!ocupado || !base || !!naoSimples} onClick={() => void conferir()} className="gap-1.5">
