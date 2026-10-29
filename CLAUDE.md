@@ -3976,6 +3976,36 @@ rollback em `docs/ia-termos-busca.sql`.
 - **Limites:** Amazon e ML não dão volume (só posição); a Shopee sugere só para anúncio que já existe; termo "a conferir"
   pode ser de outro tipo de produto (tofu, sílica numa areia de mandioca) — por isso nunca vai para palavras/Modelo.
 
+## 5.12 Histórico de faturamento pelo Tiny — só totais (29/out/2026)
+
+Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedido; mostrar no Dashboard
+(decisão: bloco próprio, não mistura com margem/DRE; cancelados à parte). SQL + rollback em
+`docs/tiny-vendas-historico.sql`.
+- **O que o Tiny devolve:** conta **SVL** só a partir de **29/10/2024** (limite do plano — janela de 2 anos que
+  ANDA um dia por dia; "fora do período permitido pelo plano"); conta **Ottz** começa entre nov/2024 (0 pedidos) e
+  fev/2025. Mês inteiro numa chamada dá "Sua consulta levou muito tempo" — a busca é dia a dia. A listagem
+  `GET /pedidos?dataInicial=D&dataFinal=D&limit=100` já traz `valor`, `situacao` (2 = cancelada), `ecommerce.nome` e
+  `dataCriacao`. O nome do canal na listagem é mais grosso que o `marca_canal` do espelho (ML Ottz e ML Fulfillment
+  saem os dois "Mercado Livre (Ottz Pet)"; Shein sai sem canal; Olist sai "Temu").
+- **Conferido:** 20/02/2026 da conta Ottz = espelho `pedidos_tiny` ao centavo (373 pedidos, R$ 15.930,35) —
+  `pedidos_tiny` é SÓ a conta Ottz.
+- **ARMADILHA — cópia fiscal:** desde jun/2026 a conta SVL do Tiny recebe uma cópia SEM canal dos pedidos da Bumi que
+  já estão na conta Ottz (20/out: 160 de 166 casam por cliente + valor). A view tira `conta='svl' and canal=''`.
+  Antes disso a SVL tinha as lojas dela com canal (`Sevilla Store` = Shopee, `ML_JUSSARA…` = ML, `Amazon [SVLL Store]`).
+- **Banco:** `tiny_vendas_dia` (PK conta+dia+canal+situação: pedidos, valor, sem_valor) e `tiny_vendas_dia_estado`
+  (conta+dia: total_api, lidos, concluido_em, fora_do_plano, erro, tentativas); só leitura para `authenticated`.
+  `view_vendas_tiny_mensal` (security_invoker): mês × empresa × marketplace × canal, pedidos/valor sem cancelados +
+  `pedidos_cancelados`/`valor_cancelado`. Empresa = SVL se conta svl ou canal com bumi/sevilla/svl.
+- **Edge fn `tiny-vendas-historico` v1** (deploy 2): `status`, `rodar[&conta][&de&ate]`. Dias nunca lidos do mais antigo
+  para o mais novo, depois relê os últimos 15 dias se a leitura tem > 20 h. Dia só grava com todas as páginas lidas
+  (apaga e reinsere o dia). Crons **170** `tiny-vendas-historico-svl` (minutos ímpares, menos :15/:45, o dia todo) e
+  **171** `tiny-vendas-historico-ottz` (só 01–09 UTC = 22h–06h BRT, para não disputar o limite do Tiny com a separação).
+  ~10 dias da SVL por rodada; a Ottz (3–5 páginas/dia) leva ~2 noites. Depois disso os crons só releem os 15 dias.
+- **Tela:** bloco recolhível "Histórico de faturamento (Tiny)" no fim do Dashboard (`src/components/dashboard/
+  HistoricoTiny.tsx`): Ambas/ACZ/SVL, barras por mês, tabela com pedidos, faturamento, vs mês anterior, vs ano anterior,
+  por marketplace e cancelado à parte; mês com dia ainda não lido aparece "incompleto" (sem comparação).
+  É o VALOR DO PEDIDO no Tiny (com frete, sem taxas/custo) — não bate com o "Desempenho do período" (integrado).
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -4026,6 +4056,7 @@ rollback em `docs/ia-termos-busca.sql`.
 | `anuncio-publicar` | v14 (deploy 15; 20/out: palavras escondidas da Amazon e Modelo do ML pelos termos de busca, §5.11.13); v13 (deploy 14; 19/out: dados fiscais — NCM do Tiny, origem 0, papel e CEST — na criação Amazon, §5.11.12.3); v12 (deploy 13; 19/out: na Amazon, fora da Bumi a marca vai "Genérico" e a ficha nova sai sem o EAN do fabricante, §5.11.12.2); v11 (deploy 12; a Amazon também CRIA — oferta em ASIN existente ou ficha nova); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `tiny-vendas-historico` | v1 (deploy 2) | Totais de vendas por dia × conta × canal × situação lidos da listagem do Tiny (out/2024 →), para o histórico do Dashboard. Só lê no Tiny. Crons 170/171 — ver §5.12 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `producao-tiny` | v3 (28/out: + saída do componente da mistura, tofu 16080 no 16640) · v2 | Produção × Tiny: a entrada do produto acabado no depósito Geral ao encerrar o lote (matéria-prima fica no app), com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |
 | `ml-fiscal` | v1 | Dados fiscais do produto no Mercado Livre (NCM, origem, CEST por SKU): `previa` (só lê ML e Tiny) e `aplicar` (PUT/POST `/items/fiscal_information`, com confirmação). JWT de usuário + módulo `ia` — ver §5.11.13.3 |

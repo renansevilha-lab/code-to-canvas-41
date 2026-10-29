@@ -12,6 +12,7 @@ import {
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { PosicaoEmpresa } from "@/components/dashboard/PosicaoEmpresa";
+import { HistoricoTiny } from "@/components/dashboard/HistoricoTiny";
 import { DesempenhoPeriodo, type Anomalia, type Kpis } from "@/components/dashboard/DesempenhoPeriodo";
 import { periodoAnterior as periodoAnteriorComum, type PeriodPreset } from "@/lib/dashboard/period";
 
@@ -597,6 +598,9 @@ function Dashboard() {
 
       {/* Posição da empresa — retrato de agora, não muda com o período */}
       <PosicaoEmpresa tick={tick} />
+
+      {/* Histórico de faturamento pelo Tiny (out/2024 →), recolhível — 29/out/2026 */}
+      <HistoricoTiny tick={tick} />
     </div>
   );
 }
