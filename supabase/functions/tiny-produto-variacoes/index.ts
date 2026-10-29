@@ -1,5 +1,6 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v8 (28/out/2026; v7 22/out)
+// Edge Function: tiny-produto-variacoes v9 (29/out/2026; v8 28/out)
+// v9 (29/out, pedido do dono): aceita produto com UMA variação só (antes exigia 2).
 // v8 (28/out): nome da opção até 30 letras (get_item_limit da Shopee: tier_variation_option_length_limit = 30;
 //   antes barrava em 20). Serve ao formato de uma grade só ("4 pacotes | Fina | 8kg").
 // v7: 429 do Tiny (limite por minuto) espera e repete até 3× em toda chamada v3; o que ainda assim esbarra no
@@ -222,7 +223,7 @@ async function conferir(token: string, pd: Pedido) {
   if (!/^[A-Za-z0-9._-]{1,30}$/.test(pd.skuPai)) pend.push("informe o SKU do produto pai (letras, números, ponto ou hífen)");
   pd.grades.forEach((g) => { if (g.length > 14) pend.push(`o nome da grade "${g}" tem ${g.length} caracteres (a Shopee aceita até 14)`); });
   if (pd.grades.length === 2 && pd.grades[0].toLowerCase() === pd.grades[1].toLowerCase()) pend.push("as duas grades têm o mesmo nome");
-  if (pd.variacoes.length < 2) pend.push("informe ao menos 2 variações");
+  if (pd.variacoes.length < 1) pend.push("informe ao menos 1 variação");
   if (pd.variacoes.length > 50) pend.push("no máximo 50 variações por produto (limite da Shopee)");
   pd.variacoes.forEach((v, i) => {
     const n = `variação ${i + 1}`;

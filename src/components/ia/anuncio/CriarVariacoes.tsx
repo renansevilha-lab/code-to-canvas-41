@@ -121,7 +121,7 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
   async function criar() {
     if (!conferido || conferido.pendencias.length) return;
     if (!window.confirm([
-      `Criar no Tiny o produto "${nome.trim()}" (SKU ${skuPai.trim()}) com ${linhas.length} variações?`, "",
+      `Criar no Tiny o produto "${nome.trim()}" (SKU ${skuPai.trim()}) com ${linhas.length} ${linhas.length === 1 ? "variação" : "variações"}?`, "",
       ...linhas.map((l) => `• ${l.rotulo} — SKU ${l.sku} — R$ ${l.preco} — kit de ${l.quantidade}× ${sku}`), "",
       "Os produtos ficam ATIVOS no Tiny. Excluir pela API não funciona: se errar, é preciso apagar na tela do Tiny.",
     ].join("\n"))) return;
@@ -129,7 +129,7 @@ export function CriarVariacoes({ sku, onFechar }: { sku: string; onFechar: () =>
     try {
       const r = (await chamarVariacoes("criar", { ...corpo(), confirmar: true })) as Resultado;
       setResultado(r);
-      (r.aviso ? toast.warning : toast.success)(`Produto ${r.pai.sku} criado no Tiny`, { description: r.aviso ?? `${r.variacoes.length} variações, cada uma como kit do ${sku}`, duration: 12000 });
+      (r.aviso ? toast.warning : toast.success)(`Produto ${r.pai.sku} criado no Tiny`, { description: r.aviso ?? `${r.variacoes.length} ${r.variacoes.length === 1 ? "variação" : "variações"}, cada uma como kit do ${sku}`, duration: 12000 });
       void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
     } catch (e) { toast.error("O Tiny não criou o produto", { description: (e as Error).message, duration: 15000 }); }
     finally { setOcupado(""); }

@@ -69,6 +69,8 @@ const TIPOS = [
   // criados pelo app em "Criar produto com variações" (produtos.criado_app_em); só aparece quando a RPC conta
   { id: "APP", rotulo: "Criados no app" },
 ];
+// ordem padrão da lista (29/out/2026, pedido do dono): o anúncio mexido por último primeiro
+const ORDEM_PADRAO = "recentes";
 const POR_PAGINA = 50;
 const TODAS = "__todas";
 
@@ -82,7 +84,7 @@ export const Route = createFileRoute("/ia/anuncios")({
     tipo: ["S", "K", "V", "APP"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
     sem: CANAIS_COM_HISTORICO.includes(String(s.sem)) ? String(s.sem) : undefined,
     giro: ["parado", "sem_giro", "excesso"].includes(String(s.giro)) ? String(s.giro) : undefined,
-    ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== "vendas" ? String(s.ordem) : undefined,
+    ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== ORDEM_PADRAO ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
   }),
   component: AnunciosPage,
@@ -102,12 +104,12 @@ function AnunciosPage() {
   }, [digitado]);
 
   const catQ = useQuery({
-    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? "vendas", pagina],
+    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? ORDEM_PADRAO, pagina],
     placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<IaCatalogo> => {
       const { data, error } = await supabaseExternal.rpc("ia_catalogo", {
         p_busca: q ?? null, p_marca: marca ?? null, p_situacao: sit ?? "todos", p_sem_canal: sem ?? null,
-        p_ordem: ordem ?? "vendas", p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA, p_tipo: tipo ?? null,
+        p_ordem: ordem ?? ORDEM_PADRAO, p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA, p_tipo: tipo ?? null,
         // só manda quando há filtro de estoque parado (p_giro tem default na função)
         ...(giro ? { p_giro: giro } : {}),
       });
@@ -267,7 +269,7 @@ function AnunciosPage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={ordem ?? "vendas"} onValueChange={(v) => set({ ordem: v === "vendas" ? undefined : v })}>
+        <Select value={ordem ?? ORDEM_PADRAO} onValueChange={(v) => set({ ordem: v === ORDEM_PADRAO ? undefined : v })}>
           <SelectTrigger className="h-9 w-[220px]"><SelectValue /></SelectTrigger>
           <SelectContent>{ORDENS.filter((o) => (o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120") && (o.id !== "parado" || (cat?.versao ?? 1) >= 6 || ordem === "parado")).map((o) => <SelectItem key={o.id} value={o.id}>{o.rotulo}</SelectItem>)}</SelectContent>
         </Select>
@@ -893,7 +895,7 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
               style={{ border: 0, outline: "none", background: "transparent", flex: 1, minWidth: 0, fontSize: 13, color: "var(--pm-t)" }} />
           </div>
           <label style={campo}>Ordem
-            <select style={{ ...selectA, maxWidth: 220 }} value={ordem ?? "vendas"} onChange={(e) => set({ ordem: e.target.value === "vendas" ? undefined : e.target.value })}>
+            <select style={{ ...selectA, maxWidth: 220 }} value={ordem ?? ORDEM_PADRAO} onChange={(e) => set({ ordem: e.target.value === ORDEM_PADRAO ? undefined : e.target.value })}>
               {ORDENS.filter((o) => (o.id !== "vendas120" || (cat?.versao ?? 1) >= 2 || ordem === "vendas120") && (o.id !== "parado" || (cat?.versao ?? 1) >= 6 || ordem === "parado"))
                 .map((o) => <option key={o.id} value={o.id}>{o.rotulo}</option>)}
             </select>
