@@ -3245,6 +3245,7 @@ mostrava "0 adicionado(s) · 75 falha(s) — exceed the max number of item limit
   o `type: 2` da v10 serve só para ENXERGAR a do dia (não criar outra por cima); **dia que
   nasceu vazio fica vazio**, não há conserto pela API depois da meia-noite. O que salva é
   conferir ANTES: a relâmpago de amanhã é criada às 18h07 e pode ser completada até 23h59.
+- **E 20 ANÚNCIOS (28/out/2026, `shopee-flashsale` v12, deploy 25):** a Bumi ficou sem relâmpago de 21 a 29/out mandando 21 anúncios / 48 variações (dentro das 50) — mesma recusa total. Nas últimas 50 relâmpagos de cada loja o máximo foi 20 anúncios (Ottz 17); a de 20/out entrou com 20/44. Agora cada envio respeita os DOIS limites (o que já está na do dia conta) e a tela mostra "X de 20 anúncios". A tabela de Promoções ganhou coluna CMV un. e cabeçalho fixo ao rolar.
 - **Lição:** falha do cron das 18h07 fica em `flashsale_criadas.status = 'erro'` e vai ao
   Discord (#atualizações), mas ninguém viu por 5 dias — vale um alerta mais forte quando a
   relâmpago do dia fecha com 0 itens.
