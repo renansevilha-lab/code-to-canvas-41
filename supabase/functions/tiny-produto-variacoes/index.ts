@@ -1,5 +1,7 @@
 // ============================================================================
-// Edge Function: tiny-produto-variacoes v7 (22/out/2026; v6 14/out)
+// Edge Function: tiny-produto-variacoes v8 (28/out/2026; v7 22/out)
+// v8 (28/out): nome da opção até 30 letras (get_item_limit da Shopee: tier_variation_option_length_limit = 30;
+//   antes barrava em 20). Serve ao formato de uma grade só ("4 pacotes | Fina | 8kg").
 // v7: 429 do Tiny (limite por minuto) espera e repete até 3× em toda chamada v3; o que ainda assim esbarra no
 //     limite fica PENDENTE (a tela retoma), não vira erro definitivo; a conferência do kit relê até 3× (o Tiny
 //     demora a refletir); variação que já é o kit certo não é reenviada. ?modulo=completar-kits {sku_pai, confirmar}
@@ -227,7 +229,7 @@ async function conferir(token: string, pd: Pedido) {
     v.valores.forEach((x, j) => {
       const g = pd.grades.length > 1 ? ` (${pd.grades[j]})` : "";
       if (!x) pend.push(`${n}: escreva o nome da opção${g} (ex.: "2 unidades")`);
-      else if (x.length > 20) pend.push(`${n}: "${x}" tem ${x.length} caracteres (a Shopee aceita até 20)`);
+      else if (x.length > 30) pend.push(`${n}: "${x}" tem ${x.length} caracteres (a Shopee aceita até 30)`);
     });
     if (v.valores.length < pd.grades.length) pend.push(`${n}: falta o valor de cada grade`);
     if (!/^[A-Za-z0-9._-]{1,30}$/.test(v.sku)) pend.push(`${n}: informe o SKU`);

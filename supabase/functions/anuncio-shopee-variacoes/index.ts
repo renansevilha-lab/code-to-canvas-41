@@ -1,5 +1,6 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v7 (16/out/2026)
+// Edge Function: anuncio-shopee-variacoes v8 (28/out/2026)
+// v8: nome da opção até 30 letras (get_item_limit da Shopee BR: tier_variation_option_length_limit = 30).
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
 // VARIAÇÕES — `product/init_tier_variation`. É o 2º passo de "enviar anúncio com variações":
@@ -214,7 +215,7 @@ async function lerOuAmpliar(modulo: string, body: Record<string, any>, quem: str
   novas.forEach((v, i) => {
     const n = `variação nova ${i + 1}`;
     if (!v.opcao) pend.push(`${n}: escreva o nome da opção`);
-    else if (v.opcao.length > 20) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 20)`);
+    else if (v.opcao.length > 30) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 30)`);
     else if (nomesHoje.has(v.opcao.toLowerCase())) pend.push(`${n}: o anúncio já tem a opção "${v.opcao}"`);
     if (!v.sku) pend.push(`${n}: sem SKU`);
     if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
@@ -333,9 +334,9 @@ Deno.serve(async (req) => {
     variacoes.forEach((v, i) => {
       const n = `variação ${i + 1}`;
       if (!v.opcao) pend.push(`${n}: escreva o nome da opção`);
-      else if (v.opcao.length > 20) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 20)`);
+      else if (v.opcao.length > 30) pend.push(`${n}: "${v.opcao}" tem ${v.opcao.length} caracteres (a Shopee aceita até 30)`);
       if (grade2 && !v.opcao2) pend.push(`${n}: escreva a opção de ${grade2}`);
-      else if (v.opcao2.length > 20) pend.push(`${n}: "${v.opcao2}" tem ${v.opcao2.length} caracteres (a Shopee aceita até 20)`);
+      else if (v.opcao2.length > 30) pend.push(`${n}: "${v.opcao2}" tem ${v.opcao2.length} caracteres (a Shopee aceita até 30)`);
       if (!v.sku) pend.push(`${n}: sem SKU`);
       if (!(v.preco > 0)) pend.push(`${n}: informe o preço`);
       const medidas = [v.comprimento_cm, v.largura_cm, v.altura_cm].filter((x) => x != null).length;

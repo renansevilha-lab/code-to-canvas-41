@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
+import { extrairPeso } from "@/lib/prazo";
 import { rotuloQuantidade, rotulosDasCores, unidadesComuns } from "@/lib/rotulosVariacao";
 
 // ============================================================================
@@ -19,10 +20,13 @@ import { rotuloQuantidade, rotulosDasCores, unidadesComuns } from "@/lib/rotulos
 // Mesma edge fn do diálogo de uma base só (`tiny-produto-variacoes` v6: `grades` + `base_sku`/`valores` por
 // variação). Com muitas variações a função não termina tudo numa chamada: esta tela continua os kits
 // (`kit`) e as fotos (`foto`) até acabar.
+// 28/out (pedido do dono, com print de um concorrente na Shopee): formato "Uma grade só" — um grupo
+// ("Tamanho") cujo nome de opção junta quantidade, tipo e peso ("4 pacotes | Fina | 8kg"), ordenado pela
+// quantidade. Cada variação continua kit do produto DO TIPO dela. A Shopee aceita até 30 letras na opção.
 // ============================================================================
 
 interface Base { sku: string; nome: string; preco: number | null; custo: number | null; tipo: string | null; marca: string | null }
-interface Linha { chave: string; base: string; cor: string; qtd: number; sku: string; preco: string }
+interface Linha { chave: string; base: string; cor: string; qtd: number; sku: string; preco: string; rotulo: string }
 interface Previa {
   previa: { variacoes: { sku: string; rotulo: string; preco: number; nome: string; custo: number | null; base_sku: string }[] };
   pendencias: string[]; avisos: string[];
@@ -32,6 +36,17 @@ interface Resultado { pai: { sku: string; id: number; nome: string }; variacoes:
 
 const dinheiro = (v: number) => v.toFixed(2).replace(".", ",");
 const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",", "."));
+/** Peso total do kit pelo peso escrito no nome do produto base ("Areia 2kg" × 4 = "8kg"); null se o nome não diz. */
+function pesoDoKit(nome: string | null | undefined, qtd: number): string | null {
+  const p = extrairPeso(nome);
+  if (!p) return null;
+  const v = Number(String(p.valor).replace(",", ".")) * qtd;
+  if (!(v > 0)) return null;
+  let n = v; let u = p.unidade;
+  if (u === "g" && n >= 1000) { n = n / 1000; u = "kg"; }
+  if (u === "ml" && n >= 1000) { n = n / 1000; u = "L"; }
+  return `${String(Math.round(n * 100) / 100).replace(".", ",")}${u}`;
+}
 
 
 export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFechar: () => void }) {
@@ -64,9 +79,13 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
   const [nome, setNome] = useState("");
   const [skuPai, setSkuPai] = useState("");
   const [grades, setGrades] = useState<[string, string]>(["Cor", "Quantidade"]);
+  // "duas" = Cor × Quantidade (dois grupos na Shopee); "uma" = um grupo só com o nome combinado
+  const [formato, setFormato] = useState<"duas" | "uma">("duas");
+  const [gradeUnica, setGradeUnica] = useState("Tamanho");
+  const [palavra, setPalavra] = useState("pacotes");
   const [cores, setCores] = useState<{ sku: string; rotulo: string }[]>([]);
   const [qtdsTexto, setQtdsTexto] = useState("1, 2, 3");
-  const [edit, setEdit] = useState<Record<string, { sku?: string; preco?: string }>>({});
+  const [edit, setEdit] = useState<Record<string, { sku?: string; preco?: string; rotulo?: string }>>({});
   const [previa, setPrevia] = useState<{ chave: string; dados: Previa } | null>(null);
   const [ocupado, setOcupado] = useState<"" | "conferindo" | "criando" | "terminando">("");
   const [resultado, setResultado] = useState<Resultado | null>(null);
@@ -89,23 +108,34 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
 
   const qtds = useMemo(() => [...new Set(qtdsTexto.split(/[^\d]+/).map(Number).filter((n) => n >= 1 && n <= 100))], [qtdsTexto]);
   const precoBase = (s: string) => bases.find((b) => b.sku === s)?.preco ?? null;
-  // a grade completa: cada cor × cada quantidade, na ordem das cores (é a ordem que a Shopee mostra)
+  const umaGrade = formato === "uma";
+  /** "4 pacotes | Fina | 8kg" (sem peso no nome do produto: "4 pacotes | Fina"). */
+  const rotuloCombinado = (base: string, cor: string, q: number) => {
+    const p = palavra.trim();
+    const qtd = p ? `${q} ${q === 1 ? p.replace(/s$/i, "") : p}` : rotuloQtd(q);
+    const peso = pesoDoKit(bases.find((b) => b.sku === base)?.nome, q);
+    return [qtd, cor.trim(), peso].filter(Boolean).join(" | ");
+  };
+  // a grade completa: cada cor × cada quantidade, na ordem das cores (é a ordem que a Shopee mostra);
+  // com uma grade só, na ordem da quantidade (4 Fina, 4 Grossa, 8 Fina, 8 Grossa — como no print do dono)
   const linhas: Linha[] = useMemo(() => {
     const usados = new Set([skuPai]); let i = 1;
-    return cores.flatMap((c) => qtds.map((q) => {
+    const pares = umaGrade ? qtds.flatMap((q) => cores.map((c) => ({ c, q }))) : cores.flatMap((c) => qtds.map((q) => ({ c, q })));
+    return pares.map(({ c, q }) => {
       const chave = `${c.sku}|${q}`;
       let sku = edit[chave]?.sku;
       if (sku === undefined) { while (i < livres.length && usados.has(livres[i])) i++; sku = livres[i++] ?? ""; }
       usados.add(sku);
       const pb = precoBase(c.sku);
-      return { chave, base: c.sku, cor: c.rotulo, qtd: q, sku, preco: edit[chave]?.preco ?? (pb ? dinheiro(pb * q) : "") };
-    }));
-  }, [cores, qtds, edit, livres, skuPai, bases]);
-  const mudar = (chave: string, x: { sku?: string; preco?: string }) => { setEdit((e) => ({ ...e, [chave]: { ...e[chave], ...x } })); setPrevia(null); };
+      return { chave, base: c.sku, cor: c.rotulo, qtd: q, sku, preco: edit[chave]?.preco ?? (pb ? dinheiro(pb * q) : ""), rotulo: edit[chave]?.rotulo ?? rotuloCombinado(c.sku, c.rotulo, q) };
+    });
+  }, [cores, qtds, edit, livres, skuPai, bases, umaGrade, palavra]);
+  const mudar = (chave: string, x: { sku?: string; preco?: string; rotulo?: string }) => { setEdit((e) => ({ ...e, [chave]: { ...e[chave], ...x } })); setPrevia(null); };
 
   const corpo = () => ({
-    base_sku: cores[0]?.sku ?? skus[0], nome: nome.trim(), sku_pai: skuPai.trim(), grades: grades.map((g) => g.trim()),
-    variacoes: linhas.map((l) => ({ sku: l.sku.trim(), base_sku: l.base, valores: [l.cor.trim(), rotuloQtd(l.qtd)], quantidade: l.qtd, preco: paraNumero(l.preco) || 0 })),
+    base_sku: cores[0]?.sku ?? skus[0], nome: nome.trim(), sku_pai: skuPai.trim(),
+    grades: umaGrade ? [gradeUnica.trim()] : grades.map((g) => g.trim()),
+    variacoes: linhas.map((l) => ({ sku: l.sku.trim(), base_sku: l.base, valores: umaGrade ? [l.rotulo.trim()] : [l.cor.trim(), rotuloQtd(l.qtd)], quantidade: l.qtd, preco: paraNumero(l.preco) || 0 })),
   });
   const chave = JSON.stringify(corpo());
   const conferido = previa?.chave === chave ? previa.dados : null;
@@ -159,8 +189,8 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
   async function criar() {
     if (!conferido || conferido.pendencias.length) return;
     if (!window.confirm([
-      `Criar no Tiny o produto "${nome.trim()}" (SKU ${skuPai.trim()}) com ${linhas.length} variações (${cores.length} ${grades[0].toLowerCase()} × ${qtds.length} ${grades[1].toLowerCase()})?`, "",
-      ...linhas.slice(0, 30).map((l) => `• ${l.cor} · ${rotuloQtd(l.qtd)} — SKU ${l.sku} — R$ ${l.preco} — kit de ${l.qtd}× ${l.base}`),
+      `Criar no Tiny o produto "${nome.trim()}" (SKU ${skuPai.trim()}) com ${linhas.length} variações (${umaGrade ? `um grupo "${gradeUnica.trim()}"` : `${cores.length} ${grades[0].toLowerCase()} × ${qtds.length} ${grades[1].toLowerCase()}`})?`, "",
+      ...linhas.slice(0, 30).map((l) => `• ${umaGrade ? l.rotulo : `${l.cor} · ${rotuloQtd(l.qtd)}`} — SKU ${l.sku} — R$ ${l.preco} — kit de ${l.qtd}× ${l.base}`),
       ...(linhas.length > 30 ? [`… e mais ${linhas.length - 30}`] : []), "",
       "Os produtos ficam ATIVOS no Tiny. Excluir pela API não funciona: se errar, é preciso apagar na tela do Tiny.",
     ].join("\n"))) return;
@@ -185,7 +215,7 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
         <DialogHeader>
           <DialogTitle>Criar produto com variações de {grades[0].toLowerCase()} × {grades[1].toLowerCase()}</DialogTitle>
           <DialogDescription>
-            Cria no Tiny um produto novo com duas grades. Cada variação é um kit do produto da {grades[0].toLowerCase()} dela:
+            Cria no Tiny um produto novo {umaGrade ? "com uma grade só (o nome da opção junta quantidade, tipo e peso)" : "com duas grades"}. Cada variação é um kit do produto da {grades[0].toLowerCase()} dela:
             vender "{cores[1]?.rotulo ?? "Marrom"} · 2 un" baixa 2 unidades do produto {cores[1]?.rotulo ?? "marrom"} no Tiny.
           </DialogDescription>
         </DialogHeader>
@@ -213,7 +243,7 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                O produto já aparece na lista de anúncios (filtro "Criados no app"). Abra o pai para gerar o anúncio: na Shopee as variações entram com os dois grupos ({grades[0]} e {grades[1]}).
+                O produto já aparece na lista de anúncios (filtro "Criados no app"). Abra o pai para gerar o anúncio: na Shopee as variações entram {umaGrade ? `num grupo só (${gradeUnica})` : `com os dois grupos (${grades[0]} e ${grades[1]})`}.
               </p>
             </div>
           ) : (
@@ -221,6 +251,33 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
               {naoSimples.length > 0 && (
                 <p className="text-xs text-destructive">Só produto SIMPLES pode ser base: {naoSimples.map((b) => b.sku).join(", ")} não é. Tire da seleção.</p>
               )}
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-[11px] text-muted-foreground">Como as variações aparecem no anúncio:</span>
+                {([["duas", `Dois grupos (${grades[0]} e ${grades[1]})`], ["uma", "Um grupo só: \"4 pacotes | Fina | 8kg\""]] as const).map(([v, t]) => (
+                  <Button key={v} size="sm" variant={formato === v ? "default" : "outline"} className="h-7 px-2.5 text-xs"
+                    onClick={() => { setFormato(v); setPrevia(null); }}>{t}</Button>
+                ))}
+              </div>
+              {umaGrade ? (
+                <div className="grid sm:grid-cols-[1fr_120px_120px_120px] gap-2">
+                  <label className="block">
+                    <span className="text-[11px] text-muted-foreground">Nome do produto com variações</span>
+                    <Input className="h-8 mt-1" value={nome} onChange={(e) => { setNome(e.target.value); setPrevia(null); }} />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-muted-foreground">SKU do pai</span>
+                    <Input className="h-8 mt-1 font-mono" value={skuPai} onChange={(e) => { setSkuPai(e.target.value); setPrevia(null); }} />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-muted-foreground">Nome do grupo</span>
+                    <Input className="h-8 mt-1" value={gradeUnica} maxLength={14} onChange={(e) => { setGradeUnica(e.target.value); setPrevia(null); }} />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-muted-foreground">Palavra da quantidade</span>
+                    <Input className="h-8 mt-1" value={palavra} maxLength={12} placeholder="pacotes" onChange={(e) => { setPalavra(e.target.value); setPrevia(null); }} />
+                  </label>
+                </div>
+              ) : (
               <div className="grid sm:grid-cols-[1fr_120px_120px_120px] gap-2">
                 <label className="block">
                   <span className="text-[11px] text-muted-foreground">Nome do produto com variações</span>
@@ -239,6 +296,7 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
                   <Input className="h-8 mt-1" value={grades[1]} maxLength={14} onChange={(e) => { setGrades([grades[0], e.target.value]); setPrevia(null); }} />
                 </label>
               </div>
+              )}
 
               <div className="grid sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -267,19 +325,21 @@ export function CriarVariacoesCores({ skus, onFechar }: { skus: string[]; onFech
                     ))}
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    {cores.length} × {qtds.length} = <b>{linhas.length}</b> variações{linhas.length > 50 ? " — a Shopee aceita até 50" : ""}. A opção aparece como "{rotuloQtd(qtds[0] ?? 1)}".
+                    {cores.length} × {qtds.length} = <b>{linhas.length}</b> variações{linhas.length > 50 ? " — a Shopee aceita até 50" : ""}. A opção aparece como "{umaGrade ? (linhas[0]?.rotulo ?? "") : rotuloQtd(qtds[0] ?? 1)}".
                   </p>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <div className="grid grid-cols-[1fr_70px_120px_100px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
-                  <span>Variação</span><span>Kit</span><span>SKU</span><span>Preço</span>
+                  <span>{umaGrade ? "Nome da opção (até 30 letras)" : "Variação"}</span><span>Kit</span><span>SKU</span><span>Preço</span>
                 </div>
                 <div className="max-h-[38vh] overflow-y-auto space-y-1 pr-1">
                   {linhas.map((l) => (
                     <div key={l.chave} className="grid grid-cols-[1fr_70px_120px_100px] gap-1.5 items-center">
-                      <span className="text-sm truncate"><b>{l.cor}</b> · {rotuloQtd(l.qtd)}</span>
+                      {umaGrade ? (
+                        <Input className={`h-7 text-sm${l.rotulo.length > 30 ? " border-destructive" : ""}`} value={l.rotulo} maxLength={30} onChange={(e) => mudar(l.chave, { rotulo: e.target.value })} />
+                      ) : <span className="text-sm truncate"><b>{l.cor}</b> · {rotuloQtd(l.qtd)}</span>}
                       <span className="text-[11px] text-muted-foreground font-mono">{l.qtd}× {l.base}</span>
                       <Input className="h-7 text-sm font-mono" value={l.sku} onChange={(e) => mudar(l.chave, { sku: e.target.value })} />
                       <Input className="h-7 text-sm font-mono" value={l.preco} onChange={(e) => mudar(l.chave, { preco: e.target.value })} placeholder="0,00" />

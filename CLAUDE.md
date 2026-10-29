@@ -2966,6 +2966,7 @@ faltou no anúncio criado direto na Shopee).
     grade do Tiny (`grades_tiny` no `localStorage`): a tela aberta antes de os kits existirem guardou "Tamanho" e ele
     passava por cima do "Cor" do Tiny. O 16594 continua com os nomes antigos no Tiny (a opção da Shopee pode ser
     corrigida no próprio bloco antes de enviar; o vínculo é pelo SKU).
+  - **Uma grade só, nome combinado (28/out, pedido do dono com print de concorrente):** no mesmo diálogo, "Como as variações aparecem no anúncio" → **Um grupo só**: grupo "Tamanho" e opção "4 pacotes | Fina | 8kg" (palavra da quantidade editável; peso = peso do nome do produto base × quantidade; ordem por quantidade; cada opção editável). Cada variação continua kit do produto DO TIPO dela. A Shopee aceita **30 letras** na opção (`product/get_item_limit`: `tier_variation_option_length_limit` = 30) — `tiny-produto-variacoes` v8 (deploy 11) e `anuncio-shopee-variacoes` v8 passaram de 20 para 30; `VariacoesShopee` lê a grade única do Tiny (`modulo=grade`). Não testado com login.
   - **Pai duplicado 16523 (14/out, inativado com o OK do dono):** criado com o MESMO nome do 16506 —
     o Tiny recusou transformar as variações em kit ("Registro em duplicidade - nome do produto já
     cadastrado"), e 16524/26/28/30 ficaram simples. Inativados pela v2 (`produto.alterar.php`,
