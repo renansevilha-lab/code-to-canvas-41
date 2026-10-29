@@ -2386,6 +2386,57 @@ Oportunidades · Buscas (Brand Analytics). **Não conferida com login.**
   receita para nós, mesmo com `frete_responsavel=SHOPEE`. Créditos "perdido no
   ARMAZÉM" são do Full (por item_id/index, não por pedido).
 
+## 5.10.1 Devoluções e reembolsos — reforma (29/out/2026, passos 1 e 2 de 8)
+
+Pedido do dono: aba única com tudo que pede a resposta dele (Shopee + ML), o sistema aprendendo
+as respostas e sugerindo; quantificar erros de separação/embalagem por pessoa; NF de devolução
+automática da Ottz desde fev/2026 (como a SVL). Plano completo em
+`docs/devolucoes-reforma-plano.md`; SQL + rollback em `docs/devolucoes-reforma.sql`
+(migrações `devolucoes_reforma_01_banco` / `_01b_causa_ml`). **Só leitura nos marketplaces até aqui.**
+- **Espelho das reclamações do ML — `ml_claims`** (PK `claim_id`; `conta` = user_id; `order_id`,
+  `pack_id`, tipo mediations/returns/cancel_purchase, stage, status, `reason_id`, `resolucao`,
+  **`acoes_disponiveis`** = `players[respondent].available_actions`, `acao_obrigatoria`, `prazo_acao`
+  = menor `due_date`, `expected_resolution`, `mensagens_n`/`ultima_msg_*`) + **`ml_claim_mensagens`**
+  (PK `hash` do ML; `de`/`para` complainant|respondent|mediator; `texto` = HTML convertido, `html`,
+  anexos) + **`ml_claim_motivos`** (catálogo `GET /post-purchase/v1/claims/reasons/{id}`: nome,
+  detalhe em pt). Preenchidas por **`ml-devolucao-lookup` v5** `?modulo=claims[&dias=2][&conta=]`
+  (abertas todas + tudo que mudou na janela + motivos novos + mensagens; orçamento 45 s — com
+  `dias=30` a 1ª rodada cobriu só a Ottz, 115 claims, e a SVL foi na 2ª) e `?modulo=claim&claim_id=`
+  (relê uma). Cron **172** `ml-claims-sync` `9,29,49 * * * *` (Bearer publicável). **Armadilha:**
+  claim FECHADA também pede ação (`return_review_ok` obrigatória com prazo = validar o produto
+  devolvido) — o sync olha as fechadas recentes por isso. Em 29/out: 6 abertas na Ottz, 0 na SVL.
+- **`view_devolucoes_pede_resposta`** = fila única Shopee (`shopee_devolucoes` REQUESTED/PROCESSING/
+  JUDGING/SELLER_DISPUTE 60 d + ACCEPTED `PENDING_REQUEST` no prazo) ∪ ML (`ml_claims` abertas ou
+  com ação), colunas comuns: `marketplace, conta, empresa, case_id, order_sn, acao_esperada`
+  (responder · validar_produto · validar_reembolso · aguardando_produto · em_analise ·
+  responder_mediador · responder_comprador · reembolsar · abrir_disputa · acompanhar),
+  **`precisa_acao`**, `prazo`, `urgencia` (vencido/hoje/amanha/depois), motivo/texto do cliente,
+  valor, itens/sku/foto, `tiny_numero`, entrada no galpão (`entrada_em`, `entrada_problemas`,
+  `separador`), última resposta e **`causa_provavel`** (`devolucao_causa_provavel(mkt, motivo)` —
+  ML pelo `nome` do catálogo: `selected_wrong_product` = cliente, `different_item_other` =
+  separação, `different_than_published` = anúncio). ~0,4 s. 29/out: 44 linhas, 28 pedem ação.
+- **Histórico que ensina — `devolucao_resposta`** (marketplace, conta, case_id, order_sn,
+  motivo/texto do cliente, solução, valor, `causa_interna`, `separador`, `acao`, `texto_resposta`,
+  `sugestao_usada` nenhuma|historico|modelo|ia|ia_editada, quem/quando, `enviado`/`resposta_mkt`/`ok`,
+  `resultado` preenchido depois pelo sync) + `devolucao_resposta_modelo` (modelos salvos à mão) +
+  **`devolucao_causa`** (dicionário: separação item errado/faltando · embalagem furado/vazado/
+  quebrado · transportadora não recebido/extravio · produto defeito/validade/anúncio · cliente
+  desistiu/não serviu/má-fé · outro). `devolucoes_recebidas` ganhou **`causa_interna`** e
+  **`separador`** (= `tags_lote.finalizada_por` pela TAG do pedido, aceita `pack_id` do ML; trigger
+  BEFORE INSERT preenche; backfill 174/489). Nada grava em `devolucao_resposta` ainda (passo 3).
+- **RPCs** (security definer, `tem_modulo('financeiro')` ou `galpao`): **`devolucao_caso(mkt,
+  case_id)`** = o painel do caso em 1 chamada (caso, itens com foto, pedido, Tiny, entrada no galpão,
+  separador, respostas anteriores do pedido; Shopee: detalhe + `view_shopee_reembolsos` + outras
+  devoluções do pedido; ML: claim + mensagens + envio de devolução); **`devolucao_sugestoes(mkt,
+  motivo, causa, acao, texto, n)`** = respostas anteriores parecidas (mesmo motivo 3 pts, causa 2,
+  ação 1, resultado favorável 1, `similarity` do `pg_trgm` no texto do cliente ×3; textos iguais
+  agrupados com "vezes") + modelos. `pg_trgm` instalada no schema `extensions` em 29/out.
+- Grants só `authenticated`/`service_role` (RLS ligado, política `app_*`); nunca anon.
+- **Próximos passos (plano):** 3 tela (abas na URL + "Pede resposta" com painel) · 4 escritas novas
+  Shopee oferta/validar e ML mensagem/reembolso/disputa/review, cada uma testada ao vivo com OK do
+  dono · 5 sugestões → IA · 6 aba Erros + MV · 7 motor da Ottz (`devolucao-auto` `?conta=`, série
+  13, clone > 29 dias) + varredura fev–jun · 8 Perdas no visual novo.
+
 ## 5.11 IA · Anúncios — unificação do gerador, Fase 1 (06/out/2026)
 
 Decisão do dono (05/out): o gerador "Anúncio Mágico" (Supabase **`pcob…`**,
@@ -4068,7 +4119,7 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 | `anuncio-publicar-sonda` | v1 | Diagnóstico só leitura: o que cada marketplace exige para criar anúncio e se os apps têm acesso — ver §5.11.3 |
 | `pesquisa-ml` | v3 (20/out: tendências também das categorias em que vendemos + `?modo=tendencias`, §5.11.13); v2 (19/out: grava `anuncio_proprio` × `participo_catalogo`) | Pesquisa de produtos ML: `descobrir_lideranca`, `diario`, `semanal` (top 20 por categoria + tendências do Pet Shop), só leitura no ML — ver §5.9.5. Crons 155–157 |
 | `pesquisa-amz` | v3 | Pesquisa de produtos Amazon: `meus`, `descobrir`, `diario` (BSR), `brand_analytics`; só leitura na SP-API — ver §5.9.6. Crons 159–162 |
-| `ml-devolucao-lookup` | v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
+| `ml-devolucao-lookup` | v5 (deploy 10, 29/out: `modulo=claims` / `claim` = espelho das reclamações em `ml_claims` + mensagens + motivos, cron 172 — §5.10.1; fonte agora em `supabase/functions/ml-devolucao-lookup/`) · v4 | Etiqueta de devolução do ML → pedido (`/shipments`) + indexador de devoluções por reclamação (cron 114) — ver §5.2.1 |
 
 **Limite rígido: ~30 segundos por execução.** Toda função que processa lote
 precisa de orçamento de tempo e parar com folga para gravar o que já fez. Isso
