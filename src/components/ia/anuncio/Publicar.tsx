@@ -530,7 +530,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
 
   const vars = variacoesQ.data?.variacoes ?? [];
   const pend = [...(d?.pendencias ?? []), ...(paiSemVariacoes
-    ? [`este é o produto pai de um produto com variações: ${ART} ${MK} recebe só anúncio simples, e o pai não tem estoque nem composição no Tiny (uma venda não baixaria nada). Crie um anúncio para cada variação${vars.length ? ` (${vars.join(", ")})` : ""}, abrindo cada uma em IA › Anúncios.`]
+    ? [ml
+      ? `este é o produto pai de um produto com variações: no Mercado Livre cada variação vira um anúncio${vars.length ? ` (${vars.join(", ")})` : ""}, com o mesmo nome de família — use o bloco "Variações no Mercado Livre" desta aba. O pai sozinho não tem estoque nem composição no Tiny.`
+      : `este é o produto pai de um produto com variações: ${ART} ${MK} recebe só anúncio simples, e o pai não tem estoque nem composição no Tiny (uma venda não baixaria nada). Crie um anúncio para cada variação${vars.length ? ` (${vars.join(", ")})` : ""}, abrindo cada uma em IA › Anúncios.`]
     : [])];
   const avisos = d?.avisos ?? [];
   return (

@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: anuncio-publicar v14 (20/out/2026) — IA · Anúncios, Fase 3
+// Edge Function: anuncio-publicar v15 (28/out/2026) — IA · Anúncios, Fase 3
 // ----------------------------------------------------------------------------
 // Envia o anúncio montado na gestão DIRETO para o marketplace (pedido do dono).
 // SHOPEE e MERCADO LIVRE (ver docs/ia-fase3-publicacao-direta.md).
@@ -75,6 +75,13 @@
 //   escondidas (generic_keyword) = palavras dos termos confirmados que o título NÃO cobre — na ficha nova vêm no
 //   formulário; no atualizar, campos.palavras (ligado por padrão; opcoes.palavras troca o texto). Mercado Livre
 //   (criar): o MODELO entra sempre que a categoria tem, preenchido com essas palavras (a pessoa pode editar).
+// v15 (28/out/2026, pedido do dono): PRODUTO COM VARIAÇÕES NO MERCADO LIVRE. As contas estão no modelo User Products:
+//   não existe array de variações — cada variação é um anúncio próprio, e o ML junta na mesma página os anúncios do
+//   mesmo vendedor/domínio com o MESMO family_name e os mesmos atributos PARENT_PK; o que muda entre eles vai nos
+//   atributos CHILD_PK (ex. UNITS_PER_PACK) ou em atributo personalizado {name, value_name}. opcoes.variacao =
+//   {sku, atributos_extra: [{name, value_name}]}: o rascunho do PAI (texto e fotos) é enviado com o SKU, o cadastro,
+//   o peso e o preço (opcoes.preco) da VARIAÇÃO; o family_name é o título do pai em todas. Criar o pai sozinho no ML
+//   virou pendência (saía um anúncio com o SKU do pai, que não tem estoque nem composição no Tiny).
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -293,7 +300,7 @@ async function carregar(rascunhoId: string) {
     db.from("ia_produto_extra").select("*").eq("sku", r.sku).maybeSingle(),
     db.from("ia_rascunho_imagem").select("id, ordem, tipo, storage_path, status").eq("rascunho_id", rascunhoId).order("ordem"),
     db.from("ia_etapa").select("etapa, status, imagem_id").eq("rascunho_id", rascunhoId),
-    db.from("ia_publicacao").select("id, canal, empresa, operacao, estado, item_id, url, fora_do_ar, erro, criado_por_nome, criado_em")
+    db.from("ia_publicacao").select("id, sku, canal, empresa, operacao, estado, item_id, url, fora_do_ar, erro, criado_por_nome, criado_em")
       .eq("rascunho_id", rascunhoId).order("criado_em", { ascending: false }).limit(10),
   ]);
   const aprovadas = new Set(((etapas.data ?? []) as any[]).filter((e) => e.etapa === "imagem" && e.status === "aprovado").map((e) => e.imagem_id));
@@ -303,9 +310,37 @@ async function carregar(rascunhoId: string) {
   const textoAprovado = ((etapas.data ?? []) as any[]).some((e) => e.etapa === "texto" && e.status === "aprovado");
   return { r: r as Record<string, any>, produto: prod.data as Record<string, any> | null, cad: cad.data as Record<string, any> | null,
     extra: extra.data as Record<string, any> | null, fotos, textoAprovado, publicacoes: (pubs.data ?? []) as Record<string, any>[],
-    capaDestino: null as string | null, avisosCapa: [] as string[] };
+    capaDestino: null as string | null, avisosCapa: [] as string[],
+    // v15: enviando uma VARIAÇÃO do produto pai (Mercado Livre): o SKU do pai e os atributos que a diferenciam
+    skuPai: null as string | null, extrasVariacao: [] as { name: string; value_name: string }[] };
 }
 type Dados = Awaited<ReturnType<typeof carregar>>;
+
+/** v15: o rascunho do PAI passa a valer para uma VARIAÇÃO dele — SKU, cadastro, peso e EAN da variação; texto e fotos do pai. */
+async function trocarParaVariacao(d: Dados, op: Opcoes): Promise<string | null> {
+  const v = (op.variacao ?? {}) as Record<string, any>;
+  const sku = String(v.sku ?? "").trim();
+  if (!/^[A-Za-z0-9._-]{1,30}$/.test(sku)) return "variação sem SKU válido";
+  const pai = String(d.r.sku);
+  const [vp, prod, cad, extra] = await Promise.all([
+    db.from("produtos").select("sku, sku_pai, ativo").eq("sku", sku).maybeSingle(),
+    db.from("ia_produto").select("sku, nome, marca, tipo").eq("sku", sku).maybeSingle(),
+    db.from("produtos").select("id_tiny, peso_bruto").eq("sku", sku).maybeSingle(),
+    db.from("ia_produto_extra").select("*").eq("sku", sku).maybeSingle(),
+  ]);
+  if (!vp.data || String(vp.data.sku_pai ?? "") !== pai) return `o SKU ${sku} não é variação do produto ${pai}`;
+  if (vp.data.ativo === false) return `a variação ${sku} está inativa no Tiny`;
+  const marcaPai = String(d.produto?.marca ?? "").trim();
+  d.skuPai = pai;
+  d.produto = { ...(prod.data ?? { sku, tipo: null }), marca: String(prod.data?.marca ?? "").trim() || marcaPai };
+  d.cad = cad.data; d.extra = extra.data;
+  // o preço do pai não serve à variação: vale só o que a tela mandar (opcoes.preco)
+  d.r = { ...d.r, sku, preco_aprovado: null, preco_sugerido: null };
+  d.extrasVariacao = (Array.isArray(v.atributos_extra) ? v.atributos_extra : [])
+    .map((x: any) => ({ name: String(x?.name ?? "").trim().slice(0, 60), value_name: String(x?.value_name ?? "").trim().slice(0, 120) }))
+    .filter((x: { name: string; value_name: string }) => x.name && x.value_name).slice(0, 4);
+  return null;
+}
 
 // v10: capa PRINCIPAL por destino (dono, 15/out/2026). Ottz Shopee = "Menor preço da Shopee";
 // Bumi Shopee = ambientada com texto; Mercado Livre (as duas contas) = ambientada limpa.
@@ -846,7 +881,9 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
 
   // características da categoria: obrigatórias (*) e as que o ML pede para a ficha. v14: o MODELO entra sempre que
   // a categoria tem (os vendedores usam o campo para as palavras que o comprador busca e o título não cobre).
-  const termos = await termosDoAnuncio(String(d.r.sku), b.titulo);
+  // v15: numa variação, os termos (e o MODELO, que é PARENT_PK: tem de ser igual em toda a família) são os do PAI
+  const termos = await termosDoAnuncio(String(d.skuPai ?? d.r.sku), b.titulo);
+  if (d.skuPai && !num(op.preco)) pendencias.push(`informe o preço da variação ${d.r.sku}`);
   const previstos = new Map<string, string>();
   for (const a of ((palpites.find((x) => String(x.category_id) === categoriaId)?.attributes ?? []) as any[])) {
     if (a?.id && a?.value_name) previstos.set(String(a.id), String(a.value_name));
@@ -903,6 +940,8 @@ async function montarCriarMl(d: Dados, op: Opcoes, token: string, conta: ContaMl
       { id: "SELLER_PACKAGE_HEIGHT", value_name: cm(medidas.altura_cm) }, { id: "SELLER_PACKAGE_WIDTH", value_name: cm(medidas.largura_cm) },
       { id: "SELLER_PACKAGE_LENGTH", value_name: cm(medidas.comprimento_cm) },
       { id: "SELLER_PACKAGE_WEIGHT", value_name: `${Math.max(1, Math.round((medidas.peso_kg ?? 0) * 1000))} g` },
+      // v15: o que diferencia esta variação das outras da família (ex. "Tipo: Sílica Grossa") — atributo personalizado
+      ...d.extrasVariacao,
     ],
   };
 
@@ -996,6 +1035,10 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
   const mC = modo === "criar" ? await montarCriarMl(d, op, token, conta, existentes) : null;
   const mA = modo === "atualizar" ? await montarAtualizarMl(d, op, token, conta, { ...alvo! }) : null;
   const m = (mC ?? mA)!;
+  // v15: o pai não vira anúncio no ML (sem estoque nem composição no Tiny) — cada variação vira o seu
+  if (mC && !d.skuPai && d.produto?.tipo === "V") {
+    mC.pendencias.unshift("este é o produto pai de um produto com variações: no Mercado Livre cada variação vira um anúncio (mesmo nome de família, a página junta todos). Use o bloco \"Variações no Mercado Livre\"");
+  }
   if (mA && mA.campos.fotos && existentes.length > 1) {
     mA.avisos.push(`este SKU tem ${existentes.length} anúncios nesta conta: no Mercado Livre, anúncios do mesmo produto podem compartilhar as fotos — a troca pode aparecer nos outros também`);
   }
@@ -1007,7 +1050,9 @@ async function fluxoMl(d: Dados, op: Opcoes, modulo: string, body: Record<string
   if (body.confirmar !== true) return json({ ok: false, erro: "envio exige confirmar: true" }, 400);
   if (m.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: m.pendencias }, 400);
   if (modo === "criar") {
-    const jaFoi = d.publicacoes.find((p) => p.canal === "mercado_livre" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar");
+    // v15: numa variação, "já foi" é por SKU (o rascunho do pai cria um anúncio por variação)
+    const jaFoi = d.publicacoes.find((p) => p.canal === "mercado_livre" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar"
+      && (!d.skuPai || String(p.sku) === String(d.r.sku)));
     if (jaFoi && op.de_novo !== true) return json({ ok: false, erro: `este rascunho já criou o anúncio ${jaFoi.item_id}. Para criar outro, marque "criar outro anúncio mesmo assim".` }, 409);
   }
   const emCurso = d.publicacoes.find((p) => p.estado === "enviando" && Date.now() - new Date(p.criado_em).getTime() < 3 * 60_000);
@@ -1757,6 +1802,10 @@ Deno.serve(async (req) => {
     }
     aplicarCapaDoDestino(d);
     if (quem.ensaio && d.r.canal !== "amazon") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
+    if (d.r.canal === "mercado_livre" && op.variacao) {
+      const erroVar = await trocarParaVariacao(d, op);
+      if (erroVar) return json({ ok: false, erro: erroVar }, 400);
+    }
     if (d.r.canal === "mercado_livre") return await fluxoMl(d, op, modulo, body, quem);
     if (d.r.canal === "amazon") return await fluxoAmazon(d, op, modulo, body, quem);
     if (d.r.canal !== "shopee") {

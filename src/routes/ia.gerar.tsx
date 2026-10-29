@@ -15,6 +15,7 @@ import { PrecoPromocao } from "@/components/ia/anuncio/PrecoPromocao";
 import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
 import { VariacoesAmazon } from "@/components/ia/anuncio/VariacoesAmazon";
+import { VariacoesML } from "@/components/ia/anuncio/VariacoesML";
 import { FiscalAmazon } from "@/components/ia/anuncio/FiscalAmazon";
 import { FiscalML } from "@/components/ia/anuncio/FiscalML";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
@@ -249,6 +250,8 @@ function GerarAnuncioPage() {
     )}
     {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
     {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+    {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
+    {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
     {/* Amazon: pesquisa pelo ASIN e família de tamanhos (18/out) */}
     {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
     {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
@@ -388,6 +391,8 @@ function GerarAnuncioPage() {
       )}
       {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
       {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+      {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
+      {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
       {/* Amazon: pesquisa pelo ASIN e família de tamanhos — pôr anúncio solto na família ou criar tamanho novo (18/out) */}
       {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
       {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
