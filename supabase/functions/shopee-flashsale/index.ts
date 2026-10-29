@@ -1,6 +1,13 @@
 // ============================================================================
-// Edge Function: shopee-flashsale v11
+// Edge Function: shopee-flashsale v12
 // ----------------------------------------------------------------------------
+// v12 (28/out): TAMBEM 20 ANUNCIOS POR RELAMPAGO. A Bumi ficou sem relampago de 21 a
+//   29/out: a programacao tinha 21 anuncios (48 variacoes, dentro das 50) e a Shopee
+//   recusou TUDO com o mesmo "exceed the max number of item limit per promotion".
+//   Nas ultimas 50 relampagos de cada loja o maximo foi 20 anuncios (Bumi; Ottz 17)
+//   e a de 20/out entrou com 20 anuncios/44 variacoes. Agora cada envio respeita os
+//   DOIS limites (20 anuncios E 50 variacoes, contando o que ja esta na do dia); o
+//   resto vira "nao coube", na ordem de quem vende mais.
 // v11 (21/out): ESCRITA SÓ COM LOGIN. A chave pública do site (que vai no código
 //   do navegador) bastava para criar/adicionar/ativar/remover/excluir relâmpagos e
 //   para programar com confirmar=1. Agora, com confirmar=1, exige sessão de usuário
@@ -185,6 +192,8 @@ async function programarLoja(
 
   // v10: 50 VARIACOES (modelos) por relampago — anuncio sem variacao conta 1.
   const MAX_POR_SALE = 50;
+  // v12: e no maximo 20 ANUNCIOS — passar de qualquer um dos dois derruba o envio inteiro.
+  const MAX_ANUNCIOS = 20;
 
   let ctx: Ctx;
   try { ctx = await pegarCtx(supabase, shopId); }
@@ -239,6 +248,7 @@ async function programarLoja(
 
   const itemIdsExistentes = new Set<number>();
   const ocupadas = new Map<number, number>(); // v10: variacoes que cada relampago do dia ja tem
+  const anunciosOcupados = new Map<number, number>(); // v12: anuncios que cada relampago do dia ja tem
   for (const s of salesDia) {
     const it = await shopeeGet(ctx, "/api/v2/shop_flash_sale/get_shop_flash_sale_items",
       { flash_sale_id: s.flash_sale_id, offset: 0, limit: 50 });
@@ -250,6 +260,8 @@ async function programarLoja(
     const comModelo = new Set(modelos.map((m) => Number(m.item_id)));
     const n = modelos.length + infos.filter((i) => i?.item_id != null && !comModelo.has(Number(i.item_id))).length;
     ocupadas.set(Number(s.flash_sale_id), Math.max(n, Number(s.item_count) || 0));
+    const nAnuncios = new Set(infos.filter((i) => i?.item_id != null).map((i) => Number(i.item_id))).size;
+    anunciosOcupados.set(Number(s.flash_sale_id), Math.max(nAnuncios, Number(s.item_count) || 0));
   }
 
   const porItem = new Map<number, any>();
@@ -270,10 +282,14 @@ async function programarLoja(
     .reduce((s: number, v: any) => s + (vendas.get(String(v.sku || "")) ?? 0), 0);
   const faltantes = [...porItem.values()].map((g) => ({ g, peso: pesoDe(g) })).sort((a, b) => b.peso - a.peso).map((x) => x.g);
   const contar = (lista: any[]) => lista.reduce((s: number, g: any) => s + (g.models?.length || 0), 0);
-  /** Anuncios INTEIROS da lista ate somarem `limite` variacoes (pula o que nao cabe e tenta o seguinte). */
-  const separar = (lista: any[], limite: number): { pega: any[]; fica: any[] } => {
+  /** Anuncios INTEIROS da lista ate somarem `limite` variacoes e no maximo `limAnuncios` anuncios
+   *  (pula o que nao cabe e tenta o seguinte). */
+  const separar = (lista: any[], limite: number, limAnuncios: number): { pega: any[]; fica: any[] } => {
     const pega: any[] = []; const fica: any[] = []; let n = 0;
-    for (const g of lista) { const m = g.models?.length || 0; if (n + m <= limite) { pega.push(g); n += m; } else fica.push(g); }
+    for (const g of lista) {
+      const m = g.models?.length || 0;
+      if (n + m <= limite && pega.length < limAnuncios) { pega.push(g); n += m; } else fica.push(g);
+    }
     return { pega, fica };
   };
   const jaNaPromo = validos.length - faltantes.reduce((s, g) => s + g.models.length, 0);
@@ -282,8 +298,10 @@ async function programarLoja(
     flash_sale_id: Number(s.flash_sale_id), status: s.status,
     itens: ocupadas.get(Number(s.flash_sale_id)) ?? (Number(s.item_count) || 0),
     cap: Math.max(0, MAX_POR_SALE - (ocupadas.get(Number(s.flash_sale_id)) ?? (Number(s.item_count) || 0))),
+    capAnuncios: Math.max(0, MAX_ANUNCIOS - (anunciosOcupados.get(Number(s.flash_sale_id)) ?? (Number(s.item_count) || 0))),
   }));
   const capTotal = capacidades.reduce((s: number, c: any) => s + c.cap, 0);
+  const capAnunciosTotal = capacidades.reduce((s: number, c: any) => s + c.capAnuncios, 0);
 
   if (faltantes.length === 0) {
     return {
@@ -294,12 +312,12 @@ async function programarLoja(
 
   if (!confirmar) {
     // v10: tudo em VARIACOES (e o que a Shopee conta)
-    const previa = separar(faltantes, salesDia.length ? capTotal : MAX_POR_SALE);
+    const previa = salesDia.length ? separar(faltantes, capTotal, capAnunciosTotal) : separar(faltantes, MAX_POR_SALE, MAX_ANUNCIOS);
     return {
       shop_id: shopId, status: "dry", dia: diaAlvo, timeslot_id: timeslotId,
       sales_existentes: salesDia.length, itens_ja_na_promo: itemIdsExistentes.size,
       faltam: contar(faltantes), anuncios_faltando: faltantes.length,
-      cabem: contar(previa.pega),
+      cabem: contar(previa.pega), anuncios_cabem: previa.pega.length,
       nao_cabem: contar(previa.fica),
       nao_cabem_skus: previa.fica.flatMap((g: any) => validos.filter((v: any) => Number(v.item_id) === Number(g.item_id)).map((v: any) => v.sku)),
       pulados, payload: previa.pega,
@@ -472,14 +490,14 @@ async function programarLoja(
   }
 
   for (const c of capacidades) {
-    if (fila.length === 0 || c.cap <= 0) continue;
-    const parte = separar(fila, c.cap);
+    if (fila.length === 0 || c.cap <= 0 || c.capAnuncios <= 0) continue;
+    const parte = separar(fila, c.cap, c.capAnuncios);
     fila = parte.fica;
     if (parte.pega.length) await addItens(c.flash_sale_id, parte.pega);
   }
 
   if (fila.length > 0 && salesDia.length === 0) {
-    const parte = separar(fila, MAX_POR_SALE);
+    const parte = separar(fila, MAX_POR_SALE, MAX_ANUNCIOS);
     const chunk = parte.pega; fila = parte.fica;
     const cr = await shopeePost(ctx, "/api/v2/shop_flash_sale/create_shop_flash_sale", { timeslot_id: Number(timeslotId) });
     const flashSaleId = cr?.response?.flash_sale_id;
@@ -499,7 +517,7 @@ async function programarLoja(
     falhaModelos += nModelos(fila);
     for (const g of fila) for (const _m of g.models) {
       const linha = validos.find((v: any) => Number(v.item_id) === Number(g.item_id));
-      problemas.push({ sku: linha?.sku ?? String(g.item_id), motivo: "nao coube na relampago do dia (a Shopee permite 1 por dia, ate 50 variacoes — entram primeiro os que mais vendem)" });
+      problemas.push({ sku: linha?.sku ?? String(g.item_id), motivo: "nao coube na relampago do dia (a Shopee permite 1 por dia, ate 20 anuncios e 50 variacoes — entram primeiro os que mais vendem)" });
     }
   }
 
