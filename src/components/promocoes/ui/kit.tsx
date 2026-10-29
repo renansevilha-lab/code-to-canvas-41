@@ -427,9 +427,15 @@ export function TabelaPromo({
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, paddingRight: 8 }}>
                       <Foto url={l.foto} />
                       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                        <span title={l.nome} style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.nome}</span>
-                        <span className={MONO} style={{ fontSize: 11, color: "var(--pm-t3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={`SKU ${l.sku ?? "—"} · ${l.code}${l.sub ? ` · ${l.sub}` : ""}`}>
-                          SKU {l.sku ?? "—"} · {l.code}{l.sub ? ` · ${l.sub}` : ""}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                          {/* variação em destaque: o nome do anúncio é igual em todas as linhas do mesmo anúncio */}
+                          {l.sub && (
+                            <span title={`Variação: ${l.sub}`} style={{ flex: "none", maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11.5, fontWeight: 600, padding: "1px 7px", borderRadius: 6, background: "var(--pm-as)", color: "var(--pm-at)", border: "1px solid var(--pm-bc)" }}>{l.sub}</span>
+                          )}
+                          <span title={l.nome} style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.nome}</span>
+                        </div>
+                        <span className={MONO} style={{ fontSize: 11, color: "var(--pm-t3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={`SKU ${l.sku ?? "—"} · ${l.code}`}>
+                          SKU {l.sku ?? "—"} · {l.code}
                         </span>
                       </div>
                     </div>
