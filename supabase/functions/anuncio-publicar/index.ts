@@ -82,6 +82,11 @@
 //   {sku, atributos_extra: [{name, value_name}]}: o rascunho do PAI (texto e fotos) é enviado com o SKU, o cadastro,
 //   o peso e o preço (opcoes.preco) da VARIAÇÃO; o family_name é o título do pai em todas. Criar o pai sozinho no ML
 //   virou pendência (saía um anúncio com o SKU do pai, que não tem estoque nem composição no Tiny).
+// v16 (29/out/2026, pedido do dono): PRODUTO COM VARIAÇÕES NA AMAZON, a família inteira pela tela. O rascunho do PAI
+//   vai uma vez como anúncio PAI (opcoes.pai_amz = {tema}: parentage_level parent + variation_theme, sem oferta,
+//   preço nem código de barras; SKU na Amazon = o SKU do pai) e uma vez por VARIAÇÃO (opcoes.variacao = {sku} +
+//   opcoes.familia_amz = {pai_sku, tema, valor}: ficha nova com SKU, cadastro, peso, EAN e preço da variação, texto e
+//   fotos do pai, parentage_level child ligado ao pai e o atributo do tema = valor). "Já criou" passa a ser por SKU.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -124,7 +129,7 @@ const num = (v: unknown): number | null => {
 // deno-lint-ignore no-explicit-any
 type Quem = { id: string | null; nome: string | null; doUsuario?: any; ensaio?: boolean };
 // v11: rota de ensaio da criação na Amazon — só a PRÉVIA (leitura + validador), morre sozinha
-const ENSAIO_AMZ_ATE = Date.parse("2026-10-20T03:00:00Z");
+const ENSAIO_AMZ_ATE = Date.parse("2026-10-31T03:00:00Z");
 async function exigirAcesso(req: Request): Promise<Quem | Response> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearer && bearer === SRK) return { id: null, nome: "sistema" };
@@ -1439,14 +1444,49 @@ function traduzAmz(t: string): string {
   return t;
 }
 
+// v16: família de variações (mesma regra da amazon-variacoes)
+function attrsDoTemaAmz(tema: string): string[] {
+  return tema.toLowerCase().split("/").map((x) => x.trim()).filter(Boolean)
+    .map((x) => (x === "size_name" ? "size" : x === "color_name" ? "color" : x === "style_name" ? "style" : x));
+}
+function valorDoTemaAmz(c: ContaAmz, tema: string, valor: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const ks = attrsDoTemaAmz(tema); const vs = valor.split("/").map((x) => x.trim());
+  ks.forEach((k, i) => {
+    const v = vs[i] ?? vs[0] ?? valor;
+    out[k] = ["number_of_items", "item_package_quantity", "total_product_quantity"].includes(k)
+      ? [{ value: Math.max(1, Math.round(Number(v.replace(/[^\d.,]/g, "").replace(",", ".")) || 1)), marketplace_id: c.mkt }]
+      : [{ value: v, language_tag: "pt_BR", marketplace_id: c.mkt }];
+  });
+  return out;
+}
+/** Temas de variação que o tipo de produto aceita (enum do esquema). */
+function temasAmz(props: Record<string, any>): string[] {
+  const pv = props?.variation_theme?.items?.properties?.name;
+  return pv ? opcoesAmz(pv).ids : [];
+}
+/** Tema padrão pelos valores: tamanho/peso → SIZE; o resto → STYLE (o primeiro que o tipo aceitar). */
+function temaPadraoAmz(temas: string[], valores: string[]): string {
+  const medida = valores.length > 0 && valores.every((v) => /\d/.test(v) && /(kg|g|ml|l|cm|un|unid|x)\b/i.test(v));
+  const pref = medida ? ["SIZE", "SIZE_NAME", "ITEM_WEIGHT"] : ["STYLE", "STYLE_NAME", "ITEM_FORM", "SCENT", "SCENT_NAME", "COLOR", "COLOR_NAME", "SIZE", "SIZE_NAME"];
+  return pref.find((t) => !temas.length || temas.includes(t)) ?? temas[0] ?? "SIZE";
+}
+
 async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Existente[]) {
   const sku = String(d.r.sku);
-  const skuAmz = String(op.sku_amazon ?? `${sku}_FBA`).trim();
+  // v16: PAI da família (o produto com variações) ou FILHO (uma variação dele)
+  const ehPai = !d.skuPai && d.produto?.tipo === "V" && !!op.pai_amz;
+  const fam = d.skuPai && op.familia_amz ? op.familia_amz as Record<string, any> : null;
+  const paiSkuAmz = fam ? String(fam.pai_sku ?? d.skuPai).trim() : "";
+  const valorVar = fam ? String(fam.valor ?? "").trim() : "";
+  const skuAmz = String(op.sku_amazon ?? (ehPai ? sku : `${sku}_FBA`)).trim();
   const b = base(d, op, { quem: "a Amazon", titulo: LIM_AMZ.titulo, descMin: 10, descMax: 50000, fotos: LIM_AMZ.fotos });
-  const pendencias: string[] = [...b.problemas.preco];
+  const pendencias: string[] = ehPai ? [] : [...b.problemas.preco];
   const avisos: string[] = [...d.avisosCapa];
-  if (existentes.length) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta conta: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
-  if (d.produto?.tipo === "V") pendencias.push("este é um produto PAI (com variações): na Amazon, crie o anúncio de cada variação e junte em família no bloco \"Variações na Amazon\"");
+  if (existentes.length && !ehPai) avisos.push(`este produto JÁ tem ${existentes.length} anúncio(s) nesta conta: criar outro gera anúncio duplicado. Para melhorar o que existe, use "Atualizar anúncio existente"`);
+  if (d.produto?.tipo === "V" && !ehPai) pendencias.push("este é um produto PAI (com variações): na Amazon, use o bloco \"Família na Amazon\" desta aba — ele cria o anúncio pai e um anúncio por variação, já ligados");
+  if (fam && !valorVar) pendencias.push(`informe o que diferencia a variação ${sku} (ex.: Sílica Grossa, 2kg)`);
+  if (fam && !paiSkuAmz) pendencias.push("informe o SKU do anúncio pai na Amazon");
 
   // código de barras: o digitado → o já conferido → o do Tiny → o do cadastro. Só vale se for DESTE produto
   // (kit costuma herdar o da unidade; na Amazon um EAN é um produto e o kit cairia na ficha da unidade).
@@ -1456,8 +1496,8 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
     db.from("produto_kits").select("sku_componente, quantidade").eq("sku_kit", sku),
     cestTiny(d.cad?.id_tiny ? Number(d.cad.id_tiny) : null),
   ]);
-  const digitado = String(op.gtin ?? "").replace(/\D/g, "");
-  let ean: string | null = digitado || String(d.extra?.gtin ?? tiny.gtin ?? cadR.data?.gtin ?? "").replace(/\D/g, "") || null;
+  const digitado = ehPai ? "" : String(op.gtin ?? "").replace(/\D/g, "");
+  let ean: string | null = ehPai ? null : (digitado || String(d.extra?.gtin ?? tiny.gtin ?? cadR.data?.gtin ?? "").replace(/\D/g, "") || null);
   if (ean && !gtinValido(ean)) {
     pendencias.push(`o código de barras ${ean} não é válido (o EAN tem 13 dígitos e o último confere os outros)`);
     ean = null;
@@ -1484,7 +1524,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
         url: `https://www.amazon.com.br/dp/${i.asin}`,
       }));
   }
-  const caminho: "oferta" | "ficha" = op.caminho === "ficha" || op.caminho === "oferta" ? op.caminho : (asins.length ? "oferta" : "ficha");
+  const caminho: "oferta" | "ficha" = ehPai || fam ? "ficha" : op.caminho === "ficha" || op.caminho === "oferta" ? op.caminho : (asins.length ? "oferta" : "ficha");
   if (caminho === "oferta" && !asins.length) pendencias.push("não há produto no catálogo da Amazon com este código de barras para entrar na oferta: use \"ficha nova\"");
   const alvoAsin = caminho === "oferta" ? (asins.find((a) => a.asin === String(op.asin ?? "")) ?? asins[0] ?? null) : null;
 
@@ -1509,6 +1549,13 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   if (!esq) avisos.push(`não consegui ler o que o tipo ${tipo} exige: a conferência fica só com o validador`);
   const props = esq?.props ?? {};
   const temCampo = (k: string) => !esq || k in props;
+  const temas = temasAmz(props);
+  const tema = ehPai || fam ? String((ehPai ? op.pai_amz?.tema : fam?.tema) ?? "").trim().toUpperCase() || temaPadraoAmz(temas, valorVar ? [valorVar] : []) : "";
+  if (tema && temas.length && !temas.includes(tema)) pendencias.push(`o tipo ${tipo} não aceita variação por ${tema}: escolha ${temas.slice(0, 12).join(", ")}`);
+  if (fam && paiSkuAmz) {
+    const pai = await amzItem(c, paiSkuAmz, "GET", { includedData: "summaries" });
+    if (!mlOk(pai)) avisos.push(`o anúncio pai ${paiSkuAmz} ainda não existe nesta conta: no envio da família ele é criado primeiro`);
+  }
 
   // restrições para vender (marca/categoria que pedem aprovação)
   if (alvoAsin) {
@@ -1522,7 +1569,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   const med = await medidasDoAnuncio(d, op, tiny);
   if (caminho === "ficha") {
     avisos.push(...med.avisos);
-    if (med.faltaPeso) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
+    if (med.faltaPeso && !ehPai) pendencias.push("informe o peso da embalagem (kg): o cadastro está sem peso e não deu para calcular");
   }
 
   // ---------------- formulário: campos que a pessoa confere (com sugestão) + os que a Amazon exigir
@@ -1566,6 +1613,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   ]);
   const valorForm = (k: string) => (typeof digitados[k] === "string" ? String(digitados[k]).trim() : (sugestoes[k] ?? ""));
 
+  const tituloFilho = `${b.titulo.replace(/\s*\([^)]*\)\s*$/, "").trim()} (${valorVar})`.slice(0, LIM_AMZ.titulo);
   /** O corpo completo para a Amazon (fotos como endereços assinados). */
   const montar = (urls: string[]) => {
     const t = (v: string) => [{ value: v, language_tag: "pt_BR", marketplace_id: c.mkt }];
@@ -1600,6 +1648,24 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
       const campo = props[k] ? campoAmz(c, props[k], v) : (k in sugestoes ? so(/^(true|false)$/.test(v) ? v === "true" : v) : null);
       if (campo) a[k] = campo;
     }
+    if (ehPai) {
+      // o pai não se vende: sem oferta, preço, código de barras nem atributo do tema
+      for (const k of ["condition_type", "purchasable_offer", "list_price", "fulfillment_availability", "merchant_suggested_asin",
+        "externally_assigned_product_identifier", "supplier_declared_has_product_identifier_exemption", ...attrsDoTemaAmz(tema)]) delete a[k];
+      Object.assign(a, {
+        parentage_level: so("parent"),
+        child_parent_sku_relationship: [{ child_relationship_type: "variation", marketplace_id: c.mkt }],
+        variation_theme: [{ name: tema, marketplace_id: c.mkt }],
+      });
+    } else if (fam) {
+      Object.assign(a, {
+        item_name: t(tituloFilho),
+        parentage_level: so("child"),
+        child_parent_sku_relationship: [{ child_relationship_type: "variation", parent_sku: paiSkuAmz, marketplace_id: c.mkt }],
+        variation_theme: [{ name: tema, marketplace_id: c.mkt }],
+        ...valorDoTemaAmz(c, tema, valorVar),
+      });
+    }
     // só vai o que o tipo de produto conhece (campo a mais é recusado)
     if (esq) for (const k of Object.keys(a)) if (!(k in props)) delete a[k];
     return { productType: tipo, requirements: requisitos, attributes: a };
@@ -1615,18 +1681,19 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   if (caminho === "ficha") {
     pendencias.push(...b.problemas.titulo, ...b.problemas.fotos);
     if (!d.textoAprovado) pendencias.push("aprove o texto (bloco 1) antes de enviar");
-    if (!eanFicha) avisos.push(ean && !ehBumi
+    if (!eanFicha && !ehPai) avisos.push(ean && !ehBumi
       ? `o código de barras ${ean} é do fabricante: com a marca "Genérico" ele não vai (a Amazon recusaria, 8572). Sem código, a ficha só passa se "Genérico" tiver isenção de GTIN no Seller Central`
       : "sem código de barras: a Amazon só aceita a ficha nova se a marca tiver isenção de GTIN aprovada no Seller Central");
     if (!valorForm("brand")) pendencias.push("informe a marca");
   } else {
     avisos.push(`entra como OFERTA no produto ${alvoAsin?.asin ?? ""} que já existe na Amazon: título, fotos e descrição são os da ficha dela — os deste anúncio não vão`);
   }
-  avisos.push("vendas pelo FBA: o anúncio só vende depois que o estoque chegar ao CD da Amazon (envio pelo Seller Central ou, na SVL, pela Reposição)");
+  if (ehPai) avisos.push(`anúncio PAI da família (variação por ${tema}): não se vende sozinho, só agrupa as variações na mesma página`);
+  else avisos.push("vendas pelo FBA: o anúncio só vende depois que o estoque chegar ao CD da Amazon (envio pelo Seller Central ou, na SVL, pela Reposição)");
 
   // dados fiscais: sem NCM o Faturador não emite a nota (e o anúncio pode ser bloqueado no transbordo)
   const ncmFinal = String(valorForm("ncm_code")).replace(/\D/g, "");
-  if (temCampo("ncm_code")) {
+  if (temCampo("ncm_code") && !ehPai) {
     if (!ncmFinal) pendencias.push(d.cad?.id_tiny ? "o produto está sem NCM (Classificação fiscal) no Tiny: cadastre lá ou digite no formulário" : "o produto não foi achado no Tiny para puxar o NCM: digite no formulário");
     else if (ncmFinal.length !== 8) pendencias.push(`o NCM ${ncmFinal} precisa ter 8 dígitos`);
     else if (!ncmTiny && !String(digitados.ncm_code ?? "").trim()) avisos.push(`NCM ${ncmFinal} veio do que já foi conferido aqui, não do Tiny (o Tiny não respondeu)`);
@@ -1638,7 +1705,7 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
 
   // VALIDADOR da Amazon: confere o corpo sem criar nada
   const errosCampo = new Set<string>();
-  if (!pendencias.length && b.preco) {
+  if (!pendencias.length && (b.preco || ehPai)) {
     const v = await amzItem(c, skuAmz, "PUT", { mode: "VALIDATION_PREVIEW" }, montar(await assinar(900)));
     const pv = problemasAmz(v.body);
     for (const i of ((v.body?.issues ?? []) as any[])) {
@@ -1666,10 +1733,11 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
   return {
     pendencias: [...new Set(pendencias)], avisos: [...new Set(avisos)], montar, assinar, skuAmz, caminho, alvoAsin, ean, med, tiny, ncm: ncmFinal || null,
     previa: {
-      loja: c.nome, sku, titulo: caminho === "oferta" ? (alvoAsin?.titulo ?? b.titulo) : b.titulo, descricao: junto, preco: b.preco,
+      loja: c.nome, sku, titulo: caminho === "oferta" ? (alvoAsin?.titulo ?? b.titulo) : fam ? tituloFilho : b.titulo, descricao: junto, preco: ehPai ? null : b.preco,
       fotos: caminho === "oferta" ? [] : b.fotos, ean, medidas: med.medidas, estoque: 0, fora_do_ar: false,
       atributos, limites: { titulo: LIM_AMZ.titulo, fotos: LIM_AMZ.fotos },
       amazon: { caminho, asins, asin: alvoAsin?.asin ?? null, tipo, tipos, sku_amazon: skuAmz, unidades, canal_envio: "FBA", marca, generico: !ehBumi, ean_ficha: eanFicha,
+        familia: ehPai || fam ? { papel: ehPai ? "pai" : "filho", tema, temas, valor: valorVar || null, pai_sku: ehPai ? skuAmz : paiSkuAmz } : null,
         fiscal: {
           ncm: ncmFinal || null, ncm_fonte: String(digitados.ncm_code ?? "").trim() ? "digitado" : ncmTiny ? "tiny" : ncmBase ? "conferido" : null,
           origem: String(valorForm("import_designation") || "0"), origem_tiny: tiny.origem ?? null,
@@ -1681,7 +1749,9 @@ async function montarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, existentes: Exi
 }
 
 async function enviarCriarAmz(d: Dados, op: Opcoes, c: ContaAmz, m: Awaited<ReturnType<typeof montarCriarAmz>>, quem: Quem): Promise<Response> {
-  const jaFoi = d.publicacoes.find((p) => p.canal === "amazon" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar");
+  // v16: o rascunho do pai cria o pai e um anúncio por variação: "já foi" é por SKU
+  const jaFoi = d.publicacoes.find((p) => p.canal === "amazon" && p.empresa === d.r.empresa && p.estado === "publicado" && p.operacao !== "atualizar"
+    && String(p.sku) === String(d.r.sku));
   if (jaFoi && op.de_novo !== true) return json({ ok: false, erro: `este rascunho já criou o anúncio ${jaFoi.item_id}. Para criar outro, marque "criar outro anúncio mesmo assim".` }, 409);
   const { data: pub, error: ePub } = await db.from("ia_publicacao").insert({
     rascunho_id: d.r.id, sku: d.r.sku, canal: "amazon", empresa: d.r.empresa, shop_id: c.shop_id, estado: "enviando", operacao: "criar",
@@ -1802,7 +1872,7 @@ Deno.serve(async (req) => {
     }
     aplicarCapaDoDestino(d);
     if (quem.ensaio && d.r.canal !== "amazon") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
-    if (d.r.canal === "mercado_livre" && op.variacao) {
+    if ((d.r.canal === "mercado_livre" || d.r.canal === "amazon") && op.variacao) {
       const erroVar = await trocarParaVariacao(d, op);
       if (erroVar) return json({ ok: false, erro: erroVar }, 400);
     }

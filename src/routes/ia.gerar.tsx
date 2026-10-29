@@ -16,6 +16,7 @@ import { VariacoesShopee } from "@/components/ia/anuncio/VariacoesShopee";
 import { AmpliarVariacoes } from "@/components/ia/anuncio/AmpliarVariacoes";
 import { VariacoesAmazon } from "@/components/ia/anuncio/VariacoesAmazon";
 import { VariacoesML } from "@/components/ia/anuncio/VariacoesML";
+import { FamiliaAmazon } from "@/components/ia/anuncio/FamiliaAmazon";
 import { FiscalAmazon } from "@/components/ia/anuncio/FiscalAmazon";
 import { FiscalML } from "@/components/ia/anuncio/FiscalML";
 import { PromocaoNoEnvio } from "@/components/ia/anuncio/PromocaoNoEnvio";
@@ -252,6 +253,8 @@ function GerarAnuncioPage() {
     {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
     {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
     {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
+    {/* produto pai na Amazon: anúncio pai + um por variação, já ligados (29/out) */}
+    {dados.produto.tipo === "V" && canal === "amazon" && <FamiliaAmazon key={`fam-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
     {/* Amazon: pesquisa pelo ASIN e família de tamanhos (18/out) */}
     {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
     {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
@@ -393,6 +396,8 @@ function GerarAnuncioPage() {
       {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
       {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
       {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
+    {/* produto pai na Amazon: anúncio pai + um por variação, já ligados (29/out) */}
+    {dados.produto.tipo === "V" && canal === "amazon" && <FamiliaAmazon key={`fam-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
       {/* Amazon: pesquisa pelo ASIN e família de tamanhos — pôr anúncio solto na família ou criar tamanho novo (18/out) */}
       {canal === "amazon" && <VariacoesAmazon key={`va-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
       {/* Amazon: só os dados fiscais (NCM, origem, atividade, CEST) de anúncio que já existe (22/out) */}
