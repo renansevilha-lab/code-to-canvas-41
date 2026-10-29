@@ -4058,6 +4058,13 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
   HistoricoTiny.tsx`): Ambas/ACZ/SVL, barras por mês, tabela com pedidos, faturamento, vs mês anterior, vs ano anterior,
   por marketplace e cancelado à parte; mês com dia ainda não lido aparece "incompleto" (sem comparação).
   É o VALOR DO PEDIDO no Tiny (com frete, sem taxas/custo) — não bate com o "Desempenho do período" (integrado).
+- **Começa em JUL/2025 (dono, 29/out, com o DRE fiscal do Tiny de 2025):** o relatório de NF da ACZ dá jan–jun/2025
+  ≈ R$ 52–81 mil/mês (perto da conta SVL) e salta para R$ 266,6 mil em julho; a conta Ottz já tinha ~R$ 250 mil/mês de
+  pedidos em fev/2025, que não viravam nota por este Tiny. Conferido julho/2025 da Ottz: 7.623 pedidos não cancelados,
+  R$ 287,4 mil × relatório 7.078 notas, R$ 266,6 mil (−7%: pedido ≠ nota, data do pedido ≠ data da emissão). A tela
+  filtra `mes >= 2025-07-01`; os dias da Ottz de out/2024 a jun/2025 ficaram `fora_do_plano` no estado (a leitura
+  noturna não os pede). A SVL antes de julho continua no banco, só não aparece. Relatório (receita bruta por NF, 2025):
+  jul 266.631,87 · ago 302.301,60 · set 335.381,64 · out 420.020,68 · nov 474.804,89 · dez 541.764,41.
 
 ## 6. Edge Functions
 

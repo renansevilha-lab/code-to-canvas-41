@@ -7,8 +7,9 @@ import { L, int, pct } from "./formato";
 // ============================================================================
 // Dashboard › "Histórico de faturamento (Tiny)" (29/out/2026, pedido do dono).
 // Só os TOTAIS por mês, lidos da listagem do Tiny pela edge fn tiny-vendas-historico
-// (tabela tiny_vendas_dia → view_vendas_tiny_mensal). Vai de out/2024 (limite do plano
-// da conta SVL) até ontem, numa fonte só, para comparar mês contra mês e ano contra ano.
+// (tabela tiny_vendas_dia → view_vendas_tiny_mensal). Começa em JUL/2025 (dono, 29/out:
+// antes disso o relatório fiscal da ACZ não representa a conta Ottz — o Tiny tem os pedidos,
+// mas as notas saíam por outro caminho) e vai até ontem, para comparar mês e ano.
 // NÃO é a mesma conta do "Desempenho do período": aqui é o valor do pedido no Tiny
 // (com frete, sem taxas nem custo); lá é o integrado dos marketplaces. Cancelados à parte.
 // Bloco recolhível; aberto/fechado fica no navegador.
@@ -27,6 +28,7 @@ const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out
 const rotulo = (m: string) => `${MES[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
 const menos1Ano = (m: string) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`;
 const CHAVE = "dashboard.historicoTiny.aberto";
+const INICIO = "2025-07-01";
 
 const th: CSSProperties = { textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--pm-t3)", padding: "6px 8px", whiteSpace: "nowrap", borderBottom: "1px solid var(--pm-b)" };
 const td: CSSProperties = { textAlign: "right", padding: "6px 8px", whiteSpace: "nowrap", borderBottom: "1px solid var(--pm-b)" };
@@ -40,7 +42,7 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
     queryKey: ["dashboard", "historico-tiny", tick], enabled: aberto, staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data, error } = await supabaseExternal.from("view_vendas_tiny_mensal" as never)
-        .select("mes, empresa, marketplace, canal, pedidos, valor, pedidos_cancelados, valor_cancelado").order("mes").limit(5000);
+        .select("mes, empresa, marketplace, canal, pedidos, valor, pedidos_cancelados, valor_cancelado").gte("mes", INICIO).order("mes").limit(5000);
       if (error) throw error;
       return (data ?? []) as unknown as Linha[];
     },
@@ -51,7 +53,7 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
     queryFn: async () => {
       const todos: Estado[] = [];
       for (let off = 0; off < 5000; off += 1000) {
-        const { data, error } = await supabaseExternal.from("tiny_vendas_dia_estado" as never).select("conta, dia, concluido_em, fora_do_plano").range(off, off + 999);
+        const { data, error } = await supabaseExternal.from("tiny_vendas_dia_estado" as never).select("conta, dia, concluido_em, fora_do_plano").gte("dia", INICIO).range(off, off + 999);
         if (error) throw error;
         todos.push(...((data ?? []) as unknown as Estado[]));
         if (!data || data.length < 1000) break;
