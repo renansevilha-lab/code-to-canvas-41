@@ -20,7 +20,8 @@ import { calcularPreco, chamarPublicar, chamarVariacoes, type IaRascunho } from 
 // ============================================================================
 
 interface Linha { sku: string; nome: string; valor: string; preco: string; ean: string; incluir: boolean }
-interface Conferido { pendencias: string[]; avisos: string[]; titulo?: string; skuAmz?: string; temas?: string[]; tema?: string }
+interface Atributo { id: string; nome: string; obrigatorio: boolean; valor: string; opcoes: string[] }
+interface Conferido { pendencias: string[]; avisos: string[]; titulo?: string; skuAmz?: string; temas?: string[]; tema?: string; faltam?: Atributo[] }
 interface Feito { sku: string; ok: boolean; item_id?: string; url?: string | null; erro?: string; pulado?: boolean }
 
 const numero = (s: string) => { const n = Number(String(s).replace(/\./g, "").replace(",", ".")); return Number.isFinite(n) && n > 0 ? n : null; };
@@ -35,6 +36,9 @@ export function FamiliaAmazon({ sku, empresa, rascunho }: { sku: string; empresa
   const [confDe, setConfDe] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<"" | "conferindo" | "enviando">("");
   const [feitos, setFeitos] = useState<Feito[]>([]);
+  // campos que a Amazon exige e vieram vazios (ex.: Cor em areia): preenchidos uma vez, valem para o pai e as variações
+  const [extras, setExtras] = useState<Record<string, string>>({});
+  const [pedidos, setPedidos] = useState<Atributo[]>([]);
 
   // variações ativas, com o valor da grade do Tiny (ou o fim do nome)
   const baseQ = useQuery({
@@ -74,19 +78,21 @@ export function FamiliaAmazon({ sku, empresa, rascunho }: { sku: string; empresa
 
   const escolhidas = (linhas ?? []).filter((l) => l.incluir);
   const repetidas = escolhidas.filter((l, i) => escolhidas.findIndex((o) => o.valor.trim().toLowerCase() === l.valor.trim().toLowerCase()) !== i);
-  const pedido = JSON.stringify({ tema, l: escolhidas.map((l) => [l.sku, l.valor, l.preco, l.ean]) });
+  const pedido = JSON.stringify({ tema, extras, l: escolhidas.map((l) => [l.sku, l.valor, l.preco, l.ean]) });
+  const atributos = () => { const a = Object.fromEntries(Object.entries(extras).filter(([, v]) => v.trim()).map(([k, v]) => [k, v.trim()])); return Object.keys(a).length ? { atributos: a } : {}; };
   const conferidoAgora = confDe === pedido;
   const destino = { canal: "amazon", empresa };
   const PAI = "__pai__";
 
-  const opPai = () => ({ modo: "criar", pai_amz: { tema } });
+  const opPai = () => ({ modo: "criar", pai_amz: { tema }, ...atributos() });
   const opFilho = (l: Linha) => ({
-    modo: "criar", preco: numero(l.preco), ...(l.ean.trim() ? { gtin: l.ean.trim() } : {}),
+    modo: "criar", preco: numero(l.preco), ...atributos(), ...(l.ean.trim() ? { gtin: l.ean.trim() } : {}),
     variacao: { sku: l.sku }, familia_amz: { pai_sku: sku, tema, valor: l.valor.trim() },
   });
   const ler = (r: any): Conferido => ({
     pendencias: r.pendencias ?? [], avisos: r.avisos ?? [], titulo: r.previa?.titulo,
     skuAmz: r.previa?.amazon?.sku_amazon, temas: r.previa?.amazon?.familia?.temas ?? [], tema: r.previa?.amazon?.familia?.tema,
+    faltam: ((r.previa?.atributos ?? []) as Atributo[]).filter((a) => a.obrigatorio && !String(a.valor ?? "").trim()),
   });
 
   async function conferir() {
@@ -104,6 +110,10 @@ export function FamiliaAmazon({ sku, empresa, rascunho }: { sku: string; empresa
       catch (e) { out[l.sku] = { erro: (e as Error).message }; }
       setConf({ ...out });
     }
+    // junta os campos exigidos e vazios de todos (sem repetir), para a pessoa preencher uma vez
+    const m = new Map<string, Atributo>();
+    for (const c of Object.values(out)) if (!("erro" in c)) for (const a of c.faltam ?? []) if (!m.has(a.id)) m.set(a.id, a);
+    setPedidos((ant) => [...new Map([...ant, ...m.values()].map((a) => [a.id, a])).values()]);
     setConfDe(pedido); setOcupado("");
   }
 
@@ -220,6 +230,21 @@ export function FamiliaAmazon({ sku, empresa, rascunho }: { sku: string; empresa
             </table>
           </div>
           {repetidas.length > 0 && <p className="text-xs text-destructive">{repetidas.map((l) => l.sku).join(", ")}: mesmo valor de outra variação — a Amazon não aceita dois iguais na família.</p>}
+          {pedidos.length > 0 && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 space-y-2">
+              <div className="text-xs text-amber-700 dark:text-amber-400">A Amazon exige estes campos. Preencha uma vez: vale para o pai e todas as variações. Depois, confira de novo.</div>
+              <div className="flex flex-wrap gap-2">
+                {pedidos.map((a) => (
+                  <label key={a.id} className="block text-xs">
+                    <span className="text-muted-foreground">{a.nome}</span>
+                    <Input className="h-7 w-48 text-xs mt-0.5" list={`fam-amz-${a.id}`} value={extras[a.id] ?? ""} disabled={!!ocupado}
+                      onChange={(e) => setExtras((x) => ({ ...x, [a.id]: e.target.value }))} placeholder={a.id === "color" ? "ex.: Branco" : ""} />
+                    {a.opcoes.length > 0 && <datalist id={`fam-amz-${a.id}`}>{a.opcoes.map((o) => <option key={o} value={o} />)}</datalist>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" disabled={!rascunho || !!ocupado || escolhidas.length === 0 || !tema} onClick={() => void conferir()}>
               {ocupado === "conferindo" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}Conferir na Amazon
