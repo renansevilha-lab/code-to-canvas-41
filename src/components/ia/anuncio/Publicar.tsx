@@ -287,9 +287,26 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
     placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<Resposta> => (await chamarPublicar("previa", { rascunho_id: rascunho.id, destino, opcoes: limpar(aplicado) })) as Resposta,
   });
+  // PRODUTO PAI (28/out, relato do dono): o envio ao Mercado Livre/Amazon só cria anúncio SIMPLES — com
+  // o pai, saía um anúncio com o SKU do pai (sem estoque nem composição no Tiny; venda não baixa nada).
+  // Nesses canais o pai não pode ser criado: cada variação vira o seu próprio anúncio.
+  const variacoesQ = useQuery({
+    queryKey: ["ia-anuncio", "produto", rascunho.sku, "variacoes-ativas"],
+    enabled: ml || amz,
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<{ tipo: string | null; variacoes: string[] }> => {
+      const [eu, filhas] = await Promise.all([
+        supabaseExternal.from("produtos").select("tipo").eq("sku", rascunho.sku).maybeSingle(),
+        supabaseExternal.from("produtos").select("sku").eq("sku_pai", rascunho.sku).eq("ativo", true).order("sku"),
+      ]);
+      return { tipo: (eu.data as { tipo: string | null } | null)?.tipo ?? null, variacoes: ((filhas.data ?? []) as { sku: string }[]).map((x) => x.sku) };
+    },
+  });
   const d = previaQ.data;
   const p = d?.previa;
   const modo = d?.modo ?? "criar";
+  const paiSemVariacoes = (ml || amz) && modo === "criar"
+    && (variacoesQ.data?.tipo === "V" || (variacoesQ.data?.variacoes.length ?? 0) > 0);
   const limTitulo = p?.limites?.titulo ?? 120;
   const limFotos = p?.limites?.fotos ?? 9;
   const fotosQ = useQuery({
@@ -511,7 +528,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   );
   if (!p) return <p className="text-sm text-muted-foreground">{d?.motivo ?? "Sem dados."}</p>;
 
-  const pend = d?.pendencias ?? []; const avisos = d?.avisos ?? [];
+  const vars = variacoesQ.data?.variacoes ?? [];
+  const pend = [...(d?.pendencias ?? []), ...(paiSemVariacoes
+    ? [`este é o produto pai de um produto com variações: ${ART} ${MK} recebe só anúncio simples, e o pai não tem estoque nem composição no Tiny (uma venda não baixaria nada). Crie um anúncio para cada variação${vars.length ? ` (${vars.join(", ")})` : ""}, abrindo cada uma em IA › Anúncios.`]
+    : [])];
+  const avisos = d?.avisos ?? [];
   return (
     <div className="space-y-3">
       {/* existe ou não + escolha do que fazer */}
@@ -743,7 +764,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button className="gap-1.5" disabled={enviando || mudou || previaQ.isFetching || pend.length > 0 || (modo === "criar" && !!criado && !deNovo)} onClick={() => void enviar()}>
+        <Button className="gap-1.5" disabled={enviando || mudou || previaQ.isFetching || pend.length > 0 || ((ml || amz) && variacoesQ.isLoading) || (modo === "criar" && !!criado && !deNovo)} onClick={() => void enviar()}>
           {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           {enviando ? `Enviando para ${ART} ${MK}…` : modo === "atualizar" ? (extrasProntos.length ? `Atualizar os ${extrasProntos.length + 1} anúncios ${NO} ${MK}` : `Atualizar o anúncio ${NO} ${MK}`) : `Criar o anúncio ${NO} ${MK}`}
         </Button>
