@@ -288,7 +288,7 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
       key: chave(i), grupo: i.mlb, nome: i.titulo ?? i.mlb, sub, foto: i.foto, sku: i.sku, code: i.mlb,
       cheio: num(i.original_price), promo: num(i.promo_price), estado, motivo,
       v30: i.sku ? v30De(i) : null, estoque: estoque.get(i.mlb) ?? null,
-      conta: () => m, semCusto: i.cmv == null,
+      conta: () => m, cmv: i.cmv ?? null, semCusto: i.cmv == null,
       mcNota: i.cmv != null && i.comissao_promo == null ? "comissão ainda não calculada (sincronize)" : null,
     };
   });

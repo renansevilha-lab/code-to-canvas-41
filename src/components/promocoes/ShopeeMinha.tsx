@@ -300,7 +300,7 @@ export function ShopeeMinha({ shopId, cab, onIrRelampago }: { shopId: number; ca
       key: k, grupo: `${d.discount_id}|${l.item_id}`, nome: l.nome, sub: l.variacao, foto: l.imagem, sku: l.sku, code: `ID ${l.item_id}`,
       cheio: l.original, promo: l.promo, estado, motivo: r && r.tipo !== "aplicado" ? r.motivo : null,
       v30: base ? num(base.vendas_30d) : null, estoque: l.estoque,
-      conta: (p) => contaShopee(base, p, tarifa), semCusto: !!base && base.cmv == null || (!base && !!l.sku && baseQ.isSuccess),
+      conta: (p) => contaShopee(base, p, tarifa), cmv: base?.cmv ?? null, semCusto: !!base && base.cmv == null || (!base && !!l.sku && baseQ.isSuccess),
       precoPara: (a) => precoParaShopee(base, tarifa, a, l.original),
     };
   };
@@ -310,7 +310,7 @@ export function ShopeeMinha({ shopId, cab, onIrRelampago }: { shopId: number; ca
     return {
       key: `${ID_FORA}|${a.item_id}:0`, grupo: `${ID_FORA}|${a.item_id}`, nome: a.nome, foto: a.imagem_url, sku: a.sku_pai, code: `ID ${a.item_id}`,
       sub: a.tem_variacao ? "com variações" : null, cheio, promo: cheio, estado: "fora", v30: num(a.vendas_30d), estoque: a.estoque_total,
-      conta: (p) => (a.tem_variacao ? null : contaShopee(base, p, tarifa)), semCusto: !a.tem_variacao && !!base && base.cmv == null,
+      conta: (p) => (a.tem_variacao ? null : contaShopee(base, p, tarifa)), cmv: a.tem_variacao ? null : base?.cmv ?? null, semCusto: !a.tem_variacao && !!base && base.cmv == null,
       mcNota: a.tem_variacao ? "MC por variação ao colocar em promoção" : null,
     };
   });

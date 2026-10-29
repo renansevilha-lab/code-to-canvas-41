@@ -267,6 +267,8 @@ export interface LinhaPromo {
   cheio: number; promo: number; estado: EstadoLinha; motivo?: string | null;
   v30: number | null; estoque: number | null;
   conta: (preco: number) => ContaMc | null;
+  /** Custo (CMV) por unidade usado na conta da MC. */
+  cmv?: number | null;
   semCusto: boolean; mcNota?: string | null;
   precoPara?: (alvo: number) => number | null;
   /** Conteúdo a mais embaixo do estado (ex.: estoque/limite da relâmpago). */
@@ -311,7 +313,7 @@ const pos = (el: HTMLElement, w: number, h: number) => {
   return { x: Math.round(x), y: Math.round(y) };
 };
 
-export const COLS = "40px minmax(230px,1.7fr) 176px 104px 104px 88px 140px 64px";
+export const COLS = "40px minmax(230px,1.7fr) 176px 84px 104px 104px 88px 140px 64px";
 
 /** Cabeçalho do detalhe + barra de filtros + tabela + barra de lote + rodapé. */
 export function TabelaPromo({
@@ -397,14 +399,15 @@ export function TabelaPromo({
               {ordem}
             </div>
           </div>
-          <div style={{ overflowX: "auto", borderTop: "1px solid var(--pm-b)" }}>
-            <div style={{ minWidth: 930 }}>
-              <div style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", height: 34, background: "var(--pm-s2)", fontSize: 11.5, fontWeight: 500, color: "var(--pm-t3)" }}>
+          <div className="overflow-x-auto xl:overflow-visible" style={{ borderTop: "1px solid var(--pm-b)" }}>
+            <div style={{ minWidth: 1014 }}>
+              <div style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", height: 34, background: "var(--pm-s2)", fontSize: 11.5, fontWeight: 500, color: "var(--pm-t3)", position: "sticky", top: 66, zIndex: 5, borderBottom: "1px solid var(--pm-b)", boxShadow: "0 2px 6px -4px oklch(0.2 0.02 270 / 0.35)" }}>
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <Check on={allOn} onClick={() => { const n = new Set(sel); visKeys.forEach((k) => { if (allOn) n.delete(k); else n.add(k); }); setSel(n); }} />
                 </div>
                 <div>Produto</div>
                 <div style={{ textAlign: "right", padding: "0 10px" }}>{precoLabel}</div>
+                <div style={{ textAlign: "right", padding: "0 10px" }} title="Custo do produto por unidade (o mesmo da conta da MC)">CMV un.</div>
                 <div style={{ textAlign: "right", padding: "0 10px" }}>MC por unidade</div>
                 <div style={{ textAlign: "right", padding: "0 10px" }}>{extraLabel}</div>
                 <div style={{ textAlign: "right", padding: "0 10px" }}>Vendas 30d</div>
@@ -454,6 +457,9 @@ export function TabelaPromo({
                           )}
                         </div>
                       ) : <span className={MONO} style={{ fontSize: 13, fontWeight: 500 }}>{BRL(p)}</span>}
+                    </div>
+                    <div className={MONO} style={{ textAlign: "right", padding: "0 10px", fontSize: 12.5, color: l.cmv != null ? "var(--pm-t2)" : "var(--pm-t3)" }}>
+                      {l.cmv != null ? BRL(l.cmv) : "—"}
                     </div>
                     <div onMouseEnter={(e) => setTip({ key: l.key, ...pos(e.currentTarget, 290, 170) })} onMouseLeave={() => setTip(null)}
                       style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "0 10px", cursor: "help" }}>

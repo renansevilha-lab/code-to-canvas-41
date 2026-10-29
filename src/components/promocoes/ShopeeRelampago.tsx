@@ -168,7 +168,7 @@ export function ShopeeRelampago({ shopId, cab }: { shopId: number; cab: CabBase 
       key: k, grupo: `${p.item_id}`, nome: p.item_nome ?? "—", sub: p.model_nome && !/^[d-]+$/.test(p.model_nome) ? p.model_nome : null, foto: p.imagem, sku: p.sku, code: `ID ${p.item_id}`,
       cheio: num(p.preco_original), promo: num(p.preco_promo), estado, motivo, apagada: !p.ativo,
       v30: base ? num(base.vendas_30d) : null, estoque: null,
-      conta: (preco) => contaShopee(base, preco, tarifa), semCusto: !!base && base.cmv == null,
+      conta: (preco) => contaShopee(base, preco, tarifa), cmv: base?.cmv ?? null, semCusto: !!base && base.cmv == null,
       precoPara: (a) => { const pz = precoParaShopee(base, tarifa, a, num(p.preco_original)); return pz != null && t ? Math.min(pz, t.teto) : pz; },
       estadoExtra: (
         <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "var(--pm-t3)" }}>
@@ -199,7 +199,7 @@ export function ShopeeRelampago({ shopId, cab }: { shopId: number; cab: CabBase 
         estado: (naPromo ? (hoje ? "na" : "encerrada") : "pausado") as EstadoLinha,
         motivo: naPromo ? null : "variação fora desta relâmpago",
         v30: base ? num(base.vendas_30d) : null, estoque: num(m.stock), apagada: !naPromo,
-        conta: (preco: number) => contaShopee(base, preco, tarifa), semCusto: !!base && base.cmv == null,
+        conta: (preco: number) => contaShopee(base, preco, tarifa), cmv: base?.cmv ?? null, semCusto: !!base && base.cmv == null,
         estadoExtra: naPromo ? <span style={{ fontSize: 10.5, color: "var(--pm-t3)" }}>estoque na campanha {INT(num(m.campaign_stock))}</span> : undefined,
       };
     }).sort((a, b) => Number(b.estado !== "pausado") - Number(a.estado !== "pausado") || (b.v30 ?? 0) - (a.v30 ?? 0));
@@ -219,6 +219,8 @@ export function ShopeeRelampago({ shopId, cab }: { shopId: number; cab: CabBase 
   };
   const contar = (f: Filtro) => linhasProg.filter(predicado(f)).length;
   const nVagas = ativos.length;
+  // a Shopee também limita a relâmpago a 20 ANÚNCIOS (shopee-flashsale v12): passar de qualquer um derruba o envio
+  const nAnuncios = new Set(ativos.map((p: any) => String(p.item_id))).size;
   const cards: CartaoDecisao[] = [
     { id: "neg", n: String(contar("neg")), label: "MC negativa", sub: "no preço relâmpago", tom: "var(--pm-r)" },
     { id: "lt10", n: String(contar("lt10")), label: "MC abaixo de 10%", sub: "entre 0% e 10%", tom: "var(--pm-am)" },
@@ -395,7 +397,7 @@ export function ShopeeRelampago({ shopId, cab }: { shopId: number; cab: CabBase 
       {ehProg && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 10, background: "var(--pm-s2)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6, fontSize: 12 }}>
-            <span><b className="pm-mono" style={{ fontSize: 13 }}>{usadas}</b> de 50 vagas usadas</span>
+            <span><b className="pm-mono" style={{ fontSize: 13 }}>{usadas}</b> de 50 vagas usadas · <b className="pm-mono" style={{ fontSize: 13, color: nAnuncios > 20 ? "var(--pm-am)" : undefined }}>{Math.min(nAnuncios, 20)}</b> de 20 anúncios{nAnuncios > 20 && <b style={{ color: "var(--pm-am)", fontWeight: 600 }}> · {nAnuncios - 20} anúncio(s) ficam de fora</b>}</span>
             <span style={{ color: "var(--pm-t3)" }}>{50 - usadas} livres{nVagas > 50 && <> · <b style={{ color: "var(--pm-am)", fontWeight: 600 }}>{nVagas - 50} ficam de fora por falta de vaga (entram os que mais vendem)</b></>}</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(50,1fr)", gap: 2, height: 10 }}>
@@ -476,7 +478,7 @@ export function ShopeeRelampago({ shopId, cab }: { shopId: number; cab: CabBase 
             onTirar: () => void remover(selTabela),
           }}
           rodape={ehProg
-            ? "Teto = maior preço que a Shopee deve aceitar: 1% abaixo do preço atual e no máximo o menor preço vendido em 7 dias. A Shopee aceita até 50 variações por relâmpago (entram os que mais vendem). Salvar muda só a programação; a Shopee recebe às 18:07 (robô ligado) ou pelo “Programar amanhã agora”. MC = preço − comissão − imposto − CMV; passe o mouse na MC para ver a conta."
+            ? "Teto = maior preço que a Shopee deve aceitar: 1% abaixo do preço atual e no máximo o menor preço vendido em 7 dias. A Shopee aceita até 20 anúncios e 50 variações por relâmpago (entram os que mais vendem). Salvar muda só a programação; a Shopee recebe às 18:07 (robô ligado) ou pelo “Programar amanhã agora”. MC = preço − comissão − imposto − CMV; passe o mouse na MC para ver a conta."
             : "Itens desta relâmpago como estão na Shopee (só leitura). Variação fora = a Shopee lista o anúncio inteiro, mas só as marcadas entram na promoção."} />
       </div>
 
