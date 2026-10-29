@@ -86,6 +86,10 @@ interface AceleraRow {
   taxa: number | null;
   lancamentos: number | null;
   valor_antecipado: number | null;
+  /** 29/out: total dos "Ajustes do Shopee Acelera" e a parte de pedidos cancelados/devolvidos (fora do DRE) */
+  ajuste_bruto?: number | null;
+  devolvido_cancelado?: number | null;
+  lancamentos_devolvidos?: number | null;
 }
 
 interface DreOperacionalRow {
@@ -993,15 +997,19 @@ function DrillAcelera({ itens }: { itens: AceleraRow[] }) {
         <div key={r.canal} className="flex items-center justify-between gap-4 py-0.5 text-xs">
           <span className="text-muted-foreground min-w-0 truncate">
             <span className="text-foreground/80">{r.canal}</span>
-            <span className="text-muted-foreground/70"> · {r.lancamentos ?? 0} pedidos antecipados
-              {r.valor_antecipado ? ` · ${brlFull(r.valor_antecipado)} adiantados` : ""}</span>
+            <span className="text-muted-foreground/70"> · {r.lancamentos ?? 0} pedidos com ajuste
+              {r.valor_antecipado ? ` · ${brlFull(r.valor_antecipado)} adiantados` : ""}
+              {Number(r.devolvido_cancelado ?? 0) > 0
+                ? ` · fora do DRE: ${brlFull(r.devolvido_cancelado)} de ${r.lancamentos_devolvidos ?? 0} cancelados/devolvidos`
+                : ""}</span>
           </span>
           <span className="tabular-nums font-mono text-foreground/80 shrink-0">{brlFull(r.taxa)}</span>
         </div>
       ))}
       <p className="text-[11px] text-muted-foreground border-t border-border/50 pt-1.5">
-        Taxa cobrada pelo Shopee Acelera (antecipação do repasse), descontada na carteira depois do escrow — por isso
-        não aparece nas deduções do pedido e entra aqui como despesa financeira.
+        "Ajuste do Shopee Acelera" descontado na carteira quando o pedido adiantado fecha com valor menor que o adiantado.
+        Não há taxa de antecipação na carteira. Os ajustes de pedidos cancelados ou devolvidos ficam fora: são a Shopee
+        pegando de volta o adiantamento de uma venda que não aconteceu, e a receita desses pedidos já entra zerada ou reduzida.
       </p>
     </div>
   );

@@ -167,6 +167,16 @@ coleta como despesa do mês; tarifas por pedido conciliam com `pedidos`).
   set/26 até dia 10: R$ 5,8 mil). `view_dre_acelera` → coluna `acelera` e linha
   "Antecipação Shopee Acelera". Baseline: total_despesas novo = antigo +
   custos_full + acelera, ao centavo.
+  **Corrigido em 29/out/2026 (opção A do dono):** NÃO existe taxa de antecipação na carteira — o
+  FAST_ESCROW_DEDUCT ("Ajuste do Shopee Acelera") é acerto do adiantamento. Em pedido cancelado/devolvido
+  é a Shopee pegando de volta o adiantado (na mediana o pedido inteiro; a receita já entra zerada/reduzida),
+  então o DRE contava a devolução duas vezes. `view_dre_acelera.taxa` agora só soma os ajustes de pedidos
+  que NÃO estão em `shopee_devolucoes` nem CANCELLED/TO_RETURN/UNPAID (colunas novas `ajuste_bruto`,
+  `devolvido_cancelado`, `lancamentos_devolvidos`). Mai–set: R$ 18.226,86 → R$ 6.661,33; o resto do DRE
+  idêntico (baseline `_bkp_dre_mensal_acelera_29out`, SQL em `docs/dre-acelera-sem-devolvidos.sql`). O que
+  sobra (pedido concluído pago 3–15% abaixo do adiantado, sem relação com os dias) pode não ser custo
+  também — só o extrato do Acelera no Seller Center confirma. Resgates × escrow dos pedidos cobertos: 1–3%
+  de diferença para os dois lados, dentro do ruído.
 - **Amazon FBA:** a taxa por unidade (FBAPerUnitFulfillmentFee) já entra em
   `pedidos.taxa_servico` via `amazon-sync-financas` (dedução do pedido). Taxa de
   ARMAZENAMENTO mensal (ServiceFee "FBAStorageFee") não é capturada — está na
