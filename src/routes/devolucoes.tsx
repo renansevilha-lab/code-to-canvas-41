@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+
 import { cn } from "@/lib/utils";
 import { formatBRL } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -28,6 +28,10 @@ import { DevolucoesShopeePerdas } from "@/components/DevolucoesShopeePerdas";
 import { DevolucaoAutoSvlPainel } from "@/components/DevolucaoAutoSvlPainel";
 import { CASO_DEVOLUCAO_PT, type DevolucaoAuto } from "@/lib/devolucaoAuto";
 import { rotuloCanal } from "@/lib/canais";
+import { BarraAbas, Segmento, type AbaSep } from "@/components/separacao/ui/kit";
+import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
+import { PedeResposta } from "@/components/devolucoes/PedeResposta";
+import { listarFila } from "@/lib/devolucoes";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos / constantes
@@ -57,6 +61,9 @@ const PAGE_SIZE = 50;
 type Filtro = "todos" | "marcados" | "geradas" | "devolvidos";
 type Periodo = "mes_atual" | "mes_anterior" | "90dias" | "todos";
 type Empresa = "ottz" | "svl";
+// "ambas" só vale na aba Pede resposta; nas outras cai na Ottz.
+type EmpresaFiltro = Empresa | "ambas";
+type AbaDevolucoes = "resposta" | "recebidas" | "nf" | "perdas";
 type SvlSit = "pendentes" | "autorizadas" | "todas";
 
 // Intervalo de data_pedido para cada período. O varredor cobre 90 dias.
@@ -112,16 +119,18 @@ function corCanal(canal: string | null | undefined): string {
 // Route
 
 type SearchParams = {
+  aba: AbaDevolucoes;
   pagina: number;
   q: string;
   filtro: Filtro;
   periodo: Periodo;
-  empresa: Empresa;
+  empresa: EmpresaFiltro;
   svlsit: SvlSit;
 };
 
 export const Route = createFileRoute("/devolucoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
+    aba: (["resposta", "recebidas", "nf", "perdas"].includes(s.aba as string) ? (s.aba as AbaDevolucoes) : "resposta"),
     pagina: Number.isFinite(Number(s.pagina)) ? Math.max(1, Math.floor(Number(s.pagina))) : 1,
     q: typeof s.q === "string" ? s.q : "",
     filtro: (["todos", "marcados", "geradas", "devolvidos"].includes(s.filtro as string)
@@ -130,7 +139,7 @@ export const Route = createFileRoute("/devolucoes")({
     periodo: (["mes_atual", "mes_anterior", "90dias", "todos"].includes(s.periodo as string)
       ? (s.periodo as Periodo)
       : "mes_atual"),
-    empresa: (["ottz", "svl"].includes(s.empresa as string) ? (s.empresa as Empresa) : "ottz"),
+    empresa: (["ottz", "svl", "ambas"].includes(s.empresa as string) ? (s.empresa as EmpresaFiltro) : "ambas"),
     svlsit: (["pendentes", "autorizadas", "todas"].includes(s.svlsit as string)
       ? (s.svlsit as SvlSit)
       : "pendentes"),
@@ -141,50 +150,63 @@ export const Route = createFileRoute("/devolucoes")({
 // ─────────────────────────────────────────────────────────────────────────────
 // Page
 
-type AbaDevolucoes = "cancelados" | "recebidas" | "shopee" | "perdas";
-
 function DevolucoesPage() {
-  const { empresa } = Route.useSearch();
-  const [aba, setAba] = useState<AbaDevolucoes>("cancelados");
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const aba = search.aba;
+  const empresaFiltro = search.empresa;
   // "Dar entrada" da aba Perdas: abre Recebidas já buscando o pedido.
   // `n` muda a cada clique para repetir a busca do mesmo pedido.
   const [buscaRecebidas, setBuscaRecebidas] = useState<{ codigo: string; n: number } | null>(null);
+  const irAba = (a: AbaDevolucoes) => { setBuscaRecebidas(null); navigate({ search: (s: SearchParams) => ({ ...s, aba: a }), resetScroll: false }); };
+  const irEmpresa = (e: EmpresaFiltro) => navigate({ search: (s: SearchParams) => ({ ...s, empresa: e, pagina: 1 }), replace: true, resetScroll: false });
+
+  // contagem da fila para a aba (a mesma leitura da PedeResposta, cache compartilhado)
+  const filaQ = useQuery({ queryKey: ["devolucoes", "fila"], queryFn: listarFila, staleTime: 60_000 });
+  const nPede = (filaQ.data ?? []).filter((c) => c.precisa_acao && (empresaFiltro === "ambas" || c.empresa === empresaFiltro)).length;
+
+  const abas: AbaSep[] = [
+    { id: "resposta", nome: "Pede resposta", n: nPede, onClick: () => irAba("resposta") },
+    { id: "recebidas", nome: "Recebidas", onClick: () => irAba("recebidas") },
+    { id: "nf", nome: "NF dos cancelados", onClick: () => irAba("nf") },
+    { id: "perdas", nome: "Perdas Shopee", onClick: () => irAba("perdas") },
+  ];
+
   return (
-    // Troca manual de aba descarta a busca pendente — senão reabrir Recebidas
-    // (o conteúdo remonta) repetiria a busca do último "Dar entrada".
-    <Tabs value={aba} onValueChange={(v) => { setBuscaRecebidas(null); setAba(v as AbaDevolucoes); }} className="w-full">
-      <div className="px-6 pt-5 max-w-[1400px] mx-auto">
-        <TabsList>
-          <TabsTrigger value="cancelados">Cancelados (NF)</TabsTrigger>
-          <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
-          <TabsTrigger value="shopee">Shopee (abertas)</TabsTrigger>
-          <TabsTrigger value="perdas">Perdas Shopee</TabsTrigger>
-        </TabsList>
+    <div className="pm-ui" style={{ color: "var(--pm-t)", fontSize: 13, paddingBottom: 40 }}>
+      <div className="px-6 pt-5 max-w-[1400px] mx-auto" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Devoluções e reembolsos</h1>
+          <div style={{ flex: 1 }} />
+          <Segmento<EmpresaFiltro>
+            valor={empresaFiltro} onValor={irEmpresa}
+            ops={[{ id: "ambas", nome: "Ambas" }, { id: "ottz", nome: "Ottz / ACZ" }, { id: "svl", nome: "SVL / Bumi" }]}
+          />
+        </div>
+        <BarraAbas abas={abas} ativa={aba} />
+        {aba === "resposta" && (
+          <ProtecaoPacking antigo={<DevolucoesShopeeAbertas />}>
+            <PedeResposta empresa={empresaFiltro} />
+          </ProtecaoPacking>
+        )}
       </div>
-      <TabsContent value="cancelados" className="mt-0">
-        {empresa === "svl" ? <SvlDevolucoes /> : <OttzDevolucoes />}
-      </TabsContent>
-      <TabsContent value="recebidas" className="mt-0">
+      {aba === "nf" && (empresaFiltro === "svl" ? <SvlDevolucoes /> : <OttzDevolucoes />)}
+      {aba === "recebidas" && (
         <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
           <DevolucoesRecebidas buscaInicial={buscaRecebidas} />
         </div>
-      </TabsContent>
-      <TabsContent value="perdas" className="mt-0">
+      )}
+      {aba === "perdas" && (
         <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
           <DevolucoesShopeePerdas
             onDarEntrada={(codigo) => {
               setBuscaRecebidas((b) => ({ codigo, n: (b?.n ?? 0) + 1 }));
-              setAba("recebidas");
+              navigate({ search: (s: SearchParams) => ({ ...s, aba: "recebidas" }), resetScroll: false });
             }}
           />
         </div>
-      </TabsContent>
-      <TabsContent value="shopee" className="mt-0">
-        <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
-          <DevolucoesShopeeAbertas />
-        </div>
-      </TabsContent>
-    </Tabs>
+      )}
+    </div>
   );
 }
 
@@ -204,7 +226,7 @@ function EmpresaToggle() {
           onClick={() => navigate({ search: { ...search, empresa: o.id, pagina: 1 }, replace: true })}
           className={cn(
             "px-3 py-1 text-xs font-medium rounded-sm transition",
-            search.empresa === o.id
+            (search.empresa === o.id || (o.id === "ottz" && search.empresa === "ambas"))
               ? "bg-accent text-accent-foreground"
               : "text-muted-foreground hover:text-foreground",
           )}

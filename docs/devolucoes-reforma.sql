@@ -361,7 +361,7 @@ returns jsonb language plpgsql stable security definer set search_path = public,
 declare
   v_caso jsonb; v_order text; v_out jsonb;
 begin
-  if not tem_modulo('financeiro') and not tem_modulo('galpao') then
+  if not tem_modulo('devolucoes') and not tem_modulo('financeiro') and not tem_modulo('galpao') then
     raise exception 'sem acesso' using errcode = '42501';
   end if;
   select to_jsonb(v) into v_caso from view_devolucoes_pede_resposta v

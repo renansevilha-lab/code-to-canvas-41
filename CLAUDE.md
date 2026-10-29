@@ -2442,9 +2442,10 @@ automática da Ottz desde fev/2026 (como a SVL). Plano completo em
   ação 1, resultado favorável 1, `similarity` do `pg_trgm` no texto do cliente ×3; textos iguais
   agrupados com "vezes") + modelos. `pg_trgm` instalada no schema `extensions` em 29/out.
 - Grants só `authenticated`/`service_role` (RLS ligado, política `app_*`); nunca anon.
-- **Próximos passos (plano):** 3 tela (abas na URL + "Pede resposta" com painel) · 4 escritas novas
+- **Passo 3 — tela (29/out, tarde):**  ganhou o shell novo (, , filtro Ambas/Ottz/SVL no topo; aba na URL ,  aceita ). Aba **Pede resposta** =  (faixa Pede ação: vence hoje/venceu, amanhã, produto devolvido a validar, reclamações no ML; recortes Pede resposta · Hoje/vencidos · Validar produto · Tudo em aberto; Shopee+ML; busca; linha com foto, motivo, texto do cliente, selo da ação esperada, prazo, "no galpão", causa provável) e **painel do caso**  (RPC : cliente diz + fotos, conversa do ML, produto, situação — Shopee pela  —, galpão/Tiny/dinheiro, respostas anteriores). Bloco Responder: **causa interna obrigatória** (pré-sugerida pela ), sugestões do histórico/modelos (, "Salvar como modelo"), Shopee **Aprovar reembolso / Disputar** pelos módulos de sempre da  (agora com o token da sessão), ML = **registrar** o que foi respondido no painel do ML (a escrita pela API é o passo 4); "Só marcar a causa". Tudo grava em  (o front insere; política ) e a causa vai também para  do pedido. Tipos/chamadas em . A antiga  fica de reserva na . Recebidas, NF dos cancelados (= Cancelados antigo, Ottz/SVL pelo filtro) e Perdas seguem com a tela antiga dentro do shell. **Não conferida com login.**
+- **Próximos passos (plano):** 4 escritas novas
   Shopee oferta/validar e ML mensagem/reembolso/disputa/review, cada uma testada ao vivo com OK do
-  dono · 5 sugestões → IA · 6 aba Erros + MV · 7 motor da Ottz (`devolucao-auto` `?conta=`, série
+  dono · 5 sugestões → IA · 6 aba **Resultados** (pedido do dono em 29/out: perdas totais em R$ — reembolsado, descontado, compensado, CMV perdido — por mês/marketplace/causa/pessoa; absorve a aba Erros) + MV · 7 motor da Ottz (`devolucao-auto` `?conta=`, série
   13, clone > 29 dias) + varredura fev–jun · 8 Perdas no visual novo.
 
 ## 5.11 IA · Anúncios — unificação do gerador, Fase 1 (06/out/2026)
