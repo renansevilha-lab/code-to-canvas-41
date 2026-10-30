@@ -242,6 +242,26 @@ export async function chamarFn(fn: string, qs: string, body?: unknown): Promise<
 export const chamarShopee = (qs: string, body?: unknown) => chamarFn("shopee-devolucao-probe", qs, body);
 export const chamarMl = (qs: string, body?: unknown) => chamarFn("ml-devolucao-lookup", qs, body);
 
+/** Ações do vendedor na reclamação do ML (ml-devolucao-lookup v6). Sem `confirmar` = prévia. */
+export type ModuloMl = "claim-mensagem" | "claim-reembolsar" | "claim-devolucao" | "claim-disputa" | "claim-review";
+export interface RespostaAcaoMl {
+  ok: boolean; previa?: boolean; erro?: string | null; acoes?: string[]; status?: number;
+  ofertas_parciais?: { currency_id: string; available_offers: Array<{ amount: number; percentage: number }> } | null;
+  return_id?: number; devolucao?: { status: string; status_money: string; shipments: Array<{ shipment_id: number; status: string; tracking_number: string | null }> };
+  motivos_falha?: Array<{ id: string; name: string; detail: string; apply: string[] }>;
+  resposta?: unknown;
+}
+export function acaoMl(modulo: ModuloMl, body: Record<string, unknown>): Promise<RespostaAcaoMl> {
+  return chamarMl(`modulo=${modulo}`, { modulo, ...body }) as unknown as Promise<RespostaAcaoMl>;
+}
+
+export const ACAO_ML_PT: Record<string, string> = {
+  send_message_to_mediator: "responder ao mediador", send_message_to_complainant: "responder ao comprador", recontact: "falar com o comprador",
+  refund: "reembolsar", allow_partial_refund: "reembolso parcial", open_dispute: "pedir mediação", allow_return: "aceitar a devolução",
+  return_review_ok: "validar o produto devolvido", return_review_fail: "recusar o produto devolvido",
+  return_review_unified_ok: "validar o produto devolvido", return_review_unified_fail: "recusar o produto devolvido",
+};
+
 export function arquivoParaBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();

@@ -17,6 +17,7 @@ import { Botao, Campo, Entrada, Escolha, Selo } from "@/components/producao/ui";
 import { Foto, Spinner } from "@/components/separacao/ui/kit";
 import { InfoDevolucaoCampos } from "@/components/InfoDevolucaoShopee";
 import type { InfoDevolucao } from "@/lib/shopeeDevolucao";
+import { AcoesMl } from "./AcoesMl";
 import {
   acaoEsperada, arquivoParaBase64, brl, chamarShopee, contarUsoModelo, dia, diaHora, lerCaso, lerSugestoes, linkMarketplace, lojaDe,
   marcarCausaNaEntrada, motivoPt, prazoTexto, registrarResposta, salvarModelo, GRUPO_CAUSA_PT, SOLUCAO_PT,
@@ -458,24 +459,11 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
                 </div>
               )
             ) : (
-              <div style={{ borderTop: "1px solid var(--pm-b)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>
-                  A resposta ao Mercado Livre ainda é feita no painel deles{link ? <> (<a href={link} target="_blank" rel="noreferrer" style={{ color: "var(--pm-at)" }}>abrir</a>)</> : null}. Registre aqui o que fez para o histórico aprender — o envio direto pelo app é o próximo passo.
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-                  <Campo rotulo="O que foi feito">
-                    <Escolha value={acaoMl} onChange={(e) => setAcaoMl(e.target.value as AcaoResposta)} style={{ width: 240 }}>
-                      <option value="mensagem_mediador">Respondi ao mediador</option>
-                      <option value="mensagem_comprador">Respondi ao comprador</option>
-                      <option value="reembolsar">Reembolsei</option>
-                      <option value="validar_ok">Validei o produto devolvido (ok)</option>
-                      <option value="validar_recusa">Recusei o produto devolvido</option>
-                      <option value="disputar">Abri disputa</option>
-                    </Escolha>
-                  </Campo>
-                  <Botao tom="primario" onClick={registrarMl} disabled={agindo !== null}>{agindo === "ml" ? <Spinner /> : null} Registrar resposta</Botao>
-                </div>
-              </div>
+              <AcoesMl
+                caso={caso} texto={texto} causa={causa} sugUsada={sugUsada} agindo={agindo} setAgindo={setAgindo}
+                exigeCausa={exigeCausa} depois={depois} onFechar={onFechar} link={link}
+                registrarManual={{ acaoMl, setAcaoMl, registrarMl }}
+              />
             )}
           </div>
         </div>

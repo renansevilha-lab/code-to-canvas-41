@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: ml-devolucao-lookup v5 — etiqueta de devolucao do ML -> pedido
+// Edge Function: ml-devolucao-lookup v6 — etiqueta de devolucao do ML -> pedido
 //                                         + espelho das reclamacoes (ml_claims)
 // ----------------------------------------------------------------------------
 // A etiqueta de devolucao do Mercado Livre NAO traz o numero do pedido: o QR e
@@ -25,6 +25,22 @@
 //     que o ML espera de nos vem em players[respondent].available_actions —
 //     inclusive em claim FECHADA (return_review_ok com prazo), por isso o
 //     sync tambem olha as fechadas recentes.
+// v6 (29/out/2026, passo 4 da reforma): ESCRITAS no ML, todas POST com JSON,
+//     sessao de usuario com modulo devolucoes|financeiro|galpao, e so com
+//     `confirmar: true` (sem ele = previa, que le o que o ML aceita hoje).
+//     Cada envio vai UMA vez (nada de retry em POST), e tudo fica em
+//     devolucao_resposta (o historico que ensina) + debug_fulfillment
+//     (modulo 'ml-claim-acao'). Endpoints conferidos na doc oficial em 29/out:
+//       claim-mensagem    POST /claims/{id}/actions/send-message {receiver_role, message, attachments:[]}
+//       claim-reembolsar  POST /claims/{id}/expected-resolutions/refund (total)
+//                         POST /claims/{id}/expected-resolutions/partial-refund {percentage} (parcial;
+//                         percentuais em GET .../partial-refund/available-offers)
+//       claim-devolucao   POST /claims/{id}/expected-resolutions/allow-return (aceita a devolucao do produto)
+//       claim-disputa     POST /claims/{id}/actions/open-dispute (pede a mediacao do ML)
+//       claim-review      POST /returns/{return_id}/return-review — body {} = produto OK;
+//                         [{reason, message}] = com problema (motivos em GET /returns/reasons?flow=
+//                         seller_return_failed&claim_id=; SRF2/SRF4 exigem foto — nao implementado:
+//                         o painel do ML cobre). return_id vem de GET /v2/claims/{id}/returns.
 //
 // v2: pedido de carrinho (pack) — o Tiny registra pelo pack_id, nao pelo
 // order_id (ex.: 2000018379163128 -> pack 2000014956563857 -> Tiny 306039).
@@ -455,6 +471,178 @@ async function relerClaim(sb: SB, contas: ContaML[], claimId: number) {
   return { ok: false, erro: `o ML nao devolveu a reclamacao ${claimId} em nenhuma conta conectada` };
 }
 
+// ---------------------------------------------------------------------------
+// v6 — escritas no ML (acoes da reclamacao)
+// ---------------------------------------------------------------------------
+const ANON_SB = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+/** Sessao de usuario com acesso a Devolucoes. Devolve o nome (para o historico) ou a resposta de erro. */
+async function exigirUsuario(req: Request, sb: SB): Promise<{ nome: string | null; uid: string } | Response> {
+  const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  let pl: Record<string, unknown> = {};
+  try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
+  if (pl.role !== "authenticated") return json({ ok: false, erro: "faca login no app (sessao de usuario exigida para escrever no Mercado Livre)" }, 401);
+  const doUsuario = createClient(URL_SB, ANON_SB || KEY_SB, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
+  let tem = false;
+  for (const m of ["devolucoes", "financeiro", "galpao"]) {
+    const { data } = await doUsuario.rpc("tem_modulo", { p_modulo: m });
+    if (data === true) { tem = true; break; }
+  }
+  if (!tem) return json({ ok: false, erro: "sem acesso ao modulo Devolucoes" }, 403);
+  const { data: perfil } = await sb.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
+  return { nome: ((perfil as { nome?: string } | null)?.nome as string) ?? (pl.email as string) ?? null, uid: String(pl.sub ?? "") };
+}
+
+/** POST no ML — UMA tentativa (repetir escrita pode duplicar). */
+async function mlPost(path: string, token: string, body?: unknown): Promise<{ status: number; body: any }> {
+  const r = await fetch(`${ML_API}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const texto = await r.text();
+  let parsed: any = null;
+  try { parsed = texto ? JSON.parse(texto) : null; } catch { parsed = { texto }; }
+  return { status: r.status, body: parsed };
+}
+
+const erroMl = (r: { status: number; body: any }) =>
+  r.body?.message ?? r.body?.error ?? r.body?.texto ?? `ML HTTP ${r.status}`;
+
+type ClaimLocal = { claim_id: number; conta: number; order_id: string | null; reason_id: string | null; tipo: string | null; acoes_disponiveis: any[]; pack_id: string | null };
+
+async function claimLocal(sb: SB, claimId: number): Promise<ClaimLocal | null> {
+  const { data } = await sb.from("ml_claims").select("claim_id, conta, order_id, reason_id, tipo, acoes_disponiveis, pack_id").eq("claim_id", claimId).maybeSingle();
+  return (data as ClaimLocal | null) ?? null;
+}
+
+const temAcao = (c: ClaimLocal, ...acoes: string[]) => (c.acoes_disponiveis ?? []).some((a: any) => acoes.includes(a?.action));
+
+/** Grava a acao no historico (devolucao_resposta) e no debug_fulfillment. */
+async function registrarAcao(sb: SB, c: ClaimLocal, p: {
+  acao: string; quem: string | null; causa: string | null; texto: string | null; enviado: unknown; resposta: unknown; ok: boolean; status: number; sugestao?: string | null;
+}) {
+  const { data: m } = await sb.from("ml_claim_motivos").select("nome").eq("reason_id", c.reason_id ?? "").maybeSingle();
+  const { data: msg } = await sb.from("ml_claim_mensagens").select("texto").eq("claim_id", c.claim_id).eq("de", "complainant").order("data").limit(1);
+  const { data: ped } = await sb.from("pedidos").select("subtotal_produtos").eq("id", c.order_id ?? "").maybeSingle();
+  const { data: ent } = await sb.from("devolucoes_recebidas").select("id, separador").eq("order_sn", c.order_id ?? "").order("recebido_em", { ascending: false }).limit(1);
+  const entrada = (ent as any[] | null)?.[0];
+  await sb.from("devolucao_resposta").insert({
+    marketplace: "mercadolivre", conta: String(c.conta), case_id: String(c.claim_id), order_sn: c.order_id,
+    motivo_mkt: (m as any)?.nome ?? c.reason_id, texto_cliente: (msg as any[] | null)?.[0]?.texto ?? null,
+    solucao: c.tipo === "returns" ? "devolucao" : c.tipo === "mediations" ? "mediacao" : c.tipo,
+    valor: (ped as any)?.subtotal_produtos ?? null, fotos_cliente: 0, tem_entrada_galpao: !!entrada, separador: entrada?.separador ?? null,
+    causa_interna: p.causa, acao: p.acao, texto_resposta: p.texto, sugestao_usada: p.sugestao ?? "nenhuma",
+    respondido_por: p.quem, enviado: p.enviado ?? null, resposta_mkt: p.resposta ?? null, ok: p.ok,
+  });
+  if (p.causa && entrada?.id) await sb.from("devolucoes_recebidas").update({ causa_interna: p.causa }).eq("id", entrada.id);
+  await sb.from("debug_fulfillment").insert({
+    modulo: "ml-claim-acao", etapa: `${c.claim_id}:${p.acao}`, status_http: p.status,
+    resultado: { conta: c.conta, order_id: c.order_id, por: p.quem, enviado: p.enviado ?? null, resposta: p.resposta ?? null },
+  });
+}
+
+/**
+ * Acoes do vendedor numa reclamacao. body: {modulo, claim_id, confirmar?, causa?, sugestao?, ...}
+ *  claim-mensagem   {receiver_role: complainant|mediator, texto}
+ *  claim-reembolsar {percentual?}  (sem percentual = total)
+ *  claim-devolucao  (aceitar a devolucao do produto)
+ *  claim-disputa
+ *  claim-review     {ok: true|false, reason?, message?}
+ */
+async function acaoClaim(req: Request, sb: SB, modulo: string, body: Record<string, unknown>, t0: number): Promise<Response> {
+  const quem = await exigirUsuario(req, sb);
+  if (quem instanceof Response) return quem;
+  const claimId = Number(body.claim_id);
+  if (!claimId) return json({ ok: false, erro: "informe claim_id" }, 400);
+  const c = await claimLocal(sb, claimId);
+  if (!c) return json({ ok: false, erro: `reclamacao ${claimId} nao esta no espelho — rode ?modulo=claim&claim_id=${claimId}` }, 404);
+  const { data: tok } = await sb.from("oauth_tokens_ml").select("access_token, expires_at").eq("user_id", c.conta).maybeSingle();
+  if (!tok) return json({ ok: false, erro: `conta ML ${c.conta} nao conectada` }, 401);
+  if (new Date((tok as any).expires_at) < new Date()) return json({ ok: false, erro: "token do Mercado Livre vencido — a renovacao roda a cada 30 min; tente em instantes" }, 401);
+  const token = String((tok as any).access_token);
+  const confirmar = body.confirmar === true || body.confirmar === "1" || body.confirmar === "true";
+  const causa = body.causa ? String(body.causa) : null;
+  const sugestao = body.sugestao ? String(body.sugestao) : null;
+
+  // relê a reclamacao ao vivo: as acoes disponiveis mudam (e a previa mostra o estado real)
+  const vivo = await mlGet(`/post-purchase/v1/claims/${claimId}`, token);
+  if (vivo.status === 200 && vivo.body?.id) {
+    const packs = await packsDosPedidos(sb, [vivo.body?.resource === "order" ? String(vivo.body.resource_id) : ""]);
+    await sb.from("ml_claims").upsert(linhaClaim(vivo.body, c.conta, packs.get(String(vivo.body?.resource_id)) ?? c.pack_id, null), { onConflict: "claim_id" });
+    c.acoes_disponiveis = ((vivo.body?.players ?? []).find((p: any) => p?.role === "respondent")?.available_actions ?? []) as any[];
+  }
+  const acoes = (c.acoes_disponiveis ?? []).map((a: any) => a?.action);
+
+  let path = ""; let corpo: unknown = undefined; let acaoHist = ""; let texto: string | null = null; let previa: Record<string, unknown> = {};
+
+  if (modulo === "claim-mensagem") {
+    const receiver = String(body.receiver_role ?? "");
+    texto = String(body.texto ?? "").trim();
+    if (!["complainant", "mediator"].includes(receiver)) return json({ ok: false, erro: "receiver_role deve ser complainant ou mediator" }, 400);
+    const precisa = receiver === "mediator" ? "send_message_to_mediator" : "send_message_to_complainant";
+    if (!acoes.includes(precisa) && !acoes.includes("recontact")) return json({ ok: false, erro: `o ML nao aceita mensagem ao ${receiver === "mediator" ? "mediador" : "comprador"} agora (acoes: ${acoes.join(", ") || "nenhuma"})`, acoes }, 409);
+    if (texto.length < 3) return json({ ok: false, erro: "escreva a mensagem" }, 400);
+    path = `/post-purchase/v1/claims/${claimId}/actions/send-message`;
+    corpo = { receiver_role: receiver, message: texto, attachments: [] };
+    acaoHist = receiver === "mediator" ? "mensagem_mediador" : "mensagem_comprador";
+  } else if (modulo === "claim-reembolsar") {
+    const pct = body.percentual != null && body.percentual !== "" ? Number(body.percentual) : null;
+    if (pct == null) {
+      if (!acoes.includes("refund")) return json({ ok: false, erro: `o ML nao oferece reembolso total agora (acoes: ${acoes.join(", ") || "nenhuma"})`, acoes }, 409);
+      path = `/post-purchase/v1/claims/${claimId}/expected-resolutions/refund`;
+      acaoHist = "reembolsar";
+    } else {
+      if (!acoes.includes("allow_partial_refund")) return json({ ok: false, erro: "o ML nao oferece reembolso parcial nesta reclamacao", acoes }, 409);
+      path = `/post-purchase/v1/claims/${claimId}/expected-resolutions/partial-refund`;
+      corpo = { percentage: pct };
+      acaoHist = "reembolso_parcial";
+    }
+    const ofertas = await mlGet(`/post-purchase/v1/claims/${claimId}/partial-refund/available-offers`, token);
+    previa = { ofertas_parciais: ofertas.status === 200 ? ofertas.body : null };
+    texto = body.texto ? String(body.texto) : null;
+  } else if (modulo === "claim-devolucao") {
+    path = `/post-purchase/v1/claims/${claimId}/expected-resolutions/allow-return`;
+    acaoHist = "aceitar_devolucao";
+    texto = body.texto ? String(body.texto) : null;
+  } else if (modulo === "claim-disputa") {
+    if (!acoes.includes("open_dispute")) return json({ ok: false, erro: `o ML nao oferece mediacao agora (acoes: ${acoes.join(", ") || "nenhuma"})`, acoes }, 409);
+    path = `/post-purchase/v1/claims/${claimId}/actions/open-dispute`;
+    acaoHist = "disputar";
+    texto = body.texto ? String(body.texto) : null;
+  } else if (modulo === "claim-review") {
+    const okProduto = body.ok === true || body.ok === "1" || body.ok === "true";
+    const precisa = okProduto ? ["return_review_ok", "return_review_unified_ok"] : ["return_review_fail", "return_review_unified_fail"];
+    if (!temAcao(c, ...precisa)) return json({ ok: false, erro: `o ML nao espera a revisao do produto agora (acoes: ${acoes.join(", ") || "nenhuma"})`, acoes }, 409);
+    const rt = await mlGet(`/post-purchase/v2/claims/${claimId}/returns`, token);
+    const returnId = rt.status === 200 ? rt.body?.id : null;
+    if (!returnId) return json({ ok: false, erro: `o ML nao devolveu a devolucao desta reclamacao (HTTP ${rt.status})` }, 409);
+    const motivos = await mlGet(`/post-purchase/v1/returns/reasons?flow=seller_return_failed&claim_id=${claimId}`, token);
+    previa = { return_id: returnId, devolucao: { status: rt.body?.status, status_money: rt.body?.status_money, shipments: rt.body?.shipments }, motivos_falha: motivos.status === 200 ? motivos.body : [] };
+    path = `/post-purchase/v1/returns/${returnId}/return-review`;
+    if (okProduto) { corpo = {}; acaoHist = "validar_ok"; texto = body.texto ? String(body.texto) : null; }
+    else {
+      const reason = String(body.reason ?? "");
+      const message = String(body.message ?? body.texto ?? "").trim();
+      if (!reason) return json({ ok: false, erro: "informe o motivo (reason) da falha", ...previa }, 400);
+      if (["SRF2", "SRF4"].includes(reason)) return json({ ok: false, erro: "esse motivo exige foto anexada — por enquanto use o painel do ML para ele", ...previa }, 400);
+      if (message.length < 5) return json({ ok: false, erro: "escreva a mensagem da falha", ...previa }, 400);
+      corpo = [{ reason, message }]; acaoHist = "validar_recusa"; texto = message;
+    }
+  } else {
+    return json({ ok: false, erro: `modulo ${modulo} desconhecido` }, 400);
+  }
+
+  if (!confirmar) return json({ ok: true, previa: true, modulo, claim_id: claimId, conta: c.conta, acoes, path, corpo: corpo ?? null, ...previa, ms: Date.now() - t0 });
+
+  const r = await mlPost(path, token, corpo);
+  const aceito = r.status >= 200 && r.status < 300;
+  await registrarAcao(sb, c, { acao: acaoHist, quem: quem.nome, causa, texto, enviado: { path, corpo: corpo ?? null }, resposta: r.body, ok: aceito, status: r.status, sugestao });
+  // relê para o espelho refletir a acao
+  const depois = await relerClaim(sb, await contasML(sb), claimId).catch(() => null);
+  return json({ ok: aceito, modulo, claim_id: claimId, status: r.status, erro: aceito ? null : erroMl(r), resposta: r.body, claim: (depois as any)?.claim ?? null, ms: Date.now() - t0 }, aceito ? 200 : 502);
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const t0 = Date.now();
@@ -484,6 +672,11 @@ serve(async (req: Request) => {
     const dias = Math.min(Math.max(Number(p("dias") ?? 2) || 2, 1), 120);
     const r = await sincronizarClaims(sb, contas, dias, t0);
     return json({ ok: true, modulo: "claims", dias, contas: r, ms: Date.now() - t0 });
+  }
+
+  if (String(p("modulo") ?? "").startsWith("claim-")) {
+    if (req.method !== "POST") return json({ ok: false, erro: "as acoes da reclamacao vao por POST com JSON" }, 405);
+    return acaoClaim(req, sb, String(p("modulo")), body, t0);
   }
 
   if (p("modulo") === "claim") {
