@@ -186,6 +186,16 @@ export const useEstoqueAcabado = (skus: string[]) =>
     },
   });
 
+/** O que o lote consumiu (gravado no encerramento): farinha do big bag, pacotes da mistura, sacos e etiquetas. */
+export interface ConsumoLote { insumo_id: number; quantidade: number; custo_un: number | null; custo: number | null }
+export const useConsumoLote = (id: number | null, encerrado: boolean) =>
+  useQuery({
+    queryKey: ["producao", "consumo", id],
+    enabled: id != null && encerrado,
+    placeholderData: undefined,
+    queryFn: () => ler<ConsumoLote[]>(supabaseExternal.from("producao_consumo").select("insumo_id, quantidade, custo_un, custo").eq("ordem_id", id!)),
+  });
+
 /** Foto por SKU (view_foto_produto: Tiny primeiro), só dos SKUs pedidos. */
 export const useFotos = (skus: string[]) => {
   const lista = [...new Set(skus.filter(Boolean))].sort();

@@ -9,7 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
 import { DialogoLancarTiny } from "./TinyProducao";
 import {
-  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useFotos,
+  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFotos, useInsumos,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
 } from "@/lib/producao";
 
@@ -378,6 +378,66 @@ function Encerrar({ aberto, onFechar, lote, onEncerrado }: { aberto: boolean; on
   );
 }
 
+const ORDEM_TIPO: Record<string, number> = { farinha: 0, produto: 1, embalagem: 2, etiqueta: 3 };
+const ROTULO_TIPO: Record<string, string> = { farinha: "Farinha do big bag", produto: "Mistura", embalagem: "Embalagem", etiqueta: "Etiqueta" };
+
+/** O que saiu do estoque no encerramento: kg do big bag, pacotes da mistura, sacos e etiquetas, com o custo. */
+function MateriaisUsados({ l }: { l: Lote }) {
+  const consumo = useConsumoLote(l.id, l.status === "encerrada");
+  const insumos = useInsumos();
+  const linhas = (consumo.data ?? [])
+    .map((c) => ({ ...c, ins: insumos.data?.find((i) => i.id === c.insumo_id) }))
+    .sort((a, b) => (ORDEM_TIPO[a.ins?.tipo ?? ""] ?? 9) - (ORDEM_TIPO[b.ins?.tipo ?? ""] ?? 9));
+  if (l.status !== "encerrada") return null;
+  const total = linhas.reduce((s, x) => s + (x.custo ?? x.quantidade * (x.custo_un ?? 0)), 0);
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid var(--pm-bs)", paddingTop: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Materiais usados</div>
+      {consumo.isLoading ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--pm-t3)" }}>Carregando…</p>
+      ) : !linhas.length ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--pm-t3)" }}>Nenhum consumo registrado neste lote.</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <tbody>
+              {linhas.map((x) => {
+                const ehKg = (x.ins?.unidade ?? "un") === "kg";
+                const custo = x.custo ?? x.quantidade * (x.custo_un ?? 0);
+                return (
+                  <tr key={x.insumo_id} style={{ borderTop: "1px solid var(--pm-bs)" }}>
+                    <td style={{ padding: "7px 8px 7px 0" }}>
+                      <div style={{ fontSize: 11, color: "var(--pm-t3)", textTransform: "uppercase", letterSpacing: 0.4 }}>{ROTULO_TIPO[x.ins?.tipo ?? ""] ?? "Outro"}</div>
+                      <div>{x.ins?.nome ?? `insumo ${x.insumo_id}`}</div>
+                      {x.ins?.tipo === "farinha" && (
+                        <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>
+                          big bag {l.big_bag}{l.sobra_kg != null ? ` · ficaram ${kg(l.sobra_kg, 0)} no bag depois deste lote` : ""}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>
+                      {ehKg ? kg(x.quantidade, x.quantidade % 1 ? 1 : 0) : `${int(x.quantidade)} un`}
+                    </td>
+                    <td style={{ padding: "7px 0 7px 8px", textAlign: "right", whiteSpace: "nowrap", color: "var(--pm-t2)" }}>
+                      {brl(custo)}
+                      <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>{brl(x.custo_un, ehKg ? 3 : 2)}/{ehKg ? "kg" : "un"}</div>
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: "1px solid var(--pm-bs)" }}>
+                <td style={{ padding: "7px 8px 7px 0", fontWeight: 700 }}>Total de materiais</td>
+                <td />
+                <td style={{ padding: "7px 0 7px 8px", textAlign: "right", fontWeight: 700 }}>{brl(total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Fechamento({ l }: { l: Lote }) {
   const qc = useQueryClient();
   const [tiny, setTiny] = useState(false);
@@ -401,6 +461,7 @@ function Fechamento({ l }: { l: Lote }) {
         <Numero rotulo="Começou" valor={horaBR(l.inicio_em)} sub={dataBR(l.inicio_em)} />
         <Numero rotulo="Terminou" valor={horaBR(l.fim_em)} sub={l.fim_em ? dataBR(l.fim_em) : "—"} />
       </div>
+      <MateriaisUsados l={l} />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
         {l.tiny_lancado_em ? (
           <Selo tom="g">lançado no Tiny em {dataBR(l.tiny_lancado_em)} {horaBR(l.tiny_lancado_em)}</Selo>
