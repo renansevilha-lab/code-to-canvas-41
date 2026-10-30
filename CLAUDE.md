@@ -3755,6 +3755,7 @@ prompts gravados desses estilos passaram a dizer PREÇO DE / ATACADO (os de tít
 `meta_prompt_imagem` **v4** manda o selo PREÇO DE / ATACADO nos estilos 1, 3 e 6 mesmo sem título e mesmo se algo citar o nome antigo.
 **Capa sem texto centralizada (pedido do dono):** `imagem_capa_ambientada_limpa` **v2** com o bloco CENTRALIZAÇÃO (produto ou conjunto
 no centro do quadro, mesma margem dos dois lados, pet e objetos nas laterais) e a mesma regra acrescentada aos 19 prompts já gravados.
+**Ainda saía de lado (29/out, print do dono, 15933):** o prompt pedia "centralizada" no meio do texto, mas a cena descrita era toda de um lado ("à esquerda a caixa de areia", "no canto direito a mandioca", gato lateral) e o modelo seguia a cena — e copiava 2 embalagens da foto de referência pedindo 1. Feito só no banco: bloco **"ENQUADRAMENTO CENTRAL"** (vale mais que qualquer outra instrução de composição: eixo do produto no meio, margens iguais, câmera de frente, cenário com peso igual dos dois lados, nada lateral acima de 15% da largura, quantidade a do prompt e não a da referência) no TOPO dos 27 prompts de capa limpa gravados; `imagem_capa_ambientada_limpa` **v3** começa com ele (cantos em equilíbrio, pet atrás do produto); `meta_prompt_imagem` **v5** manda abrir todo prompt de estilo 5 com o bloco copiado e descrever a cena equilibrada, sem "à esquerda/à direita" para o produto. Capas já geradas só mudam ao refazer a imagem.
 
 ## 5.11.13.2 "Onde vende hoje" também mostra onde está anunciado sem venda (25/out/2026)
 
