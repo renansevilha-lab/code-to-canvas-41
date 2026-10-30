@@ -300,3 +300,95 @@ export function linkMarketplace(c: CasoFila): string | null {
   if (c.order_sn) return `https://www.mercadolivre.com.br/vendas/${c.order_sn}/detalhe`;
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Aba Resultados (29/out/2026) — RPC devolucao_resultados + drill por caso.
+// Definições (mesmas da view_devolucao_erros):
+//   reembolsado   = o que o cliente recebeu de volta;
+//   perda_liquida = o que saiu do NOSSO bolso (descontado − compensado pelo marketplace);
+//   cmv_perdido   = custo do produto que NÃO voltou (reembolso sem devolução, extravio, disputa perdida);
+//   perda_total   = perda_liquida + cmv_perdido (dinheiro + produto).
+// ---------------------------------------------------------------------------
+
+export type JanelaResultados = "mes" | "3m" | "6m" | "12m" | "ano";
+
+export interface ResultadosTotais {
+  casos: number; em_aberto: number; com_perda: number; reembolsado: number; descontado: number; compensado: number;
+  perda_liquida: number; cmv_perdido: number; perda_total: number; produto_voltou: number; classificados: number; pedidos: number;
+}
+export interface ResultadosDevolucao {
+  periodo: { de: string; ate: string; empresa: string };
+  totais: ResultadosTotais;
+  por_mes: Array<{ mes: string; casos: number; perda_liquida: number; cmv_perdido: number; perda_total: number; pedidos: number }>;
+  por_grupo: Array<{ grupo: string; casos: number; perda_liquida: number; cmv_perdido: number; perda_total: number; classificados: number }>;
+  por_causa: Array<{ causa: string | null; causa_nome: string | null; grupo: string; casos: number; perda_liquida: number; cmv_perdido: number; perda_total: number; classificados: number }>;
+  por_marketplace: Array<{ marketplace: Marketplace; empresa: Empresa | null; casos: number; reembolsado: number; perda_liquida: number; cmv_perdido: number; perda_total: number; pedidos: number }>;
+  por_classe: Array<{ marketplace: Marketplace; classe: string; casos: number; perda_total: number }>;
+  por_pessoa: Array<{ separador: string; casos: number; erros_nossos: number; perda_total: number; pedidos_finalizados: number }>;
+  por_sku: Array<{ sku: string; nome_produto: string | null; foto: string | null; casos: number; embalagem: number; separacao: number; perda_total: number }>;
+  por_motivo: Array<{ marketplace: Marketplace; motivo: string | null; casos: number; perda_total: number }>;
+}
+
+/** Um caso da view_devolucao_erros (drill da aba Resultados). */
+export interface CasoErro {
+  marketplace: Marketplace; empresa: Empresa | null; conta: string; case_id: string; order_sn: string | null;
+  data: string; motivo: string | null; classe: string; texto_cliente: string | null;
+  valor_reembolsado: number; descontado: number; compensado: number; cmv: number; produto_voltou: boolean; cmv_perdido: number;
+  em_aberto: boolean; venda: number | null; mes: string; perda_liquida: number;
+  sku: string | null; nome_produto: string | null; separador: string | null;
+  causa: string | null; causa_origem: "resposta" | "entrada" | "provavel"; grupo: string | null; causa_nome: string | null; entrada_em: string | null;
+}
+
+const isoDia = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** De/até (dias BRT, calendário local) de cada janela da aba. */
+export function periodoJanela(j: JanelaResultados, hoje = new Date()): { de: string; ate: string } {
+  const ate = isoDia(hoje);
+  const y = hoje.getFullYear(), m = hoje.getMonth();
+  if (j === "mes") return { de: isoDia(new Date(y, m, 1)), ate };
+  if (j === "ano") return { de: `${y}-01-01`, ate };
+  const n = j === "3m" ? 2 : j === "6m" ? 5 : 11;
+  return { de: isoDia(new Date(y, m - n, 1)), ate };
+}
+
+export async function lerResultados(de: string, ate: string, empresa: Empresa | "ambas"): Promise<ResultadosDevolucao> {
+  const { data, error } = await supabaseExternal.rpc("devolucao_resultados" as never, { p_de: de, p_ate: ate, p_empresa: empresa } as never);
+  if (error) throw error;
+  const r = data as unknown as ResultadosDevolucao;
+  const num = (o: Record<string, unknown>) => { for (const k of Object.keys(o)) if (typeof o[k] === "string" && /^-?\d+(\.\d+)?$/.test(o[k] as string)) o[k] = Number(o[k]); return o; };
+  num(r.totais as unknown as Record<string, unknown>);
+  for (const k of ["por_mes", "por_grupo", "por_causa", "por_marketplace", "por_classe", "por_pessoa", "por_sku", "por_motivo"] as const) {
+    (r[k] as unknown as Array<Record<string, unknown>>).forEach(num);
+  }
+  return r;
+}
+
+export async function lerCasosResultado(p: { de: string; ate: string; empresa: Empresa | "ambas"; grupo?: string | null; causa?: string | null; separador?: string | null; sku?: string | null; limite?: number }): Promise<CasoErro[]> {
+  const { data, error } = await supabaseExternal.rpc("devolucao_resultados_casos" as never, {
+    p_de: p.de, p_ate: p.ate, p_empresa: p.empresa, p_grupo: p.grupo ?? null, p_causa: p.causa ?? null,
+    p_separador: p.separador ?? null, p_sku: p.sku ?? null, p_limite: p.limite ?? 200,
+  } as never);
+  if (error) throw error;
+  return ((data ?? []) as unknown as CasoErro[]).map((c) => ({
+    ...c,
+    valor_reembolsado: Number(c.valor_reembolsado ?? 0), descontado: Number(c.descontado ?? 0), compensado: Number(c.compensado ?? 0),
+    cmv: Number(c.cmv ?? 0), cmv_perdido: Number(c.cmv_perdido ?? 0), perda_liquida: Number(c.perda_liquida ?? 0),
+    venda: c.venda == null ? null : Number(c.venda),
+  }));
+}
+
+/** Monta o CasoFila mínimo para abrir o PainelCaso a partir de um caso da aba Resultados (o painel relê o detalhe pela RPC). */
+export function casoFilaDeErro(c: CasoErro): CasoFila {
+  return {
+    marketplace: c.marketplace, conta: c.conta, empresa: c.empresa, case_id: c.case_id, order_sn: c.order_sn,
+    status_mkt: c.classe, motivo: c.motivo, motivo_nome: c.motivo, texto_cliente: c.texto_cliente, solucao: null,
+    valor: c.valor_reembolsado || c.venda, fotos_cliente: 0, criado_em: c.data, atualizado_em: null,
+    acao_esperada: c.em_aberto ? "acompanhar" : "encerrado", precisa_acao: false, prazo: null, acoes: [], itens: [],
+    logistica_reversa: null, rastreio_volta: null, volta_entregue_em: null,
+    sku: c.sku, nome_produto: c.nome_produto, foto: null, tiny_numero: null, tiny_pedido_id: null, tiny_situacao: null,
+    entrada_em: c.entrada_em, entrada_problemas: null, entrada_causa: c.causa_origem === "entrada" ? c.causa : null,
+    separador: c.separador, respondido_em: null, respondido_acao: null, respondido_causa: c.causa_origem === "resposta" ? c.causa : null,
+    causa_interna: c.causa_origem === "provavel" ? null : c.causa, causa_provavel: c.causa_origem === "provavel" ? c.causa : null,
+    urgencia: null,
+  };
+}

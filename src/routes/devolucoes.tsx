@@ -31,7 +31,8 @@ import { rotuloCanal } from "@/lib/canais";
 import { BarraAbas, Segmento, type AbaSep } from "@/components/separacao/ui/kit";
 import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
 import { PedeResposta } from "@/components/devolucoes/PedeResposta";
-import { listarFila } from "@/lib/devolucoes";
+import { listarFila, type JanelaResultados } from "@/lib/devolucoes";
+import { Resultados } from "@/components/devolucoes/Resultados";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos / constantes
@@ -63,7 +64,7 @@ type Periodo = "mes_atual" | "mes_anterior" | "90dias" | "todos";
 type Empresa = "ottz" | "svl";
 // "ambas" só vale na aba Pede resposta; nas outras cai na Ottz.
 type EmpresaFiltro = Empresa | "ambas";
-type AbaDevolucoes = "resposta" | "recebidas" | "nf" | "perdas";
+type AbaDevolucoes = "resposta" | "resultados" | "recebidas" | "nf" | "perdas";
 type SvlSit = "pendentes" | "autorizadas" | "todas";
 
 // Intervalo de data_pedido para cada período. O varredor cobre 90 dias.
@@ -126,11 +127,13 @@ type SearchParams = {
   periodo: Periodo;
   empresa: EmpresaFiltro;
   svlsit: SvlSit;
+  /** janela da aba Resultados */
+  janela: JanelaResultados;
 };
 
 export const Route = createFileRoute("/devolucoes")({
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
-    aba: (["resposta", "recebidas", "nf", "perdas"].includes(s.aba as string) ? (s.aba as AbaDevolucoes) : "resposta"),
+    aba: (["resposta", "resultados", "recebidas", "nf", "perdas"].includes(s.aba as string) ? (s.aba as AbaDevolucoes) : "resposta"),
     pagina: Number.isFinite(Number(s.pagina)) ? Math.max(1, Math.floor(Number(s.pagina))) : 1,
     q: typeof s.q === "string" ? s.q : "",
     filtro: (["todos", "marcados", "geradas", "devolvidos"].includes(s.filtro as string)
@@ -143,6 +146,7 @@ export const Route = createFileRoute("/devolucoes")({
     svlsit: (["pendentes", "autorizadas", "todas"].includes(s.svlsit as string)
       ? (s.svlsit as SvlSit)
       : "pendentes"),
+    janela: (["mes", "3m", "6m", "12m", "ano"].includes(s.janela as string) ? (s.janela as JanelaResultados) : "3m"),
   }),
   component: DevolucoesPage,
 });
@@ -167,6 +171,7 @@ function DevolucoesPage() {
 
   const abas: AbaSep[] = [
     { id: "resposta", nome: "Pede resposta", n: nPede, onClick: () => irAba("resposta") },
+    { id: "resultados", nome: "Resultados", onClick: () => irAba("resultados") },
     { id: "recebidas", nome: "Recebidas", onClick: () => irAba("recebidas") },
     { id: "nf", nome: "NF dos cancelados", onClick: () => irAba("nf") },
     { id: "perdas", nome: "Perdas Shopee", onClick: () => irAba("perdas") },
@@ -187,6 +192,15 @@ function DevolucoesPage() {
         {aba === "resposta" && (
           <ProtecaoPacking antigo={<DevolucoesShopeeAbertas />}>
             <PedeResposta empresa={empresaFiltro} />
+          </ProtecaoPacking>
+        )}
+        {aba === "resultados" && (
+          <ProtecaoPacking antigo={<DevolucoesShopeePerdas onDarEntrada={(codigo) => { setBuscaRecebidas((b) => ({ codigo, n: (b?.n ?? 0) + 1 })); navigate({ search: (s: SearchParams) => ({ ...s, aba: "recebidas" }), resetScroll: false }); }} />}>
+            <Resultados
+              empresa={empresaFiltro}
+              janela={search.janela}
+              onJanela={(j) => navigate({ search: (s: SearchParams) => ({ ...s, janela: j }), replace: true, resetScroll: false })}
+            />
           </ProtecaoPacking>
         )}
       </div>
