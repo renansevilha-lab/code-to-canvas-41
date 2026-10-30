@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-inbound v14 (27/out/2026; conferência dos anúncios na prévia; NF de remessa, DANFE, coleta, encaixotamento e folha em PDF) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
+// Edge Function: amazon-inbound v15 (30/out/2026; confere se a Amazon fixou o transporte; v14: conferência dos anúncios na prévia; NF de remessa, DANFE, coleta, encaixotamento e folha em PDF) — envio ao FBA pela API (Fulfillment Inbound v2024-03-20)
 // ----------------------------------------------------------------------------
 // Pedido do dono: na aba Fulfillment › REPOSIÇÃO, os produtos escolhidos viram o plano de envio na Amazon,
 // com as caixas preenchidas pelos MODELOS (amazon_modelo_caixa), parando para a pessoa escolher o centro de
@@ -604,7 +604,24 @@ async function passo(plano: Record<string, any>, token: string, planoRef: string
     while (Date.now() < ate) {
       const o = await sp(token, "GET", `${API}/operations/${plano.operacao_id}`);
       const st = String(o.body?.operationStatus ?? "");
-      if (st === "SUCCESS") return await salvar(planoRef, { passo: DEPOIS[plano.passo], operacao_id: null }, { acao: `${plano.passo}: concluído` });
+      if (st === "SUCCESS") {
+        const avisos = ((o.body?.operationProblems ?? []) as any[]).map((p) => `${p.code ?? ""}: ${p.message ?? ""}`).join(" · ");
+        // v15: a confirmação do transporte volta SUCCESS mesmo quando a Amazon NÃO fixa a opção (aviso FBA_INB_0208: a
+        // coleta escolhida esgotou). Sem conferir, o plano ficava "transporte confirmado" e o Seller Central travado.
+        if (plano.passo === "confirmando_transporte") {
+          const faltam: string[] = [];
+          for (const e of ((plano.envios_amazon ?? []) as any[])) {
+            const r = await sp(token, "GET", `${API}/inboundPlans/${id}/shipments/${encodeURIComponent(String(e.id))}`);
+            if (ok(r) && !r.body?.selectedTransportationOptionId) faltam.push(String(e.fba ?? e.id));
+          }
+          if (faltam.length) {
+            const erro = `a Amazon não fixou o transporte de ${faltam.join(", ")}${avisos ? ` (${avisos})` : ""}. A coleta escolhida não está mais disponível: cote de novo e escolha outra data.`;
+            return await salvar(planoRef, { passo: "destino_confirmado", operacao_id: null, erro }, { acao: "transporte NÃO fixado pela Amazon", faltam, avisos });
+          }
+        }
+        return await salvar(planoRef, { passo: DEPOIS[plano.passo], operacao_id: null, ...(plano.passo === "confirmando_transporte" ? { erro: null } : {}) },
+          { acao: `${plano.passo}: concluído`, ...(avisos ? { avisos } : {}) });
+      }
       if (st === "FAILED") {
         const probs = ((o.body?.operationProblems ?? []) as any[]).map((p) => `${p.code ?? ""}: ${p.message ?? ""}${p.details ? ` (${p.details})` : ""}`).join(" · ");
         return await salvar(planoRef, { passo: "erro", operacao_id: null, erro: `${plano.passo}: ${probs || "operação falhou"}` }, { acao: `${plano.passo}: falhou`, erro: probs });
@@ -937,8 +954,8 @@ Deno.serve(async (req) => {
         const token = await tokenConta(Number(p.shop_id));
         const r = await sp(token, "GET", `${API}/inboundPlans/${encodeURIComponent(String(p.plano_id))}/transportationOptions?shipmentId=${encodeURIComponent(String(e.id))}`);
         e.coleta_lida_em = new Date().toISOString();
-        const op = ((r.body?.transportationOptions ?? []) as any[]).find((o) => String(o.transportationOptionId) === String(e.transporte_escolhido))
-          ?? ((r.body?.transportationOptions ?? []) as any[])[0];
+        // v15: só a opção escolhida (cair na 1ª da lista dava uma coleta que não existia)
+        const op = ((r.body?.transportationOptions ?? []) as any[]).find((o) => String(o.transportationOptionId) === String(e.transporte_escolhido));
         const ini = op?.carrierAppointment?.startTime ?? null;
         if (ok(r) && ini) {
           const mudou = e.coleta?.inicio !== ini;

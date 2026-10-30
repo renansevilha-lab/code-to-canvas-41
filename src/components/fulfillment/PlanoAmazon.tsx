@@ -231,6 +231,7 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
       if (r.ok === false) toast.error(r.erro ?? "A Amazon recusou");
       else if (r.plano?.passo === "transporte_confirmado") { toast.success("Transporte confirmado: criando o envio na aba Envios…"); await criarEnviosApp(); }
       else if (r.plano?.passo === "erro") toast.error("A Amazon recusou", { description: r.plano.erro ?? undefined });
+      else if (r.plano?.passo === "destino_confirmado") toast.error("A Amazon não fixou o transporte", { description: r.plano.erro ?? undefined });
     } catch (e) { toast.error("Falha na Amazon", { description: (e as Error).message }); } finally { setRodando(null); }
   }
   /** A mesma escolha (mesmo tipo e mesma data de coleta) em todos os envios do plano. */
@@ -440,6 +441,11 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
               <CheckCircle2 className="mr-1 inline h-4 w-4" /> Envio criado na Amazon:{" "}
               {(plano.envios_amazon ?? []).map((e) => `${e.fba ?? e.id}${e.cd ? ` → ${e.cd}` : ""}`).join(" · ")}
             </div>
+            {plano.erro && (
+              <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> {plano.erro}
+              </p>
+            )}
             <p className="text-muted-foreground">
               Como o destino foi confirmado pelo app, a Amazon exige que o <b>transporte também seja escolhido aqui</b> (no Seller Central a
               etapa 2 fica travada). Informe o dia em que a carga fica pronta e cote.
