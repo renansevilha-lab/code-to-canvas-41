@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-anuncio-sonda v6 (27/out/2026) — IA · Anúncios
+// Edge Function: amazon-anuncio-sonda v7 (30/out/2026) — IA · Anúncios
 // (publicada no slot `amazon-lwa-debug`: criar função nova no projeto falha — ver CLAUDE.md §5.11)
 // ----------------------------------------------------------------------------
 // DIAGNÓSTICO do envio de anúncio para a Amazon (SP-API, Listings Items). NÃO altera nada:
@@ -28,6 +28,8 @@
 //       campos fiscais, até 20/out 03:00 UTC. Lê antes, valida, aplica UMA vez, relê e grava em debug_fulfillment.
 // GET ?conta=ottz&teste=medidas-aplicar&sku_amazon=15180|15181[&confirmar=1]
 //       v6 (27/out/2026): medidas da embalagem dos kits Tofu 16 kg = 50×40×30 cm, 16 kg (OK do dono), até 28/out 03:00 UTC.
+// GET ?conta=ottz&teste=inbound-cancelar&plano=wfa487734b-…&confirmar=1
+//       v7 (30/out/2026): cancela o plano FBA travado da ACZ (pedido do dono), só ele, até 31/out 03:00 UTC.
 // Sem dados sensíveis na resposta (nenhum token).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -233,6 +235,27 @@ Deno.serve(async (req) => {
       registro.depois = await ler();
       await sb.from("debug_fulfillment").insert({ modulo: "amazon-medidas-aplicar", etapa: skuAmz, status_http: r.status, resultado: registro });
       return json({ ...registro, aplicado: r.ok && corpoR?.status === "ACCEPTED" });
+    } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
+  }
+  // ------------------------------------------------------------ v7: CANCELAR O PLANO FBA travado (escrita real autorizada)
+  // 30/out/2026, pedido do dono ("cancele esse plano e recrie igual"): o plano ACZ wfa487734b ficou travado — a coleta
+  // parceira da Amazon é recusada (FBA_INB_0208) e a etapa 2 no Seller Central exige terminar pela API. O pg_net não faz PUT,
+  // e o cancelamento é PUT. Só este plano, até 31/out 03:00 UTC.
+  if (teste === "inbound-cancelar") {
+    try {
+      const LIBERADO = "wfa487734b-0156-4209-998a-4aa164628fb5";
+      if (conta !== "ottz") return json({ erro: "só a conta ACZ" }, 403);
+      if (Date.now() > Date.parse("2026-10-31T03:00:00Z")) return json({ erro: "rota encerrada" }, 403);
+      const plano = (u.searchParams.get("plano") || "").trim();
+      if (plano !== LIBERADO) return json({ erro: `plano ${plano} não está liberado` }, 403);
+      if (u.searchParams.get("confirmar") !== "1") return json({ erro: "sem confirmar=1" }, 400);
+      const { data: tk } = await sb.from("oauth_tokens_amazon").select("access_token").eq("shop_id", SHOP[conta]).maybeSingle();
+      const r = await fetch(`${SPAPI}/inbound/fba/2024-03-20/inboundPlans/${plano}/cancellation`, {
+        method: "PUT", headers: { "x-amz-access-token": String(tk?.access_token ?? ""), Accept: "application/json" },
+      });
+      const txt = await r.text(); let corpoR: any = null; try { corpoR = JSON.parse(txt); } catch { corpoR = { bruto: txt.slice(0, 300) }; }
+      await sb.from("debug_fulfillment").insert({ modulo: "amazon-inbound-cancelar", etapa: plano, status_http: r.status, resultado: corpoR });
+      return json({ http: r.status, resposta: corpoR });
     } catch (e) { return json({ erro: String(e instanceof Error ? e.message : e) }, 500); }
   }
   if (!sku && !asinQ) return json({ erro: "informe ?sku= ou ?asin=" }, 400);

@@ -62,9 +62,10 @@ export const PASSOS: Record<string, string> = {
   ler_destinos: "lendo os centros de destino", escolher_destino: "escolher o destino", confirmando_destino: "confirmando o destino",
   ler_envios: "lendo os envios da Amazon", destino_confirmado: "falta o transporte",
   gerar_transporte: "cotando o transporte", gerando_transporte: "cotando o transporte", ler_transporte: "lendo as opções de transporte",
-  escolher_transporte: "escolher o transporte", confirmando_transporte: "confirmando o transporte", transporte_confirmado: "transporte confirmado", cancelando: "cancelando", cancelado: "cancelado", erro: "parou com erro",
+  escolher_transporte: "escolher o transporte", confirmando_transporte: "confirmando o transporte", transporte_confirmado: "transporte confirmado",
+  seller_central: "continuar no Seller Central", cancelando: "cancelando", cancelado: "cancelado", erro: "parou com erro",
 };
-const PARADOS = new Set(["escolher_destino", "destino_confirmado", "escolher_transporte", "transporte_confirmado", "cancelado", "erro"]);
+const PARADOS = new Set(["escolher_destino", "destino_confirmado", "escolher_transporte", "transporte_confirmado", "seller_central", "cancelado", "erro"]);
 const dataHora = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "short", day: "2-digit", month: "2-digit" }) : "—");
 const horaBRT = (iso: string) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 /** Nome da opção para gente: parceira da Amazon = coleta; por nossa conta = quem leva e como. */
@@ -93,7 +94,7 @@ async function chamar(body: Record<string, unknown>): Promise<any> {
 function corPasso(passo: string) {
   if (passo === "erro") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
   if (passo === "transporte_confirmado") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
-  if (passo === "escolher_destino" || passo === "escolher_transporte" || passo === "destino_confirmado") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
+  if (passo === "escolher_destino" || passo === "escolher_transporte" || passo === "destino_confirmado" || passo === "seller_central") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
   if (passo === "cancelado") return "bg-muted text-muted-foreground";
   return "";
 }
@@ -429,6 +430,28 @@ export function PlanoAmazonDialog({ aberto, onFechar, empresa, itens, planoId: p
                 <CheckCircle2 className="h-4 w-4" /> Confirmar destino
               </Button>
               <Button variant="outline" className="gap-1.5" disabled={!!rodando} onClick={() => setConfirmarCancelar(true)}>
+                <XCircle className="h-4 w-4" /> Cancelar o plano
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {plano?.passo === "seller_central" && (
+          <div className="space-y-2 text-sm">
+            <div className="rounded-md border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+              <CheckCircle2 className="mr-1 inline h-4 w-4" /> Etapa 1 feita na Amazon (itens, preparo e caixas).
+            </div>
+            <p className="text-muted-foreground">
+              Destino e transporte (etapa 2) ficam para o <b>Seller Central</b>: abra o plano, confirme o envio e escolha a coleta.
+              Depois, o envio entra na aba Envios por "Importar da Amazon" e o app liga ao plano sozinho.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild size="sm" className="gap-1.5">
+                <a href={`https://sellercentral.amazon.com.br/fba/sendtoamazon?wf=${plano.plano_id}`} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-4 w-4" /> Continuar no Seller Central
+                </a>
+              </Button>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-destructive" disabled={!!rodando} onClick={() => setConfirmarCancelar(true)}>
                 <XCircle className="h-4 w-4" /> Cancelar o plano
               </Button>
             </div>
