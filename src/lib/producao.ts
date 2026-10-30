@@ -186,6 +186,29 @@ export const useEstoqueAcabado = (skus: string[]) =>
     },
   });
 
+/** Foto por SKU (view_foto_produto: Tiny primeiro), só dos SKUs pedidos. */
+export const useFotos = (skus: string[]) => {
+  const lista = [...new Set(skus.filter(Boolean))].sort();
+  return useQuery({
+    queryKey: ["producao", "fotos", lista.join(",")],
+    enabled: lista.length > 0,
+    staleTime: 30 * 60_000,
+    queryFn: async () => {
+      const r = await ler<Array<{ sku: string; foto: string | null }>>(supabaseExternal.from("view_foto_produto").select("sku, foto").in("sku", lista));
+      return Object.fromEntries(r.filter((x) => x.foto).map((x) => [x.sku, x.foto as string])) as Record<string, string>;
+    },
+  });
+};
+
+/** Início e fim do lote: "29/10 15:07 → 16:01" (o dia do fim só aparece se for outro). */
+export const periodoBR = (ini: string | null, fim: string | null) => {
+  if (!ini) return "—";
+  const d = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
+  const a = `${d(ini)} ${horaBR(ini)}`;
+  if (!fim) return `${a} → em andamento`;
+  return `${a} → ${d(fim) === d(ini) ? "" : d(fim) + " "}${horaBR(fim)}`;
+};
+
 // --- formatação --------------------------------------------------------------
 export const int = (n: number | null | undefined) => (n == null ? "—" : Math.round(n).toLocaleString("pt-BR"));
 export const kg = (n: number | null | undefined, casas = 1) =>

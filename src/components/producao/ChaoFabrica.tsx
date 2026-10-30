@@ -9,7 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
 import { DialogoLancarTiny } from "./TinyProducao";
 import {
-  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada,
+  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useFotos,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
 } from "@/lib/producao";
 
@@ -25,6 +25,7 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
   const recarregar = () => qc.invalidateQueries({ queryKey: ["producao"] });
   const nomePessoa = (pid?: string) => pessoas.data?.find((p) => p.id === pid)?.nome ?? pid ?? "—";
   const quemEnvase = l?.pessoas?.envase ?? null;
+  const foto = useFotos(l ? [l.sku] : []).data?.[l?.sku ?? ""];
 
   async function gravar(tabela: string, linha: Record<string, unknown>, okMsg?: string) {
     const { error } = await supabaseExternal.from(tabela as never).insert({ ordem_id: id, ...linha } as never);
@@ -70,10 +71,15 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
         {fechado ? <Selo>{l.status}</Selo> : l.parado_agora ? <Selo tom="r">parado · {nomeMotivoParada(l.parada_motivo)}</Selo> : <Selo tom="g">rodando</Selo>}
       </div>
       <Cartao>
-        <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 0.5, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{l.codigo}</div>
-        <div style={{ fontSize: 13, color: "var(--pm-t2)", marginTop: 2 }}>{l.sku} · {l.produto}</div>
-        <div style={{ fontSize: 12.5, color: "var(--pm-t3)", marginTop: 2 }}>
-          Big bag {l.big_bag} · {l.embalagem} · aberto {horaBR(l.inicio_em)}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {foto && <img src={foto} alt="" width={64} height={64} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 10, border: "1px solid var(--pm-bs)", background: "#fff", flexShrink: 0 }} />}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 0.5, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{l.codigo}</div>
+            <div style={{ fontSize: 13, color: "var(--pm-t2)", marginTop: 2 }}>{l.sku} · {l.produto}</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--pm-t3)", marginTop: 6 }}>
+          Big bag {l.big_bag} · {l.embalagem} · {fechado ? `produção ${periodoBR(l.inicio_em, l.fim_em)}` : `começou ${horaBR(l.inicio_em)}`}
         </div>
       </Cartao>
 
@@ -392,6 +398,8 @@ function Fechamento({ l }: { l: Lote }) {
           tom={difCusto != null ? (difCusto > 0.05 ? "r" : "g") : undefined} />
         <Numero rotulo="Peso médio" valor={l.media_g != null ? `${int(l.media_g)} g` : "—"} sub={`${int(l.abaixo_t)} abaixo do limite`} tom={l.abaixo_t ? "r" : undefined} />
         <Numero rotulo="Ritmo" valor={l.un_hora != null ? `${int(l.un_hora)}/h` : "—"} sub={`${minutos(l.minutos_total)} · parado ${minutos(l.minutos_parados)}`} />
+        <Numero rotulo="Começou" valor={horaBR(l.inicio_em)} sub={dataBR(l.inicio_em)} />
+        <Numero rotulo="Terminou" valor={horaBR(l.fim_em)} sub={l.fim_em ? dataBR(l.fim_em) : "—"} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
         {l.tiny_lancado_em ? (

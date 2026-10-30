@@ -1308,6 +1308,7 @@ matéria-prima (farinha, sacos, etiquetas) na própria Produção.
   **`producao-tiny` v3:** além da entrada do 16640, **saída dos pacotes de 16080** no Geral (papel `mistura`). Tela:
   aviso da receita no "Iniciar produção", campo "Pacotes … abertos" no encerramento, "Farinha por saco" e "Pacotes 16080"
   no fechamento. Testado (desfeito): 100 sacos → 63 pacotes + 252 kg, R$ 19,26/saco. Não conferido na tela.
+- **Foto e horário (30/out, pedido do dono):** /producao mostra a foto do produto (`view_foto_produto`, só dos SKUs da tela, `useFotos`) em O que produzir, nos lotes rodando, nos encerrados e no chão de fábrica, e o início → fim de cada lote (`producao_ordem.inicio_em`/`fim_em`, já gravados; coluna nova nos encerrados com duração e tempo parado; "Começou"/"Terminou" no fechamento).
 - **Pendente (decisão do dono):** custo médio do acabado no Tiny, regra de pesagem final; os 4 big bags da NF 19532 estão
   SEM tipo de farinha até alguém classificar em Entradas; 16581 e 16678 têm o MESMO EAN (7898774450199) e Santa Lucia como
   fornecedor no Tiny.

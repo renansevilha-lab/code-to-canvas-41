@@ -1,7 +1,7 @@
 // Painel do dia: o que está rodando, o que a cobertura pede, big bags e lotes encerrados.
 import { Botao, Cartao, Numero, Selo, tabela, td, th } from "./ui";
 import {
-  brl, dataBR, horaBR, int, kg, minutos, nomeMotivoParada, useBigBags, useEstoqueAcabado, useLotes, useParametros, type Lote,
+  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type Lote,
 } from "@/lib/producao";
 
 export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: () => void; onIrLote: (id: number) => void; onIrEntradas: () => void }) {
@@ -12,6 +12,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
   const acabado = useEstoqueAcabado((params.data ?? []).map((p) => p.sku));
 
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
+  const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
   const listaBags = bags.data ?? [];
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
   const semDensidade = listaBags.filter((b) => b.densidade_pendente && b.saldo_kg > 0).length;
@@ -36,7 +37,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
           <p style={{ margin: 0, fontSize: 13, color: "var(--pm-t3)" }}>Nenhum lote aberto.</p>
         ) : (
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
-            {(abertos.data ?? []).map((l) => <CartaoLote key={l.id} l={l} onClick={() => onIrLote(l.id)} />)}
+            {(abertos.data ?? []).map((l) => <CartaoLote key={l.id} l={l} foto={fotos[l.sku]} onClick={() => onIrLote(l.id)} />)}
           </div>
         )}
       </Cartao>
@@ -54,7 +55,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
                 const meta = params.data?.find((p) => p.sku === a.sku)?.meta_estoque_un ?? null;
                 return (
                   <tr key={a.sku}>
-                    <td style={td}><b>{a.sku}</b> <span style={{ color: "var(--pm-t2)" }}>{a.nome}</span></td>
+                    <td style={td}><Produto foto={fotos[a.sku]} sku={a.sku} nome={a.nome} /></td>
                     <td style={{ ...td, textAlign: "right" }}>{int(a.estoque)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{int(a.venda_30d)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{a.cobertura != null ? `${int(a.cobertura)} dias` : "—"}</td>
@@ -80,7 +81,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
           <div style={{ overflowX: "auto" }}>
             <table style={tabela}>
               <thead><tr>
-                <th style={th}>Lote</th><th style={th}>Data</th><th style={{ ...th, textAlign: "right" }}>Bons</th>
+                <th style={th}>Lote</th><th style={th}>Produto</th><th style={th}>Início → fim</th><th style={{ ...th, textAlign: "right" }}>Bons</th>
                 <th style={{ ...th, textAlign: "right" }}>Refugo</th><th style={{ ...th, textAlign: "right" }}>Farinha / saco</th>
                 <th style={{ ...th, textAlign: "right" }}>Custo / saco</th><th style={{ ...th, textAlign: "right" }}>Peso médio</th>
                 <th style={{ ...th, textAlign: "right" }}>Ritmo</th>
@@ -91,7 +92,11 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
                   return (
                     <tr key={l.id} className="pm-linha-hv" style={{ cursor: "pointer" }} onClick={() => onIrLote(l.id)}>
                       <td style={{ ...td, fontWeight: 600 }}>{l.codigo}</td>
-                      <td style={td}>{dataBR(l.data)}</td>
+                      <td style={td}><Produto foto={fotos[l.sku]} sku={l.sku} nome={l.produto} pequeno /></td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        {periodoBR(l.inicio_em, l.fim_em)}
+                        <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>{minutos(l.minutos_total)}{l.minutos_parados ? ` · parado ${minutos(l.minutos_parados)}` : ""}</div>
+                      </td>
                       <td style={{ ...td, textAlign: "right" }}>{int(l.boas)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{int(l.refugo)}</td>
                       <td style={{ ...td, textAlign: "right", color: porSaco != null && porSaco > l.farinha_padrao_kg * 1.01 ? "var(--pm-r)" : undefined }}>
@@ -116,7 +121,27 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
   );
 }
 
-function CartaoLote({ l, onClick }: { l: Lote; onClick: () => void }) {
+/** Foto + SKU + nome do produto (sem foto = quadrado vazio, para a coluna não pular). */
+export function Produto({ foto, sku, nome, pequeno }: { foto?: string; sku: string; nome: string | null; pequeno?: boolean }) {
+  const lado = pequeno ? 34 : 44;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: pequeno ? 180 : 240 }}>
+      {foto ? (
+        <img src={foto} alt="" loading="lazy" width={lado} height={lado}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+          style={{ width: lado, height: lado, objectFit: "cover", borderRadius: 8, border: "1px solid var(--pm-bs)", background: "#fff", flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: lado, height: lado, borderRadius: 8, background: "var(--pm-s2)", flexShrink: 0 }} />
+      )}
+      <div style={{ lineHeight: 1.25 }}>
+        <b>{sku}</b>
+        {nome && <div style={{ fontSize: pequeno ? 11.5 : 12.5, color: "var(--pm-t2)" }}>{nome}</div>}
+      </div>
+    </div>
+  );
+}
+
+function CartaoLote({ l, foto, onClick }: { l: Lote; foto?: string; onClick: () => void }) {
   const pct = l.qtd_planejada ? Math.min(100, (l.envasados / l.qtd_planejada) * 100) : null;
   return (
     <button type="button" onClick={onClick} className="pm-linha-hv"
@@ -126,7 +151,8 @@ function CartaoLote({ l, onClick }: { l: Lote; onClick: () => void }) {
         <div style={{ flex: 1 }} />
         {l.parado_agora ? <Selo tom="r">parado · {nomeMotivoParada(l.parada_motivo)}</Selo> : <Selo tom="g">rodando</Selo>}
       </div>
-      <div style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>{l.sku} · big bag {l.big_bag} · desde {horaBR(l.inicio_em)}</div>
+      <Produto foto={foto} sku={l.sku} nome={l.produto} pequeno />
+      <div style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>big bag {l.big_bag} · começou {horaBR(l.inicio_em)}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
         <Numero rotulo="Envasados" valor={int(l.envasados)} sub={l.qtd_planejada ? `de ${int(l.qtd_planejada)}` : undefined} />
         <Numero rotulo="Ritmo" valor={l.un_hora != null ? `${int(l.un_hora)}/h` : "—"} sub={minutos(l.minutos_total)} />
