@@ -1,5 +1,7 @@
 // Painel do dia: o que está rodando, o que a cobertura pede, big bags e lotes encerrados.
+import { useState } from "react";
 import { Botao, Cartao, Numero, Selo, tabela, td, th } from "./ui";
+import { FichaProducao } from "./FichaProducao";
 import {
   brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type Lote,
 } from "@/lib/producao";
@@ -12,6 +14,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
   const acabado = useEstoqueAcabado((params.data ?? []).map((p) => p.sku));
 
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
+  const [ficha, setFicha] = useState<string | null>(null);
   const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
   const listaBags = bags.data ?? [];
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
@@ -54,7 +57,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
               {(acabado.data ?? []).map((a) => {
                 const meta = params.data?.find((p) => p.sku === a.sku)?.meta_estoque_un ?? null;
                 return (
-                  <tr key={a.sku}>
+                  <tr key={a.sku} className="pm-linha-hv" style={{ cursor: "pointer" }} onClick={() => setFicha(a.sku)} title="Ver a ficha de produção">
                     <td style={td}><Produto foto={fotos[a.sku]} sku={a.sku} nome={a.nome} /></td>
                     <td style={{ ...td, textAlign: "right" }}>{int(a.estoque)}</td>
                     <td style={{ ...td, textAlign: "right" }}>{int(a.venda_30d)}</td>
@@ -70,9 +73,11 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
           </table>
         </div>
         <p style={{ fontSize: 11.5, color: "var(--pm-t3)", margin: "8px 0 0" }}>
-          Estoque e venda pela mesma regra do agente de compras (Geral + Fulls, kits abertos). Com pouca venda ainda, a cobertura não diz muito: use a meta da ficha técnica.
+          Clique num produto para ver a ficha de produção (o que vai em cada saco, proporções e custo). Estoque e venda pela mesma regra do agente de compras (Geral + Fulls, kits abertos). Com pouca venda ainda, a cobertura não diz muito: use a meta da ficha técnica.
         </p>
       </Cartao>
+
+      <FichaProducao sku={ficha} foto={ficha ? fotos[ficha] : undefined} onFechar={() => setFicha(null)} />
 
       <Cartao titulo="Lotes encerrados">
         {!encerrados.length ? (

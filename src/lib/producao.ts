@@ -186,6 +186,27 @@ export const useEstoqueAcabado = (skus: string[]) =>
     },
   });
 
+/** Ficha de produção (view_producao_ficha): o que vai num saco, proporções e custo padrão. */
+export interface Ficha {
+  sku: string; produto: string | null; ativo: boolean; prefixo_lote: string; peso_nominal_kg: number; sobrepeso_pct: number;
+  perda_pct: number; consumo_padrao_kg: number; tolerancia_g: number; pesar_cada: number | null; pesar_primeiros: number;
+  meta_estoque_un: number | null; farinha: string | null; farinha_kg: number; farinha_custo_kg: number; farinha_custo: number;
+  farinha_pct: number; mistura: string | null; mistura_sku: string | null; mistura_un_kg: number | null; mistura_farinha_kg: number | null;
+  mistura_un: number | null; mistura_kg: number | null; mistura_custo_un: number | null; mistura_custo: number | null;
+  mistura_pct: number | null; embalagem: string | null; embalagem_custo: number | null; etiqueta: string | null;
+  etiqueta_custo: number | null; custo_conversao_un: number; custo_padrao_un: number;
+}
+export const useFicha = (sku: string | null) =>
+  useQuery({
+    queryKey: ["producao", "ficha", sku],
+    enabled: sku != null,
+    placeholderData: undefined,
+    queryFn: async () => {
+      const r = await ler<Ficha[]>(supabaseExternal.from("view_producao_ficha").select("*").eq("sku", sku!).limit(1));
+      return r[0] ?? null;
+    },
+  });
+
 /** O que o lote consumiu (gravado no encerramento): farinha do big bag, pacotes da mistura, sacos e etiquetas. */
 export interface ConsumoLote { insumo_id: number; quantidade: number; custo_un: number | null; custo: number | null }
 export const useConsumoLote = (id: number | null, encerrado: boolean) =>
