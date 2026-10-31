@@ -165,7 +165,9 @@ export const usePessoas = () =>
     },
   });
 
-/** Estoque de hoje dos SKUs fabricados (cadastro do Tiny) e venda dos últimos 30 dias (regra do agente de compras). */
+/** Estoque de hoje dos SKUs fabricados (cadastro do Tiny) e venda dos últimos 30 dias (regra do agente de compras).
+ *  Lê o retrato diário ads_cobertura_sku: a view_cobertura_fornecedor ao vivo leva ~3 s e estourava o limite de 8 s
+ *  com o banco carregado — e a tabela "O que produzir" ficava vazia. Se o retrato falhar, a lista sai sem cobertura. */
 export const useEstoqueAcabado = (skus: string[]) =>
   useQuery({
     queryKey: ["producao", "acabado", skus.join(",")],
@@ -174,14 +176,15 @@ export const useEstoqueAcabado = (skus: string[]) =>
       const [prod, cob] = await Promise.all([
         ler<Array<{ sku: string; nome: string; estoque: number | null; custo: number | null }>>(
           supabaseExternal.from("produtos").select("sku, nome, estoque, custo").in("sku", skus)),
-        ler<Array<{ sku: string; venda_30d: number | null; estoque_total: number | null; cobertura_total_dias: number | null; status: string | null }>>(
-          supabaseExternal.from("view_cobertura_fornecedor").select("sku, venda_30d, estoque_total, cobertura_total_dias, status").in("sku", skus)),
+        ler<Array<{ sku: string; venda_30d: number | null; estoque_total: number | null; cobertura_com_oc_dias: number | null; status: string | null }>>(
+          supabaseExternal.from("ads_cobertura_sku").select("sku, venda_30d, estoque_total, cobertura_com_oc_dias, status").in("sku", skus))
+          .catch(() => []),
       ]);
       return skus.map((s) => {
         const p = prod.find((x) => x.sku === s);
         const c = cob.find((x) => x.sku === s);
         return { sku: s, nome: p?.nome ?? s, estoque: c?.estoque_total ?? p?.estoque ?? null, venda_30d: c?.venda_30d ?? null,
-                 cobertura: c?.cobertura_total_dias ?? null, custo_tiny: p?.custo ?? null };
+                 cobertura: c?.cobertura_com_oc_dias ?? null, custo_tiny: p?.custo ?? null };
       });
     },
   });

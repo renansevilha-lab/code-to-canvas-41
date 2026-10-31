@@ -54,6 +54,13 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
               <th style={{ ...th, textAlign: "right" }}>Meta</th><th style={{ ...th, textAlign: "right" }}>Custo no Tiny</th>
             </tr></thead>
             <tbody>
+              {(acabado.isLoading || params.isLoading) && <tr><td colSpan={6} style={{ ...td, color: "var(--pm-t3)" }}>Carregando…</td></tr>}
+              {(acabado.error || params.error) && (
+                <tr><td colSpan={6} style={{ ...td, color: "var(--pm-r)" }}>
+                  Não deu para ler agora ({((acabado.error ?? params.error) as Error).message}).{" "}
+                  <button type="button" onClick={() => { void params.refetch(); void acabado.refetch(); }} style={{ textDecoration: "underline", color: "inherit", background: "none", border: 0, cursor: "pointer" }}>Tentar de novo</button>
+                </td></tr>
+              )}
               {(acabado.data ?? []).map((a) => {
                 const meta = params.data?.find((p) => p.sku === a.sku)?.meta_estoque_un ?? null;
                 return (
