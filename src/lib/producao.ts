@@ -195,6 +195,7 @@ export interface Ficha {
   mistura_un: number | null; mistura_kg: number | null; mistura_custo_un: number | null; mistura_custo: number | null;
   mistura_pct: number | null; embalagem: string | null; embalagem_custo: number | null; etiqueta: string | null;
   etiqueta_custo: number | null; custo_conversao_un: number; custo_padrao_un: number;
+  seladora_temp_c: number | null; processo: Array<{ nome: string; valor: string }> | null; instrucoes: string | null;
 }
 export const useFicha = (sku: string | null) =>
   useQuery({

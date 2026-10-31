@@ -1,7 +1,10 @@
 // Ficha de produção de um produto fabricado: o que vai num saco, proporções, embalagem e custo padrão.
 // Tudo vem da view_producao_ficha (a mesma conta do custo padrão dos lotes); aqui só exibe.
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Numero, Selo } from "./ui";
+import { useState } from "react";
+import { Botao, Numero, Selo } from "./ui";
+import { EditarFicha } from "./EditarFicha";
+import { usePerfil } from "@/hooks/usePerfil";
 import { brl, int, kg, useFicha } from "@/lib/producao";
 
 const pct = (n: number | null | undefined) => (n == null ? "—" : `${Number(n).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
@@ -11,6 +14,10 @@ const num = (n: number | null | undefined, casas = 3) =>
 export function FichaProducao({ sku, foto, onFechar }: { sku: string | null; foto?: string; onFechar: () => void }) {
   const q = useFicha(sku);
   const f = q.data;
+  const { perfil } = usePerfil();
+  const podeEditar = !!perfil?.modulos.includes("todos");
+  const [editando, setEditando] = useState(false);
+  const processo = (f?.processo ?? []).filter((x) => x.nome || x.valor);
   const linhas = f
     ? [
         { tipo: "Farinha do big bag", nome: f.farinha ?? "—", qtd: kg(f.farinha_kg, 3), extra: f.mistura ? `${pct(f.farinha_pct)} do peso` : "100% do peso", custo: f.farinha_custo, un: `${brl(f.farinha_custo_kg, 3)}/kg` },
@@ -24,11 +31,13 @@ export function FichaProducao({ sku, foto, onFechar }: { sku: string | null; fot
     : [];
 
   return (
-    <Dialog open={sku != null} onOpenChange={(v) => !v && onFechar()}>
+    <Dialog open={sku != null} onOpenChange={(v) => { if (!v) { setEditando(false); onFechar(); } }}>
       <DialogContent className="pm-ui max-w-2xl" style={{ background: "var(--pm-s)", color: "var(--pm-t)", maxHeight: "90vh", overflowY: "auto" }}>
-        <DialogHeader><DialogTitle>Ficha de produção</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editando ? "Editar ficha de produção" : "Ficha de produção"}</DialogTitle></DialogHeader>
         {q.isLoading ? (
           <p style={{ color: "var(--pm-t3)", fontSize: 13 }}>Carregando…</p>
+        ) : f && editando ? (
+          <EditarFicha sku={f.sku} onFim={() => setEditando(false)} />
         ) : !f ? (
           <p style={{ color: "var(--pm-t3)", fontSize: 13 }}>Este produto não tem ficha de produção.</p>
         ) : (
@@ -44,6 +53,8 @@ export function FichaProducao({ sku, foto, onFechar }: { sku: string | null; fot
                   {!f.ativo && <Selo tom="a">ficha desligada</Selo>}
                 </div>
               </div>
+              <div style={{ flex: 1 }} />
+              {podeEditar && <Botao onClick={() => setEditando(true)}>Editar ficha</Botao>}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
@@ -96,6 +107,33 @@ export function FichaProducao({ sku, foto, onFechar }: { sku: string | null; fot
                   </tr>
                 </tbody>
               </table>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Processo</div>
+              {f.seladora_temp_c == null && !processo.length && !f.instrucoes ? (
+                <p style={{ fontSize: 12.5, color: "var(--pm-t3)", margin: 0 }}>
+                  Sem parâmetros de processo{podeEditar ? " — em “Editar ficha” dá para pôr a temperatura da seladora e outros." : "."}
+                </p>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <tbody>
+                    {f.seladora_temp_c != null && (
+                      <tr style={{ borderTop: "1px solid var(--pm-bs)" }}>
+                        <td style={{ padding: "7px 8px 7px 0" }}>Temperatura da seladora</td>
+                        <td style={{ padding: "7px 0", textAlign: "right", fontWeight: 700 }}>{num(f.seladora_temp_c, 1)} °C</td>
+                      </tr>
+                    )}
+                    {processo.map((x, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--pm-bs)" }}>
+                        <td style={{ padding: "7px 8px 7px 0" }}>{x.nome}</td>
+                        <td style={{ padding: "7px 0", textAlign: "right", fontWeight: 700 }}>{x.valor}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {f.instrucoes && <p style={{ fontSize: 13, whiteSpace: "pre-wrap", margin: "8px 0 0", padding: 10, borderRadius: 9, background: "var(--pm-s2)" }}>{f.instrucoes}</p>}
             </div>
           </div>
         )}

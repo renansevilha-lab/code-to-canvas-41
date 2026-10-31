@@ -80,3 +80,13 @@ commit;
 -- delete from producao_parametros where sku in ('16723','15933');
 -- delete from producao_insumo where nome = 'Saco 3 kg' or tiny_sku = '15679';
 -- update producao_insumo set nome = 'Farinha de mandioca Lotus — grãos médios' where id = 1;
+
+-- ============================================================================================
+-- 30/out/2026 (2º pedido do dono): ficha editável + processo. Migração producao_ficha_processo.
+-- producao_parametros ganhou seladora_temp_c (°C), processo jsonb [{nome, valor}] e instrucoes;
+-- view_producao_ficha recriada com as três no FIM (mesmo corpo acima + p.seladora_temp_c, p.processo, p.instrucoes).
+-- A edição grava direto nas tabelas pela tela (RLS: só módulo "todos"): producao_parametros, producao_insumo
+-- (preço/etiqueta da embalagem e da etiqueta — valem para todo produto que usa o mesmo saco) e producao_config
+-- (mão de obra, custos da fábrica, capacidade — valem para todos).
+-- ROLLBACK: recriar a view sem as 3 colunas e
+--   alter table producao_parametros drop column seladora_temp_c, drop column processo, drop column instrucoes;

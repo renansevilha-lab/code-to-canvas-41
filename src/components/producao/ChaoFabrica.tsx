@@ -9,7 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
 import { DialogoLancarTiny } from "./TinyProducao";
 import {
-  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFotos, useInsumos,
+  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFicha, useFotos, useInsumos,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
 } from "@/lib/producao";
 
@@ -26,6 +26,11 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
   const nomePessoa = (pid?: string) => pessoas.data?.find((p) => p.id === pid)?.nome ?? pid ?? "—";
   const quemEnvase = l?.pessoas?.envase ?? null;
   const foto = useFotos(l ? [l.sku] : []).data?.[l?.sku ?? ""];
+  const ficha = useFicha(l?.sku ?? null).data;
+  const processo = [
+    ...(ficha?.seladora_temp_c != null ? [{ nome: "Seladora", valor: `${String(ficha.seladora_temp_c).replace(".", ",")} °C` }] : []),
+    ...(ficha?.processo ?? []).filter((x) => x.nome || x.valor),
+  ];
 
   async function gravar(tabela: string, linha: Record<string, unknown>, okMsg?: string) {
     const { error } = await supabaseExternal.from(tabela as never).insert({ ordem_id: id, ...linha } as never);
@@ -81,6 +86,18 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
         <div style={{ fontSize: 12.5, color: "var(--pm-t3)", marginTop: 6 }}>
           Big bag {l.big_bag} · {l.embalagem} · {fechado ? `produção ${periodoBR(l.inicio_em, l.fim_em)}` : `começou ${horaBR(l.inicio_em)}`}
         </div>
+        {!fechado && processo.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+            {processo.map((x, i) => (
+              <span key={i} style={{ fontSize: 13, padding: "4px 10px", borderRadius: 8, background: "var(--pm-as)", color: "var(--pm-at)" }}>
+                {x.nome}{x.nome && x.valor ? ": " : ""}<b>{x.valor}</b>
+              </span>
+            ))}
+          </div>
+        )}
+        {!fechado && ficha?.instrucoes && (
+          <div style={{ fontSize: 13, whiteSpace: "pre-wrap", marginTop: 8, padding: 10, borderRadius: 9, background: "var(--pm-s2)" }}>{ficha.instrucoes}</div>
+        )}
       </Cartao>
 
       {/* Números do lote */}
