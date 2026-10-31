@@ -328,12 +328,20 @@ function Dashboard() {
           );
         }
 
-        if (!visao.error) {
-          const row = Array.isArray(visao.data) ? (visao.data as VisaoGeralRow[])[0] : (visao.data as VisaoGeralRow | null);
+        // Nos minutos cheios (:00) várias rotinas disparam juntas e a RPC pode estourar os 8 s (30/out, 22h00:
+        // 4 × 500 seguidos). Tenta de novo 2× e, se ainda falhar, NÃO mostra R$ 0: avisa e mantém o último valor.
+        let visaoR = visao;
+        for (let t = 0; visaoR.error && t < 2 && !cancel; t++) {
+          await new Promise((r) => setTimeout(r, 2500 * (t + 1)));
+          visaoR = await supabaseExternal.rpc("dashboard_visao_geral", { data_inicial: range.from, data_final: range.to });
+        }
+        if (cancel) return;
+        if (!visaoR.error) {
+          const row = Array.isArray(visaoR.data) ? (visaoR.data as VisaoGeralRow[])[0] : (visaoR.data as VisaoGeralRow | null);
           setVisaoGeral(row ?? null);
         } else {
-          console.warn("dashboard_visao_geral →", visao.error);
-          setVisaoGeral(null);
+          console.warn("dashboard_visao_geral →", visaoR.error);
+          setErro("Os números do topo não carregaram (banco ocupado neste minuto). Clique em “Atualizar tudo” em instantes.");
         }
 
         if (canaisR.error) setErro(`view_canais_diario: ${canaisR.error.message}`);
@@ -536,7 +544,8 @@ function Dashboard() {
 
   // Cartões — valores da RPC dashboard_visao_geral (fonte única: receita, margem, ADS e lucro pós
   // ADS iguais ao DRE; a Amazon não tem ADS integrado). Delta e sparkline vêm da série diária.
-  const kpis: Kpis | null = loading && !visaoGeral ? null : {
+  // sem a RPC (carregando ou falhou) os cartões ficam em branco — nunca R$ 0 falso
+  const kpis: Kpis | null = !visaoGeral ? null : {
     vendas: Number(visaoGeral?.vendas ?? 0),
     margem: Number(visaoGeral?.margem_contrib ?? 0),
     mcPct: visaoGeral?.margem_pct != null ? Number(visaoGeral.margem_pct) : null,
