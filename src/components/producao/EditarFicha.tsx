@@ -138,7 +138,8 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
     if (v.embPreco == null || v.embPreco < 0) return toast.error("Informe o preço da embalagem.");
     if (etiquetaSim && !f.etq) return toast.error("Escolha a etiqueta (ou desmarque “leva etiqueta”).");
     if (etiquetaSim && (v.etqPreco == null || v.etqPreco < 0)) return toast.error("Informe o preço da etiqueta.");
-    if (!v.mod || !v.cif || !v.cap) return toast.error("Informe mão de obra, custos da fábrica e capacidade.");
+    if (v.mod == null || v.mod < 0 || v.cif == null || v.cif < 0) return toast.error("Informe mão de obra e custos da fábrica (pode ser 0).");
+    if (!v.cap || v.cap <= 0) return toast.error("A capacidade precisa ser maior que zero (ex.: 10000).");
     const proc = processo.map((x) => ({ nome: x.nome.trim(), valor: x.valor.trim() })).filter((x) => x.nome || x.valor);
 
     setSalvando(true);
@@ -270,7 +271,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
 
       {bloco("Mão de obra e fábrica", "Vale para todos os produtos: custo por saco = (mão de obra + custos da fábrica) ÷ capacidade.")}
       <div style={grade}>
-        <Campo rotulo="Mão de obra no mês (R$)"><Entrada inputMode="decimal" value={f.mod} onChange={set("mod")} /></Campo>
+        <Campo rotulo="Mão de obra no mês (R$)" dica="0 = fora do custo por enquanto"><Entrada inputMode="decimal" value={f.mod} onChange={set("mod")} /></Campo>
         <Campo rotulo="Custos da fábrica no mês (R$)" dica="aluguel, energia, manutenção…"><Entrada inputMode="decimal" value={f.cif} onChange={set("cif")} /></Campo>
         <Campo rotulo="Capacidade normal (sacos/mês)"><Entrada inputMode="numeric" value={f.cap} onChange={set("cap")} /></Campo>
       </div>
