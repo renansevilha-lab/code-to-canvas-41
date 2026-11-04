@@ -2,9 +2,13 @@
 import { useState } from "react";
 import { Botao, Cartao, Numero, Selo, tabela, td, th } from "./ui";
 import { FichaProducao } from "./FichaProducao";
+import { ContagemAcabado } from "./ContagemAcabado";
 import {
-  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type Lote,
+  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type EstoqueAcabado, type Lote,
 } from "@/lib/producao";
+
+const quandoBR = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 
 export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: () => void; onIrLote: (id: number) => void; onIrEntradas: () => void }) {
   const abertos = useLotes("aberta");
@@ -15,6 +19,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
 
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
   const [ficha, setFicha] = useState<string | null>(null);
+  const [contar, setContar] = useState<EstoqueAcabado | null>(null);
   const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
   const listaBags = bags.data ?? [];
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
@@ -49,30 +54,53 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
         <div style={{ overflowX: "auto" }}>
           <table style={tabela}>
             <thead><tr>
-              <th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Estoque</th>
+              <th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>No galpão</th>
+              <th style={{ ...th, textAlign: "right" }}>No Full</th>
               <th style={{ ...th, textAlign: "right" }}>Venda 30 dias</th><th style={{ ...th, textAlign: "right" }}>Cobertura</th>
-              <th style={{ ...th, textAlign: "right" }}>Meta</th><th style={{ ...th, textAlign: "right" }}>Custo no Tiny</th>
+              <th style={{ ...th, textAlign: "right" }}>Meta</th><th style={{ ...th, textAlign: "right" }}>Custo no Tiny</th><th style={th} />
             </tr></thead>
             <tbody>
-              {(acabado.isLoading || params.isLoading) && <tr><td colSpan={6} style={{ ...td, color: "var(--pm-t3)" }}>Carregando…</td></tr>}
+              {(acabado.isLoading || params.isLoading) && <tr><td colSpan={8} style={{ ...td, color: "var(--pm-t3)" }}>Carregando…</td></tr>}
               {(acabado.error || params.error) && (
-                <tr><td colSpan={6} style={{ ...td, color: "var(--pm-r)" }}>
+                <tr><td colSpan={8} style={{ ...td, color: "var(--pm-r)" }}>
                   Não deu para ler agora ({((acabado.error ?? params.error) as Error).message}).{" "}
                   <button type="button" onClick={() => { void params.refetch(); void acabado.refetch(); }} style={{ textDecoration: "underline", color: "inherit", background: "none", border: 0, cursor: "pointer" }}>Tentar de novo</button>
                 </td></tr>
               )}
               {(acabado.data ?? []).map((a) => {
                 const meta = params.data?.find((p) => p.sku === a.sku)?.meta_estoque_un ?? null;
+                const total = a.saldo != null ? Math.max(0, a.saldo) + a.full_estoque : null;
+                const sub = { fontSize: 11.5, color: "var(--pm-t3)", fontWeight: 400 } as const;
                 return (
                   <tr key={a.sku} className="pm-linha-hv" style={{ cursor: "pointer" }} onClick={() => setFicha(a.sku)} title="Ver a ficha de produção">
                     <td style={td}><Produto foto={fotos[a.sku]} sku={a.sku} nome={a.nome} /></td>
-                    <td style={{ ...td, textAlign: "right" }}>{int(a.estoque)}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{int(a.venda_30d)}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{a.cobertura != null ? `${int(a.cobertura)} dias` : "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}
+                      title={a.saldo != null ? `contagem ${int(a.contagem_qtd)} + produzido ${int(a.produzido)} − vendido ${int(a.vendido_galpao)} − enviado ao Full ${int(a.enviado_full)}` : undefined}>
+                      {a.saldo != null ? (
+                        <>
+                          <span style={{ fontWeight: 650, color: a.saldo < 0 ? "var(--pm-r)" : undefined }}>{int(a.saldo)}</span>
+                          <div style={sub}>contado {quandoBR(a.contagem_em)}{a.contagem_por ? " · " + a.contagem_por : ""}</div>
+                        </>
+                      ) : (
+                        <>
+                          <Selo tom="a">sem contagem</Selo>
+                          <div style={sub}>Tiny diz {int(a.estoque_tiny)}</div>
+                        </>
+                      )}
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>{a.full_estoque ? int(a.full_estoque) : "—"}</td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      {meta != null ? (a.estoque != null && a.estoque < meta ? <Selo tom="a">faltam {int(meta - a.estoque)}</Selo> : int(meta)) : "—"}
+                      {int(a.venda_30d)}
+                      {a.venda_30d_full > 0 && <div style={sub}>{int(a.venda_30d_full)} pelo Full</div>}
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>{a.cobertura_dias != null ? `${int(a.cobertura_dias)} dias` : "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      {meta != null ? (total != null && total < meta ? <Selo tom="a">faltam {int(meta - total)}</Selo> : int(meta)) : "—"}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>{brl(a.custo_tiny)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      <Botao onClick={(e) => { e.stopPropagation(); setContar(a); }}>Contar</Botao>
+                    </td>
                   </tr>
                 );
               })}
@@ -80,10 +108,11 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
           </table>
         </div>
         <p style={{ fontSize: 11.5, color: "var(--pm-t3)", margin: "8px 0 0" }}>
-          Clique num produto para ver a ficha de produção (o que vai em cada saco, proporções e custo). Estoque e venda pela mesma regra do agente de compras (Geral + Fulls, kits abertos). Com pouca venda ainda, a cobertura não diz muito: use a meta da ficha técnica.
+          Clique num produto para ver a ficha de produção. O estoque é do nosso sistema, não do Tiny: no galpão = última contagem + sacos bons dos lotes encerrados − vendas que saíram do galpão (kits abertos) − envios ao Full; passe o mouse no número para ver a conta. Venda 30 dias de todos os canais (Shopee, Mercado Livre, TikTok, Full incluído). Cobertura = (galpão + Full) ÷ venda média por dia.
         </p>
       </Cartao>
 
+      <ContagemAcabado item={contar} foto={contar ? fotos[contar.sku] : undefined} onFechar={() => setContar(null)} />
       <FichaProducao sku={ficha} foto={ficha ? fotos[ficha] : undefined} onFechar={() => setFicha(null)} />
 
       <Cartao titulo="Lotes encerrados">

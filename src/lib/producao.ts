@@ -165,26 +165,36 @@ export const usePessoas = () =>
     },
   });
 
-/** Estoque de hoje dos SKUs fabricados (cadastro do Tiny) e venda dos últimos 30 dias (regra do agente de compras).
- *  Lê o retrato diário ads_cobertura_sku: a view_cobertura_fornecedor ao vivo leva ~3 s e estourava o limite de 8 s
- *  com o banco carregado — e a tabela "O que produzir" ficava vazia. Se o retrato falhar, a lista sai sem cobertura. */
+/** Estoque do produto ACABADO pelo nosso sistema (04/nov/2026, decisão do dono — não pelo Tiny):
+ *  RPC producao_estoque_acabado = última contagem + sacos bons dos lotes encerrados − vendas que saem do galpão
+ *  (Full/FBA fora, kits abertos) − envios ao Full; venda de 30 dias de todos os canais. SQL em docs/producao-estoque-acabado.sql. */
+export interface EstoqueAcabado {
+  sku: string; nome: string; custo_tiny: number | null; estoque_tiny: number | null;
+  contagem_qtd: number | null; contagem_em: string | null; contagem_por: string | null;
+  produzido: number | null; vendido_galpao: number | null; enviado_full: number | null; saldo: number | null;
+  venda_30d: number; venda_30d_galpao: number; venda_30d_full: number; full_estoque: number; cobertura_dias: number | null;
+}
 export const useEstoqueAcabado = (skus: string[]) =>
   useQuery({
     queryKey: ["producao", "acabado", skus.join(",")],
     enabled: skus.length > 0,
     queryFn: async () => {
-      const [prod, cob] = await Promise.all([
+      const [prod, est] = await Promise.all([
         ler<Array<{ sku: string; nome: string; estoque: number | null; custo: number | null }>>(
           supabaseExternal.from("produtos").select("sku, nome, estoque, custo").in("sku", skus)),
-        ler<Array<{ sku: string; venda_30d: number | null; estoque_total: number | null; cobertura_com_oc_dias: number | null; status: string | null }>>(
-          supabaseExternal.from("ads_cobertura_sku").select("sku, venda_30d, estoque_total, cobertura_com_oc_dias, status").in("sku", skus))
-          .catch(() => []),
+        ler<Array<Omit<EstoqueAcabado, "nome" | "custo_tiny" | "estoque_tiny">>>(supabaseExternal.rpc("producao_estoque_acabado" as never)),
       ]);
-      return skus.map((s) => {
+      return skus.map((s): EstoqueAcabado => {
         const p = prod.find((x) => x.sku === s);
-        const c = cob.find((x) => x.sku === s);
-        return { sku: s, nome: p?.nome ?? s, estoque: c?.estoque_total ?? p?.estoque ?? null, venda_30d: c?.venda_30d ?? null,
-                 cobertura: c?.cobertura_com_oc_dias ?? null, custo_tiny: p?.custo ?? null };
+        const e = est.find((x) => x.sku === s);
+        return {
+          sku: s, nome: p?.nome ?? s, custo_tiny: p?.custo ?? null, estoque_tiny: p?.estoque ?? null,
+          contagem_qtd: e?.contagem_qtd ?? null, contagem_em: e?.contagem_em ?? null, contagem_por: e?.contagem_por ?? null,
+          produzido: e?.produzido ?? null, vendido_galpao: e?.vendido_galpao ?? null, enviado_full: e?.enviado_full ?? null,
+          saldo: e?.saldo ?? null, venda_30d: Number(e?.venda_30d ?? 0), venda_30d_galpao: Number(e?.venda_30d_galpao ?? 0),
+          venda_30d_full: Number(e?.venda_30d_full ?? 0), full_estoque: Number(e?.full_estoque ?? 0),
+          cobertura_dias: e?.cobertura_dias != null ? Number(e.cobertura_dias) : null,
+        };
       });
     },
   });
