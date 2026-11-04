@@ -6,14 +6,19 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
-import { ETAPAS, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useParametros, usePessoas, type Etapa } from "@/lib/producao";
+import {
+  ETAPAS, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
+} from "@/lib/producao";
 
-export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onFechar: () => void; onAberto: (id: number) => void }) {
+export function AbrirLote({ aberto, op, onFechar, onAberto }: {
+  aberto: boolean; op?: OrdemProducao | null; onFechar: () => void; onAberto: (id: number) => void;
+}) {
   const qc = useQueryClient();
   const params = useParametros();
   const bags = useBigBags();
   const insumos = useInsumos();
   const pessoas = usePessoas();
+  const ops = useOrdensProducao(false);
 
   const [sku, setSku] = useState("");
   const [bag, setBag] = useState("");
@@ -23,6 +28,7 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
     try { return JSON.parse(localStorage.getItem("producao.quem") || "{}"); } catch { return {}; }
   });
   const [salvando, setSalvando] = useState(false);
+  const [opId, setOpId] = useState("");
 
   const par = params.data?.find((p) => p.sku === sku) ?? null;
   const embalagens = (insumos.data ?? []).filter((i) => i.tipo === "embalagem" && i.ativo);
@@ -38,13 +44,28 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
   useEffect(() => {
     if (!sku && params.data?.length === 1) setSku(params.data[0].sku);
   }, [params.data, sku]);
+  // veio de uma ordem de produção: produto e ordem já escolhidos
+  useEffect(() => {
+    if (!aberto) return;
+    if (op) { setSku(op.sku); setOpId(String(op.id)); } else setOpId("");
+  }, [aberto, op?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const opsDoSku = (ops.data ?? []).filter((o) => o.sku === sku && o.status === "aberta" && !o.lote_aberto_id && o.falta > 0);
+  const opSel = opsDoSku.find((o) => String(o.id) === opId) ?? null;
+  useEffect(() => {
+    // produto trocado: a ordem escolhida só vale se for dele; sem escolha, usa a única ordem aberta do produto
+    if (opId && !opsDoSku.some((o) => String(o.id) === opId)) setOpId("");
+    else if (!opId && !op && opsDoSku.length === 1) setOpId(String(opsDoSku[0].id));
+  }, [sku, ops.data]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (par) setEmb(par.embalagem_padrao_id ? String(par.embalagem_padrao_id) : "");
     setBag("");
   }, [par?.sku]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (bagSel && par) setQtd(String(Math.floor(bagSel.saldo_kg / farinhaPorSaco(par))));
-  }, [bagSel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (bagSel && par) {
+      const rende = Math.floor(bagSel.saldo_kg / farinhaPorSaco(par));
+      setQtd(String(opSel ? Math.min(rende, opSel.falta) : rende));
+    }
+  }, [bagSel?.id, opSel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function abrir() {
     if (!par || !bagSel) return toast.error("Escolha o produto e o big bag.");
@@ -58,10 +79,14 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
     setSalvando(false);
     if (error) return toast.error(erroMsg(error));
     try { localStorage.setItem("producao.quem", JSON.stringify(quem)); } catch { /* sem armazenamento local */ }
-    const op = data as unknown as { id: number; codigo: string };
-    toast.success(`Lote ${op.codigo} aberto. Ajuste a datadora para esse código.`);
+    const lote = data as unknown as { id: number; codigo: string };
+    if (opSel) {
+      const { error: e2 } = await supabaseExternal.from("producao_ordem" as never).update({ op_id: opSel.id } as never).eq("id", lote.id);
+      if (e2) toast.error(`Lote aberto, mas não ficou ligado à ordem #${opSel.id}: ${erroMsg(e2)}`);
+    }
+    toast.success(`Lote ${lote.codigo} aberto${opSel ? ` para a ordem #${opSel.id}` : ""}. Ajuste a datadora para esse código.`);
     void qc.invalidateQueries({ queryKey: ["producao"] });
-    onAberto(op.id);
+    onAberto(lote.id);
   }
 
   return (
@@ -75,6 +100,18 @@ export function AbrirLote({ aberto, onFechar, onAberto }: { aberto: boolean; onF
               {(params.data ?? []).map((p) => <option key={p.sku} value={p.sku}>{p.sku} · {p.prefixo_lote}</option>)}
             </Escolha>
           </Campo>
+          {sku && (opsDoSku.length > 0 || opSel) && (
+            <Campo rotulo="Ordem de produção" dica={opSel?.obs ? `Obs.: ${opSel.obs}` : undefined}>
+              <Escolha value={opId} onChange={(e) => setOpId(e.target.value)}>
+                <option value="">sem ordem</option>
+                {opsDoSku.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    #{o.id} · faltam {int(o.falta)} de {int(o.qtd)}{o.prazo ? ` · até ${o.prazo.slice(8, 10)}/${o.prazo.slice(5, 7)}` : ""}{o.prioridade === "urgente" ? " · URGENTE" : ""}
+                  </option>
+                ))}
+              </Escolha>
+            </Campo>
+          )}
           <Campo
             rotulo="Big bag de origem"
             dica={par && !bagsDoSku.length ? (aClassificar ? `Nenhum big bag desta farinha. Há ${aClassificar} big bag(s) a classificar em Entradas.` : "Nenhum big bag desta farinha com saldo.") : undefined}

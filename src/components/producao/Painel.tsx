@@ -3,14 +3,17 @@ import { useState } from "react";
 import { Botao, Cartao, Numero, Selo, tabela, td, th } from "./ui";
 import { FichaProducao } from "./FichaProducao";
 import { ContagemAcabado } from "./ContagemAcabado";
+import { OrdensProducao } from "./OrdensProducao";
 import {
-  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type EstoqueAcabado, type Lote,
+  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type EstoqueAcabado, type Lote, type OrdemProducao,
 } from "@/lib/producao";
 
 const quandoBR = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 
-export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: () => void; onIrLote: (id: number) => void; onIrEntradas: () => void }) {
+export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
+  onAbrirLote: () => void; onIrLote: (id: number) => void; onIrEntradas: () => void; onProduzir: (op: OrdemProducao) => void;
+}) {
   const abertos = useLotes("aberta");
   const todos = useLotes("todas", 30);
   const params = useParametros();
@@ -20,6 +23,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
   const [ficha, setFicha] = useState<string | null>(null);
   const [contar, setContar] = useState<EstoqueAcabado | null>(null);
+  const [ordemPara, setOrdemPara] = useState<string | null>(null);
   const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
   const listaBags = bags.data ?? [];
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
@@ -49,6 +53,8 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
           </div>
         )}
       </Cartao>
+
+      <OrdensProducao fotos={fotos} onProduzir={onProduzir} onIrLote={onIrLote} novaPara={ordemPara} onNovaFechada={() => setOrdemPara(null)} />
 
       <Cartao titulo="O que produzir" direita={<span style={{ fontSize: 12, color: "var(--pm-t3)" }}>farinha disponível: {kg(kgDisp, 0)}</span>}>
         <div style={{ overflowX: "auto" }}>
@@ -99,7 +105,10 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas }: { onAbrirLote: (
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>{brl(a.custo_tiny)}</td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <Botao onClick={(e) => { e.stopPropagation(); setContar(a); }}>Contar</Botao>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <Botao onClick={(e) => { e.stopPropagation(); setOrdemPara(a.sku); }} title="Criar uma ordem de produção deste produto">Ordem</Botao>
+                        <Botao onClick={(e) => { e.stopPropagation(); setContar(a); }}>Contar</Botao>
+                      </div>
                     </td>
                   </tr>
                 );

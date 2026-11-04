@@ -8,6 +8,7 @@ import { Entradas } from "@/components/producao/Entradas";
 import { AbrirLote } from "@/components/producao/AbrirLote";
 import { ChaoFabrica } from "@/components/producao/ChaoFabrica";
 import { Botao, Entrada } from "@/components/producao/ui";
+import type { OrdemProducao } from "@/lib/producao";
 
 // ============================================================================
 // Produção (27/out/2026) — envase da areia Bumi (16581 grãos médios, 16678 grossa)
@@ -32,6 +33,7 @@ function ProducaoPage() {
   const busca = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const [abrindo, setAbrindo] = useState(false);
+  const [opInicial, setOpInicial] = useState<OrdemProducao | null>(null);
   const [rastreio, setRastreio] = useState("");
 
   const ir = (b: Partial<Busca>) => navigate({ search: (s: Busca) => ({ ...s, ...b }), resetScroll: false });
@@ -71,11 +73,12 @@ function ProducaoPage() {
             ]}
           />
           {busca.aba === "painel"
-            ? <Painel onAbrirLote={() => setAbrindo(true)} onIrLote={irLote} onIrEntradas={() => ir({ aba: "entradas" })} />
+            ? <Painel onAbrirLote={() => { setOpInicial(null); setAbrindo(true); }} onIrLote={irLote} onIrEntradas={() => ir({ aba: "entradas" })}
+                onProduzir={(op) => { setOpInicial(op); setAbrindo(true); }} />
             : <Entradas />}
         </>
       )}
-      <AbrirLote aberto={abrindo} onFechar={() => setAbrindo(false)} onAberto={(id) => { setAbrindo(false); irLote(id); }} />
+      <AbrirLote aberto={abrindo} op={opInicial} onFechar={() => setAbrindo(false)} onAberto={(id) => { setAbrindo(false); irLote(id); }} />
     </div>
   );
 }

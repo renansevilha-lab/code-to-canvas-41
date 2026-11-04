@@ -9,7 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
 import { DialogoLancarTiny } from "./TinyProducao";
 import {
-  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFicha, useFotos, useInsumos,
+  ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFicha, useFotos, useOpDoLote, useInsumos,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
 } from "@/lib/producao";
 
@@ -27,6 +27,7 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
   const quemEnvase = l?.pessoas?.envase ?? null;
   const foto = useFotos(l ? [l.sku] : []).data?.[l?.sku ?? ""];
   const ficha = useFicha(l?.sku ?? null).data;
+  const opLote = useOpDoLote(l ? l.id : null).data;
   const processo = [
     ...(ficha?.seladora_temp_c != null ? [{ nome: "Seladora", valor: `${String(ficha.seladora_temp_c).replace(".", ",")} °C` }] : []),
     ...(ficha?.processo ?? []).filter((x) => x.nome || x.valor),
@@ -86,6 +87,13 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
         <div style={{ fontSize: 12.5, color: "var(--pm-t3)", marginTop: 6 }}>
           Big bag {l.big_bag} · {l.embalagem} · {fechado ? `produção ${periodoBR(l.inicio_em, l.fim_em)}` : `começou ${horaBR(l.inicio_em)}`}
         </div>
+        {opLote && (
+          <div style={{ marginTop: 8, padding: 10, borderRadius: 9, border: `1px solid ${opLote.prioridade === "urgente" ? "var(--pm-r)" : "var(--pm-bs)"}`, fontSize: 13 }}>
+            <b>Ordem de produção #{opLote.id}</b>{opLote.prioridade === "urgente" ? " · URGENTE" : ""} · pedido {int(opLote.qtd)} sacos, feitos {int(opLote.produzido)}
+            {opLote.prazo ? ` · prazo ${opLote.prazo.slice(8, 10)}/${opLote.prazo.slice(5, 7)}` : ""}
+            {opLote.obs && <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{opLote.obs}</div>}
+          </div>
+        )}
         {!fechado && processo.length > 0 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
             {processo.map((x, i) => (

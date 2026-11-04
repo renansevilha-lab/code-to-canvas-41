@@ -284,3 +284,59 @@ export function erroMsg(e: unknown): string {
   const m = e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e);
   return m.replace(/^.*?ERROR:\s*/i, "");
 }
+
+// --- Ordem de produção (04/nov/2026): o dono estipula o que produzir; lotes abertos a partir dela ficam ligados
+//     (producao_ordem.op_id) e a view soma o produzido. SQL em docs/producao-ordem-producao.sql. ---
+export interface OrdemProducao {
+  id: number; sku: string; produto: string | null; qtd: number; prazo: string | null; prioridade: "normal" | "urgente";
+  obs: string | null; status: "aberta" | "concluida" | "cancelada"; criado_por: string | null; criado_em: string;
+  fechada_em: string | null; fechada_por: string | null; motivo: string | null;
+  produzido: number; falta: number; envasando: number; lotes: number; lote_aberto_id: number | null;
+  situacao: "aberta" | "em_producao" | "atingida" | "concluida" | "cancelada"; atrasada: boolean;
+}
+export const useOrdensProducao = (comFechadas = false) =>
+  useQuery({
+    queryKey: ["producao", "ops", comFechadas],
+    queryFn: () => {
+      let q = supabaseExternal.from("view_producao_op" as never).select("*").order("criado_em", { ascending: false }).limit(60);
+      if (!comFechadas) q = q.eq("status", "aberta");
+      return ler<OrdemProducao[]>(q);
+    },
+    refetchInterval: 60_000,
+  });
+
+/** Pessoas da equipe com o ID do Discord (para marcar no aviso). */
+export const useEquipeDiscord = () =>
+  useQuery({
+    queryKey: ["producao", "equipe-discord"],
+    staleTime: 30 * 60_000,
+    queryFn: () => ler<Array<{ id: string; nome: string; discord_user_id: string | null }>>(
+      supabaseExternal.from("equipe_membros").select("id, nome, discord_user_id").eq("ativo", true).order("ordem")),
+  });
+
+/** Aviso no Discord pela porta única (discord-notify, canal "producao"; sem o secret DISCORD_WEBHOOK_PRODUCAO cai no GERAL).
+ *  Melhor-esforço: devolve false se não foi, sem derrubar o que já foi gravado. */
+export async function avisarProducao(payload: { titulo: string; descricao?: string; nivel?: "info" | "aviso" | "ok" | "erro"; campos?: Array<{ nome: string; valor: string; inline?: boolean }>; marcar?: string[] }): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseExternal.functions.invoke("discord-notify", {
+      body: { canal: "producao", rodape: "Produção · ordem de produção", ...payload },
+    });
+    return !error && !!(data as { enviado?: boolean } | null)?.enviado;
+  } catch {
+    return false;
+  }
+}
+
+/** A ordem de produção de um lote (null = lote aberto sem ordem). */
+export const useOpDoLote = (loteId: number | null) =>
+  useQuery({
+    queryKey: ["producao", "op-do-lote", loteId],
+    enabled: loteId != null,
+    queryFn: async () => {
+      const r = await ler<Array<{ op_id: number | null }>>(supabaseExternal.from("producao_ordem").select("op_id").eq("id", loteId!).limit(1));
+      const id = r[0]?.op_id;
+      if (!id) return null;
+      const o = await ler<OrdemProducao[]>(supabaseExternal.from("view_producao_op" as never).select("*").eq("id", id).limit(1));
+      return o[0] ?? null;
+    },
+  });
