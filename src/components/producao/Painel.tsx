@@ -4,6 +4,8 @@ import { Botao, Cartao, Numero, Selo, tabela, td, th } from "./ui";
 import { FichaProducao } from "./FichaProducao";
 import { ContagemAcabado } from "./ContagemAcabado";
 import { OrdensProducao } from "./OrdensProducao";
+import { AdicionarProduto } from "./AdicionarProduto";
+import { usePerfil } from "@/hooks/usePerfil";
 import {
   brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type EstoqueAcabado, type Lote, type OrdemProducao,
 } from "@/lib/producao";
@@ -22,6 +24,10 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
 
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
   const [ficha, setFicha] = useState<string | null>(null);
+  const [fichaEditar, setFichaEditar] = useState(false);
+  const [adicionar, setAdicionar] = useState(false);
+  const { perfil } = usePerfil();
+  const podeAdicionar = !!perfil?.modulos.includes("todos");
   const [contar, setContar] = useState<EstoqueAcabado | null>(null);
   const [ordemPara, setOrdemPara] = useState<string | null>(null);
   const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
@@ -56,7 +62,12 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
 
       <OrdensProducao fotos={fotos} onProduzir={onProduzir} onIrLote={onIrLote} novaPara={ordemPara} onNovaFechada={() => setOrdemPara(null)} />
 
-      <Cartao titulo="O que produzir" direita={<span style={{ fontSize: 12, color: "var(--pm-t3)" }}>farinha disponível: {kg(kgDisp, 0)}</span>}>
+      <Cartao titulo="O que produzir" direita={
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>farinha disponível: {kg(kgDisp, 0)}</span>
+          {podeAdicionar && <Botao onClick={() => setAdicionar(true)}>+ Adicionar produto</Botao>}
+        </div>
+      }>
         <div style={{ overflowX: "auto" }}>
           <table style={tabela}>
             <thead><tr>
@@ -122,7 +133,9 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
       </Cartao>
 
       <ContagemAcabado item={contar} foto={contar ? fotos[contar.sku] : undefined} onFechar={() => setContar(null)} />
-      <FichaProducao sku={ficha} foto={ficha ? fotos[ficha] : undefined} onFechar={() => setFicha(null)} />
+      <FichaProducao sku={ficha} foto={ficha ? fotos[ficha] : undefined} editar={fichaEditar} onFechar={() => { setFicha(null); setFichaEditar(false); }} />
+      <AdicionarProduto aberto={adicionar} onFechar={() => setAdicionar(false)}
+        onCriado={(sku) => { setAdicionar(false); setFichaEditar(true); setFicha(sku); }} />
 
       <Cartao titulo="Lotes encerrados">
         {!encerrados.length ? (

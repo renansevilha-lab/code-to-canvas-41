@@ -1,7 +1,7 @@
 // Ficha de produção de um produto fabricado: o que vai num saco, proporções, embalagem e custo padrão.
 // Tudo vem da view_producao_ficha (a mesma conta do custo padrão dos lotes); aqui só exibe.
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Botao, Numero, Selo } from "./ui";
 import { EditarFicha } from "./EditarFicha";
 import { usePerfil } from "@/hooks/usePerfil";
@@ -11,12 +11,14 @@ const pct = (n: number | null | undefined) => (n == null ? "—" : `${Number(n).
 const num = (n: number | null | undefined, casas = 3) =>
   n == null ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: casas });
 
-export function FichaProducao({ sku, foto, onFechar }: { sku: string | null; foto?: string; onFechar: () => void }) {
+export function FichaProducao({ sku, foto, onFechar, editar }: { sku: string | null; foto?: string; onFechar: () => void; editar?: boolean }) {
   const q = useFicha(sku);
   const f = q.data;
   const { perfil } = usePerfil();
   const podeEditar = !!perfil?.modulos.includes("todos");
   const [editando, setEditando] = useState(false);
+  // produto recém-adicionado abre direto no "Editar ficha"
+  useEffect(() => { if (sku != null && editar && podeEditar) setEditando(true); }, [sku, editar, podeEditar]);
   const processo = (f?.processo ?? []).filter((x) => x.nome || x.valor);
   const linhas = f
     ? [
