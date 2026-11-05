@@ -31,6 +31,13 @@ export function Entradas() {
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [porNf, setPorNf] = useState(false);
+  const [verBags, setVerBags] = useState(false);
+  const saldoBags = bagsComSaldo.reduce((t, b) => t + b.saldo_kg, 0);
+  const saldoPorFarinha = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of bagsComSaldo) m.set(b.insumo ?? "a classificar", (m.get(b.insumo ?? "a classificar") ?? 0) + 1);
+    return [...m.entries()];
+  }, [bagsComSaldo]);
 
   const insumo = insumos.data?.find((i) => String(i.id) === insumoSel) ?? null;
   const ehFarinha = insumoSel === ACLASSIFICAR || insumo?.tipo === "farinha";
@@ -122,7 +129,17 @@ export function Entradas() {
 
       <EntradasRecebidas />
 
-      <Cartao titulo="Big bags" direita={
+      <Cartao titulo={
+        <button type="button" onClick={() => setVerBags((v) => !v)}
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, border: 0, background: "transparent", padding: 0, cursor: "pointer", color: "inherit", font: "inherit", textAlign: "left" }}>
+          <span style={{ display: "inline-block", transform: verBags ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
+          Big bags
+          <span style={{ fontSize: 12, fontWeight: 400, color: "var(--pm-t3)" }}>
+            {bagsComSaldo.length} com saldo · {kg(saldoBags, 0)}
+            {saldoPorFarinha.length > 0 && <> · {saldoPorFarinha.map(([n, q]) => `${q} ${n.replace(/^Farinha de mandiocas*/i, "")}`).join(" · ")}</>}
+          </span>
+        </button>
+      } direita={verBags && (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>um lote de produção = um big bag</span>
           {etiqueta.seletor}
@@ -130,9 +147,11 @@ export function Entradas() {
             {etiqueta.imprimindo ? "Imprimindo…" : `Etiquetas dos ${bagsComSaldo.length} com saldo`}
           </Botao>
         </span>
-      }>
-        <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar}
-          onEtiqueta={(b) => etiqueta.imprimir([b])} imprimindo={etiqueta.imprimindo} />
+      )}>
+        {verBags && (
+          <TabelaBigBags bags={bags.data ?? []} farinhas={farinhas} onMudou={recarregar}
+            onEtiqueta={(b) => etiqueta.imprimir([b])} imprimindo={etiqueta.imprimindo} />
+        )}
       </Cartao>
 
       <Cartao titulo="Saldo das matérias-primas">
