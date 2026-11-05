@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode, useContext, useEffect, useMemo, use
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Boxes, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Loader2, MapPin,
+  Boxes, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ListChecks, Loader2, MapPin,
   MoreVertical, Package as PackageIcon, Printer, RotateCcw, Search, StickyNote,
 } from "lucide-react";
 
@@ -196,6 +196,38 @@ function useImpressoras() {
 }
 
 // ============================================================================
+/** Código do pedido no marketplace (inteiro, com botão de copiar) + número do Tiny embaixo. */
+function CodigoPedido({ ecommerce, tiny, compacto }: { ecommerce: string | null; tiny: string | null; compacto?: boolean }) {
+  const [copiado, setCopiado] = useState(false);
+  const codigo = ecommerce || tiny || "";
+  const copiar = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!codigo) return;
+    try {
+      await navigator.clipboard.writeText(codigo);
+      setCopiado(true);
+      toast.success(`Copiado: ${codigo}`);
+      window.setTimeout(() => setCopiado(false), 1500);
+    } catch {
+      toast.error("Não consegui copiar", { description: codigo });
+    }
+  };
+  return (
+    <span style={{ display: "inline-flex", flexDirection: compacto ? "row" : "column", alignItems: compacto ? "center" : "flex-start", gap: compacto ? 6 : 0, minWidth: 0 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 600, whiteSpace: "nowrap" }}>{codigo || "—"}</span>
+        {codigo && (
+          <button type="button" onClick={(e) => void copiar(e)} title="Copiar o código do pedido"
+            style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: "1px solid var(--pm-bc, var(--pm-b))", background: "var(--pm-s)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", color: copiado ? "var(--pm-g)" : "var(--pm-t2)" }}>
+            {copiado ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          </button>
+        )}
+      </span>
+      {ecommerce && tiny && <span style={{ fontSize: 10.5, color: "var(--pm-t3)", whiteSpace: "nowrap" }}>Tiny #{tiny}</span>}
+    </span>
+  );
+}
+
 export function MultiSkuPanel() {
   const qc = useQueryClient();
   const novo = useContext(VisualNovoSep);
@@ -551,9 +583,9 @@ export function MultiSkuPanel() {
         { t: obs ? "Editar observação…" : "Observação…", onClick: () => { const chave = String(p.separacao_id); void editarObsSeparacao("pedido", chave, obs?.texto, perfil?.nome ?? null).then(recarregarObs); } },
       ];
       return (
-        <div key={p.separacao_id} style={{ display: "grid", gridTemplateColumns: "minmax(110px,1.2fr) 80px 100px 80px minmax(130px,1fr) 36px", gap: 8, alignItems: "center", padding: "5px 10px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
+        <div key={p.separacao_id} style={{ display: "grid", gridTemplateColumns: "minmax(200px,max-content) 80px 100px 80px minmax(130px,1fr) 36px", gap: 8, alignItems: "center", padding: "5px 10px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
           <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <span style={{ ...MONO, fontWeight: 600 }} title={p.numero_ecommerce ?? ""}>#{p.venda_numero}</span>
+            <CodigoPedido ecommerce={p.numero_ecommerce} tiny={p.venda_numero} />
             {obs && <ObsLinha obs={obs} />}
           </span>
           <span style={{ color: "var(--pm-t2)" }}>{p.loja}{p.tipo_envio === "ML Flex" ? " · Flex" : ""}</span>
@@ -782,7 +814,7 @@ export function MultiSkuPanel() {
                     {alocacao.liberados.map((p) => (
                       <div key={p.separacao_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12 }}>
                         <i style={{ width: 8, height: 8, borderRadius: 2, background: corEnv(p.tipo_envio), flex: "none" }} />
-                        <span style={{ ...MONO, fontWeight: 600 }}>#{p.venda_numero}</span>
+                        <CodigoPedido ecommerce={p.numero_ecommerce} tiny={p.venda_numero} compacto />
                         <span style={{ color: "var(--pm-t2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{descricaoCombo(p.itens)}</span>
                         <span style={{ color: "var(--pm-t3)" }}>{p.loja}</span>
                       </div>
@@ -806,7 +838,7 @@ export function MultiSkuPanel() {
                       <div key={p.separacao_id} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "7px 14px", borderTop: "1px solid var(--pm-b)", fontSize: 12 }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <i style={{ width: 8, height: 8, borderRadius: 2, background: corEnv(p.tipo_envio), flex: "none" }} />
-                          <span style={{ ...MONO, fontWeight: 600 }}>#{p.venda_numero}</span>
+                          <CodigoPedido ecommerce={p.numero_ecommerce} tiny={p.venda_numero} compacto />
                           <span style={{ color: "var(--pm-t3)" }}>{p.loja}</span>
                         </span>
                         <span style={{ color: "var(--pm-am)", fontWeight: 600, paddingLeft: 16 }}>falta {faltas.map((f) => `${f.sku} ×${formatNumber(f.falta)}`).join(" · ")}</span>
