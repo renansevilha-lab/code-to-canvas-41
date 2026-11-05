@@ -31,6 +31,14 @@ const lerLembrados = (): Record<string, { destino: string; fator: number }> => {
 };
 const num = (s: string) => { const v = Number(String(s).trim().replace(/\./g, "").replace(",", ".")); return Number.isFinite(v) ? v : NaN; };
 const numDec = (s: string) => { const v = Number(String(s).trim().replace(",", ".")); return Number.isFinite(v) ? v : NaN; };
+/** Valor em reais digitado: "1.250,50", "1250,5" ou "1250.50". */
+const moeda = (s: string) => {
+  const t = String(s).trim().replace(/[R$s]/g, "");
+  const v = Number(t.includes(",") ? t.replace(/./g, "").replace(",", ".") : t);
+  return Number.isFinite(v) ? v : 0;
+};
+type Gasto = { desc: string; valor: string };
+const SUGESTOES_GASTO = ["Frete", "Descarga", "Pedágio", "Seguro", "Outro"];
 const fmt = (n: number, casas = 3) => String(Math.round(n * 10 ** casas) / 10 ** casas).replace(".", ",");
 
 /** Quantidade da linha na unidade da matéria-prima: kg (TON × 1000) ou unidades (milheiro × 1000). */
@@ -56,6 +64,8 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
   const [recebido, setRecebido] = useState(hojeSP());
   const [prefixo, setPrefixo] = useState("");
   const [rateio, setRateio] = useState(true);
+  const [gastos, setGastos] = useState<Gasto[]>([]);
+  const [baseGasto, setBaseGasto] = useState<"valor" | "quantidade">("valor");
   const [busca, setBusca] = useState("");
   const [lendo, setLendo] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -155,10 +165,21 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
 
   const extras = nf?.totais ? nf.totais.frete + nf.totais.ipi + nf.totais.st + nf.totais.outras : 0;
   const totalProdutos = nf ? nf.itens.reduce((s, x) => s + valorLiquido(x), 0) : 0;
+  // Outros gastos digitados (frete pago à parte, descarga…): rateados só entre as linhas que viram matéria-prima.
+  const totalGastos = gastos.reduce((s, g) => s + moeda(g.valor), 0);
+  const usadasAgora = linhas.filter((l) => l.destino !== IGNORAR);
+  const baseValor = usadasAgora.reduce((s, l) => s + valorLiquido(l.item), 0);
+  const baseQtd = usadasAgora.reduce((s, l) => s + (numDec(l.qtd) > 0 ? numDec(l.qtd) : 0), 0);
+  const gastoDaLinha = (l: Linha) => {
+    if (!totalGastos || l.destino === IGNORAR) return 0;
+    if (baseGasto === "quantidade") { const q = numDec(l.qtd); return baseQtd > 0 && q > 0 ? (totalGastos * q) / baseQtd : 0; }
+    return baseValor > 0 ? (totalGastos * valorLiquido(l.item)) / baseValor : 0;
+  };
   const custoLinha = (l: Linha) => {
     const v = valorLiquido(l.item);
-    return v + (rateio && totalProdutos > 0 ? (extras * v) / totalProdutos : 0);
+    return v + (rateio && totalProdutos > 0 ? (extras * v) / totalProdutos : 0) + gastoDaLinha(l);
   };
+  const setGasto = (i: number, g: Partial<Gasto>) => setGastos((gs) => gs.map((x, j) => (j === i ? { ...x, ...g } : x)));
   const set = (i: number, campo: Partial<Linha>) => setLinhas((ls) => ls.map((l, j) => (j === i ? { ...l, ...campo } : l)));
   function trocarDestino(i: number, destino: string) {
     const l = linhas[i];
@@ -167,7 +188,7 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
     set(i, { destino, qtd: fmt(q), bags: String(ehFarinha(destino) ? Math.max(1, Math.round(q / 1000)) : 1) });
   }
 
-  function fechar() { setNf(null); setLinhas([]); setBusca(""); onFechar(); }
+  function fechar() { setNf(null); setLinhas([]); setBusca(""); setGastos([]); onFechar(); }
 
   async function salvar() {
     if (!nf) return;
@@ -178,6 +199,8 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
       if (!(q > 0)) return toast.error(`Quantidade inválida em "${l.item.xProd}".`);
       if (ehFarinha(l.destino) && !(num(l.bags) >= 1)) return toast.error(`Informe quantos big bags em "${l.item.xProd}".`);
     }
+    for (const g of gastos) if (moeda(g.valor) > 0 && !g.desc.trim()) return toast.error("Diga o que é cada gasto extra (ex.: frete).");
+    const gastosUsados = gastos.filter((g) => moeda(g.valor) > 0);
     if (ja.data?.length && !window.confirm(`Esta NF já tem ${ja.data.length} entrada(s) registrada(s) (${ja.data.slice(0, 4).map((x) => x.codigo).join(", ")}…). Registrar mesmo assim?`)) return;
     const cnpj = nf.cnpj.replace(/\D/g, "") || null;
     const base = {
@@ -193,7 +216,9 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
       const comum = {
         ...base, insumo_id: l.destino === ACLASSIFICAR ? null : Number(l.destino), nf_item_codigo: l.item.cProd || null,
         ncm: l.item.ncm ?? null, cfop: l.item.cfop ?? null, custo_un: custoUn,
-        obs: `NF ${nf.numero}: ${l.item.xProd}`.slice(0, 300),
+        obs: (`NF ${nf.numero}: ${l.item.xProd}` + (gastosUsados.length
+          ? ` · inclui ${brl(gastoDaLinha(l))} de ${gastosUsados.map((g) => `${g.desc.trim()} ${brl(moeda(g.valor))}`).join(", ")} (rateado por ${baseGasto})`
+          : "")).slice(0, 300),
       };
       if (ehFarinha(l.destino)) {
         const n = Math.max(1, Math.floor(num(l.bags)));
@@ -344,6 +369,7 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
                             <>
                               {brl(custoLinha(l) / q, 4)}/{un}
                               <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>total {brl(custoLinha(l))}</div>
+                              {gastoDaLinha(l) > 0 && <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>+ {brl(gastoDaLinha(l))} de gastos</div>}
                             </>
                           ) : "—"}
                         </td>
@@ -353,12 +379,41 @@ export function EntradaPorNf({ aberto, onFechar }: { aberto: boolean; onFechar: 
                 </tbody>
               </table>
             </div>
+            <div style={{ border: "1px solid var(--pm-b)", borderRadius: 10, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 13 }}>Outros gastos desta compra</b>
+                <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>somados ao custo da matéria-prima (ex.: frete pago à parte)</span>
+                <span style={{ flex: 1 }} />
+                {SUGESTOES_GASTO.map((d) => (
+                  <Botao key={d} onClick={() => setGastos((gs) => [...gs, { desc: d === "Outro" ? "" : d, valor: "" }])}>+ {d}</Botao>
+                ))}
+              </div>
+              {gastos.map((g, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <Entrada placeholder="o que é (ex.: frete)" value={g.desc} onChange={(e) => setGasto(i, { desc: e.target.value })} style={{ flex: 1, minWidth: 0 }} />
+                  <span style={{ fontSize: 12 }}>R$</span>
+                  <Entrada inputMode="decimal" placeholder="0,00" value={g.valor} onChange={(e) => setGasto(i, { valor: e.target.value })} style={{ width: 120 }} />
+                  <Botao tom="fantasma" onClick={() => setGastos((gs) => gs.filter((_, j) => j !== i))}>Tirar</Botao>
+                </div>
+              ))}
+              {totalGastos > 0 && (
+                <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+                  <span>Total {brl(totalGastos)} dividido entre as linhas que viram matéria-prima:</span>
+                  <label style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input type="radio" checked={baseGasto === "valor"} onChange={() => setBaseGasto("valor")} /> pelo valor
+                  </label>
+                  <label style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input type="radio" checked={baseGasto === "quantidade"} onChange={() => setBaseGasto("quantidade")} /> pela quantidade (kg/un)
+                  </label>
+                </div>
+              )}
+            </div>
             <p style={{ fontSize: 11.5, color: "var(--pm-t3)", margin: 0 }}>
               Confira a quantidade na unidade da matéria-prima (kg da farinha; unidades de saco e etiqueta — nota em milheiro ou fardo precisa converter).
               A escolha de cada linha fica lembrada para as próximas notas deste fornecedor.
             </p>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <Botao tom="fantasma" onClick={() => { setNf(null); setLinhas([]); }}>Outra NF</Botao>
+              <Botao tom="fantasma" onClick={() => { setNf(null); setLinhas([]); setGastos([]); }}>Outra NF</Botao>
               <div style={{ display: "flex", gap: 8 }}>
                 <Botao onClick={fechar} disabled={salvando}>Cancelar</Botao>
                 <Botao tom="primario" onClick={salvar} disabled={salvando}>{salvando ? "Registrando…" : "Registrar entradas"}</Botao>
