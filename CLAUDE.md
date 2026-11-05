@@ -4427,7 +4427,7 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   `statement_timeout` do role `authenticator`). Cada DDL dispara esse reload. Medido: 8–11 s com
   cache frio logo após restart, 1,4 s aquecido → **`authenticator` ficou com 30s** (era 8s).
   Cortes de cron em 02/out: 95 desligado, 113 → a cada 2 h (peso é lido 1× por SKU; só pega produto novo), 111 pausado, 104 → 2×/dia, 109 → 15 min,
-  26 → 10 min, 62 → 30 min. Regra: **DDL/migrations e backfills fora do horário comercial**;
+  26 → 10 min, 62 → 30 min. **05/nov: o 95 `ml-prazo-despacho` foi religado** (`7-59/20`, ~5 s por rodada) — desligado, NENHUM pedido do ML ganhava prazo e a Separação mostrava o ML sem prazo; o acúmulo (603 pedidos) foi escoado à mão. O módulo só olha pedidos dos últimos 25 dias, do mais novo para o mais velho (o ML mantém PAID depois de enviado, então compete com tudo o que já saiu). Regra: **DDL/migrations e backfills fora do horário comercial**;
   diagnóstico: `query_logs` postgrest_logs "schema cache".
 - **Alerta "Table publicly accessible" do Supabase (20/out/2026):** 26 tabelas, 37 views/MVs e 14 funções security definer
   criadas depois do fechamento de 15/ago ainda davam acesso ao **anon** (a chave pública que vai no site) — várias migrações
@@ -4670,6 +4670,7 @@ deploy `npx wrangler deploy --config .output/server/wrangler.json`. **Push na ma
 (`bun.lockb`/`bunfig.toml` do Lovable removidos — lock do bun estava parado em
 21/jul). Endereço definitivo decidido pelo dono: **ottz-pet-app.ottzpet.workers.dev**.
 Pendente: avisar a equipe (login 1× + reescolher impressora) e desligar o Lovable.
+**EMFILE na Cloudflare (05/nov/2026):** todo build falhava com um pacote diferente "não encontrado" (rou3, sonner, date-fns) — era `EMFILE: too many open files` (a máquina de build passou a ter limite menor de arquivos abertos). `vite.config.ts` limita o Rollup a 32 arquivos ao mesmo tempo (`maxParallelFileOps`); o `prebuild` (`scripts/completar-dependencias.mjs`, só no CI) mostra o limite e confere os pacotes. Log do build lido pela API do painel (`/api/v4/accounts/<conta>/builds/builds/<id>/logs`, com a sessão do dono no Chrome).
 **Push não garante publicado (18/out/2026):** o site ficou parado desde 16/10 sem ninguém ver — todos os builds de
 18/10 falharam no `npm ci` da Cloudflare (**npm 10.9.2**, Node 24): "package.json e package-lock.json fora de
 sincronia — Missing: miniflare@4.20260730.0, workerd… (cópias aninhadas do `nitro`)". O npm 11 deste PC aceita o
