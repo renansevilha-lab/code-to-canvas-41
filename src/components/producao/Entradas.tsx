@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
 import { useImpressaoBigBag } from "./EtiquetaBigBag";
+import { EntradaPorNf } from "./EntradaPorNf";
 import { brl, dataBR, erroMsg, hojeSP, int, kg, useBigBags, useEntradas, useEstoqueMp, useInsumos, type BigBag } from "@/lib/producao";
 
 const ACLASSIFICAR = "farinha:?";
@@ -29,6 +30,7 @@ export function Entradas() {
   const [prefixo, setPrefixo] = useState("");
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [porNf, setPorNf] = useState(false);
 
   const insumo = insumos.data?.find((i) => String(i.id) === insumoSel) ?? null;
   const ehFarinha = insumoSel === ACLASSIFICAR || insumo?.tipo === "farinha";
@@ -70,7 +72,9 @@ export function Entradas() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <Cartao titulo="Nova entrada de matéria-prima">
+      <Cartao titulo="Nova entrada de matéria-prima" direita={
+        <Botao tom="primario" onClick={() => setPorNf(true)}>Entrada pela NF (XML ou Tiny)</Botao>
+      }>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
           <Campo rotulo="Matéria-prima">
             <Escolha value={insumoSel} onChange={(e) => setInsumoSel(e.target.value)}>
@@ -113,6 +117,8 @@ export function Entradas() {
           <Botao tom="primario" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Registrar entrada"}</Botao>
         </div>
       </Cartao>
+
+      <EntradaPorNf aberto={porNf} onFechar={() => setPorNf(false)} />
 
       <EntradasRecebidas />
 

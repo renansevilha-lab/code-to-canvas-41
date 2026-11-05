@@ -19,6 +19,9 @@ export interface ItemXml {
   /** Desconto da linha (det/prod/vDesc). O valor líquido da linha é vProd − vDesc.
    *  NF montada do espelho do Tiny: 0 (a API só dá o desconto total no cabeçalho). */
   vDesc?: number;
+  /** NCM e CFOP da linha (det/prod) — usados na entrada de matéria-prima da Produção. */
+  ncm?: string;
+  cfop?: string;
 }
 /** Totais do cabeçalho (ICMSTot) que entram na formação de custo. */
 export interface TotaisNf { frete: number; ipi: number; st: number; outras: number; desconto: number }
@@ -90,6 +93,8 @@ export function parseNfe(texto: string): NfXml {
       qTrib: n(t(p, "qTrib")),
       vProd: n(t(p, "vProd")),
       vDesc: n(t(p, "vDesc")),
+      ncm: t(p, "NCM") || undefined,
+      cfop: t(p, "CFOP") || undefined,
     };
   });
   if (itens.length === 0) throw new Error("A NF-e não tem itens.");
