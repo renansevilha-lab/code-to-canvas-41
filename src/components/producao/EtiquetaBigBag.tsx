@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
-import { aplicarApelidos } from "@/lib/impressoras";
+import { listarImpressoras } from "@/lib/impressoras";
 import { zplSan } from "@/lib/identificador";
 import { dataBR, type BigBag } from "@/lib/producao";
 import { Escolha } from "./ui";
@@ -19,14 +19,7 @@ function useImpressoras() {
   return useQuery({
     queryKey: ["producao", "impressoras"],
     refetchInterval: 60_000,
-    queryFn: async (): Promise<Impressora[]> => {
-      const resp = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`, {
-        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
-      });
-      const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
-    },
+    queryFn: listarImpressoras,
   });
 }
 

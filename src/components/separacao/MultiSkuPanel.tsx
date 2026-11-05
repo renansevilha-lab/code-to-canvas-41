@@ -20,7 +20,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
-import { aplicarApelidos } from "@/lib/impressoras";
+import { listarImpressoras } from "@/lib/impressoras";
 import { FAIXAS_PRAZO, faixaPrazo, nivelPrazo, PRAZO_ESTILO } from "@/lib/prazo";
 import { useObsSeparacao, editarObsSeparacao, ObsLinha } from "@/lib/separacaoObs";
 import { buscarMlFlex } from "@/lib/mlFlex";
@@ -185,12 +185,7 @@ async function aguardarImpressora(onTick: (impressas: number, pendentes: number)
 function useImpressoras() {
   return useQuery({
     queryKey: ["separacao", "impressoras"],
-    queryFn: async () => {
-      const resp = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`, { headers: HEADERS });
-      const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
-    },
+    queryFn: listarImpressoras,
     refetchInterval: 60_000,
   });
 }

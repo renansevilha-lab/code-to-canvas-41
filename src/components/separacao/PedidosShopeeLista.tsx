@@ -17,7 +17,7 @@ import {
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { acharLoteDaTag, imprimirIdentificadorApi, type TagLoteRow } from "@/lib/identificador";
-import { aplicarApelidos } from "@/lib/impressoras";
+import { listarImpressoras } from "@/lib/impressoras";
 import { Package as PackageIcon, MessageSquare } from "lucide-react";
 import { MensagemLoteDialog, type AlvoMensagem } from "@/components/separacao/MensagemLoteDialog";
 
@@ -139,14 +139,7 @@ const lojaParam = (shopId: number): "ottz" | "svl" => (shopId === 522186766 ? "o
 function useImpressoras() {
   return useQuery({
     queryKey: ["separacao", "impressoras"],
-    queryFn: async () => {
-      const resp = await fetch(`${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`, {
-        headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` },
-      });
-      const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
-    },
+    queryFn: listarImpressoras,
     refetchInterval: 60_000,
   });
 }

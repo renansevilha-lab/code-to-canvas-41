@@ -1515,9 +1515,21 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   local (`id 2`), uma **ZD100** nova (`id 57043`) e a `[nikolaspc]` compartilhada (`id 10540`).
   Ligações refeitas: `id 2` ← `printnode_id 75043468` ("Zebra ZD220 (PC Renan)"), `id 57043` ←
   `75985321` ("Zebra ZD100 (PC Renan)"), `10540` sem ligação. As listas de impressora do app
-  passaram a aceitar `zd220|zd100` no nome (antes só ZD220 — a ZD100 nem aparecia). A lista das
-  telas ainda vem da API do PrintNode (é ela que dá o `printer_id`); a impressão em si vai pela
-  fila própria.
+  passaram a aceitar `zd220|zd100` no nome (antes só ZD220 — a ZD100 nem aparecia).
+- **PrintNode FORA (05/nov, pedido do dono):** a lista das telas vem de
+  **`view_impressoras_app`** (`listarImpressoras()` em `src/lib/impressoras.ts`; Zebras ativas vistas
+  pelos agentes em 7 dias; `printer_id` = o antigo id do PrintNode quando a impressora tem — mantém
+  a escolha do `localStorage separacao.printerId` — senão o `impressoras.id`; online = sinal < 90 s).
+  `print_enfileirar_se_proprio` resolve os dois ids e **enfileira mesmo com o programa do PC fora**
+  (o job espera; o vigia cancela em 25 min) — impressora nossa nunca cai no PrintNode. **PDF vira
+  ZPL no navegador** (`src/lib/pdfZpl.ts`, pdfjs-dist 4.10.38: página a 203 dpi, reduzida para caber
+  em 812×1218, `^GFA` com a compressão ASCII da Zebra; ida e volta conferida sem erro) — botão
+  Imprimir dos documentos do Fulfillment (etiqueta de produto da Amazon). `fulfillment-inbound` v16
+  (fonte no repositório) não tem mais PrintNode: PDF = 400, impressora fora da fila = 409.
+  `shopee-sync-ads` e `ml-etiqueta` AINDA têm o PrintNode como reserva no código, mas só é alcançado
+  com id que não é nosso (as telas não oferecem mais) — limpar no próximo deploy delas. Não apagar o
+  secret `PRINTNODE_API_KEY` antes disso: o `confirmar-impressao` (contador da tela) ainda o lê.
+  `impressoras.id 151` (entrada da ZD220 do PC da Tânia que não imprime) ficou `ativa = false`.
 - **Pendente:** tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
@@ -4122,7 +4134,7 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 | `fulfillment-sync` | v5.1 (deploy 21, 21/out: CORS de volta — a v4 saiu sem nenhum cabeçalho CORS e o botão "Sincronizar" do Fulfillment dava "Failed to fetch" nos 4 módulos desde 14/out; o cron não sentia, §6.2) · v5 (deploy 20) | Estoque nos CDs. v5: o ML lê TODOS os estoques do Full a cada rodada (§5.9.4.2); v4: em trânsito da Amazon pelos envios (§5.9.4); fonte em `supabase/functions/fulfillment-sync/` |
 | `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
-| `fulfillment-inbound` | v15 | **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
+| `fulfillment-inbound` | v16 | **v16 (05/nov):** sem PrintNode — `imprimir` só ZPL, sempre pela fila própria; PDF é convertido no navegador (§5.9). **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
 | `nf-devolucao` | v3.21 (deploy 36) | Devoluções: `varrer-cancelados` (cron), `pendentes`, `emitir`, `criar` (SVL aceita reembolso aceito, itens parciais com kit aberto, anti-duplicata), `clonar`/`clonar-lote` — ver seções 5.2 e 5.2.3 |
 | `devolucao-auto` | v6 (deploy 9; fonte em `supabase/functions/devolucao-auto/`) | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), **`emitir`** (v6: emite as notas que o motor criou; cron 158), `status` — ver §5.2.3 |
 | `shopee-devolucao-probe` | v28 (fonte em `supabase/functions/shopee-devolucao-probe/`) | Returns da Shopee: `sync`, `detalhar` (v26 `prazo_disputa`, v27/v28 `prazo_vendedor` + `volta_entregue_em`), `escrow`, `rastreio-ida`, `volta`, responder — ver §5.10. **Não apagar** (crons 124–126) |

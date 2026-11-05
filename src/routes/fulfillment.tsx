@@ -79,7 +79,8 @@ import {
   EXTERNAL_PUBLISHABLE_KEY,
 } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
-import { aplicarApelidos } from "@/lib/impressoras";
+import { listarImpressoras } from "@/lib/impressoras";
+import { pdfParaZpl } from "@/lib/pdfZpl";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -1413,7 +1414,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-// Impressoras ZD220 (mesmo PrintNode das etiquetas Shopee). A escolha compartilha
+// Impressoras Zebra (fila própria, as mesmas das etiquetas Shopee). A escolha compartilha
 // o localStorage com a tela de Separação, então a impressora selecionada lá vale aqui.
 const STORAGE_PRINTER = "separacao.printerId";
 interface ImpressoraFF {
@@ -1428,15 +1429,7 @@ function useImpressorasFF(enabled: boolean) {
     queryKey: ["fulfillment", "impressoras"],
     enabled,
     refetchInterval: 60_000,
-    queryFn: async (): Promise<ImpressoraFF[]> => {
-      const resp = await fetch(
-        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras&loja=ottz`,
-        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-      );
-      const data = (await resp.json().catch(() => ({}))) as { impressoras?: ImpressoraFF[] };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
-    },
+    queryFn: listarImpressoras,
   });
 }
 
@@ -2351,9 +2344,10 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
   }
   const [imprimindoDoc, setImprimindoDoc] = useState<string | null>(null);
   /**
-   * Imprime um documento PDF anexado direto na ZD220 (PrintNode, pdf_base64).
-   * Caso real: etiqueta de produtos da AMAZON só existe em PDF — o time abria
-   * o arquivo e imprimia na mão ("quebra um galho"); agora é um clique.
+   * Imprime um documento anexado direto na Zebra. Caso real: etiqueta de
+   * produtos da AMAZON só existe em PDF — o time abria o arquivo e imprimia na
+   * mão. Sem PrintNode (05/nov): o PDF vira ZPL aqui no navegador (lib/pdfZpl,
+   * uma etiqueta por página) e vai pela fila própria, como as outras.
    */
   async function imprimirDoc(d: EnvioDoc): Promise<boolean> {
     if (!printerId) { toast.warning("Escolha a impressora."); return false; }
@@ -2369,8 +2363,11 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
     setImprimindoDoc(d.id);
     try {
       const { bytes } = await baixarDocBytes(d);
+      const ehPdf = new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-";
+      const zpl = ehPdf ? (await pdfParaZpl(bytes)).zpl : new TextDecoder().decode(bytes);
+      if (!/\^XA/i.test(zpl)) throw new Error("o arquivo não é PDF nem ZPL");
       const { data: r, error: e2 } = await supabaseExternal.functions.invoke("fulfillment-inbound", {
-        body: { modulo: "imprimir", pdf_base64: bytesParaBase64(bytes), printer_id: printerId, title: d.nome ?? "Documento" },
+        body: { modulo: "imprimir", zpl, printer_id: printerId, title: d.nome ?? "Documento" },
       });
       if (e2) throw new Error(e2.message);
       if (!(r as { ok?: boolean })?.ok) throw new Error(JSON.stringify((r as { resposta?: unknown })?.resposta ?? r));

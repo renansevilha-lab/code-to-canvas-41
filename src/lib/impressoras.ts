@@ -1,23 +1,30 @@
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 
-// A lista de impressoras das telas vem do PrintNode (shopee-sync-ads?modulo=
-// impressoras) com o nome do Windows ("ZDesigner ZD220-203dpi ZPL"), igual em
-// todos os PCs. O apelido cadastrado em `impressoras.apelido` (view
-// view_impressoras_apelidos, por printnode_id) substitui o nome exibido.
-// O filtro "zd220" das telas roda ANTES, no nome original.
-export async function aplicarApelidos<T extends { printer_id: number; nome: string }>(
-  lista: T[],
-): Promise<T[]> {
-  if (!lista.length) return lista;
+// Impressoras das telas = as NOSSAS (impressão própria, §5.9 do CLAUDE.md), sem
+// PrintNode desde 05/nov/2026. Vem da view_impressoras_app: Zebras vistas pelos
+// agentes nos últimos 7 dias, com o apelido no lugar do nome do Windows.
+// `printer_id` = o id antigo do PrintNode quando a impressora tem (mantém a
+// escolha guardada no navegador), senão o id da tabela `impressoras`. As edge
+// functions mandam esse id para a rpc print_enfileirar_se_proprio, que resolve
+// os dois. Online = o programa do PC deu sinal nos últimos 90 s.
+export interface ImpressoraApp {
+  printer_id: number;
+  nome: string;
+  computador: string;
+  estado: "online" | "offline";
+  configurada?: boolean;
+}
+
+export async function listarImpressoras(): Promise<ImpressoraApp[]> {
   const { data, error } = await supabaseExternal
-    .from("view_impressoras_apelidos")
-    .select("printnode_id, apelido");
-  if (error || !data?.length) return lista; // sem apelido: segue com o nome do PrintNode
-  const porId = new Map(
-    (data as { printnode_id: number; apelido: string }[]).map((a) => [Number(a.printnode_id), a.apelido]),
-  );
-  return lista.map((p) => {
-    const apelido = porId.get(Number(p.printer_id));
-    return apelido ? { ...p, nome: apelido } : p;
-  });
+    .from("view_impressoras_app")
+    .select("printer_id, nome, computador, estado")
+    .order("nome");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { printer_id: number; nome: string; computador: string | null; estado: string }[]).map((p) => ({
+    printer_id: Number(p.printer_id),
+    nome: p.nome,
+    computador: p.computador ?? "",
+    estado: p.estado === "online" ? "online" : "offline",
+  }));
 }

@@ -64,7 +64,7 @@ import { formatNumber, formatBRL } from "@/lib/format";
 import { usePerfil } from "@/hooks/usePerfil";
 import { registrarSeparacaoLog } from "@/lib/separacaoLog";
 import { type TagLoteRow, diasAtePrazo, acharLoteDaTag, imprimirIdentificadorApi } from "@/lib/identificador";
-import { aplicarApelidos } from "@/lib/impressoras";
+import { listarImpressoras } from "@/lib/impressoras";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -126,7 +126,7 @@ async function callSeparacaoFn<T>(qs: string): Promise<T> {
 }
 
 
-// ============ Impressoras (PrintNode via edge fn) ============
+// ============ Impressoras (impressão própria, sem PrintNode) ============
 
 interface Impressora {
   printer_id: number;
@@ -154,22 +154,8 @@ function confirmarImpressoraOffline(nome?: string): Promise<boolean> {
 function useImpressoras() {
   return useQuery({
     queryKey: ["separacao", "impressoras"],
-    queryFn: async () => {
-      const resp = await fetch(
-        `${EXTERNAL_URL}/functions/v1/shopee-sync-ads?modulo=impressoras`,
-        { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-      );
-      const data = (await resp.json().catch(() => ({}))) as {
-        impressoras?: Impressora[];
-      };
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      // Somente ZD220 (etiqueta Shopee ZPL). O filtro é pelo NOME — a API não
-      // devolve `descricao` (filtrar por ela deixava a lista sempre vazia).
-      // O apelido (ex.: "Zebra Fundos (PC RENAN)") troca só o nome exibido.
-      return aplicarApelidos((data.impressoras ?? []).filter((p) =>
-        /zd220|zd100/i.test(p.nome ?? ""),
-      ));
-    },
+    // Nossas impressoras (agentes nas bancadas), sem PrintNode — lib/impressoras.
+    queryFn: listarImpressoras,
     refetchInterval: 60_000,
   });
 }
@@ -2610,7 +2596,7 @@ function LotesDoDia({
         {impressoraSelecionada && (
           <span className="inline-flex items-center gap-1.5">
             <span className="font-mono px-1.5 py-0.5 rounded bg-muted text-foreground">
-              PrintNode ID {impressoraSelecionada.printer_id}
+              ID {impressoraSelecionada.printer_id}
             </span>
             {impressoraSelecionada.configurada ? (
               <span className="text-emerald-600" title="É a impressora configurada como padrão no sistema">
