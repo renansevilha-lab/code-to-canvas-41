@@ -6,4 +6,11 @@
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-export default defineConfig();
+import { fileURLToPath } from "node:url";
+
+// 05/nov/2026: o build da Cloudflare (Linux) parou de achar o pacote rou3 que o h3 importa
+// ("Rollup failed to resolve import rou3 from node_modules/h3/dist/h3.mjs") — aqui e no Windows o
+// mesmo lock monta. Apontar o caminho do arquivo resolve sem depender da busca em node_modules.
+const rou3 = fileURLToPath(new URL("./node_modules/rou3/dist/index.mjs", import.meta.url));
+
+export default defineConfig({ vite: { resolve: { alias: { rou3 } } } });
