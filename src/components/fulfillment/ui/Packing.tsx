@@ -365,7 +365,7 @@ export function PackingNovo(p: PackingProps) {
             <div style={card}>
               <span style={tituloCard}>Impressora</span>
               <select value={p.printerId || ""} onChange={(e) => p.onPrinter(Number(e.target.value))} style={campo}>
-                {p.impressoras.length === 0 && <option value="">Nenhuma ZD220</option>}
+                {p.impressoras.length === 0 && <option value="">Nenhuma Zebra</option>}
                 {p.impressoras.map((x) => (
                   <option key={x.printer_id} value={x.printer_id}>
                     {x.configurada ? "★ " : ""}{x.nome} — {x.computador}{x.estado !== "online" ? ` (${x.estado})` : ""}

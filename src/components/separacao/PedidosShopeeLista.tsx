@@ -145,7 +145,7 @@ function useImpressoras() {
       });
       const data = (await resp.json().catch(() => ({}))) as { impressoras?: Impressora[] };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220")));
+      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
     },
     refetchInterval: 60_000,
   });

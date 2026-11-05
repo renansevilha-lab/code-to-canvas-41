@@ -1511,6 +1511,13 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   ficou sem `printnode_id`/apelido. O roteamento é SÓ por `printnode_id` +
   agente vivo — impressora nova vista pelo agente nasce com `usar_proprio=false`
   e o app não a enxerga até alguém fazer essa ligação.
+- **Agente voltou ao RENANPC (05/nov):** o `bancada-1` subiu de novo no RENANPC e lá vê a ZD220
+  local (`id 2`), uma **ZD100** nova (`id 57043`) e a `[nikolaspc]` compartilhada (`id 10540`).
+  Ligações refeitas: `id 2` ← `printnode_id 75043468` ("Zebra ZD220 (PC Renan)"), `id 57043` ←
+  `75985321` ("Zebra ZD100 (PC Renan)"), `10540` sem ligação. As listas de impressora do app
+  passaram a aceitar `zd220|zd100` no nome (antes só ZD220 — a ZD100 nem aparecia). A lista das
+  telas ainda vem da API do PrintNode (é ela que dá o `printer_id`); a impressão em si vai pela
+  fila própria.
 - **Pendente:** tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam

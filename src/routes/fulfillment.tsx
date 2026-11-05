@@ -1435,7 +1435,7 @@ function useImpressorasFF(enabled: boolean) {
       );
       const data = (await resp.json().catch(() => ({}))) as { impressoras?: ImpressoraFF[] };
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return aplicarApelidos((data.impressoras ?? []).filter((p) => (p.nome ?? "").toLowerCase().includes("zd220")));
+      return aplicarApelidos((data.impressoras ?? []).filter((p) => /zd220|zd100/i.test(p.nome ?? "")));
     },
   });
 }
@@ -3002,7 +3002,7 @@ function PackingEnvio({ envioId, onVoltar }: { envioId: string; onVoltar: () => 
                       </SelectItem>
                     ))}
                     {impressoras.length === 0 && (
-                      <SelectItem value="_" disabled>Nenhuma ZD220</SelectItem>
+                      <SelectItem value="_" disabled>Nenhuma Zebra</SelectItem>
                     )}
                   </SelectContent>
                 </Select>

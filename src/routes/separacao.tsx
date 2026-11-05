@@ -167,7 +167,7 @@ function useImpressoras() {
       // devolve `descricao` (filtrar por ela deixava a lista sempre vazia).
       // O apelido (ex.: "Zebra Fundos (PC RENAN)") troca só o nome exibido.
       return aplicarApelidos((data.impressoras ?? []).filter((p) =>
-        (p.nome ?? "").toLowerCase().includes("zd220"),
+        /zd220|zd100/i.test(p.nome ?? ""),
       ));
     },
     refetchInterval: 60_000,
@@ -2602,7 +2602,7 @@ function LotesDoDia({
             ))}
             {!loadingImpressoras && (impressoras ?? []).length === 0 && (
               <SelectItem value="_" disabled>
-                Nenhuma ZD220 encontrada
+                Nenhuma Zebra encontrada
               </SelectItem>
             )}
           </SelectContent>
