@@ -6,7 +6,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { ProdutoTopo, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
+import { ProdutoTopo, type FaixaCusto, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
 import { EtapaTexto } from "@/components/ia/anuncio/EtapaTexto";
 import { EtapaFotos } from "@/components/ia/anuncio/EtapaFotos";
 import { FotosVariacoes } from "@/components/ia/anuncio/FotosVariacoes";
@@ -94,9 +94,21 @@ function GerarAnuncioPage() {
         supabaseExternal.from("produtos").select("foto_capa").eq("sku", sku).maybeSingle(),
       ]);
       if (p.error) throw p.error;
+      // produto PAI (tipo V) não tem custo próprio: o cabeçalho mostra a faixa das variações (kits), que têm
+      let faixa: FaixaCusto | null = null;
+      if ((p.data as ProdutoIa | null)?.tipo === "V") {
+        const vs = await supabaseExternal.from("produtos").select("sku").eq("sku_pai", sku).eq("ativo", true);
+        const skus = (vs.data ?? []).map((x) => x.sku as string);
+        if (skus.length) {
+          const c = await supabaseExternal.from("view_cmv_efetivo").select("sku, cmv_efetivo").in("sku", skus);
+          const vals = (c.data ?? []).map((x) => (x.cmv_efetivo != null ? Number(x.cmv_efetivo) : null)).filter((v): v is number => v != null && v > 0);
+          faixa = { min: vals.length ? Math.min(...vals) : 0, max: vals.length ? Math.max(...vals) : 0, n: skus.length, sem_custo: skus.length - vals.length };
+        }
+      }
       return {
         produto: (p.data ? { ...(p.data as ProdutoIa), foto: (p.data as ProdutoIa).foto ?? (capa.data?.foto_capa as string | null) ?? null } : null) as ProdutoIa | null,
         custo: cmv.data?.cmv_efetivo != null ? Number(cmv.data.cmv_efetivo) : null,
+        faixa,
         extra: (ex.data ?? null) as IaProdutoExtra | null,
       };
     },
@@ -299,7 +311,7 @@ function GerarAnuncioPage() {
   // Anúncio, duas colunas (o trabalho à esquerda; preço, capa e lojas do destino à direita). O antigo fica de reserva.
   const novo = (
     <div className="pm-ui" style={{ padding: "14px 24px 80px", maxWidth: 1440, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
-      <CabecalhoAnuncio produto={dados.produto} custo={dados.custo} canal={canal} empresa={empresa}
+      <CabecalhoAnuncio produto={dados.produto} custo={dados.custo} faixa={dados.faixa} canal={canal} empresa={empresa}
         onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho?.id })} situacaoLoja={situacaoLoja}
         passos={passos} falta={falta} podeConferir={!!rasc} onConferir={() => irEnvio(canal, empresa)}
         abas={ABAS.map((x) => ({ ...x, n: x.id === "fotos" ? nRev : undefined }))} aba={aba} onAba={(id) => set({ aba: id as Aba | undefined })} />
@@ -310,7 +322,7 @@ function GerarAnuncioPage() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
             {blocoOutros}
-            <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} extra={dados.extra} canal={canal} empresa={empresa} compacto
+            <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} faixa={dados.faixa} extra={dados.extra} canal={canal} empresa={empresa} compacto
               onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
             {blocoTexto}
             {blocoTermos}
@@ -336,7 +348,7 @@ function GerarAnuncioPage() {
         <span className="text-sm text-muted-foreground">· {nomeCanal(canal)} · {empresa === "svl" ? "SVL" : "Ottz/ACZ"}</span>
       </div>
 
-      <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} extra={dados.extra} canal={canal} empresa={empresa}
+      <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} faixa={dados.faixa} extra={dados.extra} canal={canal} empresa={empresa}
         onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
 
       <div className="flex flex-wrap gap-1 border-b">

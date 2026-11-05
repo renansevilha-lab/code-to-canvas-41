@@ -19,9 +19,23 @@ export interface ProdutoIa {
   sku: string; nome: string; marca: string | null; categoria_caminho: string | null; tipo: string | null; foto: string | null;
 }
 
+/** Custo das VARIAÇÕES de um produto pai (tipo V): o pai não tem custo próprio na gestão, as variações (kits) têm. */
+export interface FaixaCusto { min: number; max: number; n: number; sem_custo: number }
+
+/** Rótulo do custo no cabeçalho: valor do produto, ou a faixa das variações no pai. null = "sem custo". */
+export function custoTexto(custo: number | null, faixa?: FaixaCusto | null): string | null {
+  if (custo != null) return formatBRL(custo);
+  if (faixa && faixa.n > 0) {
+    const base = faixa.min === faixa.max ? formatBRL(faixa.min) : `${formatBRL(faixa.min)} a ${formatBRL(faixa.max)}`;
+    const aviso = faixa.sem_custo > 0 ? ` · ${faixa.sem_custo} sem custo` : "";
+    return `${base} nas ${faixa.n} variações${aviso}`;
+  }
+  return null;
+}
+
 /** Cabeçalho do anúncio: produto, canal/empresa, foto real de referência e dados que a gestão não tem. */
-export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, onEmpresa, compacto }: {
-  produto: ProdutoIa; custo: number | null; extra: IaProdutoExtra | null;
+export function ProdutoTopo({ produto, custo, faixa, extra, canal, empresa, onCanal, onEmpresa, compacto }: {
+  produto: ProdutoIa; custo: number | null; faixa?: FaixaCusto | null; extra: IaProdutoExtra | null;
   canal: string; empresa: string; onCanal: (c: string) => void; onEmpresa: (e: string) => void;
   /** visual novo: nome, SKU, custo e destino já estão no cabeçalho fixo — aqui ficam só as fotos reais, a composição e os dados para a IA */
   compacto?: boolean;
@@ -79,7 +93,7 @@ export function ProdutoTopo({ produto, custo, extra, canal, empresa, onCanal, on
             </label>
             <div className="pb-1">
               <span className="text-[11px] text-muted-foreground block">Custo (CMV da gestão)</span>
-              <span className="font-mono">{custo != null ? formatBRL(custo) : <span className="text-destructive">sem custo</span>}</span>
+              <span className="font-mono">{custoTexto(custo, faixa) ?? <span className="text-destructive">sem custo</span>}</span>
             </div>
           </div>
           <DadosExtras sku={produto.sku} extra={extra} />

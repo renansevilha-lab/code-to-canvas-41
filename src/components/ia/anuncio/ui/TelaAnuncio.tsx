@@ -6,7 +6,7 @@ import { ArrowRight, Check, ChevronDown, ChevronLeft, ExternalLink } from "lucid
 import { LOGO } from "@/components/dashboard/formato";
 import { formatBRL } from "@/lib/format";
 import { rotuloFoto, urlsAssinadas, type IaEtapa, type IaRascunhoImagem } from "@/lib/iaAnuncio";
-import type { ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
+import { custoTexto, type FaixaCusto, type ProdutoIa } from "@/components/ia/anuncio/ProdutoTopo";
 
 // ============================================================================
 // Tela do anúncio no design novo (Claude Design, pacote "Anúncios", 22/out/2026) — fase 2: o cabeçalho fixo
@@ -57,8 +57,8 @@ export const dataCurta = (iso: string) =>
 
 // ── cabeçalho fixo ───────────────────────────────────────────────────────────
 
-export function CabecalhoAnuncio({ produto, custo, canal, empresa, onDestino, situacaoLoja, passos, falta, onConferir, podeConferir, abas, aba, onAba }: {
-  produto: ProdutoIa; custo: number | null; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
+export function CabecalhoAnuncio({ produto, custo, faixa, canal, empresa, onDestino, situacaoLoja, passos, falta, onConferir, podeConferir, abas, aba, onAba }: {
+  produto: ProdutoIa; custo: number | null; faixa?: FaixaCusto | null; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
   /** "já anunciado · 2345…" / "não anunciado" / "verificando…" por loja */
   situacaoLoja: (canal: string, empresa: string) => { t: string; cor: string };
   passos: Passo[]; falta: { t: string; cor: string }; onConferir: () => void; podeConferir: boolean;
@@ -89,7 +89,7 @@ export function CabecalhoAnuncio({ produto, custo, canal, empresa, onDestino, si
             <span style={{ fontSize: 11, fontWeight: 600, padding: "0 7px", borderRadius: 5, border: "1px solid var(--pm-bc)", color: "var(--pm-t)" }}>{tipo}</span>
             {produto.marca && <span style={{ whiteSpace: "nowrap" }}>{produto.marca}</span>}
             {produto.categoria_caminho && <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 320 }} title={produto.categoria_caminho}>{produto.categoria_caminho.split(" -> ").slice(-1)[0]}</span>}
-            <span style={{ whiteSpace: "nowrap" }}>custo <b className={MONO} style={{ fontWeight: 600, color: custo == null ? "var(--pm-r)" : "var(--pm-t)" }}>{custo != null ? formatBRL(custo) : "sem custo"}</b></span>
+            <span style={{ whiteSpace: "nowrap" }} title={custo == null && faixa ? "Produto com variações: o pai não tem custo próprio; o custo é o de cada variação (kit)." : undefined}>custo <b className={MONO} style={{ fontWeight: 600, color: custoTexto(custo, faixa) == null ? "var(--pm-r)" : "var(--pm-t)" }}>{custoTexto(custo, faixa) ?? "sem custo"}</b></span>
           </div>
         </div>
         <div ref={caixa} style={{ display: "flex", alignItems: "center", gap: 10, position: "relative", flexWrap: "wrap" }}>
