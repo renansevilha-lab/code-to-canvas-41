@@ -46,7 +46,9 @@ function quebrados() {
   return ruins;
 }
 
-console.log(`[completar-dependencias] node ${process.version}`);
+let limite = "?";
+try { limite = execSync("sh -c \"ulimit -n; ulimit -Hn\"").toString().trim().replace(/\s+/, " / "); } catch {}
+console.log(`[completar-dependencias] node ${process.version} · arquivos abertos (atual / máximo): ${limite}`);
 let ruins = quebrados();
 console.log(`[completar-dependencias] ${ruins.length} pacote(s) quebrados ou ausentes${ruins.length ? ": " + ruins.slice(0, 30).join(" · ") : ""}`);
 for (let tentativa = 1; ruins.length && tentativa <= 2; tentativa++) {

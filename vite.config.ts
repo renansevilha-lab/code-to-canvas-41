@@ -6,4 +6,14 @@
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-export default defineConfig();
+// 05/nov/2026: o build da Cloudflare passou a falhar com "EMFILE: too many open files" (limite de
+// arquivos abertos menor na máquina de build). Às vezes o erro aparecia disfarçado de "Rollup failed to
+// resolve import" (rou3, sonner, date-fns). O padrão do Rollup é abrir até 1.000 arquivos ao mesmo tempo;
+// com 32 o build fica praticamente com o mesmo tempo e não esbarra no limite.
+export default defineConfig({
+  vite: {
+    build: {
+      rollupOptions: { maxParallelFileOps: 32 },
+    },
+  },
+});
