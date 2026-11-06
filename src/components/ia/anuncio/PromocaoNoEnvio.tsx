@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarPromocoes, traduzirErroShopee } from "@/components/promocoes/comum";
+import { chamarVariacoesShopee } from "@/lib/iaAnuncio";
 import { EV_PRONTO, EV_VAI_CRIAR, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -188,6 +189,41 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     },
   });
   const calc = precosQ.data ?? {};
+  // nome da variação e CMV por linha (06/nov, pedido do dono). O espelho guarda só o índice da opção ("0", "1"…) em
+  // nome_variacao: o nome vem do anúncio ao vivo (só leitura) e, sem ele, do cadastro sem o nome do pai.
+  const aoVivoQ = useQuery({
+    queryKey: ["ia-anuncio", "envio-promo-opcoes", empresa, alvo.itemId],
+    enabled: atualizar && modelos.length > 0, staleTime: 5 * 60_000, retry: false,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const r = await chamarVariacoesShopee("ler", { empresa, item_id: String(alvo.itemId) });
+      const vs = ((r?.anuncio?.variacoes ?? []) as { sku: string; opcao: string }[]);
+      return Object.fromEntries(vs.filter((v) => v.sku && v.opcao).map((v) => [v.sku, v.opcao]));
+    },
+  });
+  const infoQ = useQuery({
+    queryKey: ["ia-anuncio", "envio-promo-info", skus.map((x) => x.sku).join(",")],
+    enabled: skus.length > 0, staleTime: 5 * 60_000,
+    queryFn: async (): Promise<Record<string, { nome: string | null; cmv: number | null }>> => {
+      const lista = skus.map((x) => x.sku);
+      const [pr, cm] = await Promise.all([
+        supabaseExternal.from("produtos").select("sku, nome").in("sku", lista),
+        supabaseExternal.from("view_cmv_efetivo").select("sku, cmv_efetivo").in("sku", lista),
+      ]);
+      const cmv = new Map(((cm.data ?? []) as { sku: string; cmv_efetivo: number | string | null }[]).map((x) => [x.sku, x.cmv_efetivo != null ? Number(x.cmv_efetivo) : null]));
+      return Object.fromEntries(lista.map((k) => {
+        const n = ((pr.data ?? []) as { sku: string; nome: string | null }[]).find((x) => x.sku === k)?.nome ?? null;
+        return [k, { nome: n, cmv: cmv.get(k) ?? null }];
+      }));
+    },
+  });
+  const nomeVariacao = (x: { sku: string; nome: string }): string => {
+    const vivo = aoVivoQ.data?.[x.sku];
+    if (vivo) return vivo;
+    const cad = infoQ.data?.[x.sku]?.nome ?? null;
+    if (cad && nome && cad.startsWith(`${nome} - `)) return cad.slice(nome.length + 3).trim();
+    if (x.nome && !/^\d+$/.test(x.nome)) return x.nome;
+    return cad ?? "";
+  };
   const promoDe = (s: string): number | null => {
     const m = mao[s];
     if (m != null && m.trim() !== "") { const v = paraNumero(m); return v > 0 ? v : null; }
@@ -346,9 +382,16 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
             {skus.map((s) => {
               const c = calc[s.sku]; const v = promoDe(s.sku);
               return (
-                <div key={s.sku} className={`grid ${atualizar ? "grid-cols-[70px_1fr_100px_110px_170px]" : "grid-cols-[70px_1fr_110px_170px]"} gap-2 items-center text-xs`}>
+                <div key={s.sku} className={`grid ${atualizar ? "grid-cols-[70px_1fr_90px_100px_110px_170px]" : "grid-cols-[70px_1fr_90px_110px_170px]"} gap-2 items-center text-xs`}>
                   <span className="font-mono">{s.sku}</span>
-                  <span className="truncate text-muted-foreground" title={s.nome}>{s.nome}{c?.erro ? <span className="text-destructive"> · {c.erro}</span> : null}</span>
+                  {(() => { const nv = nomeVariacao(s); return (
+                    <span className="truncate" title={nv}>{nv || <span className="text-muted-foreground">—</span>}{c?.erro ? <span className="text-destructive"> · {c.erro}</span> : null}</span>
+                  ); })()}
+                  {(() => { const cmv = infoQ.data?.[s.sku]?.cmv; return (
+                    <span className="text-right tabular-nums text-muted-foreground whitespace-nowrap" title="CMV: custo do produto (kit = soma dos componentes)">
+                      {cmv != null && cmv > 0 ? <>CMV {formatBRL(cmv)}</> : infoQ.isLoading ? "…" : <span className="text-destructive">sem CMV</span>}
+                    </span>
+                  ); })()}
                   {atualizar && (() => { const h = promoHoje(s.sku); return <span className="text-right text-muted-foreground tabular-nums" title="preço promocional de hoje nesta promoção">{h != null ? `hoje ${formatBRL(h)}` : "—"}</span>; })()}
                   <Input className="h-7 text-right tabular-nums text-xs" inputMode="decimal" placeholder={c?.preco != null ? dinheiro(c.preco) : "sem preço"}
                     value={mao[s.sku] ?? (c?.preco != null ? dinheiro(c.preco) : "")} onChange={(e) => setMao({ ...mao, [s.sku]: e.target.value })}
