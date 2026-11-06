@@ -3859,6 +3859,14 @@ código); palavra repetida no mesmo título (gato/gatos contam igual) é recusad
 repetição e a diferença entre as lojas e, se algo sair da regra, devolve UMA vez ao modelo com a lista dos problemas.
 Resultado: 6 de 6 sem problema no fim (ex.: 16457 ML 44 → 60 caracteres, "Granulado Higiênico Gatos Bento Mix Mandioca e
 Minerais 10kg"). Na Amazon alguns títulos ficam com cara de lista de palavras no fim. **Ainda não ligado ao fluxo:** a `anuncio-publicar` só lê `ia_rascunho.titulo` (um título para todos os destinos).
+**Título com a inicial de cada palavra em maiúscula (06/nov/2026, pedido do dono):** "Areia para Gatos Bumi Pet Care", nunca "Areia
+para gato bumi pet care". Gatilho BEFORE `trg_ia_rascunho_titulo_maiusculas` em `ia_rascunho` → `ia_titulo_capitalizar(text)` (SQL +
+rollback em `docs/ia-titulo-maiusculas.sql`): vale para todo caminho que grava o título (IA, "Salvar título" da conferência, "Trazer",
+anúncio aberto pelo ID) e a `anuncio-publicar` lê daqui. Conectivo no meio fica minúsculo (e, de, da, do, para, com, em, no, na, ou, a, o,
+por, ao, x, c/, p/; "Sem" fica maiúsculo — é palavra-chave em "Sem Enxágue"); palavra que começa com número e unidade solta ficam como
+estão (4kg, 100%, 2 un, 500 ml); palavra com maiúscula no meio fica (PetLike, SVL); espaço duplo vira um. Os 9 rascunhos fora da regra
+foram corrigidos (só no app; anúncio já publicado não muda). Templates `titulo_generico` e `titulo_mercado_livre` na **v2** com a regra.
+Em 06/nov o envio segue com UM título por rascunho para todos os destinos (Ottz × Bumi saem iguais).
 
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
