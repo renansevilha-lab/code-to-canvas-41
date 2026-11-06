@@ -66,6 +66,17 @@ export interface Parametro {
   pesar_cada: number | null; pesar_primeiros: number; meta_estoque_un: number | null; ativo: boolean;
   // mistura (16640): pacotes de um produto do Tiny entram junto com a farinha; null = só farinha
   mistura_insumo_id: number | null; mistura_un_kg: number | null; mistura_farinha_kg: number | null;
+  /** 06/nov: outras embalagens que o produto também usa (ex.: 15984 no saco transparente em alguns marketplaces) */
+  embalagens_alternativas: number[] | null;
+}
+/** As embalagens da ficha: a padrão primeiro, depois as alternativas (só as que existem e estão ativas). */
+export function embalagensDaFicha(par: Pick<Parametro, "embalagem_padrao_id" | "embalagens_alternativas"> | null, insumos: Insumo[] | undefined): Array<Insumo & { padrao: boolean }> {
+  if (!par || !insumos) return [];
+  const ids = [par.embalagem_padrao_id, ...(par.embalagens_alternativas ?? [])].filter((x): x is number => x != null).map(Number);
+  return [...new Set(ids)].map((id, i) => {
+    const e = insumos.find((x) => Number(x.id) === id && x.tipo === "embalagem" && x.ativo);
+    return e ? { ...e, padrao: i === 0 && Number(par.embalagem_padrao_id) === id } : null;
+  }).filter((x): x is Insumo & { padrao: boolean } => x != null);
 }
 export interface BigBag {
   id: number; codigo: string; insumo_id: number | null; insumo: string | null; a_classificar: boolean;
@@ -293,6 +304,8 @@ export interface OrdemProducao {
   fechada_em: string | null; fechada_por: string | null; motivo: string | null;
   produzido: number; falta: number; envasando: number; lotes: number; lote_aberto_id: number | null;
   situacao: "aberta" | "em_producao" | "atingida" | "concluida" | "cancelada"; atrasada: boolean;
+  /** 06/nov: em qual embalagem produzir (null = a padrão da ficha) */
+  embalagem_id: number | null; embalagem: string | null;
 }
 export const useOrdensProducao = (comFechadas = false) =>
   useQuery({

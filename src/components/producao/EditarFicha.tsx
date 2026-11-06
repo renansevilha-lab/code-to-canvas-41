@@ -15,7 +15,7 @@ interface ParamRow {
   sobrepeso_pct: number; perda_pct: number; tolerancia_g: number; custo_insumo_kg: number; pesar_cada: number | null;
   pesar_primeiros: number; meta_estoque_un: number | null; ativo: boolean; mistura_insumo_id: number | null;
   mistura_un_kg: number | null; mistura_farinha_kg: number | null; seladora_temp_c: number | null;
-  processo: ParamProcesso[] | null; instrucoes: string | null;
+  processo: ParamProcesso[] | null; instrucoes: string | null; embalagens_alternativas: number[] | null;
 }
 interface Config { id: number; mod_mensal: number; cif_mensal: number; capacidade_normal_un: number }
 
@@ -65,6 +65,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
   const [processo, setProcesso] = useState<ParamProcesso[]>([]);
   const [instrucoes, setInstrucoes] = useState("");
   const [etiquetaSim, setEtiquetaSim] = useState(false);
+  const [alternativas, setAlternativas] = useState<number[]>([]);
   const [salvando, setSalvando] = useState(false);
 
   const lista = insumos.data ?? [];
@@ -91,6 +92,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
     setEtiquetaSim(!!emb?.precisa_etiqueta);
     setProcesso(Array.isArray(p.processo) ? p.processo : []);
     setInstrucoes(p.instrucoes ?? "");
+    setAlternativas((p.embalagens_alternativas ?? []).map(Number));
   }, [dados.data, insumos.data, porId]);
 
   const set = (k: string) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -177,6 +179,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
         meta_estoque_un: v.meta, ativo, farinha_id: Number(f.farinha), custo_insumo_kg: v.farinhaKg,
         mistura_insumo_id: f.mistura ? Number(f.mistura) : null, mistura_un_kg: f.mistura ? v.misturaUnKg : null,
         mistura_farinha_kg: f.mistura ? v.misturaFarKg : null, embalagem_padrao_id: embalagem,
+        embalagens_alternativas: alternativas.filter((x) => x !== Number(embalagem)),
         seladora_temp_c: v.temp, processo: proc, instrucoes: instrucoes.trim() || null, updated_at: new Date().toISOString(),
       } as never).eq("sku", sku);
       if (error) throw error;
@@ -268,6 +271,20 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
           {outrosNaEtiqueta.length > 0 && <div style={{ fontSize: 11.5, color: "var(--pm-am)" }}>O preço da etiqueta vale também para {outrosNaEtiqueta.join(", ")}.</div>}
         </>
       )}
+
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--pm-t2)", marginBottom: 4 }}>Outras embalagens que este produto também usa</div>
+        <div style={{ fontSize: 11.5, color: "var(--pm-t3)", marginBottom: 6 }}>Aparecem como opção ao iniciar a produção e na ordem de produção (ex.: saco transparente para alguns marketplaces). O custo padrão da ficha é o da embalagem usada acima.</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {de("embalagem").filter((i) => String(i.id) !== f.emb).map((i) => (
+            <label key={i.id} style={{ fontSize: 13, display: "flex", gap: 5, alignItems: "center" }}>
+              <input type="checkbox" checked={alternativas.includes(Number(i.id))}
+                onChange={(e) => setAlternativas((a) => (e.target.checked ? [...a, Number(i.id)] : a.filter((x) => x !== Number(i.id))))} />
+              {i.nome}{i.precisa_etiqueta ? " (com etiqueta)" : ""}
+            </label>
+          ))}
+        </div>
+      </div>
 
       {bloco("Mão de obra e fábrica", "Vale para todos os produtos: custo por saco = (mão de obra + custos da fábrica) ÷ capacidade.")}
       <div style={grade}>

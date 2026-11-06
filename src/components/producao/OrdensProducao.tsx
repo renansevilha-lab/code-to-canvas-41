@@ -9,7 +9,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
 import {
-  avisarProducao, erroMsg, int, useEquipeDiscord, useOrdensProducao, useParametros, type OrdemProducao,
+  embalagensDaFicha, useInsumos, avisarProducao, erroMsg, int, useEquipeDiscord, useOrdensProducao, useParametros, type OrdemProducao,
 } from "@/lib/producao";
 
 const dia = (d: string | null) => (d ? d.slice(0, 10).split("-").reverse().slice(0, 2).join("/") : "—");
@@ -127,6 +127,7 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
                       {dia(op.prazo)}{op.atrasada ? " · atrasada" : ""}
                     </td>
                     <td style={{ ...td, maxWidth: 300 }}>
+                      {op.embalagem && <div style={{ fontSize: 12.5, fontWeight: 650, marginBottom: 2 }}>Embalagem: {op.embalagem}</div>}
                       {op.obs && <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{op.obs}</div>}
                       <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>
                         por {op.criado_por ?? "—"} em {quando(op.criado_em)}
@@ -167,6 +168,11 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
   const [prazo, setPrazo] = useState("");
   const [prioridade, setPrioridade] = useState<"normal" | "urgente">("normal");
   const [obs, setObs] = useState("");
+  const [emb, setEmb] = useState("");
+  const insumos = useInsumos();
+  const daFicha = embalagensDaFicha(params.data?.find((p) => p.sku === sku) ?? null, insumos.data);
+  useEffect(() => { setEmb(""); }, [sku]);
+  const embEscolhida = daFicha.find((e) => String(e.id) === emb) ?? null;
   const [marcar, setMarcar] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("producao.op.marcar") || "[]"); } catch { return []; }
   });
@@ -186,6 +192,7 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
     setSalvando(true);
     const { data, error } = await supabaseExternal.from("producao_op" as never).insert({
       sku, qtd: n, prazo: prazo || null, prioridade, obs: obs.trim() || null, criado_por: perfil?.nome ?? null,
+      embalagem_id: embEscolhida ? embEscolhida.id : null,
     } as never).select("id").single();
     if (error) { setSalvando(false); return toast.error(erroMsg(error)); }
     const id = (data as unknown as { id: number }).id;
@@ -200,6 +207,7 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
         { nome: "Quantidade", valor: `${int(n)} sacos`, inline: true },
         { nome: "Prazo", valor: prazo ? prazo.split("-").reverse().join("/") : "sem prazo", inline: true },
         { nome: "Pedida por", valor: perfil?.nome ?? "—", inline: true },
+        ...(embEscolhida ? [{ nome: "Embalagem", valor: embEscolhida.nome, inline: true }] : []),
         ...(obs.trim() ? [{ nome: "Observações", valor: obs.trim() }] : []),
       ],
       marcar: ids,
@@ -231,6 +239,14 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
               </Escolha>
             </Campo>
           </div>
+          {daFicha.length > 1 && (
+            <Campo rotulo="Embalagem" dica="este produto sai em mais de uma embalagem (ex.: transparente para alguns marketplaces)">
+              <Escolha value={emb} onChange={(e) => setEmb(e.target.value)}>
+                <option value="">a padrão ({daFicha.find((e) => e.padrao)?.nome ?? daFicha[0].nome})</option>
+                {daFicha.filter((e) => !e.padrao).map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </Escolha>
+            </Campo>
+          )}
           <Campo rotulo="Observações">
             <textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={3} placeholder="ex.: usar o big bag 02; fechar em fardos de 2"
               style={{ padding: 10, borderRadius: 9, border: "1px solid var(--pm-bc)", background: "var(--pm-s)", color: "var(--pm-t)", fontSize: 13.5, resize: "vertical" }} />

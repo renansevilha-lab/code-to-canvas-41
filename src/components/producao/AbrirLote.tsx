@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
 import {
-  ETAPAS, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
+  ETAPAS, embalagensDaFicha, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
 } from "@/lib/producao";
 
 export function AbrirLote({ aberto, op, onFechar, onAberto }: {
@@ -33,6 +33,9 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
   const par = params.data?.find((p) => p.sku === sku) ?? null;
   const embalagens = (insumos.data ?? []).filter((i) => i.tipo === "embalagem" && i.ativo);
   const embSel = embalagens.find((e) => String(e.id) === emb) ?? null;
+  // as embalagens da ficha (padrão + alternativas) aparecem como botões; o "outra" abre a lista inteira
+  const daFicha = embalagensDaFicha(par, insumos.data);
+  const [outraEmb, setOutraEmb] = useState(false);
   const bagsDoSku = useMemo(
     () => (bags.data ?? []).filter((b) => par && b.insumo_id === par.farinha_id && !b.lote_aberto && b.saldo_kg >= farinhaPorSaco(par)),
     [bags.data, par],
@@ -58,8 +61,13 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
   }, [sku, ops.data]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (par) setEmb(par.embalagem_padrao_id ? String(par.embalagem_padrao_id) : "");
+    setOutraEmb(false);
     setBag("");
   }, [par?.sku]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a ordem de produção diz em qual embalagem produzir
+  useEffect(() => {
+    if (opSel?.embalagem_id) setEmb(String(opSel.embalagem_id));
+  }, [opSel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (bagSel && par) {
       const rende = Math.floor(bagSel.saldo_kg / farinhaPorSaco(par));
@@ -123,12 +131,36 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
               ))}
             </Escolha>
           </Campo>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
-            <Campo rotulo="Embalagem" dica={embSel?.precisa_etiqueta ? "precisa de etiqueta: a etapa de etiquetagem entra no lote" : undefined}>
-              <Escolha value={emb} onChange={(e) => setEmb(e.target.value)}>
-                {embalagens.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
-              </Escolha>
+          {daFicha.length > 1 && (
+            <Campo rotulo="Embalagem deste lote" dica={opSel?.embalagem ? `a ordem #${opSel.id} pede: ${opSel.embalagem}` : undefined}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {daFicha.map((e) => {
+                  const sel = String(e.id) === emb;
+                  return (
+                    <button key={e.id} type="button" onClick={() => { setEmb(String(e.id)); setOutraEmb(false); }}
+                      style={{ padding: "7px 11px", borderRadius: 9, fontSize: 13, cursor: "pointer", textAlign: "left",
+                        border: `1px solid ${sel ? "var(--pm-a)" : "var(--pm-bc)"}`, background: sel ? "var(--pm-a)" : "var(--pm-s)", color: sel ? "#fff" : "var(--pm-t)" }}>
+                      <div style={{ fontWeight: 650 }}>{e.nome}</div>
+                      <div style={{ fontSize: 11, opacity: 0.8 }}>{e.padrao ? "padrão" : "alternativa"}{e.precisa_etiqueta ? " · com etiqueta" : ""}</div>
+                    </button>
+                  );
+                })}
+                {!outraEmb && <button type="button" onClick={() => setOutraEmb(true)} style={{ fontSize: 12, color: "var(--pm-t2)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>outra…</button>}
+              </div>
             </Campo>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
+            {daFicha.length > 1 && !outraEmb ? (
+              <Campo rotulo="Etiquetagem">
+                <div style={{ fontSize: 12.5, paddingTop: 8, color: "var(--pm-t2)" }}>{embSel?.precisa_etiqueta ? "esta embalagem leva etiqueta: a etapa de etiquetagem entra no lote" : "sem etiqueta"}</div>
+              </Campo>
+            ) : (
+              <Campo rotulo="Embalagem" dica={embSel?.precisa_etiqueta ? "precisa de etiqueta: a etapa de etiquetagem entra no lote" : undefined}>
+                <Escolha value={emb} onChange={(e) => setEmb(e.target.value)}>
+                  {embalagens.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </Escolha>
+              </Campo>
+            )}
             <Campo rotulo="Sacos planejados">
               <Entrada inputMode="numeric" value={qtd} onChange={(e) => setQtd(e.target.value)} />
             </Campo>
