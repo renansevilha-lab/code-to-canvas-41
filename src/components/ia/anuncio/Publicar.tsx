@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
 import { EnvioAlvoContext, type EnvioAlvo } from "@/components/ia/anuncio/PromocaoNoEnvio";
-import { calcularPreco, chamarIa, chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { calcularPreco, chamarIa, chamarPublicar, chamarVariacoesShopee, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -487,6 +487,27 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
     ? { modo: "atualizar", itemId: p?.alvo?.item_id ? String(p.alvo.item_id) : null, precoCheio: trocaPreco ? (p?.preco ?? null) : (p?.atual?.preco ?? null), precoAtual: p?.atual?.preco ?? null }
     : { modo: "criar", itemId: null, precoCheio: p?.preco ?? null };
 
+  // 06/nov/2026 (pedido do dono, 15984 · anúncio 47859963706): atualizar as fotos troca só a GALERIA; a foto de cada
+  // OPÇÃO (variação) é outro campo da Shopee. Se a 1ª foto que fica no anúncio é nova, a opção do PRÓPRIO produto
+  // (variação com o SKU deste rascunho) passa a usar essa foto — pela anuncio-shopee-variacoes?modulo=fotos-opcoes.
+  // As outras opções (ex.: o kit 2un) ficam com a foto de hoje; trocar essas é no bloco "Fotos das opções".
+  const capaOpcao = canal === "shopee" && modo === "atualizar" && finalOrdem[0] && !idsAtuais.includes(finalOrdem[0]) ? finalOrdem[0] : null;
+  async function fotoDaOpcao(emp: string, itemId: string, rotulo: string) {
+    if (!capaOpcao) return;
+    const pedido = { empresa: emp, item_id: itemId, fotos: [{ sku: rascunho.sku, path: capaOpcao }] };
+    try {
+      const pv = await chamarVariacoesShopee("fotos-opcoes", pedido);
+      const pend = (pv.pendencias ?? []) as string[];
+      // anúncio sem variações ou sem opção deste SKU: não há foto de opção a trocar
+      if (pend.some((x) => /não tem variações|não é de nenhuma variação/.test(x))) return;
+      if (pend.length) { toast.warning(`${rotulo}: a foto da variação ${rascunho.sku} não foi trocada`, { description: `${pend.join(" · ")} — use o bloco "Fotos das opções".`, duration: 20000 }); return; }
+      await chamarVariacoesShopee("fotos-opcoes", { ...pedido, confirmar: true });
+      toast.success(`${rotulo}: a foto da variação ${rascunho.sku} também foi trocada`);
+    } catch (e) {
+      toast.warning(`${rotulo}: a foto da variação ${rascunho.sku} não foi trocada`, { description: `${(e as Error).message} — use o bloco "Fotos das opções".`, duration: 20000 });
+    }
+  }
+
   async function enviar() {
     if (!p) return;
     const c = p.campos;
@@ -507,6 +528,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
       `Atualizar o anúncio ${p.alvo?.item_id} ${NO} ${p.loja}?`, "",
       `Vai trocar: ${[c?.titulo ? "título" : "", c?.descricao ? "descrição" : "", c?.fotos ? `fotos (ficam ${manter.length} das atuais + ${novas.length} nova(s))` : "", c?.preco ? `preço (${p.preco != null ? formatBRL(p.preco) : "—"})` : "", c?.palavras ? "palavras de busca escondidas" : ""].filter(Boolean).join(", ")}.`,
       (p.alvo?.n_variacoes ?? 0) > 0 ? `O anúncio tem ${p.alvo?.n_variacoes} variações: título, descrição e fotos valem para todas.` : "",
+      (p.alvo?.n_variacoes ?? 0) > 0 && c?.fotos && capaOpcao ? `A foto da variação ${rascunho.sku} também passa a ser a 1ª foto nova (as outras variações ficam com a foto de hoje).` : "",
       extrasProntos.length ? `TAMBÉM, com a mesma troca: ${extrasProntos.map((o) => `${MK} ${o.rotulo} (${o.e.item_id})${promoExtra.has(chaveT(o)) ? ` + promoção ${promoExtra.get(chaveT(o))}` : ""}`).join(", ")}.` : "",
       extras.length > extrasProntos.length ? `${extras.length - extrasProntos.length} anúncio(s) marcado(s) em "Atualizar também" tem pendência e fica(m) de fora.` : "",
       promoJunto ? `Em seguida: preço promocional na promoção ${promoJunto} — vale na hora.` : "",
@@ -535,6 +557,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
       if (ativarDepois) opc.fora_do_ar = true;
       const r = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino, opcoes: opc, confirmar: true });
       if (modo === "atualizar") toast.success(`Anúncio atualizado ${NO} ${MK}`, { description: `Código ${r.item_id} · ${(r.atualizados ?? []).join(", ")}` });
+      if (modo === "atualizar" && c?.fotos && (r.atualizados ?? []).includes("fotos") && p.alvo?.item_id) await fotoDaOpcao(empresa, String(p.alvo.item_id), `${MK} ${nomeEmpresa(empresa)}`);
       // atualizado: a promoção escolhida no bloco Minha Promoção entra agora, com o preço cheio que ficou
       if (modo === "atualizar" && promoJunto && p.alvo?.item_id) {
         const pronto: AnuncioPronto = { canal, empresa, sku: rascunho.sku, item_id: String(p.alvo.item_id), precos: alvoPromo.precoCheio != null ? { [rascunho.sku]: alvoPromo.precoCheio } : {} };
@@ -560,6 +583,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
         try {
           const rr = await chamarPublicar("enviar", { rascunho_id: rascunho.id, destino: { canal, empresa: o.empresa }, opcoes: opcoesT(o, true), confirmar: true });
           toast.success(`Também atualizado: ${MK} ${o.rotulo}`, { description: `Código ${rr.item_id} · ${(rr.atualizados ?? []).join(", ")}` });
+          if ((rr.atualizados ?? []).includes("fotos")) await fotoDaOpcao(o.empresa, String(o.e.item_id), `${MK} ${o.rotulo}`);
           // a promoção escolhida no bloco deste anúncio entra agora (o bloco sabe o preço cheio que ficou)
           if (promoExtra.has(chaveT(o))) {
             const pronto: AnuncioPronto = { canal, empresa: o.empresa, sku: rascunho.sku, item_id: String(o.e.item_id), precos: {} };
