@@ -1,5 +1,12 @@
 // ============================================================================
-// Edge Function: anuncio-shopee-variacoes v8 (28/out/2026)
+// Edge Function: anuncio-shopee-variacoes v9 (06/nov/2026)
+// v9 (pedido do dono: "a foto das variações não funcionou para atualizar"): a atualização da anuncio-publicar troca só
+//   a galeria; a foto de cada OPÇÃO é do tier_variation. POST ?modulo=fotos-opcoes {empresa, item_id,
+//   fotos:[{sku, path}], confirmar?} — anúncio que JÁ tem variações: casa cada SKU com a variação dele (model_sku) e a
+//   opção do 1º grupo; sem confirmar = prévia (hoje → vai ficar); com, sobe as fotos (media_space) e chama UMA vez
+//   product/update_tier_variation com os grupos e opções de hoje, na mesma ordem e com os mesmos nomes, trocando só a
+//   imagem das opções pedidas (as outras ficam com a de hoje). Regra da Shopee: ou toda opção tem foto, ou nenhuma.
+//   Só aceita caminho que é foto de rascunho da IA (ia_rascunho_imagem.storage_path).
 // v8: nome da opção até 30 letras (get_item_limit da Shopee BR: tier_variation_option_length_limit = 30).
 // ----------------------------------------------------------------------------
 // Transforma um anúncio SIMPLES da Shopee (o que a `anuncio-publicar` cria) em anúncio COM
@@ -192,6 +199,7 @@ async function lerOuAmpliar(modulo: string, body: Record<string, any>, quem: str
   const c = await ctxShopee(shopId);
   const anuncio = await lerAnuncio(c, itemId);
   if (modulo === "ler") return json({ ok: true, anuncio });
+  if (modulo === "fotos-opcoes") return await fotosOpcoes(c, itemId, anuncio, body, quem);
 
   // ---- ampliar: só anúncio que JÁ tem variações (o simples vai pelo `criar`)
   const novas: Variacao[] = (Array.isArray(body.novas) ? body.novas : []).map((v: any) => ({
@@ -289,6 +297,70 @@ async function lerOuAmpliar(modulo: string, body: Record<string, any>, quem: str
   return json({ ok: true, feitos, anuncio: depois ?? anuncio, avisos });
 }
 
+/** v9: troca a foto das opções (1º grupo) de um anúncio que já tem variações. */
+async function fotosOpcoes(c: Ctx, itemId: number, anuncio: Awaited<ReturnType<typeof lerAnuncio>>, body: Record<string, any>, quem: string | null): Promise<Response> {
+  const pedidos = (Array.isArray(body.fotos) ? body.fotos : [])
+    .map((f: any) => ({ sku: String(f?.sku ?? "").trim(), path: String(f?.path ?? "").trim() }))
+    .filter((f: { sku: string; path: string }) => f.sku && f.path);
+  const pend: string[] = []; const avisos: string[] = [];
+  if (!anuncio.tem_variacao || !anuncio.grupos.length) pend.push("este anúncio não tem variações: a foto dele é a da galeria (atualize pelo envio)");
+  if (!["NORMAL", "UNLIST"].includes(anuncio.situacao)) pend.push(`o anúncio está com a situação ${anuncio.situacao} na Shopee`);
+  if (!pedidos.length) pend.push("escolha ao menos uma foto");
+  // só fotos de rascunho da IA
+  if (pedidos.length) {
+    const { data } = await db.from("ia_rascunho_imagem").select("storage_path").in("storage_path", pedidos.map((f: { path: string }) => f.path));
+    const ok = new Set(((data ?? []) as { storage_path: string }[]).map((x) => x.storage_path));
+    for (const f of pedidos) if (!ok.has(f.path)) pend.push(`a foto escolhida para ${f.sku} não é de um rascunho da IA`);
+  }
+  const grupo = anuncio.grupos[0];
+  const opcoes = ((grupo?.opcoes ?? []) as { opcao: string; image_id: string | null; foto: string | null }[]);
+  // SKU → índice da opção do 1º grupo
+  const novaPorOpcao = new Map<number, { sku: string; path: string }>();
+  for (const f of pedidos) {
+    const m = (anuncio.variacoes as any[]).find((v) => v.sku === f.sku);
+    if (!m) { pend.push(`o SKU ${f.sku} não é de nenhuma variação deste anúncio`); continue; }
+    const ix = Number(m.tier_index?.[0]);
+    if (!Number.isInteger(ix) || !opcoes[ix]) { pend.push(`não achei a opção do SKU ${f.sku}`); continue; }
+    if (novaPorOpcao.has(ix) && novaPorOpcao.get(ix)!.path !== f.path) avisos.push(`a opção "${opcoes[ix].opcao}" vale para mais de um SKU: fica a foto de ${novaPorOpcao.get(ix)!.sku}`);
+    else novaPorOpcao.set(ix, f);
+  }
+  const semFoto = opcoes.filter((o, i) => !novaPorOpcao.has(i) && !o.image_id).map((o) => o.opcao);
+  if (semFoto.length && semFoto.length < opcoes.length) pend.push(`a Shopee exige foto em todas as opções ou em nenhuma: falta foto para ${semFoto.join(", ")}`);
+  if (anuncio.grupos.length > 1) avisos.push(`a foto vale para a opção de "${grupo.nome}" (a Shopee só tem foto no 1º grupo)`);
+  const plano = opcoes.map((o, i) => ({ opcao: o.opcao, hoje: o.foto, sku: novaPorOpcao.get(i)?.sku ?? null, nova: novaPorOpcao.get(i)?.path ?? null }));
+  const pendencias = [...new Set(pend)];
+  if (body.confirmar !== true) return json({ ok: true, anuncio, pendencias, avisos, plano });
+  if (pendencias.length) {
+    await registrar(`${itemId}:fotos-opcoes-pendencias`, 400, { quem, shop_id: c.shopId, pendencias, plano });
+    return json({ ok: false, erro: "há pendências", pendencias }, 400);
+  }
+  // 1) sobe as fotos (só mídia: se falhar aqui, nada mudou no anúncio)
+  const ids = new Map<number, string>();
+  for (const [ix, f] of novaPorOpcao) {
+    const dl = await db.storage.from(BUCKET).download(f.path);
+    if (dl.error || !dl.data) throw new Error(`não consegui ler a foto da opção ${opcoes[ix].opcao}`);
+    const mime = (dl.data.type || "image/png").split(";")[0];
+    ids.set(ix, await subirImagem(c, new Uint8Array(await dl.data.arrayBuffer()), mime, `${f.sku}.${mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg"}`));
+  }
+  // 2) os grupos de hoje, iguais, trocando só a imagem das opções pedidas
+  const corpo = {
+    item_id: itemId,
+    tier_variation: (anuncio.grupos as any[]).map((g, gi) => ({
+      name: g.nome,
+      option_list: (g.opcoes as any[]).map((o, i) => {
+        const id = gi === 0 ? (ids.get(i) ?? o.image_id) : null;
+        return { option: o.opcao, ...(id ? { image: { image_id: id } } : {}) };
+      }),
+    })),
+  };
+  const r = await shopeePost(c, "/api/v2/product/update_tier_variation", corpo);
+  const erro = r?.error ? `${r.error} ${r.message ?? ""}`.trim() : null;
+  await registrar(`${itemId}:fotos-opcoes`, erro ? 400 : 200, { quem, shop_id: c.shopId, enviado: corpo, resposta: r });
+  if (erro) return json({ ok: false, erro: `a Shopee recusou a troca das fotos: ${erro} — nada foi alterado no anúncio`, resposta: r }, 200);
+  const depois = await lerAnuncio(c, itemId).catch(() => null);
+  return json({ ok: true, trocadas: ids.size, anuncio: depois ?? anuncio, avisos, aviso: r?.warning || null });
+}
+
 interface Variacao {
   sku: string; opcao: string; opcao2: string; preco: number; estoque: number; foto_path: string | null;
   peso_kg: number | null; comprimento_cm: number | null; largura_cm: number | null; altura_cm: number | null;
@@ -301,10 +373,10 @@ Deno.serve(async (req) => {
   const quem = await exigirAcesso(req);
   if (quem instanceof Response) return quem;
   const modulo = new URL(req.url).searchParams.get("modulo") ?? "";
-  if (!["previa", "criar", "ativar", "ler", "ampliar"].includes(modulo)) return json({ ok: false, erro: "use ?modulo=previa, criar, ativar, ler ou ampliar" }, 400);
+  if (!["previa", "criar", "ativar", "ler", "ampliar", "fotos-opcoes"].includes(modulo)) return json({ ok: false, erro: "use ?modulo=previa, criar, ativar, ler, ampliar ou fotos-opcoes" }, 400);
   const body = await req.json().catch(() => ({})) as Record<string, any>;
   try {
-    if (modulo === "ler" || modulo === "ampliar") return await lerOuAmpliar(modulo, body, quem.nome);
+    if (modulo === "ler" || modulo === "ampliar" || modulo === "fotos-opcoes") return await lerOuAmpliar(modulo, body, quem.nome);
     if (modulo === "ativar") {
       const loja = LOJA[String(body.empresa ?? "")];
       const id = Number(String(body.item_id ?? "").replace(/\D/g, ""));

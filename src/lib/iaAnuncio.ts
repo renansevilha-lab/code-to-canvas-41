@@ -257,7 +257,7 @@ export const chamarVariacoes = (modulo: "sugerir" | "previa" | "criar" | "kit" |
   chamarFuncao("tiny-produto-variacoes", modulo, body);
 /** Cria as variações (opções) num anúncio simples da Shopee — edge fn anuncio-shopee-variacoes.
  *  v7: `ler` (o anúncio ao vivo) e `ampliar` (opções novas num anúncio que já tem variações). */
-export const chamarVariacoesShopee = (modulo: "previa" | "criar" | "ativar" | "ler" | "ampliar", body: Record<string, unknown>) =>
+export const chamarVariacoesShopee = (modulo: "previa" | "criar" | "ativar" | "ler" | "ampliar" | "fotos-opcoes", body: Record<string, unknown>) =>
   chamarFuncao("anuncio-shopee-variacoes", modulo, body);
 
 /** URLs assinadas (1 h) das imagens do bucket privado, em lote.

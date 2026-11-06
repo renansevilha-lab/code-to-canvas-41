@@ -31,6 +31,7 @@ import { formatBRL } from "@/lib/format";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
 import { TermosBusca } from "@/components/ia/anuncio/TermosBusca";
 import { AnuncioAberto } from "@/components/ia/anuncio/AnuncioAberto";
+import { FotosOpcoesShopee } from "@/components/ia/anuncio/FotosOpcoesShopee";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
@@ -270,6 +271,7 @@ function GerarAnuncioPage() {
     )}
     {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
     {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+    {canal === "shopee" && <FotosOpcoesShopee key={`fos-${sku}-${empresa}`} sku={sku} empresa={empresa} itemInicial={item} />}
     {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
     {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
     {/* produto pai na Amazon: anúncio pai + um por variação, já ligados (29/out) */}
@@ -312,6 +314,7 @@ function GerarAnuncioPage() {
       <FotosVariacoes key={`fv-${sku}`} sku={sku} nomePai={dados.produto.nome ?? ""} canal={canal} empresa={empresa}
         briefing={apoioQ.data.briefing} tiposAtivos={apoioQ.data.tipos} modelos={apoioQ.data.modelos} />
     )}
+    {dados.produto.tipo === "V" && canal === "shopee" && <FotosOpcoesShopee key={`fos2-${sku}-${empresa}`} sku={sku} empresa={empresa} itemInicial={item} />}
   </>);
 
   // visual novo (pacote "Anúncios" do Claude Design, fase 2): cabeçalho fixo com destino, progresso e abas; na aba
@@ -415,6 +418,7 @@ function GerarAnuncioPage() {
       )}
       {/* anúncio que já está rodando: acrescentar opções e ligar a um pai no Tiny (16/out) */}
       {canal === "shopee" && <AmpliarVariacoes key={`av-${sku}`} sku={sku} empresa={empresa} />}
+      {canal === "shopee" && <FotosOpcoesShopee key={`fos-${sku}-${empresa}`} sku={sku} empresa={empresa} itemInicial={item} />}
       {/* produto pai no Mercado Livre: um anúncio por variação, mesmo nome de família (28/out) */}
       {dados.produto.tipo === "V" && canal === "mercado_livre" && <VariacoesML key={`vml-${sku}-${empresa}`} sku={sku} empresa={empresa} rascunho={rasc} />}
     {/* produto pai na Amazon: anúncio pai + um por variação, já ligados (29/out) */}
