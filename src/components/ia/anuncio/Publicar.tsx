@@ -117,8 +117,10 @@ export function listaDeExistentes(ex: Existentes | undefined, c: string, e: stri
   return undefined;
 }
 
-export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPara, abrirSinal }: {
+export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPara, abrirSinal, itemInicial }: {
   rascunho: IaRascunho; canal: string; empresa: string; onDestino: (canal: string, empresa: string) => void;
+  /** anúncio aberto pela busca por ID (06/nov): a conferência abre já nele, no modo atualizar */
+  itemInicial?: string;
   /** muda de valor = abrir a conferência do destino atual (botão "Conferir envio" do cabeçalho novo) */
   abrirSinal?: number;
   /** bloco extra dentro da conferência de CRIAR (ex.: cadastrar em Minha Promoção, na Shopee) */
@@ -133,6 +135,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPa
   // clicar em "enviar para cá" já abre a conferência (o número muda a cada clique e remonta o Envio aberto)
   const [abrir, setAbrir] = useState(0);
   useEffect(() => { if (abrirSinal) setAbrir((n) => n + 1); }, [abrirSinal]);
+  useEffect(() => { if (itemInicial) setAbrir((n) => n + 1); }, [itemInicial]);
   // todos os anúncios deste produto no canal escolhido (todas as lojas): servem ao "Atualizar também"
   const outros: Outro[] = (LOJAS[canal] ?? []).flatMap((l) => (listaDe(canal, l.empresa) ?? []).map((e) => ({ empresa: l.empresa, rotulo: l.rotulo, e })));
   // ENVIAR TAMBÉM (13/out, pedido do dono): criado num lugar, a conferência já oferece os outros
@@ -200,7 +203,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPa
       <div ref={caixa} className="scroll-mt-20 scroll-mb-6">
       {pronto
         ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} outros={outros} noEnvio={noEnvio} promoPara={promoPara} demais={demais} onIr={irPara}
+            abertoInicial={abrir > 0} itemInicial={itemInicial} outros={outros} noEnvio={noEnvio} promoPara={promoPara} demais={demais} onIr={irPara}
             ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })}
             medidasIniciais={medidasComuns?.id === rascunho.id ? medidasComuns.m : null}
             onMedidas={(m) => setMedidasComuns((a) => ({ id: rascunho.id, m: { ...(a?.id === rascunho.id ? a.m : {}), ...m } }))} />
@@ -220,8 +223,8 @@ interface Outro { empresa: string; rotulo: string; e: Existente }
 /** Peso e medidas da embalagem: digitados na conferência de um destino, acompanham a troca de marketplace/loja. */
 const MEDIDAS = ["peso_kg", "comprimento_cm", "largura_cm", "altura_cm"] as const;
 
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEnvio, promoPara, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
-  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; outros?: Outro[]; noEnvio?: ReactNode;
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial, outros, noEnvio, promoPara, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
+  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; itemInicial?: string; outros?: Outro[]; noEnvio?: ReactNode;
   promoPara?: (empresa: string, itemId: string) => ReactNode;
   demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
   /** ordem das fotos já arrumada em outro destino deste anúncio */
@@ -238,8 +241,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, outros, noEn
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(abertoInicial === true);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
-  const [op, setOp] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}) }));
-  const [aplicado, setAplicado] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}) }));
+  const alvoInicial: Op = itemInicial ? { modo: "atualizar", item_id: itemInicial } : {};
+  const [op, setOp] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}), ...alvoInicial }));
+  const [aplicado, setAplicado] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}), ...alvoInicial }));
   useEffect(() => {
     const m = Object.fromEntries(MEDIDAS.filter((k) => typeof op[k] === "string" && String(op[k]).trim() !== "").map((k) => [k, String(op[k])]));
     if (Object.keys(m).length) onMedidas?.(m);

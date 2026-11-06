@@ -3612,6 +3612,15 @@ o próprio SKU — o pai nunca casava, e o envio CRIARIA um anúncio duplicado.
 - **`/ia/anuncios`:** o selo "onde vende" virou botão — abre a lista dos anúncios daquele canal
   (Shopee: link da loja e do Seller Center; Mercado Livre só Ottz, pelo espelho; TikTok; Amazon só
   aviso), procurando pelo SKU e pelos SKUs das variações, para conferir se é o anúncio certo.
+- **Editar anúncio achado pelo ID (06/nov/2026, pedido do dono):** no cartão "Anúncio com este ID" de `/ia/anuncios`
+  (`AnunciosAchados.tsx`), botão **"Editar no app"** → `/ia/gerar?sku=&canal=&empresa=&item=<ID>`. Produto aberto: o SKU
+  do anúncio se é produto ativo (e é o único SKU ou não é variação), senão o pai comum das variações, senão o 1º SKU ativo;
+  sem SKU ativo no catálogo, sem botão. Loja pelo `shop_id` (522186766 = ottz, 759046323 = svl; ML = espelho da Ottz). O
+  parâmetro **`item`** abre a conferência do `Publicar`/`Envio` já em `modo: "atualizar"` com o `item_id` daquele anúncio
+  (a função escolhe pelo `item_id` entre os existentes); trocar de destino limpa o `item`. O cartão `AnuncioAberto.tsx`
+  no topo diz qual anúncio está aberto e, sem rascunho, oferece "Começar com o título do anúncio" (`ia_rascunho_criar` +
+  título do espelho; a descrição fica em branco — escrever ou desmarcar Descrição na conferência). A escrita é a de
+  sempre (prévia + confirmação). **Não conferido com login.**
 
 ## 5.11.11.11 Texto pré-aprovado e capa principal por loja (15/out/2026)
 

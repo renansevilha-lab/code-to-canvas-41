@@ -30,6 +30,7 @@ import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
 import { formatBRL } from "@/lib/format";
 import { Referencias } from "@/components/ia/anuncio/Referencias";
 import { TermosBusca } from "@/components/ia/anuncio/TermosBusca";
+import { AnuncioAberto } from "@/components/ia/anuncio/AnuncioAberto";
 import {
   CANAIS, nomeCanal, type IaBriefing, type IaEtapa, type IaProdutoExtra, type IaPromptImagem, type IaRascunho, type IaRascunhoImagem,
 } from "@/lib/iaAnuncio";
@@ -44,7 +45,7 @@ import {
 // ============================================================================
 
 type Aba = "fotos" | "analise" | "preco";
-type Busca = { sku: string; canal: string; empresa: string; r?: string; aba?: Aba };
+type Busca = { sku: string; canal: string; empresa: string; r?: string; aba?: Aba; item?: string };
 // abas da página (na URL): o anúncio em si, a análise do produto e o preço/promoção nos marketplaces
 const ABAS: { id: Aba | undefined; rotulo: string }[] = [
   { id: undefined, rotulo: "Anúncio" },
@@ -60,6 +61,8 @@ export const Route = createFileRoute("/ia/gerar")({
     empresa: s.empresa === "svl" ? "svl" : "ottz",
     r: typeof s.r === "string" && s.r ? s.r : undefined,
     aba: s.aba === "fotos" || s.aba === "analise" || s.aba === "preco" ? s.aba : undefined,
+    // anúncio aberto pela busca por ID em /ia/anuncios (06/nov): a conferência abre já nele, no modo atualizar
+    item: typeof s.item === "string" && s.item ? s.item : typeof s.item === "number" ? String(s.item) : undefined,
   }),
   component: GerarAnuncioPage,
 });
@@ -75,7 +78,7 @@ function useVisivel() {
 }
 
 function GerarAnuncioPage() {
-  const { sku, canal, empresa, r, aba } = Route.useSearch();
+  const { sku, canal, empresa, r, aba, item } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/gerar" });
   const visivel = useVisivel();
   // `resetScroll: false`: trocar de destino ou de aba não pode jogar a tela para o topo (13/out — parecia
@@ -233,7 +236,7 @@ function GerarAnuncioPage() {
     if (l == null) return { t: "não deu para verificar", cor: "var(--pm-t2)" };
     return l.length ? { t: `já anunciado · ${l[0].item_id}${l.length > 1 ? ` +${l.length - 1}` : ""}`, cor: "var(--pm-g)" } : { t: "não anunciado", cor: "var(--pm-t2)" };
   };
-  const irEnvio = (c: string, e: string) => { set({ canal: c, empresa: e, r: rascunho?.id, aba: undefined }); setAbrirEnvio((n) => n + 1); };
+  const irEnvio = (c: string, e: string) => { set({ canal: c, empresa: e, r: rascunho?.id, aba: undefined, ...(c !== canal || e !== empresa ? { item: undefined } : {}) }); setAbrirEnvio((n) => n + 1); };
 
   // blocos de sempre (iguais no visual novo e no antigo)
   const blocoOutros = outros.length > 0 && (
@@ -251,6 +254,10 @@ function GerarAnuncioPage() {
   const blocoPreco = <PainelPreco sku={sku} canal={canal} empresa={empresa} rascunho={rasc} />;
   const blocoRefs = <Referencias key={`ref-${sku}`} sku={sku} marca={dados.produto.marca} />;
   const blocoTermos = <TermosBusca key={`tb-${sku}`} sku={sku} canal={canal} titulo={rasc?.titulo ?? null} />;
+  const blocoAberto = item && (
+    <AnuncioAberto key={`aa-${item}`} item={item} canal={canal} empresa={empresa} sku={sku} rascunho={rasc}
+      onCriado={(id) => set({ r: id })} onFechar={() => set({ item: undefined })} />
+  );
   const blocoTexto = (
     <EtapaTexto sku={sku} canal={canal} empresa={empresa} rascunho={rasc}
       etapa={etapaTexto} briefing={apoioQ.data?.briefing ?? null}
@@ -275,7 +282,7 @@ function GerarAnuncioPage() {
     {canal === "mercado_livre" && <FiscalML key={`fm-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
   </>);
   const blocoEnvio = rascunho && r !== "novo" && (
-    <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })} abrirSinal={abrirEnvio}
+    <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id, item: undefined })} abrirSinal={abrirEnvio} itemInicial={item}
       noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />}
       promoPara={(emp, item) => <PromocaoNoEnvio key={`pe-${sku}-${emp}-${item}`} sku={sku} nome={dados.produto?.nome ?? ""} empresa={emp} comVariacoes={dados.produto?.tipo === "V"} />} />
   );
@@ -312,7 +319,7 @@ function GerarAnuncioPage() {
   const novo = (
     <div className="pm-ui" style={{ padding: "14px 24px 80px", maxWidth: 1440, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
       <CabecalhoAnuncio produto={dados.produto} custo={dados.custo} faixa={dados.faixa} canal={canal} empresa={empresa}
-        onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho?.id })} situacaoLoja={situacaoLoja}
+        onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho?.id, item: undefined })} situacaoLoja={situacaoLoja}
         passos={passos} falta={falta} podeConferir={!!rasc} onConferir={() => irEnvio(canal, empresa)}
         abas={ABAS.map((x) => ({ ...x, n: x.id === "fotos" ? nRev : undefined }))} aba={aba} onAba={(id) => set({ aba: id as Aba | undefined })} />
       {aba === "fotos" && abaFotos}
@@ -321,9 +328,10 @@ function GerarAnuncioPage() {
       {!aba && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+            {blocoAberto}
             {blocoOutros}
             <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} faixa={dados.faixa} extra={dados.extra} canal={canal} empresa={empresa} compacto
-              onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
+              onCanal={(c) => set({ canal: c, r: rascunho?.id, item: undefined })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id, item: undefined })} />
             {blocoTexto}
             {blocoTermos}
             {blocoRefs}
@@ -349,7 +357,7 @@ function GerarAnuncioPage() {
       </div>
 
       <ProdutoTopo key={sku} produto={dados.produto} custo={dados.custo} faixa={dados.faixa} extra={dados.extra} canal={canal} empresa={empresa}
-        onCanal={(c) => set({ canal: c, r: rascunho?.id })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id })} />
+        onCanal={(c) => set({ canal: c, r: rascunho?.id, item: undefined })} onEmpresa={(e) => set({ empresa: e, r: rascunho?.id, item: undefined })} />
 
       <div className="flex flex-wrap gap-1 border-b">
         {ABAS.map((x) => (
@@ -365,6 +373,7 @@ function GerarAnuncioPage() {
       {aba === "preco" && <PrecoPromocao key={`pp-${sku}`} sku={sku} empresa={empresa} />}
 
       {!aba && (<>
+      {blocoAberto}
       {outros.length > 0 && (
         <Card><CardContent className="p-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="text-muted-foreground">Outros rascunhos deste SKU:</span>
@@ -418,7 +427,7 @@ function GerarAnuncioPage() {
     {canal === "mercado_livre" && <FiscalML key={`fm-${sku}-${empresa}`} sku={sku} empresa={empresa} />}
 
       {rascunho && r !== "novo" && (
-        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id })}
+        <Publicar rascunho={rascunho} canal={canal} empresa={empresa} onDestino={(c, e) => set({ canal: c, empresa: e, r: rascunho.id, item: undefined })} itemInicial={item}
           noEnvio={<PromocaoNoEnvio key={`pe-${sku}-${empresa}`} sku={sku} nome={dados.produto.nome ?? ""} empresa={empresa} comVariacoes={dados.produto.tipo === "V"} />}
           promoPara={(emp, item) => <PromocaoNoEnvio key={`pe-${sku}-${emp}-${item}`} sku={sku} nome={dados.produto?.nome ?? ""} empresa={emp} comVariacoes={dados.produto?.tipo === "V"} />} />
       )}
