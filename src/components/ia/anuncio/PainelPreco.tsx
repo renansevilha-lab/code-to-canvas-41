@@ -114,10 +114,13 @@ export function PainelPreco({ sku, canal, empresa, rascunho }: { sku: string; ca
   async function salvar() {
     if (!rascunho) return;
     const v = numero();
-    const mc = rascunho.memoria_calculo ?? {};
+    // lê a memória ATUAL do banco: outras telas gravam nela (ex.: título próprio da loja na Shopee) e a cópia em
+    // cache pode estar velha — gravar por cima apagaria o que elas fizeram
+    const { data: fresco } = await supabaseExternal.from("ia_rascunho").select("memoria_calculo").eq("id", rascunho.id).maybeSingle();
+    const mc = ((fresco as { memoria_calculo?: Record<string, any> } | null)?.memoria_calculo ?? rascunho.memoria_calculo ?? {}) as Record<string, any>;
     const mudanca = proprio
       ? { preco_aprovado: v > 0 ? v : null, memoria_calculo: { ...mc, margem_desejada: margem } }
-      : { memoria_calculo: { ...mc, destinos: { ...(mc.destinos ?? {}), [chaveDestino]: { preco: v > 0 ? v : null, margem } } } };
+      : { memoria_calculo: { ...mc, destinos: { ...(mc.destinos ?? {}), [chaveDestino]: { ...(mc.destinos?.[chaveDestino] ?? {}), preco: v > 0 ? v : null, margem } } } };
     const { error } = await supabaseExternal.from("ia_rascunho").update(mudanca).eq("id", rascunho.id);
     if (error) { toast.error("Falha ao salvar", { description: error.message }); return; }
     toast.success(`Preço de ${nomeCanal(canal)} · ${nomeEmpresa(empresa)} salvo`);

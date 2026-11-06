@@ -25,6 +25,9 @@
 // como termos a usar; os "a conferir" só se a foto/rótulo confirmar. Marca de concorrente nunca.
 // v6 (23/out/2026, ENSAIO): `?modulo=titulos-ensaio` = títulos por loja (Ottz × Bumi/SVL com pequena diferença),
 // pelos termos mais buscados de cada marketplace; só devolve, não grava.
+// v7 (06/nov/2026, opção B do dono): `?modulo=titulo-loja {sku, rascunho_id, empresa, forcar?}` = título da OUTRA
+// loja da Shopee (Ottz × Bumi) com 1–2 palavras diferentes do título do rascunho, guardado em
+// memoria_calculo.titulos_loja["shopee:<empresa>"] e usado pela anuncio-publicar no envio àquela loja.
 // =============================================================================
 import {
   CORS, json, sb, exigirAcesso, carregarProduto, fotoReferencia, fotosReaisExtras, blocosFotosReais, templatesAtivos, escolherTemplate,
@@ -572,6 +575,104 @@ async function enfileirarImagens(db: DB, body: Record<string, any>) {
   };
 }
 
+// ---------------------------------------------------------------- título da loja (v7, opção B do dono, 06/nov/2026)
+// Na Shopee as duas lojas (Ottz e Bumi) concorrem na MESMA busca: o anúncio de cada uma leva um título com 1 ou 2
+// palavras diferentes. O título do rascunho é o da loja-base (a do rascunho, se ele é da Shopee; senão a Ottz) e a
+// OUTRA loja ganha uma variação dele, guardada em memoria_calculo.titulos_loja["shopee:<empresa>"] = {titulo, base,
+// em, manual}. `base` = o título de que ela foi feita: se o título do rascunho mudar, a variação fica velha e é
+// refeita (a anuncio-publicar só usa a variação quando `base` é o título atual).
+async function tituloDaLoja(db: DB, p: Produto, body: Record<string, any>) {
+  const empresa = body.empresa === "svl" ? "svl" : body.empresa === "ottz" ? "ottz" : null;
+  if (!empresa) throw new Error("informe a empresa (ottz ou svl)");
+  const { data: r, error } = await db.from("ia_rascunho").select("id, sku, canal, empresa, titulo, memoria_calculo").eq("id", String(body.rascunho_id ?? "")).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!r || String(r.sku) !== p.sku) throw new Error("rascunho não encontrado para este SKU");
+  const base = String(r.titulo ?? "").replace(/\s+/g, " ").trim();
+  if (!base) throw new Error("o anúncio ainda não tem título");
+  const baseEmp = r.canal === "shopee" ? String(r.empresa) : "ottz";
+  if (empresa === baseEmp) return { ok: true, empresa, titulo: base, base, da_loja: false };
+  const chave = `shopee:${empresa}`;
+  const mc = (r.memoria_calculo ?? {}) as Record<string, any>;
+  const salvo = mc.titulos_loja?.[chave] as { titulo?: string; base?: string; manual?: boolean } | undefined;
+  if (!body.forcar && salvo?.titulo && salvo.base === base) {
+    return { ok: true, empresa, titulo: salvo.titulo, base, da_loja: true, manual: !!salvo.manual, cache: true, diferenca: diferencaTitulos(base, salvo.titulo) };
+  }
+
+  const gs = await guardrails(db);
+  const { data: cfg } = await db.from("ia_canal_config").select("titulo_max_chars").eq("canal", "shopee").maybeSingle();
+  const max = Number(cfg?.titulo_max_chars) || 120;
+  const termos = await termosBusca(db, p.sku);
+  const lista = (termos?.shopee ?? []).filter((x) => !x.concorrente && x.confirmado).slice(0, 25)
+    .map((x) => `${x.termo}${x.volume ? ` (${Number(x.volume).toLocaleString("pt-BR")})` : ""}`);
+  const nomeLoja = (e: string) => (e === "svl" ? "Bumi Pet" : "Ottz Pet");
+  const prompt = [
+    `Temos duas lojas na Shopee vendendo o MESMO produto: ${nomeLoja(baseEmp)} e ${nomeLoja(empresa)}. Elas aparecem na mesma busca,`,
+    "entao os titulos NAO podem ser iguais. Este e o titulo da loja " + nomeLoja(baseEmp) + ":",
+    `"${base}"`,
+    `Produto (cadastro): ${p.nome} | Marca: ${p.marca ?? "(sem marca)"}`,
+    "",
+    `Escreva o titulo da loja ${nomeLoja(empresa)}:`,
+    "- parta do MESMO titulo e troque UMA ou no maximo DUAS PALAVRAS soltas, ou inverta a ordem de dois atributos;",
+    "- trocas boas: um sinonimo que o comprador tambem busca (gato/gatos, higienica/sanitaria, kit 2/2 unidades, pote/porta), ou outro termo buscado da lista abaixo no lugar de UMA palavra;",
+    "- nunca mude nem tire fato: peso, volume, capacidade, quantidade, marca, linha, composicao, sabor, cor;",
+    "- nunca troque o primeiro termo (o mais buscado) e nunca repita palavra no titulo;",
+    `- maximo ${max} caracteres; inicial de cada palavra em maiuscula e conectivos (e, de, da, do, para, com) em minusculo; sem emoji, sem palavra promocional.`,
+    "",
+    lista.length ? `TERMOS QUE OS COMPRADORES BUSCAM NA SHOPEE (volume/mes): ${lista.join("; ")}` : "",
+    blocoInstrucoes(gs),
+    "",
+    'Responda APENAS com JSON: {"titulo": "...", "mudou": "o que foi trocado"}',
+  ].filter((x) => x !== "").join("\n");
+  const modelo = await resolverModeloTexto(null);
+  const pedir = async (texto: string) => {
+    const bruto = await claude(modelo, [{ type: "text", text: texto }], 800);
+    const s = bruto.replace(/```json|```/g, ""); const i = s.indexOf("{"), f = s.lastIndexOf("}");
+    try { return JSON.parse(s.slice(i, f + 1)) as { titulo?: string; mudou?: string }; } catch { return { titulo: "" } as { titulo?: string; mudou?: string }; }
+  };
+  const numeros = (s: string) => palavrasTitulo(s).filter((w) => /\d/.test(w)).sort().join(" ");
+  const conferir = (t: string) => {
+    const prob: string[] = [];
+    const d = diferencaTitulos(base, t);
+    if (!t) prob.push("veio vazio");
+    else {
+      if (t.length > max) prob.push(`tem ${t.length} caracteres; o maximo e ${max}`);
+      if (d.iguais) prob.push("ficou igual ao da outra loja: troque UMA palavra");
+      else if (d.trocadas > 2) prob.push(`mudou ${d.trocadas} palavras (${d.so_na_1.join(" ")} -> ${d.so_na_2.join(" ")}); deixe so 1 ou 2 diferentes`);
+      if (numeros(t) !== numeros(base)) prob.push("mudou peso/quantidade/numero; mantenha exatamente os mesmos numeros");
+      const vistos = new Map<string, number>();
+      for (const w of palavrasTitulo(t)) { if (w.length < 3 || CONECTIVOS.has(w) || /^\d/.test(w)) continue; const k = w.replace(/s$/, ""); vistos.set(k, (vistos.get(k) ?? 0) + 1); }
+      const rep = [...vistos].filter(([, n]) => n > 1).map(([w]) => w);
+      if (rep.length) prob.push(`repete ${rep.join(", ")}`);
+    }
+    return { prob, d };
+  };
+  const limpar = (s: unknown) => ajustarConectivos(validar(String(s ?? "").replace(/\s+/g, " ").trim(), gs).texto);
+  let j = await pedir(prompt);
+  let titulo = limpar(j.titulo);
+  let c = conferir(titulo);
+  if (c.prob.length) {
+    const j2 = await pedir(`${prompt}\n\nSUA RESPOSTA ANTERIOR: ${JSON.stringify(j)}\nPROBLEMAS (corrija todos): ${c.prob.join("; ")}`);
+    const t2 = limpar(j2.titulo); const c2 = conferir(t2);
+    if (t2 && c2.prob.length <= c.prob.length) { j = j2; titulo = t2; c = c2; }
+  }
+  if (!titulo || c.d.iguais || titulo.length > max) throw new Error(`não consegui um título diferente para a ${nomeLoja(empresa)}: ${c.prob.join("; ")}`);
+  // mesma regra de maiúsculas do gatilho de ia_rascunho.titulo
+  const { data: cap } = await db.rpc("ia_titulo_capitalizar", { p: titulo });
+  if (typeof cap === "string" && cap) titulo = cap;
+  const { data: atual } = await db.from("ia_rascunho").select("memoria_calculo").eq("id", r.id).single();
+  const mc2 = (atual?.memoria_calculo ?? {}) as Record<string, any>;
+  const novo = { ...mc2, titulos_loja: { ...(mc2.titulos_loja ?? {}), [chave]: { titulo, base, em: new Date().toISOString(), manual: false, mudou: j.mudou ?? null, modelo } } };
+  const up = await db.from("ia_rascunho").update({ memoria_calculo: novo }).eq("id", r.id);
+  if (up.error) throw new Error(up.error.message);
+  return { ok: true, empresa, titulo, base, da_loja: true, manual: false, cache: false, mudou: j.mudou ?? null, problemas: c.prob, diferenca: diferencaTitulos(base, titulo) };
+}
+/** Quantas palavras mudam entre dois títulos (o pedido é 1–2; 0 = iguais). */
+function diferencaTitulos(a: string, b: string) {
+  const A = palavrasTitulo(a), B = palavrasTitulo(b);
+  const so = (x: string[], y: string[]) => x.filter((w) => !y.includes(w));
+  return { trocadas: Math.max(so(A, B).length, so(B, A).length), iguais: A.join(" ") === B.join(" "), so_na_1: so(A, B), so_na_2: so(B, A) };
+}
+
 // ---------------------------------------------------------------- foto de referência
 async function trocarFotoRef(db: DB, p: Produto, body: Record<string, any>) {
   if (typeof body.path === "string" && body.path) {
@@ -625,6 +726,7 @@ Deno.serve(async (req) => {
     if (modulo === "texto") return json(await gerarTexto(db, p, body, quem));
     if (modulo === "prompts-imagem") return json(await gerarPromptsImagem(db, p, body));
     if (modulo === "foto-ref") return json(await trocarFotoRef(db, p, body));
+    if (modulo === "titulo-loja") return json(await tituloDaLoja(db, p, body));
     return json({ erro: `módulo desconhecido: ${modulo}` }, 400);
   } catch (e) {
     return json({ ok: false, erro: String(e instanceof Error ? e.message : e).slice(0, 500) }, 500);

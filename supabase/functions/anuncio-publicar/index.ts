@@ -87,6 +87,10 @@
 //   preço nem código de barras; SKU na Amazon = o SKU do pai) e uma vez por VARIAÇÃO (opcoes.variacao = {sku} +
 //   opcoes.familia_amz = {pai_sku, tema, valor}: ficha nova com SKU, cadastro, peso, EAN e preço da variação, texto e
 //   fotos do pai, parentage_level child ligado ao pai e o atributo do tema = valor). "Já criou" passa a ser por SKU.
+// v17 (06/nov/2026, opção B do dono): TÍTULO PRÓPRIO DA LOJA NA SHOPEE. Ottz e Bumi aparecem na mesma busca: a loja
+//   que não é a do rascunho usa memoria_calculo.titulos_loja["shopee:<empresa>"].titulo (1–2 palavras diferentes, feito
+//   pela ia-anuncio?modulo=titulo-loja ou digitado na conferência) — só quando `base` é o título atual do rascunho;
+//   título velho = vai o do rascunho, com aviso.
 // opcoes: {modo, item_id, campos, fotos, categoria_id, estoque, fora_do_ar, peso_kg,
 //          comprimento_cm, largura_cm, altura_cm, preco, de_novo}
 // Regras:
@@ -1871,6 +1875,13 @@ Deno.serve(async (req) => {
       d.r = { ...d.r, canal: canalD, empresa: empresaD, preco_aprovado: salvo, preco_sugerido: sugerido };
     }
     aplicarCapaDoDestino(d);
+    // v17: título próprio da loja na Shopee (Ottz × Bumi), só se feito a partir do título atual
+    if (d.r.canal === "shopee") {
+      const tl = d.r.memoria_calculo?.titulos_loja?.[`shopee:${d.r.empresa}`] as { titulo?: string; base?: string } | undefined;
+      const baseAtual = String(d.r.titulo ?? "").replace(/\s+/g, " ").trim();
+      if (tl?.titulo && tl.base === baseAtual) d.r = { ...d.r, titulo: tl.titulo };
+      else if (tl?.titulo) d.avisosCapa.push("o título próprio desta loja foi feito para um título antigo do anúncio: vai o título do anúncio (refaça o título da loja)");
+    }
     if (quem.ensaio && d.r.canal !== "amazon") return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
     if ((d.r.canal === "mercado_livre" || d.r.canal === "amazon") && op.variacao) {
       const erroVar = await trocarParaVariacao(d, op);

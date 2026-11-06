@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
 import { EnvioAlvoContext, type EnvioAlvo } from "@/components/ia/anuncio/PromocaoNoEnvio";
-import { calcularPreco, chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { calcularPreco, chamarIa, chamarPublicar, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -84,6 +84,11 @@ interface Previa {
 interface Publicacao { id: string; canal: string; empresa: string; operacao: string; estado: string; item_id: string | null; url: string | null; fora_do_ar: boolean | null; erro: string | null; criado_por_nome: string | null; criado_em: string }
 interface Resposta { ok: boolean; disponivel: boolean; motivo?: string; modo?: "criar" | "atualizar"; existentes?: Existente[]; previa?: Previa; pendencias?: string[]; avisos?: string[]; publicacoes?: Publicacao[] }
 type Op = Record<string, string | boolean>;
+/** Título próprio da loja na Shopee (ia-anuncio?modulo=titulo-loja). */
+interface TituloLoja {
+  titulo: string; base: string; da_loja: boolean; manual?: boolean; cache?: boolean; mudou?: string | null;
+  diferenca?: { trocadas: number; iguais: boolean; so_na_1: string[]; so_na_2: string[] };
+}
 
 const txt = (v: number | null | undefined) => (v == null ? "" : String(v).replace(".", ","));
 // no Mercado Livre o título começa desmarcado: o ML recusa a troca em anúncio que já vendeu
@@ -255,6 +260,47 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
   // ajustes feitos na própria conferência (13/out, pedido do dono): título e tirar foto mexem no rascunho
   const [tituloTxt, setTituloTxt] = useState<string | null>(null);
   const [mexendo, setMexendo] = useState(false);
+  // TÍTULO DA LOJA (06/nov, opção B do dono): Ottz e Bumi aparecem na mesma busca da Shopee. A loja que não é a do
+  // rascunho leva um título com 1–2 palavras diferentes (ia-anuncio?modulo=titulo-loja), guardado no rascunho em
+  // memoria_calculo.titulos_loja; a anuncio-publicar usa ele no envio a esta loja.
+  const baseEmp = rascunho.canal === "shopee" ? rascunho.empresa : "ottz";
+  const lojaPropria = canal === "shopee" && empresa !== baseEmp;
+  const nomeLojaShopee = (e: string) => (e === "svl" ? "Bumi" : "Ottz");
+  const baseTitulo = String(rascunho.titulo ?? "").replace(/\s+/g, " ").trim();
+  const chaveTituloLoja = ["ia-titulo-loja", rascunho.id, empresa, baseTitulo];
+  const tituloLojaQ = useQuery({
+    queryKey: chaveTituloLoja,
+    enabled: aberto && lojaPropria && !!baseTitulo,
+    staleTime: Infinity, retry: false, placeholderData: undefined,
+    queryFn: async (): Promise<TituloLoja> => {
+      const r = (await chamarIa("titulo-loja", { sku: rascunho.sku, rascunho_id: rascunho.id, empresa })) as TituloLoja;
+      // título novo gravado no rascunho: a conferência relê para mostrar o que vai
+      if (!r.cache) void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+      return r;
+    },
+  });
+  async function refazerTituloLoja() {
+    setMexendo(true);
+    try {
+      const r = (await chamarIa("titulo-loja", { sku: rascunho.sku, rascunho_id: rascunho.id, empresa, forcar: true })) as TituloLoja;
+      qc.setQueryData(chaveTituloLoja, r);
+      setTituloTxt(null);
+      await qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+    } catch (e) { toast.error(`Não consegui outro título para a ${nomeLojaShopee(empresa)}`, { description: (e as Error).message, duration: 12000 }); }
+    finally { setMexendo(false); }
+  }
+  /** Título digitado para esta loja: só desta loja (o do anúncio não muda), com a mesma regra de maiúsculas. */
+  async function salvarTituloLoja(texto: string) {
+    const { data: cap } = await supabaseExternal.rpc("ia_titulo_capitalizar", { p: texto });
+    const titulo = typeof cap === "string" && cap ? cap : texto;
+    const { data: atual, error: e1 } = await supabaseExternal.from("ia_rascunho").select("memoria_calculo").eq("id", rascunho.id).single();
+    if (e1) throw e1;
+    const mc = ((atual as { memoria_calculo?: Record<string, any> } | null)?.memoria_calculo ?? {}) as Record<string, any>;
+    const novo = { ...mc, titulos_loja: { ...(mc.titulos_loja ?? {}), [`shopee:${empresa}`]: { titulo, base: baseTitulo, em: new Date().toISOString(), manual: true } } };
+    const { error } = await supabaseExternal.from("ia_rascunho").update({ memoria_calculo: novo }).eq("id", rascunho.id);
+    if (error) throw error;
+    qc.setQueryData(chaveTituloLoja, { ...(tituloLojaQ.data ?? {}), titulo, base: baseTitulo, manual: true, da_loja: true, mudou: null, diferenca: undefined });
+  }
   // PREÇO PADRÃO (13/out, pedido do dono): sem preço aprovado para este destino, a conferência já
   // abre com o preço da margem padrão do canal (Shopee = 30%, em IA › Prompts › Canais), calculado
   // agora — o "sugerido" guardado no rascunho é o da margem antiga.
@@ -312,6 +358,22 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
   const paiSemVariacoes = (ml || amz) && modo === "criar"
     && (variacoesQ.data?.tipo === "V" || (variacoesQ.data?.variacoes.length ?? 0) > 0);
   const limTitulo = p?.limites?.titulo ?? 120;
+  const tl = tituloLojaQ.data;
+  const blocoTituloLoja = lojaPropria ? (
+    <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+      {tituloLojaQ.isFetching ? (
+        <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />escrevendo o título da {nomeLojaShopee(empresa)} (1–2 palavras diferentes do da {nomeLojaShopee(baseEmp)})…</span>
+      ) : tituloLojaQ.isError ? (
+        <span className="text-destructive">Não consegui o título da {nomeLojaShopee(empresa)}: {(tituloLojaQ.error as Error).message} — vai o título do anúncio.</span>
+      ) : tl ? (
+        <span>
+          Título só da {nomeLojaShopee(empresa)}{tl.manual ? " (digitado)" : ""}. Na {nomeLojaShopee(baseEmp)}: <i>{baseTitulo}</i>
+          {tl.diferenca && !tl.diferenca.iguais ? <> · trocou <b>{tl.diferenca.so_na_1.join(" ") || "a ordem"}</b>{tl.diferenca.so_na_2.length ? <> → <b>{tl.diferenca.so_na_2.join(" ")}</b></> : null}</> : null}
+        </span>
+      ) : null}
+      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={mexendo || tituloLojaQ.isFetching || !baseTitulo} onClick={() => void refazerTituloLoja()}>Outro título</Button>
+    </div>
+  ) : null;
   const limFotos = p?.limites?.fotos ?? 9;
   const fotosQ = useQuery({
     queryKey: ["ia-anuncio", "publicar-fotos", (p?.fotos ?? []).map((f) => f.path).join("|")],
@@ -387,6 +449,16 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
     const novo = (tituloTxt ?? "").trim();
     if (!novo || novo === p?.titulo) { setTituloTxt(null); return; }
     setMexendo(true);
+    if (lojaPropria) {
+      try {
+        await salvarTituloLoja(novo);
+        setTituloTxt(null);
+        await qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
+        toast.success(`Título da ${nomeLojaShopee(empresa)} atualizado`, { description: "Só desta loja; o título do anúncio não muda." });
+      } catch (e) { toast.error("Não consegui salvar o título", { description: (e as Error).message, duration: 12000 }); }
+      finally { setMexendo(false); }
+      return;
+    }
     try {
       const et = await supabaseExternal.from("ia_etapa").select("id, status").eq("rascunho_id", rascunho.id).eq("etapa", "texto").limit(1);
       const etapa = (et.data ?? [])[0] as { id: string; status: string } | undefined;
@@ -589,6 +661,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
           <Troca rotulo="Título" marcado={op.c_titulo === true} onMarcar={(v) => trocar({ c_titulo: v })}
             antes={p.atual.titulo} depois={`${p.titulo} (${p.titulo.length}/${limTitulo})`}
             nota={ml ? "Desmarcado por padrão: o Mercado Livre só deixa trocar o título de anúncio que ainda não vendeu." : undefined} />
+          {blocoTituloLoja}
           <Troca rotulo="Descrição" marcado={op.c_descricao !== false} onMarcar={(v) => trocar({ c_descricao: v })}
             antes={resumo(p.atual.descricao)} depois={resumo(p.descricao)} nota={amz ? "Na Amazon a descrição e os bullets vão em campos separados; aqui aparecem juntos." : undefined} />
           {amz && p.palavras && (
@@ -639,7 +712,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
             ) : (
             <label className="block md:col-span-2">
               <span className={`text-[11px] ${(tituloTxt ?? p.titulo).length > limTitulo ? "text-destructive" : "text-muted-foreground"}`}>
-                Título ({(tituloTxt ?? p.titulo).length}/{limTitulo}) · o mesmo para todos os destinos
+                Título ({(tituloTxt ?? p.titulo).length}/{limTitulo}) · {lojaPropria ? `só da ${nomeLojaShopee(empresa)}` : "o mesmo para todos os destinos"}
               </span>
               <div className="flex gap-2 mt-1">
                 <Input className="h-8 text-sm" value={tituloTxt ?? p.titulo} disabled={mexendo} onChange={(e) => setTituloTxt(e.target.value)} />
@@ -650,6 +723,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
                   </>
                 )}
               </div>
+              {blocoTituloLoja && <div className="mt-1">{blocoTituloLoja}</div>}
             </label>
             )}
             <label className="block">
