@@ -3634,6 +3634,11 @@ o próprio SKU — o pai nunca casava, e o envio CRIARIA um anúncio duplicado.
   Anúncio com destino Shopee e aba Fotos do produto pai): hoje × fotos aprovadas do rascunho de cada variação (padrão =
   capa ambientada com texto), Conferir → Trocar (confirmação). **Não testado ao vivo** (o formato do
   `update_tier_variation` só com imagens é o da documentação).
+  **No próprio envio (06/nov, noite — 15984 / item 47859963706, Ottz: galeria atualizada às 17h50, opções não):** o bloco
+  ficava à parte e ninguém o usou. Agora o "Atualizar" da Shopee (`Publicar.tsx`, `fotoDaOpcao`), depois de trocar as
+  fotos, faz prévia + confirmação do `fotos-opcoes` para a variação com o SKU DO PRÓPRIO rascunho, com a 1ª foto da
+  galeria final quando ela é nova (vale também para "Atualizar também"). As outras opções (ex.: kit 16067) ficam com a
+  foto de hoje; anúncio sem variações ou sem opção desse SKU = nada a fazer; pendência vira aviso apontando o bloco.
 - **Minha Promoção no envio (06/nov):** cada linha mostra o nome da variação (o espelho guarda só o índice "0", "1"…
   em `shopee_anuncios_variacao.nome_variacao`; o nome vem do anúncio ao vivo pelo `ler`, ou do cadastro sem o nome do
   pai) e o CMV (`view_cmv_efetivo`).
