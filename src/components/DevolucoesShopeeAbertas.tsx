@@ -650,7 +650,7 @@ export function DevolucoesShopeeAbertas() {
                 >
                   {motivos.map((m) => (
                     <option key={m.dispute_reason} value={String(m.dispute_reason)}>
-                      {(m.dispute_requirement ?? `Motivo ${m.dispute_reason}`).split("\n")[0].slice(0, 90)}
+                      {nomeMotivoDisputa(m)}
                     </option>
                   ))}
                 </select>
