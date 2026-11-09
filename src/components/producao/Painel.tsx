@@ -5,6 +5,7 @@ import { FichaProducao } from "./FichaProducao";
 import { ContagemAcabado } from "./ContagemAcabado";
 import { OrdensProducao } from "./OrdensProducao";
 import { AdicionarProduto } from "./AdicionarProduto";
+import { EtiquetaProduto, temEtiquetaProduto } from "./EtiquetaProduto";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
   brl, farinhaCurta, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useInsumos, useLotes, useParametros, type EstoqueAcabado, type Lote, type OrdemProducao,
@@ -31,6 +32,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
   const podeAdicionar = !!perfil?.modulos.includes("todos");
   const [contar, setContar] = useState<EstoqueAcabado | null>(null);
   const [ordemPara, setOrdemPara] = useState<string | null>(null);
+  const [etiqueta, setEtiqueta] = useState<EstoqueAcabado | null>(null);
   const fotos = useFotos([...(params.data ?? []).map((p) => p.sku), ...(todos.data ?? []).map((l) => l.sku)]).data ?? {};
   const listaBags = bags.data ?? [];
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
@@ -142,6 +144,9 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
                     <td style={{ ...td, textAlign: "right" }}>
                       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                         <Botao onClick={(e) => { e.stopPropagation(); setOrdemPara(a.sku); }} title="Criar uma ordem de produção deste produto">Ordem</Botao>
+                        {temEtiquetaProduto(a.sku) && (
+                          <Botao onClick={(e) => { e.stopPropagation(); setEtiqueta(a); }} title="Imprimir a etiqueta do produto (a arte do saco)">Etiqueta</Botao>
+                        )}
                         <Botao onClick={(e) => { e.stopPropagation(); setContar(a); }}>Contar</Botao>
                       </div>
                     </td>
@@ -156,6 +161,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
         </p>
       </Cartao>
 
+      <EtiquetaProduto sku={etiqueta?.sku ?? null} nome={etiqueta?.nome} onFechar={() => setEtiqueta(null)} />
       <ContagemAcabado item={contar} foto={contar ? fotos[contar.sku] : undefined} onFechar={() => setContar(null)} />
       <FichaProducao sku={ficha} foto={ficha ? fotos[ficha] : undefined} editar={fichaEditar} onFechar={() => { setFicha(null); setFichaEditar(false); }} />
       <AdicionarProduto aberto={adicionar} onFechar={() => setAdicionar(false)}
