@@ -202,3 +202,31 @@ export function statusDevolucaoProduto(d: InfoDevolucao | undefined): Rotulo | n
   const detalhe = [chegou, base.detalhe, transportadoraVolta(d.tracking_number), d.tracking_number].filter(Boolean).join(" · ");
   return { rotulo: base.rotulo, detalhe: detalhe || undefined, cor };
 }
+
+// ---------------------------------------------------------------------------
+// Motivos de disputa (get_return_dispute_reason). A Shopee NÃO devolve o nome do
+// motivo, só o número e o que exige de prova — e o 46 vem sem texto nenhum
+// (09/nov/2026: a lista mostrava "46 ·"). O nome sai da prova pedida.
+// ---------------------------------------------------------------------------
+const NOME_MOTIVO_DISPUTA: Record<number, string> = {
+  47: "Produto voltou com dano ou problema",
+  48: "Pacote voltou vazio ou faltando item",
+  49: "Produto que voltou é diferente do anunciado",
+  50: "Outro motivo (com prova)",
+  56: "Produto voltou com sinais de uso",
+};
+export function nomeMotivoDisputa(m: { dispute_reason: number; dispute_requirement?: string | null; evidence_module_list?: { requirement: string; is_required: boolean }[] | null }): string {
+  const fixo = NOME_MOTIVO_DISPUTA[m.dispute_reason];
+  if (fixo) return fixo;
+  const prova = m.evidence_module_list?.[0]?.requirement?.trim();
+  if (prova) return prova.replace(/\s+/g, " ").slice(0, 90);
+  const texto = (m.dispute_requirement ?? "").trim().split("\n")[0];
+  if (texto) return texto.slice(0, 90);
+  return `Motivo ${m.dispute_reason} — a Shopee não informa o nome (não exige foto)`;
+}
+/** O que a Shopee pede de prova para o motivo (texto para mostrar embaixo da lista). */
+export function provaMotivoDisputa(m: { dispute_requirement?: string | null; evidence_module_list?: { requirement: string; is_required: boolean }[] | null } | undefined): string | null {
+  if (!m) return null;
+  const mods = (m.evidence_module_list ?? []).map((x) => `${x.requirement.replace(/\s+/g, " ").trim()}${x.is_required ? " (obrigatório)" : ""}`);
+  return mods.length ? mods.join(" · ") : null;
+}

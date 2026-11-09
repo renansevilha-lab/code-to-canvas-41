@@ -27,6 +27,7 @@ import {
 
 const ESTADO_ITEM_PT: Record<string, string> = { ok: "ok", furado: "furado", faltando: "faltando", quebrado: "quebrado", errado: "errado", vazado: "vazado" };
 
+import { nomeMotivoDisputa, provaMotivoDisputa } from "@/lib/shopeeDevolucao";
 interface MotivoDisputa {
   dispute_reason: number;
   dispute_requirement: string | null;
@@ -438,8 +439,9 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
                           <>
                             <Campo rotulo="Motivo (lista da Shopee para este caso)">
                               <Escolha value={String(motivoSel?.dispute_reason ?? "")} onChange={(e) => setDispMotivo(e.target.value)}>
-                                {motivos.map((m) => <option key={m.dispute_reason} value={m.dispute_reason}>{m.dispute_reason} · {m.dispute_requirement ?? "sem exigência"}</option>)}
+                                {motivos.map((m) => <option key={m.dispute_reason} value={m.dispute_reason}>{nomeMotivoDisputa(m)}</option>)}
                               </Escolha>
+                              {provaMotivoDisputa(motivoSel) && <div style={{ fontSize: 11.5, color: "var(--pm-t3)", marginTop: 4 }}>Prova pedida: {provaMotivoDisputa(motivoSel)}</div>}
                             </Campo>
                             <Campo rotulo="E-mail de contato"><Entrada value={dispEmail} onChange={(e) => setDispEmail(e.target.value)} placeholder="voce@empresa.com" /></Campo>
                             <Campo rotulo={evidenciaObrigatoria ? "Fotos (OBRIGATÓRIO para este motivo)" : "Fotos (opcional)"}>
