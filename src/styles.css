@@ -423,6 +423,8 @@
 .pm-ui .pm-hv:hover { background: var(--pm-hv) !important; color: var(--pm-t) !important; }
 .pm-ui .pm-hv-a:hover { background: var(--pm-ah) !important; }
 .pm-ui .pm-linha-hv:hover { background: var(--pm-s2) !important; }
+.copiavel:hover { background: color-mix(in oklab, currentColor 12%, transparent); }
+.copiavel:hover svg { opacity: 1 !important; }
 .pm-ui .pm-mono {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
 }

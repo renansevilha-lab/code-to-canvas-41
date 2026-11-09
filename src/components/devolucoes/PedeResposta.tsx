@@ -5,6 +5,7 @@
 // (o que cada marketplace espera, prazo, urgência, causa provável) mora na
 // view; aqui só filtro e apresentação.
 // ============================================================================
+import { Copiavel } from "./Copiavel";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -120,8 +121,9 @@ function Linha({ c, onAbrir, causaNome }: { c: CasoFila; onAbrir: () => void; ca
   const corBorda = !c.precisa_acao ? "var(--pm-b)" : pz.tom === "r" ? "var(--pm-r)" : pz.tom === "a" ? "var(--pm-am)" : "var(--pm-a)";
   const problemas = c.entrada_problemas?.length ?? 0;
   return (
-    <button
-      type="button" onClick={onAbrir} className="pm-linha-hv"
+    <div
+      role="button" tabIndex={0} onClick={onAbrir} className="pm-linha-hv"
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) onAbrir(); }}
       style={{ textAlign: "left", display: "grid", gridTemplateColumns: "52px minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid var(--pm-bs)", borderLeft: `4px solid ${corBorda}`, background: "var(--pm-s)", cursor: "pointer", color: "var(--pm-t)", opacity: c.precisa_acao ? 1 : 0.78 }}
     >
       <Foto src={c.foto} alt={c.nome_produto ?? ""} tam={52} />
@@ -129,8 +131,10 @@ function Linha({ c, onAbrir, causaNome }: { c: CasoFila; onAbrir: () => void; ca
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
           <Selo tom={c.marketplace === "shopee" ? "r" : "a"}>{c.marketplace === "shopee" ? "Shopee" : "ML"}</Selo>
           <span style={{ color: "var(--pm-t2)" }}>{lojaDe(c)}</span>
-          <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{c.case_id}</span>
-          <span style={{ color: "var(--pm-t3)" }}>pedido {c.order_sn ?? "—"}{c.tiny_numero ? ` · Tiny ${c.tiny_numero}` : ""}</span>
+          <span style={{ color: "var(--pm-t3)" }}>pedido</span>
+          <Copiavel valor={c.order_sn} style={{ fontWeight: 700, fontSize: 12.5 }} />
+          {c.tiny_numero && <span style={{ color: "var(--pm-t3)" }}>Tiny <Copiavel valor={c.tiny_numero} oQue="Número do Tiny" style={{ color: "var(--pm-t2)" }} /></span>}
+          <span style={{ color: "var(--pm-t3)" }}>{c.marketplace === "shopee" ? "solicitação" : "reclamação"} <Copiavel valor={c.case_id} oQue="Solicitação" /></span>
         </div>
         <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           <b>{motivoPt(c.motivo_nome ?? c.motivo)}</b>
@@ -152,6 +156,6 @@ function Linha({ c, onAbrir, causaNome }: { c: CasoFila; onAbrir: () => void; ca
           {c.prazo ? (pz.txt === "venceu" ? `venceu · ${diaHora(c.prazo)}` : `vence em ${pz.txt}`) : "sem prazo"}
         </span>
       </div>
-    </button>
+    </div>
   );
 }

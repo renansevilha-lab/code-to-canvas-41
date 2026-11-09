@@ -10,6 +10,7 @@
 //   Produto que não voltou   = CMV dos casos em que o produto ficou com o cliente/extraviou.
 //   Perda total              = saiu do bolso + produto que não voltou.
 // ============================================================================
+import { Copiavel } from "./Copiavel";
 import { useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -330,7 +331,7 @@ function DrillCasos({ de, ate, empresa, drill, onFechar, onAbrir }: { de: string
                   <tr key={`${c.marketplace}:${c.case_id}`} className="pm-linha-hv" style={{ cursor: "pointer" }} onClick={() => onAbrir(c)}>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{dia(c.data)}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{MKT_PT[c.marketplace]} <span style={{ color: "var(--pm-t3)" }}>{c.empresa ? EMP_PT[c.empresa] : ""}</span></td>
-                    <td style={{ ...td, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{c.order_sn ?? c.case_id}</td>
+                    <td style={{ ...td, fontSize: 12 }}><Copiavel valor={c.order_sn ?? c.case_id} /></td>
                     <td style={{ ...td, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.nome_produto ?? ""}>{c.sku ? <b style={{ fontWeight: 600 }}>{c.sku}</b> : null} {c.nome_produto ?? ""}</td>
                     <td style={td}>{motivoPt(c.motivo)}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{c.causa_nome ?? c.causa ?? "—"} <Selo tom={ORIGEM[c.causa_origem]?.tom ?? "n"}>{ORIGEM[c.causa_origem]?.txt ?? c.causa_origem}</Selo></td>

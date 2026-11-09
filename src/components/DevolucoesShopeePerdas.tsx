@@ -14,6 +14,7 @@
 // "Dar entrada" reusa a aba Recebidas (mesma bipagem) — o pedido sai daqui
 // sozinho quando `devolucoes_recebidas` ganha a linha (situação vira 5).
 // ============================================================================
+import { Copiavel } from "@/components/devolucoes/Copiavel";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
@@ -361,7 +362,7 @@ export function DevolucoesShopeePerdas({ onDarEntrada }: { onDarEntrada: (orderS
 
                   <div className="flex-1 min-w-[260px] space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[13px] font-bold">{p.order_sn}</span>
+                      <Copiavel valor={p.order_sn} className="text-[13px] font-bold" />
                       <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{lojaDe(p.shop_id)}</span>
                       <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${s.cor}1F`, color: s.cor }}>{s.rotulo}</span>
                       <span className="text-[11px] text-muted-foreground">pedido {dataCurta(p.data_pedido)}</span>
@@ -381,8 +382,8 @@ export function DevolucoesShopeePerdas({ onDarEntrada }: { onDarEntrada: (orderS
                       <span className="text-muted-foreground">
                         {" "}· {dataCurta(p.ida_ultimo_em)}
                         {p.dias_desde_evento != null && <> · há <b className="text-foreground">{p.dias_desde_evento}</b> dia(s)</>}
-                        {ex?.rastreioIda && <> · ida <span className="font-mono">{ex.rastreioIda}</span></>}
-                        {ex?.rastreioVolta && <> · volta <span className="font-mono">{ex.rastreioVolta}</span></>}
+                        {ex?.rastreioIda && <> · ida <Copiavel valor={ex.rastreioIda} oQue="Rastreio" /></>}
+                        {ex?.rastreioVolta && <> · volta <Copiavel valor={ex.rastreioVolta} oQue="Rastreio" /></>}
                       </span>
                     </div>
                     <div className="text-[11.5px] text-muted-foreground truncate max-w-[720px]" title={p.texto_comprador ?? undefined}>

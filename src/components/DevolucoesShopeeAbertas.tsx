@@ -16,6 +16,7 @@
 // As duas ações são IRREVERSÍVEIS e mexem com dinheiro — cada uma passa por
 // diálogo próprio, por solicitação, e o backend só age com &confirmar=1.
 // ============================================================================
+import { Copiavel } from "@/components/devolucoes/Copiavel";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
@@ -481,8 +482,8 @@ export function DevolucoesShopeeAbertas() {
                   {/* miolo */}
                   <div className="flex-1 min-w-[240px] space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[13px] font-bold">{d.return_sn}</span>
-                      <span className="text-[11px] text-muted-foreground font-mono">pedido {d.order_sn ?? "—"}</span>
+                      <Copiavel valor={d.return_sn} oQue="Solicitação" className="text-[13px] font-bold" />
+                      <span className="text-[11px] text-muted-foreground">pedido <Copiavel valor={d.order_sn} className="text-foreground font-semibold" /></span>
                       <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{lojaDe(d.shop_id)}</span>
                       <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${st.cor}1F`, color: st.cor }}>{st.rotulo}</span>
                       {d.fora && <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground" title="Achada pela busca: não está entre as abertas">fora das abertas</span>}

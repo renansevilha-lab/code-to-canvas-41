@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Copiavel } from "@/components/devolucoes/Copiavel";
 import { useQuery } from "@tanstack/react-query";
 import { PackageSearch, Loader2, Check, ScanLine, AlertTriangle, Package as PackageIcon, Minus, Plus, ClipboardCheck } from "lucide-react";
 import { format, parseISO } from "date-fns";
@@ -588,8 +589,8 @@ export function DevolucoesRecebidas({ buscaInicial }: { buscaInicial?: { codigo:
               </span>
             )}
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="text-2xl font-extrabold font-mono tracking-tight">{pedido.order_sn}</span>
-              <Pill cor="#6C7481">Tiny {pedido.tiny_numero}</Pill>
+              <Copiavel valor={pedido.order_sn} className="text-2xl font-extrabold tracking-tight" />
+              <Pill cor="#6C7481">Tiny <Copiavel valor={pedido.tiny_numero} oQue="Número do Tiny" /></Pill>
               <Pill cor={canalCor(pedido.marca_canal)}>{rotuloCanal(pedido.marca_canal)}</Pill>
               {pedido.forma_envio && <Pill cor={envioCor(pedido.forma_envio)}>{pedido.forma_envio}</Pill>}
               {pedido.situacao && <Pill cor={situacaoCor(pedido.situacao)}><span className="capitalize">{pedido.situacao}</span></Pill>}
@@ -737,8 +738,8 @@ export function DevolucoesRecebidas({ buscaInicial }: { buscaInicial?: { codigo:
                         <td className="py-3 px-2 text-[12.5px] text-muted-foreground font-mono whitespace-nowrap">{format(parseISO(r.recebido_em), "dd/MM HH:mm")}</td>
                         <td className="py-3 px-2 min-w-0">
                           <div className="flex flex-col leading-tight gap-0.5">
-                            <span className="text-[12.5px] font-semibold font-mono truncate">{r.order_sn}</span>
-                            <span className="text-[10.5px] text-muted-foreground">Tiny {r.tiny_numero}</span>
+                            <Copiavel valor={r.order_sn} className="text-[12.5px] font-semibold" />
+                            <span className="text-[10.5px] text-muted-foreground">Tiny <Copiavel valor={r.tiny_numero} oQue="Número do Tiny" /></span>
                             {r.shopee_status && (
                               <span className="text-[10px] font-semibold" style={{ color: shopeeCor(r.shopee_status) }}>{rotuloMkt(r.marca_canal)}: {r.shopee_status}</span>
                             )}

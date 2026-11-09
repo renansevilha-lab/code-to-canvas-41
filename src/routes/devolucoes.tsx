@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Copiavel } from "@/components/devolucoes/Copiavel";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Search, CheckCircle2, ExternalLink, Send, Loader2, RefreshCw, FilePlus2, FileCheck2, Clock } from "lucide-react";
@@ -723,9 +724,9 @@ function OttzDevolucoes() {
                           aria-label="Marcar para devolução"
                         />
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs">{r.numero_pedido ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs"><Copiavel valor={r.numero_pedido} oQue="Número do Tiny" /></td>
                       <td className="px-3 py-2 max-w-[220px]">
-                        <div className="font-mono text-[11px] text-muted-foreground truncate">{r.numero_ecommerce ?? "—"}</div>
+                        <div className="text-[11px] text-muted-foreground truncate"><Copiavel valor={r.numero_ecommerce} /></div>
                         {r.motivo_cancelamento && (
                           <div className="text-[11px] text-destructive/90 truncate" title={r.motivo_cancelamento}>
                             {r.motivo_cancelamento}
@@ -954,7 +955,7 @@ function PendentesEmissaoCard({ onEmitiu }: { onEmitiu: () => void }) {
                             className="inline-block h-2 w-2 rounded-full"
                             style={{ backgroundColor: corCanal(p.pedido_cancelado.marca_canal) }}
                           />
-                          <span className="font-mono">{p.pedido_cancelado.numero_pedido}</span>
+                          <Copiavel valor={p.pedido_cancelado.numero_pedido} oQue="Número do Tiny" />
                           <Badge variant="outline" className="h-4 px-1 text-[10px]">cancelado</Badge>
                         </span>
                       ) : (
@@ -1417,7 +1418,7 @@ function SvlDevolucoes() {
                             title="Criada pela automação a partir do pedido do marketplace">
                             automática · {CASO_DEVOLUCAO_PT[autoPorNota[r.id_nota].caso] ?? autoPorNota[r.id_nota].caso}
                             {autoPorNota[r.id_nota].itens_parcial ? " · parcial" : ""} · pedido{" "}
-                            <span className="font-mono">{autoPorNota[r.id_nota].order_sn}</span>
+                            <Copiavel valor={autoPorNota[r.id_nota].order_sn} />
                           </div>
                         )}
                       </td>

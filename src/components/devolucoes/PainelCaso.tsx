@@ -8,6 +8,7 @@
 // feita no painel do ML e REGISTRADA aqui (a escrita pela API é o passo 4 do
 // plano). Toda resposta vai para devolucao_resposta — é o que ensina o sistema.
 // ============================================================================
+import { Copiavel } from "./Copiavel";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -225,10 +226,10 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
               <Selo tom="n">{lojaDe(caso)}</Selo>
               <Selo tom={ae.tom}>{ae.rotulo}</Selo>
             </div>
-            <div style={{ fontSize: 15, fontWeight: 700, marginTop: 6, fontFamily: "ui-monospace, monospace" }}>{caso.case_id}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginTop: 6 }}><Copiavel valor={caso.case_id} oQue="Solicitação" /></div>
             <div style={{ fontSize: 12, color: "var(--pm-t2)" }}>
-              pedido <b style={{ fontFamily: "ui-monospace, monospace" }}>{caso.order_sn ?? "—"}</b>
-              {caso.tiny_numero && <> · Tiny <b>{caso.tiny_numero}</b>{caso.tiny_situacao ? ` (${caso.tiny_situacao})` : ""}</>}
+              pedido <Copiavel valor={caso.order_sn} style={{ fontWeight: 700, color: "var(--pm-t)" }} />
+              {caso.tiny_numero && <> · Tiny <Copiavel valor={caso.tiny_numero} oQue="Número do Tiny" style={{ fontWeight: 700 }} />{caso.tiny_situacao ? ` (${caso.tiny_situacao})` : ""}</>}
               {link && <> · <a href={link} target="_blank" rel="noreferrer" style={{ color: "var(--pm-at)" }}>abrir no {caso.marketplace === "shopee" ? "Seller Center" : "ML"}</a></>}
             </div>
           </div>
