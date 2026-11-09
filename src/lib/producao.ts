@@ -78,6 +78,8 @@ export function embalagensDaFicha(par: Pick<Parametro, "embalagem_padrao_id" | "
     return e ? { ...e, padrao: i === 0 && Number(par.embalagem_padrao_id) === id } : null;
   }).filter((x): x is Insumo & { padrao: boolean } => x != null);
 }
+/** Nome da matéria-prima sem o "Farinha de mandioca" do começo: "BRANCA (JAJU) — média". */
+export const farinhaCurta = (nome: string | null | undefined) => (nome ?? "").replace(/^farinha de mandioca\s*/i, "").trim() || (nome ?? "");
 export interface BigBag {
   id: number; codigo: string; insumo_id: number | null; insumo: string | null; a_classificar: boolean;
   fornecedor_nome: string | null; nf_numero: string | null; recebido_em: string; qtd_inicial_kg: number;

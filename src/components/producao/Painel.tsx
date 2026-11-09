@@ -7,7 +7,7 @@ import { OrdensProducao } from "./OrdensProducao";
 import { AdicionarProduto } from "./AdicionarProduto";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
-  brl, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useLotes, useParametros, type EstoqueAcabado, type Lote, type OrdemProducao,
+  brl, farinhaCurta, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useBigBags, useEstoqueAcabado, useFotos, useInsumos, useLotes, useParametros, type EstoqueAcabado, type Lote, type OrdemProducao,
 } from "@/lib/producao";
 
 const quandoBR = (iso: string | null) =>
@@ -20,6 +20,7 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
   const todos = useLotes("todas", 30);
   const params = useParametros();
   const bags = useBigBags();
+  const insumos = useInsumos();
   const acabado = useEstoqueAcabado((params.data ?? []).map((p) => p.sku));
 
   const encerrados = (todos.data ?? []).filter((l) => l.status === "encerrada");
@@ -35,6 +36,17 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
   const aClassificar = listaBags.filter((b) => b.a_classificar).length;
   const semDensidade = listaBags.filter((b) => b.densidade_pendente && b.saldo_kg > 0).length;
   const kgDisp = listaBags.filter((b) => !b.a_classificar).reduce((s, b) => s + Math.max(0, b.saldo_kg), 0);
+  // 08/nov (dono): a matéria-prima de cada produto, com o que há dela nos big bags (o código do bag não diz a farinha)
+  const nomeInsumo = (id: number | null | undefined) => (id == null ? "" : (insumos.data ?? []).find((i) => Number(i.id) === Number(id))?.nome ?? "");
+  const kgDaFarinha = (id: number | null | undefined) =>
+    listaBags.filter((b) => id != null && Number(b.insumo_id) === Number(id) && !b.lote_aberto).reduce((s, b) => s + Math.max(0, b.saldo_kg), 0);
+  const materiaPrimaDe = (sku: string) => {
+    const p = params.data?.find((x) => x.sku === sku);
+    if (!p) return null;
+    const f = farinhaCurta(nomeInsumo(p.farinha_id));
+    const m = p.mistura_insumo_id ? nomeInsumo(p.mistura_insumo_id) : "";
+    return { texto: `${f || "farinha não definida na ficha"}${m ? ` + ${m}` : ""}`, kg: p.farinha_id != null ? kgDaFarinha(p.farinha_id) : null };
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -90,7 +102,19 @@ export function Painel({ onAbrirLote, onIrLote, onIrEntradas, onProduzir }: {
                 const sub = { fontSize: 11.5, color: "var(--pm-t3)", fontWeight: 400 } as const;
                 return (
                   <tr key={a.sku} className="pm-linha-hv" style={{ cursor: "pointer" }} onClick={() => setFicha(a.sku)} title="Ver a ficha de produção">
-                    <td style={td}><Produto foto={fotos[a.sku]} sku={a.sku} nome={a.nome} /></td>
+                    <td style={td}>
+                      <Produto foto={fotos[a.sku]} sku={a.sku} nome={a.nome} />
+                      {(() => {
+                        const mp = materiaPrimaDe(a.sku);
+                        if (!mp) return null;
+                        return (
+                          <div style={{ ...sub, marginTop: 3 }}>
+                            matéria-prima: <b style={{ fontWeight: 600, color: "var(--pm-t2)" }}>{mp.texto}</b>
+                            {mp.kg != null && <span style={{ color: mp.kg > 0 ? undefined : "var(--pm-r)" }}> · {mp.kg > 0 ? `${kg(mp.kg, 0)} nos big bags` : "sem big bag com saldo"}</span>}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={{ ...td, textAlign: "right" }}
                       title={a.saldo != null ? `contagem ${int(a.contagem_qtd)} + produzido ${int(a.produzido)} − vendido ${int(a.vendido_galpao)} − enviado ao Full ${int(a.enviado_full)}` : undefined}>
                       {a.saldo != null ? (

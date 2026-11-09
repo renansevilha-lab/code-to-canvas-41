@@ -1,13 +1,13 @@
 // Iniciar produção (abre o lote): SKU → big bag da farinha dele (só os com saldo) → embalagem → quem está em cada etapa.
 // O código do lote (prefixo-AAAAMMDD-NN) nasce no banco (producao_abrir_lote).
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
 import {
-  ETAPAS, embalagensDaFicha, erroMsg, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
+  ETAPAS, embalagensDaFicha, erroMsg, farinhaCurta, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
 } from "@/lib/producao";
 
 export function AbrirLote({ aberto, op, onFechar, onAberto }: {
@@ -31,6 +31,28 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
   const [opId, setOpId] = useState("");
 
   const par = params.data?.find((p) => p.sku === sku) ?? null;
+  // 08/nov (dono): na escolha do produto e do big bag, mostrar a MATÉRIA-PRIMA (o código do bag — JAJU-3310-02 — não diz
+  // se é a farinha branca ou a marrom, fina ou média). Nome do produto só dos SKUs da produção.
+  const skusPar = (params.data ?? []).map((p) => p.sku);
+  const nomesQ = useQuery({
+    queryKey: ["producao", "nomes-produtos", skusPar.join(",")],
+    enabled: aberto && skusPar.length > 0,
+    queryFn: async () => {
+      const { data } = await supabaseExternal.from("produtos").select("sku, nome").in("sku", skusPar);
+      return Object.fromEntries(((data ?? []) as { sku: string; nome: string | null }[]).map((x) => [x.sku, x.nome ?? ""]));
+    },
+  });
+  const nomeInsumo = (id: number | null | undefined) => (id == null ? "" : (insumos.data ?? []).find((i) => Number(i.id) === Number(id))?.nome ?? "");
+  const materiaPrima = (p: typeof par) => {
+    if (!p) return "";
+    const f = farinhaCurta(nomeInsumo(p.farinha_id)) || "farinha não definida na ficha";
+    const m = p.mistura_insumo_id ? nomeInsumo(p.mistura_insumo_id) : "";
+    return m ? `${f} + ${m}` : f;
+  };
+  const nomeCurtoProduto = (s: string) => {
+    const n = nomesQ.data?.[s] ?? "";
+    return n.length > 48 ? `${n.slice(0, 47)}…` : n;
+  };
   const embalagens = (insumos.data ?? []).filter((i) => i.tipo === "embalagem" && i.ativo);
   const embSel = embalagens.find((e) => String(e.id) === emb) ?? null;
   // as embalagens da ficha (padrão + alternativas) aparecem como botões; o "outra" abre a lista inteira
@@ -102,10 +124,14 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
       <DialogContent className="pm-ui max-w-lg" style={{ background: "var(--pm-s)", color: "var(--pm-t)" }}>
         <DialogHeader><DialogTitle>Iniciar produção</DialogTitle></DialogHeader>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <Campo rotulo="Produto">
+          <Campo rotulo="Produto" dica={par ? `Matéria-prima: ${materiaPrima(par)}` : undefined}>
             <Escolha value={sku} onChange={(e) => setSku(e.target.value)}>
               <option value="">Escolha…</option>
-              {(params.data ?? []).map((p) => <option key={p.sku} value={p.sku}>{p.sku} · {p.prefixo_lote}</option>)}
+              {(params.data ?? []).map((p) => (
+                <option key={p.sku} value={p.sku}>
+                  {p.sku}{nomeCurtoProduto(p.sku) ? ` · ${nomeCurtoProduto(p.sku)}` : ""} · {materiaPrima(p)}
+                </option>
+              ))}
             </Escolha>
           </Campo>
           {sku && (opsDoSku.length > 0 || opSel) && (
@@ -122,12 +148,14 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
           )}
           <Campo
             rotulo="Big bag de origem"
-            dica={par && !bagsDoSku.length ? (aClassificar ? `Nenhum big bag desta farinha. Há ${aClassificar} big bag(s) a classificar em Entradas.` : "Nenhum big bag desta farinha com saldo.") : undefined}
+            dica={par && !bagsDoSku.length
+              ? (aClassificar ? `Nenhum big bag de ${farinhaCurta(nomeInsumo(par.farinha_id)) || "farinha desta ficha"}. Há ${aClassificar} big bag(s) a classificar em Entradas.` : `Nenhum big bag de ${farinhaCurta(nomeInsumo(par.farinha_id)) || "farinha desta ficha"} com saldo.`)
+              : par ? `Só aparecem os big bags de ${farinhaCurta(nomeInsumo(par.farinha_id))}.` : undefined}
           >
             <Escolha value={bag} onChange={(e) => setBag(e.target.value)} disabled={!par}>
               <option value="">Escolha…</option>
               {bagsDoSku.map((b) => (
-                <option key={b.id} value={b.id}>{b.codigo} · {kg(b.saldo_kg, 0)} · rende {int(Math.floor(b.saldo_kg / farinhaPorSaco(par!)))} sacos</option>
+                <option key={b.id} value={b.id}>{b.codigo} · {farinhaCurta(b.insumo)} · {kg(b.saldo_kg, 0)} · rende {int(Math.floor(b.saldo_kg / farinhaPorSaco(par!)))} sacos</option>
               ))}
             </Escolha>
           </Campo>
