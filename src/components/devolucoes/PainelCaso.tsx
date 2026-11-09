@@ -70,7 +70,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
   // --- disputa (Shopee) -------------------------------------------------------
   const [disputando, setDisputando] = useState(false);
   const [dispMotivo, setDispMotivo] = useState("");
-  const [dispEmail, setDispEmail] = useState(() => { try { return localStorage.getItem("devol_disputa_email") ?? ""; } catch { return ""; } });
+  const [dispEmail, setDispEmail] = useState("contato@ottzpet.com.br"); // dono, 09/nov: o e-mail de disputa é sempre este
   const [dispFotos, setDispFotos] = useState<File[]>([]);
   const motivosQ = useQuery({
     queryKey: ["devolucoes", "motivos_disputa", caso.case_id],

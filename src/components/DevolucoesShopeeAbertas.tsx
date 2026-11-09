@@ -154,7 +154,7 @@ export function DevolucoesShopeeAbertas() {
   const [disputa, setDisputa] = useState<DevAberta | null>(null);
   const [dispTexto, setDispTexto] = useState("");
   const [dispEmail, setDispEmail] = useState<string>(() => {
-    try { return localStorage.getItem("devol_disputa_email") ?? ""; } catch { return ""; }
+    return "contato@ottzpet.com.br"; // dono, 09/nov: o e-mail de disputa é sempre este
   });
   const [dispMotivo, setDispMotivo] = useState<string>("");
   const [dispFotos, setDispFotos] = useState<File[]>([]);
