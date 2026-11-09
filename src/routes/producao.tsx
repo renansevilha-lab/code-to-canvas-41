@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { BarraAbas } from "@/components/separacao/ui/kit";
@@ -7,6 +7,8 @@ import { Painel } from "@/components/producao/Painel";
 import { Entradas } from "@/components/producao/Entradas";
 import { AbrirLote } from "@/components/producao/AbrirLote";
 import { ChaoFabrica } from "@/components/producao/ChaoFabrica";
+import { CustosPrecos } from "@/components/producao/custos/CustosPrecos";
+import { usePerfil } from "@/hooks/usePerfil";
 import { Botao, Entrada } from "@/components/producao/ui";
 import type { OrdemProducao } from "@/lib/producao";
 
@@ -18,12 +20,12 @@ import type { OrdemProducao } from "@/lib/producao";
 // ?lote=<id> abre o chão de fábrica (tela do celular da bancada).
 // ============================================================================
 
-type Aba = "painel" | "entradas";
+type Aba = "painel" | "entradas" | "custos";
 interface Busca { aba: Aba; lote?: number }
 
 export const Route = createFileRoute("/producao")({
   validateSearch: (s: Record<string, unknown>): Busca => ({
-    aba: s.aba === "entradas" ? "entradas" : "painel",
+    aba: s.aba === "entradas" || s.aba === "custos" ? s.aba : "painel",
     lote: Number(s.lote) > 0 ? Number(s.lote) : undefined,
   }),
   component: ProducaoPage,
@@ -35,6 +37,13 @@ function ProducaoPage() {
   const [abrindo, setAbrindo] = useState(false);
   const [opInicial, setOpInicial] = useState<OrdemProducao | null>(null);
   const [rastreio, setRastreio] = useState("");
+  // Custos e Preços: só módulo custos (ou todos). Sem acesso, a aba nem aparece e o link volta ao painel.
+  const { temAcesso, loading: carregandoPerfil } = usePerfil();
+  const podeCustos = temAcesso("custos");
+  const aba: Aba = busca.aba === "custos" && !podeCustos ? "painel" : busca.aba;
+  useEffect(() => {
+    if (busca.aba === "custos" && !carregandoPerfil && !podeCustos) navigate({ search: (x: Busca) => ({ ...x, aba: "painel" }), replace: true });
+  }, [busca.aba, carregandoPerfil, podeCustos, navigate]);
 
   const ir = (b: Partial<Busca>) => navigate({ search: (s: Busca) => ({ ...s, ...b }), resetScroll: false });
   const irLote = (id: number | undefined) => navigate({ search: (s: Busca) => ({ ...s, lote: id }) });
@@ -66,13 +75,14 @@ function ProducaoPage() {
             </div>
           </div>
           <BarraAbas
-            ativa={busca.aba}
+            ativa={aba}
             abas={[
               { id: "painel", nome: "Painel do dia", onClick: () => ir({ aba: "painel" }) },
               { id: "entradas", nome: "Entradas de matéria-prima", onClick: () => ir({ aba: "entradas" }) },
+              ...(podeCustos ? [{ id: "custos", nome: "Custos e Preços", onClick: () => ir({ aba: "custos" }) }] : []),
             ]}
           />
-          {busca.aba === "painel"
+          {aba === "custos" ? <CustosPrecos /> : aba === "painel"
             ? <Painel onAbrirLote={() => { setOpInicial(null); setAbrindo(true); }} onIrLote={irLote} onIrEntradas={() => ir({ aba: "entradas" })}
                 onProduzir={(op) => { setOpInicial(op); setAbrindo(true); }} />
             : <Entradas />}

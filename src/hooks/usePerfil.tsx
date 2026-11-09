@@ -84,6 +84,7 @@ export const MODULOS: Array<{ slug: string; label: string; desc: string }> = [
   { slug: "ads", label: "Mídia & Canais", desc: "ADS Shopee, ADS Mercado Livre, Promoções" },
   { slug: "financeiro", label: "Financeiro", desc: "DRE, Fluxo de Caixa, Contas a Pagar, Carteira (inclui Devoluções)" },
   { slug: "ia", label: "IA · Anúncios", desc: "Prompts e contextos do gerador de anúncios com IA" },
+  { slug: "custos", label: "Custos e Preços", desc: "Produção › Custos e Preços: custo dos fabricados, cenários e tabela de atacado (precisa também do Galpão para abrir a Produção)" },
   { slug: "todos", label: "Administrador", desc: "Acesso total + gestão de usuários" },
 ];
 
