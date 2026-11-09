@@ -153,7 +153,7 @@ function Linha({ c, onAbrir, causaNome }: { c: CasoFila; onAbrir: () => void; ca
         <span style={{ fontSize: 15, fontWeight: 700 }}>{brl(c.valor)}</span>
         <Selo tom={ae.tom}>{ae.curto}</Selo>
         <span style={{ fontSize: 11.5, fontWeight: 600, color: pz.tom === "r" ? "var(--pm-r)" : pz.tom === "a" ? "var(--pm-am)" : "var(--pm-t3)" }}>
-          {c.prazo ? (pz.txt === "venceu" ? `venceu · ${diaHora(c.prazo)}` : `vence em ${pz.txt}`) : "sem prazo"}
+          {c.prazo ? (pz.txt === "venceu" ? `venceu · ${diaHora(c.prazo)}` : `vence em ${pz.txt} · ${diaHora(c.prazo)}`) : "sem prazo"}
         </span>
       </div>
     </div>

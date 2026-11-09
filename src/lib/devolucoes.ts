@@ -286,7 +286,9 @@ export function prazoTexto(iso: string | null): { txt: string; tom: "r" | "a" | 
   if (h < 1) return { txt: `${Math.max(1, Math.floor(ms / 60_000))} min`, tom: "r" };
   if (h < 24) return { txt: `${h} h`, tom: "r" };
   const d = Math.floor(h / 24);
-  return { txt: `${d} dia${d > 1 ? "s" : ""}`, tom: d <= 1 ? "a" : "n" };
+  // dias + horas: "1 dia" para 45 h parecia 1 dia a menos que o Seller Center, que arredonda para cima ("2 dias")
+  const r = h % 24;
+  return { txt: `${d} dia${d > 1 ? "s" : ""}${r ? ` e ${r} h` : ""}`, tom: d <= 1 ? "a" : "n" };
 }
 
 export const diaHora = (iso: string | null | undefined) =>
