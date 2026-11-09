@@ -526,3 +526,18 @@ grant execute on function public.devolucao_causa_provavel(text, text) to authent
 -- drop table if exists public.ml_claim_motivos;
 -- drop function if exists public.devolucao_causa_provavel(text, text);
 -- drop table if exists public.devolucao_causa;
+
+
+-- =====================================================================================================
+-- 09/nov/2026 — migração devolucoes_fila_nao_recebi_em_analise
+-- Shopee "Não recebi meu pacote" (NOT_RECEIPT) fica REQUESTED enquanto a PRÓPRIA Shopee analisa
+-- (Seller Center: "Em análise pela Shopee", sem ações; get_return_dispute_reason vazio) -> não pede resposta.
+-- Prazo só quando é NOSSO: em análise = sem prazo; PROCESSING = só prazo_vendedor (nunca o due_date).
+-- Aplicada trocando 3 trechos da definição NO AR (cada um tem de existir uma vez):
+--   acao_esperada: + WHEN d.status = 'REQUESTED' AND d.reason = 'NOT_RECEIPT' THEN 'em_analise'   (antes do 'responder')
+--   precisa_acao : WHEN d.status = 'REQUESTED' AND d.reason IS DISTINCT FROM 'NOT_RECEIPT' THEN true
+--   prazo        : CASE WHEN d.status = 'JUDGING' OR d.status = 'REQUESTED' AND d.reason = 'NOT_RECEIPT' THEN NULL
+--                       WHEN d.status = 'PROCESSING' THEN d.prazo_vendedor
+--                       ELSE COALESCE(d.prazo_disputa, CASE WHEN d.status <> 'ACCEPTED' THEN d.prazo_vendedor END, d.due_date) END
+-- Rollback: desfazer as 3 trocas (create or replace view com os trechos antigos, que estão na definição acima).
+-- =====================================================================================================
