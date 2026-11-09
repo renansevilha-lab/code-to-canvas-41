@@ -5,9 +5,10 @@ import { toast } from "sonner";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "../ui";
 import { brl, int, kg, useFotos } from "@/lib/producao";
 import { Produtividade } from "./Produtividade";
+import { LinhaCanal } from "./Precificacao";
 import {
-  FONTE_KG, FONTE_MOD, FONTE_PRECO_KG, num, pct, salvarSku, salvarSkus, useCenarioSkus, useCusto, useMedicoes, useRecalcular,
-  type Cenario, type CenarioSku, type CustoSku,
+  FONTE_KG, FONTE_MOD, FONTE_PRECO_KG, num, pct, salvarSku, salvarSkus, useCenarioSkus, useCusto, useMargens, useMatriz, useMedicoes, useRecalcular,
+  type Cenario, type CenarioSku, type CustoSku, type LinhaMatriz,
 } from "@/lib/custos";
 
 const CORES = { materia: "#8B6F47", embalagem: "#5B8DEF", mod: "#E0A030", premio: "#9C6ADE", cif: "#7A8699" };
@@ -20,6 +21,15 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
   const linhas = custo.data ?? [];
   const porSku = useMemo(() => Object.fromEntries((skus.data ?? []).map((s) => [s.sku, s])), [skus.data]);
   const med = useMedicoes();
+  // preços por canal (preco_cenario_matriz) para o bloco "Preço nos marketplaces" de cada cartão
+  const matriz = useMatriz(cenario.id);
+  const margens = useMargens();
+  const mcs = useMemo(() => (margens.data ?? []).filter((m) => m.ativo).map((m) => Number(m.mc_pct)), [margens.data]);
+  const matrizPorSku = useMemo(() => {
+    const m: Record<string, LinhaMatriz[]> = {};
+    for (const l of matriz.data ?? []) (m[l.sku] ??= []).push(l);
+    return m;
+  }, [matriz.data]);
   // produtividade de cada produto (lotes limpos, view_custo_mod_medida): a do próprio SKU ou, sem lote limpo, a do grupo
   const prod = useMemo(() => {
     const m = med.data?.mod ?? [];
@@ -37,10 +47,11 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Produtividade />
       <AcoesEmMassa cenario={cenario} linhas={linhas} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(520px, 1fr))", gap: 12 }}>
         {linhas.map((c) => (
           <CartaoSku key={c.sku} c={c} foto={fotos.data?.[c.sku]} aberto={aberto === c.sku}
-            onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]} />
+            onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]}
+            precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={matriz.isLoading} />
         ))}
       </div>
       <Legenda />
@@ -62,8 +73,9 @@ function Legenda() {
   );
 }
 
-function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario;
-  prod?: { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null }) {
+function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, precos, mcs, precosCarregando }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario;
+  prod?: { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null;
+  precos?: LinhaMatriz[]; mcs: number[]; precosCarregando: boolean }) {
   const partes = [
     { k: "materia", v: c.materia }, { k: "embalagem", v: c.embalagem + c.etiqueta }, { k: "mod", v: c.mod ?? 0 },
     { k: "premio", v: c.premio ?? 0 }, { k: "cif", v: c.cif ?? 0 },
@@ -93,17 +105,13 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod }: { c
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", fontSize: 12.5 }}>
-        <Linha r="Matéria-prima" v={brl(c.materia)} />
-        <Linha r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} />
-        <Linha r="Mão de obra" v={c.mod == null ? "—" : brl(c.mod)} />
-        <Linha r="Prêmio + CIF" v={brl((c.premio ?? 0) + (c.cif ?? 0))} />
+        <Linha r="Matéria-prima" v={brl(c.materia)} cor={CORES.materia} />
+        <Linha r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} cor={CORES.embalagem} />
+        <MaoDeObraRapida c={c} cenario={cenario} />
+        <Linha r="Prêmio + CIF" v={brl((c.premio ?? 0) + (c.cif ?? 0))} cor={CORES.premio} />
       </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
-        <Selo tom={tomKg as "g" | "azul" | "a" | "n"}>{num(c.kg_un, 3)} kg/un · {FONTE_KG[fonteKg]}</Selo>
-        <Selo>{brl(c.preco_kg, 4)}/kg · {FONTE_PRECO_KG[c.preco_kg_fonte] ?? c.preco_kg_fonte}</Selo>
-        <Selo tom={c.mod_fonte.startsWith("manual") ? "azul" : c.mod_fonte === "sem_medida" ? "a" : "n"}>MOD {FONTE_MOD[c.mod_fonte] ?? c.mod_fonte}</Selo>
-      </div>
+      <MateriaConsiderada c={c} tomKg={tomKg as "g" | "azul" | "a" | "n"} />
 
       <div style={{ fontSize: 12, color: "var(--pm-t2)", display: "flex", gap: 12, flexWrap: "wrap" }}>
         {prod && <span style={{ width: "100%" }}>Produtividade <b>{num(prod.un_h_linha, 1)} sacos/h</b> de linha · <b>{num(prod.un_homem_hora, 1)}</b> por pessoa/hora{prod.do_grupo ? " (média do grupo)" : ` (${prod.lotes} ${prod.lotes === 1 ? "lote" : "lotes"}, ${int(prod.un_total)} sacos)`}</span>}
@@ -123,15 +131,130 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod }: { c
         <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11.5, color: "var(--pm-am)" }}>{c.avisos.map((a) => <li key={a}>{a}</li>)}</ul>
       )}
 
-      <div><Botao onClick={onAbrir}>{aberto ? "Fechar" : "Ajustar no cenário"}</Botao></div>
+      <PrecosMarketplace c={c} precos={precos} mcs={mcs} carregando={precosCarregando} cenario={cenario} />
+
+      <div><Botao onClick={onAbrir}>{aberto ? "Fechar" : "Ajustar tudo no cenário"}</Botao></div>
       {aberto && (pronto ? <EditorSku c={c} cfg={cfg} cenario={cenario} /> : <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>Carregando…</span>)}
     </section>
   );
 }
 
-const Linha = ({ r, v }: { r: string; v: string }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><span style={{ color: "var(--pm-t3)" }}>{r}</span><b style={{ fontVariantNumeric: "tabular-nums" }}>{v}</b></div>
+const Linha = ({ r, v, cor }: { r: string; v: string; cor?: string }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+    <span style={{ color: "var(--pm-t3)", display: "inline-flex", alignItems: "center", gap: 6 }}>{cor && <span style={{ width: 8, height: 8, borderRadius: 2, background: cor, flexShrink: 0 }} />}{r}</span>
+    <b style={{ fontVariantNumeric: "tabular-nums" }}>{v}</b>
+  </div>
 );
+
+// Mão de obra editável direto no cartão (pedido do dono, 09/nov): clicar no valor abre um campo
+// "R$ por saco"; salvar grava fonte_mod = manual_un no cenário e o banco recalcula. "voltar à medida" desfaz.
+function MaoDeObraRapida({ c, cenario }: { c: CustoSku; cenario: Cenario }) {
+  const recalcular = useRecalcular();
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const manual = c.mod_fonte.startsWith("manual");
+  async function gravar(campos: Partial<CenarioSku>, msg: string) {
+    setSalvando(true);
+    try { await salvarSku(cenario.id, c.sku, campos); recalcular(); setEditando(false); toast.success(msg); }
+    catch (e) { toast.error("Não deu para salvar", { description: (e as Error).message }); }
+    finally { setSalvando(false); }
+  }
+  function salvar() {
+    const p = Number(valor.trim().replace(",", "."));
+    if (!(p >= 0) || valor.trim() === "") return toast.warning("Informe o valor em R$ por saco.");
+    void gravar({ fonte_mod: "manual_un", mod_rs_un_manual: p }, `Mão de obra de ${c.sku}: ${brl(p)} por saco (cenário ${cenario.nome}).`);
+  }
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", minHeight: 22 }}>
+      <span style={{ color: "var(--pm-t3)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: CORES.mod, flexShrink: 0 }} />Mão de obra
+        {manual && !editando && (
+          <button type="button" onClick={() => void gravar({ fonte_mod: "medido" }, `Mão de obra de ${c.sku} voltou à medida dos lotes.`)} disabled={salvando}
+            title={`Hoje: valor manual. Medida nos lotes: ${c.mod_un_homem_hora == null ? "sem medida" : `${num(c.mod_un_homem_hora, 1)} un/homem-hora a ${brl(c.mod_rs_hora)}/h`}`}
+            style={{ border: 0, background: "transparent", color: "var(--pm-at)", cursor: "pointer", fontSize: 11, padding: 0 }}>manual · voltar à medida</button>
+        )}
+      </span>
+      {editando ? (
+        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>R$/saco</span>
+          <Entrada autoFocus inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value)} disabled={salvando}
+            onKeyDown={(e) => { if (e.key === "Enter") salvar(); if (e.key === "Escape") setEditando(false); }} style={{ width: 72, height: 28 }} />
+          <Botao tom="primario" onClick={salvar} disabled={salvando} style={{ height: 28, padding: "0 9px" }}>OK</Botao>
+          <Botao tom="fantasma" onClick={() => setEditando(false)} disabled={salvando} style={{ height: 28, padding: "0 7px" }}>✕</Botao>
+        </span>
+      ) : (
+        <button type="button" onClick={() => { setValor(c.mod == null ? "" : num(c.mod, 2)); setEditando(true); }}
+          title={`${FONTE_MOD[c.mod_fonte] ?? c.mod_fonte} — clique para trocar o valor por saco`}
+          style={{ border: "1px dashed var(--pm-bc)", borderRadius: 6, background: "transparent", cursor: "pointer", color: "inherit", font: "inherit", fontWeight: 700, fontVariantNumeric: "tabular-nums", padding: "0 6px", lineHeight: "20px" }}>
+          {c.mod == null ? "—" : brl(c.mod)} <span style={{ fontSize: 10, fontWeight: 400, color: "var(--pm-t3)" }}>✎</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Qual matéria-prima está entrando na conta: farinha (nome, kg por saco e de onde veio, R$/kg e de onde veio),
+// e, nas misturas, o componente comprado (quantos por saco e a que preço).
+function MateriaConsiderada({ c, tomKg }: { c: CustoSku; tomKg: "g" | "azul" | "a" | "n" }) {
+  const farinhaRs = (Number(c.kg_farinha) || 0) * (Number(c.preco_kg) || 0);
+  const misturaRs = c.mistura ? (Number(c.un_mistura) || 0) * (Number(c.preco_mistura_un) || 0) : 0;
+  return (
+    <div style={{ background: "var(--pm-s2)", borderRadius: 10, padding: "8px 10px", fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--pm-t2)", textTransform: "uppercase", letterSpacing: ".04em" }}>Matéria-prima considerada</div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+        <span style={{ minWidth: 0 }}>
+          <b>{c.farinha_nome ?? "Farinha (não identificada)"}</b>
+          <span style={{ color: "var(--pm-t3)" }}> · {num(c.kg_farinha ?? c.kg_un, 3)} kg/saco</span>
+        </span>
+        <b style={{ fontVariantNumeric: "tabular-nums" }}>{brl(farinhaRs)}</b>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <Selo tom={tomKg}>{num(c.kg_un, 3)} kg/un · {FONTE_KG[c.kg_un_fonte]}</Selo>
+        <Selo>{brl(c.preco_kg, 4)}/kg · {FONTE_PRECO_KG[c.preco_kg_fonte] ?? c.preco_kg_fonte}</Selo>
+      </div>
+      {c.mistura && (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", borderTop: "1px dashed var(--pm-b)", paddingTop: 4 }}>
+          <span style={{ minWidth: 0 }}>
+            <b>{c.mistura_nome ?? "Componente da mistura"}</b>
+            <span style={{ color: "var(--pm-t3)" }}> · {num(c.un_mistura, 3)} un/saco a {brl(c.preco_mistura_un)} (custo do Tiny)</span>
+          </span>
+          <b style={{ fontVariantNumeric: "tabular-nums" }}>{brl(misturaRs)}</b>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Preço nos marketplaces (e atacado) deste produto, direto no cartão — a mesma linha da aba Precificação.
+function PrecosMarketplace({ c, precos, mcs, carregando, cenario }: { c: CustoSku; precos?: LinhaMatriz[]; mcs: number[]; carregando: boolean; cenario: Cenario }) {
+  const [verAtacado, setVerAtacado] = useState(false);
+  if (carregando) return <div style={{ fontSize: 12, color: "var(--pm-t3)" }}>Calculando os preços…</div>;
+  if (!precos?.length) return null;
+  const mkt = precos.filter((l) => l.tipo === "marketplace");
+  const atac = precos.filter((l) => l.tipo === "atacado");
+  const lista = [...mkt, ...(verAtacado ? atac : [])];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--pm-t2)", textTransform: "uppercase", letterSpacing: ".04em" }}>Preço nos marketplaces</span>
+        <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>sobre {brl(c.cv)} de custo</span>
+        <div style={{ flex: 1 }} />
+        {atac.length > 0 && <button type="button" onClick={() => setVerAtacado((v) => !v)} style={{ border: 0, background: "transparent", color: "var(--pm-at)", cursor: "pointer", fontSize: 11.5, padding: 0 }}>{verAtacado ? "esconder atacado" : "ver atacado"}</button>}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ ...tabela, fontSize: 12 }}>
+          <thead><tr>
+            <th style={th}>Canal</th>
+            {mcs.map((m) => <th key={m} style={{ ...th, textAlign: "right" }}>MC {pct(m, Math.round(m * 1000) % 10 ? 1 : 0)}</th>)}
+            <th style={{ ...th, textAlign: "right" }}>Piso</th><th style={{ ...th, textAlign: "right" }}>Praticado</th><th style={{ ...th, textAlign: "right" }}>MC</th>
+          </tr></thead>
+          <tbody>{lista.map((l) => <LinhaCanal key={l.canal} l={l} mcs={mcs} f={(v) => v ?? null} cenario={cenario} />)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Editor por SKU: grava em custo_cenario_sku (0,5 s depois de parar de digitar) e o banco recalcula

@@ -84,7 +84,7 @@ export function Precificacao({ cenario }: { cenario: Cenario }) {
   );
 }
 
-function LinhaCanal({ l, mcs, f, cenario }: { l: LinhaMatriz; mcs: number[]; f: (v: number | null | undefined) => number | null; cenario: Cenario }) {
+export function LinhaCanal({ l, mcs, f, cenario }: { l: LinhaMatriz; mcs: number[]; f: (v: number | null | undefined) => number | null; cenario: Cenario }) {
   const qc = useQueryClient();
   const [editando, setEditando] = useState(false);
   const [valor, setValor] = useState("");
