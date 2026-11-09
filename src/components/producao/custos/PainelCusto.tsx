@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "../ui";
 import { brl, int, kg, useFotos } from "@/lib/producao";
+import { Produtividade } from "./Produtividade";
 import {
   FONTE_KG, FONTE_MOD, FONTE_PRECO_KG, num, pct, salvarSku, salvarSkus, useCenarioSkus, useCusto, useMedicoes, useRecalcular,
   type Cenario, type CenarioSku, type CustoSku,
@@ -18,17 +19,28 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
   const [aberto, setAberto] = useState<string | null>(null);
   const linhas = custo.data ?? [];
   const porSku = useMemo(() => Object.fromEntries((skus.data ?? []).map((s) => [s.sku, s])), [skus.data]);
+  const med = useMedicoes();
+  // produtividade de cada produto (lotes limpos, view_custo_mod_medida): a do próprio SKU ou, sem lote limpo, a do grupo
+  const prod = useMemo(() => {
+    const m = med.data?.mod ?? [];
+    const grupo = (c: CustoSku) => m.find((x) => x.sku == null && (c.mistura ? x.grupo === "Misturas" : x.grupo.startsWith("Mandioca pura " + String(Number(c.peso_nominal_kg)).replace(".", ","))));
+    return Object.fromEntries(linhas.map((c) => {
+      const proprio = m.find((x) => x.sku === c.sku);
+      return [c.sku, proprio ? { ...proprio, do_grupo: false } : grupo(c) ? { ...grupo(c)!, do_grupo: true } : null];
+    }));
+  }, [med.data, linhas]);
 
   if (custo.isLoading) return <Cartao><span style={{ color: "var(--pm-t3)" }}>Calculando…</span></Cartao>;
   if (custo.error) return <Cartao><span style={{ color: "var(--pm-r)" }}>Não deu para calcular: {(custo.error as Error).message}</span></Cartao>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Produtividade />
       <AcoesEmMassa cenario={cenario} linhas={linhas} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 12 }}>
         {linhas.map((c) => (
           <CartaoSku key={c.sku} c={c} foto={fotos.data?.[c.sku]} aberto={aberto === c.sku}
-            onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} />
+            onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]} />
         ))}
       </div>
       <Legenda />
@@ -50,7 +62,8 @@ function Legenda() {
   );
 }
 
-function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario }) {
+function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario;
+  prod?: { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null }) {
   const partes = [
     { k: "materia", v: c.materia }, { k: "embalagem", v: c.embalagem + c.etiqueta }, { k: "mod", v: c.mod ?? 0 },
     { k: "premio", v: c.premio ?? 0 }, { k: "cif", v: c.cif ?? 0 },
@@ -93,6 +106,7 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario }: { c: Cust
       </div>
 
       <div style={{ fontSize: 12, color: "var(--pm-t2)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {prod && <span style={{ width: "100%" }}>Produtividade <b>{num(prod.un_h_linha, 1)} sacos/h</b> de linha · <b>{num(prod.un_homem_hora, 1)}</b> por pessoa/hora{prod.do_grupo ? " (média do grupo)" : ` (${prod.lotes} ${prod.lotes === 1 ? "lote" : "lotes"}, ${int(prod.un_total)} sacos)`}</span>}
         <span>Padrão <b>{brl(c.cv_padrao)}</b></span>
         <span>Medido <b>{c.cv_medido == null ? "—" : brl(c.cv_medido)}</b></span>
         <span>Cenário <b>{brl(c.cv)}</b></span>
