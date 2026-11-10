@@ -3308,7 +3308,13 @@ linhas, crítica), entrou o 2º passo que a própria Shopee pede:
     (mantém `purchase_limit` e o preço das outras variações); senão `add-itens` (aviso: a Shopee
     costuma recusar o mesmo anúncio em duas promoções). Botão "Só trocar/cadastrar agora" faz só a
     promoção, comparando com o preço cheio de HOJE. **Atualizar também (20/out, pedido do dono):** cada anúncio Shopee marcado ali (ex.: Bumi) ganha o SEU bloco, com as promoções da loja dele e "Só cadastrar na promoção agora"; no envio, a promoção dele entra depois da atualização dele. Os avisos (`ia-anuncio-vai-criar` / `-pronto`) levam o `item_id` e cada bloco só responde pelo seu anúncio (prop `promoPara` de `Publicar`).
-    **Não testado ao vivo.**
+    **Não testado ao vivo.** **10/nov/2026 — variações AO VIVO:** o Kit 5 Ottz (item 46713408425) virou anúncio com
+    variações às 11h02 (20kg 16789 / 8kg 16786) e a atualização das 11h05 não o pôs na promoção: o espelho só tinha o anúncio
+    simples, foi preço do item inteiro (a Shopee recusa em anúncio com variações) e a Shopee já o tinha tirado da promoção em
+    que estava (anúncio que ganha variações SAI da promoção). Agora as variações vêm de `anuncio-shopee-variacoes?modulo=ler`,
+    relidas no clique (espelho só se a leitura falhar); variação nova ganha o preço promocional calculado na hora; anúncio com
+    variações sem SKU = pendência, nunca preço do item. O 51971442481 (Ottz, 16776, criado 10/nov 00h16) nem chegou a chamar
+    `add-itens` — causa não achada.
   - **Como os blocos conversam** (`src/lib/iaEnvioEventos.ts`): `ia-anuncio-vai-criar` (síncrono,
     detalhe mutável: variações e promoção dizem o que farão — entra no texto da confirmação) →
     `ia-anuncio-criado` (`ativar`) → `ia-anuncio-pronto` (item, modelos, preços cheios).
