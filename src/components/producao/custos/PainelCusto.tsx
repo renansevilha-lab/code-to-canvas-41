@@ -1,6 +1,6 @@
 // Custo variável por unidade de cada produto fabricado, no cenário escolhido.
 // O número vem de custo_cenario_calcular (banco). Editar um campo grava em custo_cenario_sku e o banco recalcula.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "../ui";
 import { brl, int, kg, useFotos } from "@/lib/producao";
@@ -18,6 +18,9 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
   const skus = useCenarioSkus(cenario.id);
   const fotos = useFotos((custo.data ?? []).map((c) => c.sku));
   const [aberto, setAberto] = useState<string | null>(null);
+  // visual: cartões (um por produto) ou linhas (tabela, cada coluna um custo; clicar na célula explica) — pedido do dono, 09/nov
+  const [visual, setVisual] = useState<"cartoes" | "linhas">(() => { try { return localStorage.getItem("custos.visual") === "linhas" ? "linhas" : "cartoes"; } catch { return "cartoes"; } });
+  const trocarVisual = (v: "cartoes" | "linhas") => { setVisual(v); try { localStorage.setItem("custos.visual", v); } catch { /* sem armazenamento */ } };
   const linhas = custo.data ?? [];
   const porSku = useMemo(() => Object.fromEntries((skus.data ?? []).map((s) => [s.sku, s])), [skus.data]);
   const med = useMedicoes();
@@ -47,16 +50,202 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Produtividade />
       <AcoesEmMassa cenario={cenario} linhas={linhas} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(520px, 1fr))", gap: 12 }}>
-        {linhas.map((c) => (
-          <CartaoSku key={c.sku} c={c} foto={fotos.data?.[c.sku]} aberto={aberto === c.sku}
-            onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]}
-            precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={matriz.isLoading} />
-        ))}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "inline-flex", border: "1px solid var(--pm-bc)", borderRadius: 9, overflow: "hidden" }}>
+          {(["cartoes", "linhas"] as const).map((k) => (
+            <button key={k} type="button" onClick={() => trocarVisual(k)}
+              style={{ border: 0, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: visual === k ? "var(--pm-a)" : "var(--pm-s)", color: visual === k ? "var(--pm-oa)" : "var(--pm-t)" }}>
+              {k === "cartoes" ? "Cartões" : "Linhas"}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>{visual === "linhas" ? "Cada coluna é um custo. Clique num valor para ver como ele foi calculado." : "Um cartão por produto, com matéria-prima, preço nos marketplaces e ajustes."}</span>
+        <div style={{ flex: 1 }} />
+        <Legenda />
       </div>
-      <Legenda />
+      {visual === "linhas" ? (
+        <TabelaCustos linhas={linhas} fotos={fotos.data ?? {}} cenario={cenario} cfgs={porSku} prod={prod} matrizPorSku={matrizPorSku} mcs={mcs} precosCarregando={matriz.isLoading} />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(520px, 1fr))", gap: 12 }}>
+          {linhas.map((c) => (
+            <CartaoSku key={c.sku} c={c} foto={fotos.data?.[c.sku]} aberto={aberto === c.sku}
+              onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]}
+              precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={matriz.isLoading} />
+          ))}
+        </div>
+      )}
       <MaoDeObra />
       <MateriaPrima />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Visual em linhas: uma linha por produto, uma coluna por custo. Clicar numa célula abre, embaixo da
+// linha, a explicação daquele custo (de onde veio cada número) — e, na mão de obra, o campo de trocar.
+// ---------------------------------------------------------------------------
+type Coluna = "materia" | "embalagem" | "mod" | "premio" | "cif" | "total";
+const COLUNAS: Array<{ k: Coluna; nome: string; cor?: string }> = [
+  { k: "materia", nome: "Matéria-prima", cor: CORES.materia }, { k: "embalagem", nome: "Embalagem + etiqueta", cor: CORES.embalagem },
+  { k: "mod", nome: "Mão de obra", cor: CORES.mod }, { k: "premio", nome: "Prêmio por lote", cor: CORES.premio },
+  { k: "cif", nome: "Indireto (CIF)", cor: CORES.cif }, { k: "total", nome: "Custo variável" },
+];
+const valorColuna = (c: CustoSku, k: Coluna): number | null =>
+  k === "materia" ? c.materia : k === "embalagem" ? c.embalagem + c.etiqueta : k === "mod" ? c.mod : k === "premio" ? c.premio ?? 0 : k === "cif" ? c.cif ?? 0 : c.cv;
+
+type ProdSku = { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null | undefined;
+
+function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, precosCarregando }: {
+  linhas: CustoSku[]; fotos: Record<string, string>; cenario: Cenario; cfgs: Record<string, CenarioSku>; prod: Record<string, ProdSku>;
+  matrizPorSku: Record<string, LinhaMatriz[]>; mcs: number[]; precosCarregando: boolean;
+}) {
+  const [aberto, setAberto] = useState<{ sku: string; col: Coluna } | null>(null);
+  const clicar = (sku: string, col: Coluna) => setAberto(aberto && aberto.sku === sku && aberto.col === col ? null : { sku, col });
+  const nCols = 2 + COLUNAS.length;
+  return (
+    <Cartao>
+      <div style={{ overflowX: "auto" }}>
+        <table style={tabela}>
+          <thead><tr>
+            <th style={th}>Produto</th>
+            {COLUNAS.map((col) => (
+              <th key={col.k} style={{ ...th, textAlign: "right" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>{col.cor && <span style={{ width: 8, height: 8, borderRadius: 2, background: col.cor }} />}{col.nome}</span>
+              </th>
+            ))}
+            <th style={{ ...th, textAlign: "right" }}>vs padrão</th>
+          </tr></thead>
+          <tbody>
+            {linhas.map((c) => {
+              const ab = aberto?.sku === c.sku ? aberto.col : null;
+              const dif = c.cv - c.cv_padrao;
+              return (
+                <Fragment key={c.sku}>
+                  <tr style={{ background: ab ? "var(--pm-s2)" : undefined }}>
+                    <td style={{ ...td, minWidth: 260 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        {fotos[c.sku] ? <img src={fotos[c.sku]} alt="" style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", background: "#fff", flexShrink: 0 }} /> : <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--pm-s2)", flexShrink: 0 }} />}
+                        <div style={{ minWidth: 0 }}>
+                          <b>{c.sku}</b> {c.mistura && <Selo tom="azul">mistura</Selo>}{c.alerta_desperdicio && <Selo tom="r">desperdício</Selo>}
+                          <div style={{ fontSize: 11.5, color: "var(--pm-t2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 420 }} title={c.nome ?? ""}>{c.nome}</div>
+                        </div>
+                      </div>
+                    </td>
+                    {COLUNAS.map((col) => {
+                      const v = valorColuna(c, col.k);
+                      const sel = ab === col.k;
+                      return (
+                        <td key={col.k} style={{ ...td, textAlign: "right", padding: "4px 6px" }}>
+                          <button type="button" onClick={() => clicar(c.sku, col.k)} title={`Ver como ${col.nome.toLowerCase()} foi calculado`}
+                            style={{ border: `1px solid ${sel ? "var(--pm-a)" : "transparent"}`, borderRadius: 7, background: sel ? "var(--pm-as)" : "transparent", cursor: "pointer", color: sel ? "var(--pm-at)" : "inherit", font: "inherit",
+                              fontWeight: col.k === "total" ? 750 : 600, fontSize: col.k === "total" ? 14 : 13, fontVariantNumeric: "tabular-nums", padding: "4px 8px", whiteSpace: "nowrap" }}
+                            className="pm-hv">
+                            {v == null ? "—" : brl(v)}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td style={{ ...td, textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums", color: Math.abs(dif) < 0.005 ? "var(--pm-t3)" : dif > 0 ? "var(--pm-r)" : "var(--pm-g)", whiteSpace: "nowrap" }}>
+                      {Math.abs(dif) < 0.005 ? "= padrão" : `${dif > 0 ? "+" : ""}${brl(dif)}`}
+                    </td>
+                  </tr>
+                  {ab && (
+                    <tr>
+                      <td colSpan={nCols} style={{ ...td, padding: "0 8px 12px", background: "var(--pm-s2)", borderBottom: "2px solid var(--pm-a)" }}>
+                        <ExplicacaoCusto c={c} col={ab} cenario={cenario} cfg={cfgs[c.sku]} prod={prod[c.sku]} precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={precosCarregando} onFechar={() => setAberto(null)} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Cartao>
+  );
+}
+
+function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarregando, onFechar }: {
+  c: CustoSku; col: Coluna; cenario: Cenario; cfg?: CenarioSku; prod: ProdSku; precos?: LinhaMatriz[]; mcs: number[]; precosCarregando: boolean; onFechar: () => void;
+}) {
+  const [ajustar, setAjustar] = useState(false);
+  const titulo = COLUNAS.find((x) => x.k === col)!;
+  const farinhaRs = (Number(c.kg_farinha) || 0) * (Number(c.preco_kg) || 0);
+  const misturaRs = c.mistura ? (Number(c.un_mistura) || 0) * (Number(c.preco_mistura_un) || 0) : 0;
+  const L = ({ r, v, sub }: { r: React.ReactNode; v?: React.ReactNode; sub?: React.ReactNode }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: "0 12px", alignItems: "baseline", padding: "3px 0", borderBottom: "1px dashed var(--pm-b)" }}>
+      <span>{r}{sub && <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>{sub}</div>}</span>
+      {v != null && <b style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{v}</b>}
+    </div>
+  );
+  const texto: React.ReactNode = (() => {
+    switch (col) {
+      case "materia": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>O que entra no saco e quanto cada parte custa, no cenário "{cenario.nome}".</p>
+          <L r={<><b>{c.farinha_nome ?? "Farinha (não identificada)"}</b> — {num(c.kg_farinha ?? c.kg_un, 3)} kg × {brl(c.preco_kg, 4)}/kg</>}
+            v={brl(farinhaRs)}
+            sub={<>consumo <b>{FONTE_KG[c.kg_un_fonte]}</b> (padrão da ficha {num(c.kg_un_padrao, 3)} kg · medido no fechamento do big bag {c.kg_un_medido == null ? "—" : num(c.kg_un_medido, 3)} kg{c.bags_medidos ? `, ${c.bags_medidos} bags` : ""}) · preço <b>{FONTE_PRECO_KG[c.preco_kg_fonte] ?? c.preco_kg_fonte}</b> (última entrada {brl(c.preco_kg_ultima, 4)} · referência {brl(c.preco_kg_referencia, 4)} · média 90 d {brl(c.preco_kg_media_90d, 4)})</>} />
+          {c.mistura && <L r={<><b>{c.mistura_nome ?? "Componente da mistura"}</b> — {num(c.un_mistura, 3)} un × {brl(c.preco_mistura_un)}</>} v={brl(misturaRs)} sub="produto comprado; preço = custo do cadastro do Tiny (ou o manual do cenário)" />}
+          <L r={<b>Matéria-prima por saco</b>} v={brl(c.materia)} />
+          {c.alerta_desperdicio && <div style={{ color: "var(--pm-r)", fontWeight: 600, marginTop: 6 }}>Consumo medido {pct((c.kg_un_medido ?? 0) / c.kg_un_padrao - 1)} acima do padrão: {brl(c.desperdicio_un)} de desperdício por saco, {brl(c.desperdicio_mes, 0)} por mês a {int(cenario.volume_mes_un)} un.</div>}
+        </>
+      );
+      case "embalagem": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Saco e etiqueta, por unidade. O preço é o custo médio das entradas de matéria-prima, salvo valor manual no cenário.</p>
+          <L r={<><b>{c.embalagem_nome ?? "Embalagem"}</b></>} v={brl(c.embalagem, 4)} sub={cfg?.embalagem_rs_un_manual != null ? "valor manual do cenário" : "custo médio do cadastro de insumos"} />
+          <L r={<b>Etiqueta</b>} v={brl(c.etiqueta, 4)} sub={cfg?.etiqueta_rs_un_manual != null ? "valor manual do cenário" : c.etiqueta > 0 ? "custo médio do cadastro de insumos" : "embalagem impressa, sem etiqueta"} />
+          <L r={<b>Embalagem + etiqueta por saco</b>} v={brl(c.embalagem + c.etiqueta)} />
+        </>
+      );
+      case "mod": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Custo das pessoas que fizeram o lote: diarista = diária ÷ {num(cenario.horas_dia_diarista, 0)} h; mensalista = salário × {num(cenario.fator_encargos, 2)} de encargos ÷ {int(cenario.horas_mes_mensalista)} h. Dividido pelos sacos que a equipe produziu por hora.</p>
+          <L r={<><b>Fonte neste cenário:</b> {FONTE_MOD[c.mod_fonte] ?? c.mod_fonte}</>} />
+          {c.mod_un_homem_hora != null && <L r={<>Produtividade medida</>} v={`${num(c.mod_un_homem_hora, 1)} sacos por pessoa/hora`}
+            sub={prod ? `${num(prod.un_h_linha, 1)} sacos/h de linha · ${prod.do_grupo ? "média do grupo (este produto tem menos de 2 lotes / 200 sacos limpos)" : `${prod.lotes} ${prod.lotes === 1 ? "lote" : "lotes"}, ${int(prod.un_total)} sacos`}` : undefined} />}
+          {c.mod_rs_hora != null && <L r="Custo da hora de trabalho" v={`${brl(c.mod_rs_hora)}/homem-hora`} sub="média ponderada das pessoas dos lotes considerados" />}
+          {c.mod_un_homem_hora != null && c.mod_rs_hora != null && <L r={<>{brl(c.mod_rs_hora)} ÷ {num(c.mod_un_homem_hora, 1)} sacos</>} v={brl(c.mod_rs_hora / c.mod_un_homem_hora)} />}
+          <div style={{ marginTop: 8, maxWidth: 420 }}><MaoDeObraRapida c={c} cenario={cenario} /></div>
+        </>
+      );
+      case "premio": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Prêmio pago à equipe por big bag fechado, rateado pelos sacos que o bag rende.</p>
+          <L r={<>{brl(cfg?.premio_rs_lote ?? 50)} por big bag ÷ {num(c.un_por_lote, 0)} sacos</>} v={brl(c.premio, 4)} sub={cfg?.un_por_lote != null ? "sacos por bag informados no cenário" : `sacos por bag = 1.000 kg ÷ ${num(c.kg_farinha ?? c.kg_un, 3)} kg de farinha por saco`} />
+        </>
+      );
+      case "cif": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Custo indireto de fabricação por saco: energia, espaço, depreciação da seladora. É um valor informado no cenário (hoje {brl(c.cif ?? 0, 4)}), não medido.</p>
+          <L r="Indireto por saco" v={brl(c.cif ?? 0, 4)} sub={(c.cif ?? 0) === 0 ? "zerado — use 'Ajustar tudo no cenário' ou a ação em massa 'CIF R$/un' para informar" : "informado no cenário"} />
+        </>
+      );
+      default: return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Soma das colunas. É o custo variável de fabricar um saco — sem mão de obra fixa, sem venda.</p>
+          <L r="Matéria-prima" v={brl(c.materia)} /><L r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} /><L r="Mão de obra" v={c.mod == null ? "—" : brl(c.mod)} />
+          <L r="Prêmio por lote" v={brl(c.premio ?? 0)} /><L r="Indireto (CIF)" v={brl(c.cif ?? 0)} />
+          <L r={<b>Custo variável</b>} v={<span style={{ fontSize: 15 }}>{brl(c.cv)}</span>} sub={<>padrão da ficha {brl(c.cv_padrao)} · medido {c.cv_medido == null ? "—" : brl(c.cv_medido)}</>} />
+          <div style={{ marginTop: 10 }}><PrecosMarketplace c={c} precos={precos} mcs={mcs} carregando={precosCarregando} cenario={cenario} /></div>
+        </>
+      );
+    }
+  })();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, paddingTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {titulo.cor && <span style={{ width: 10, height: 10, borderRadius: 3, background: titulo.cor }} />}
+        <b style={{ fontSize: 13 }}>{titulo.nome} — {c.sku}</b>
+        <div style={{ flex: 1 }} />
+        <Botao tom="fantasma" onClick={() => setAjustar((v) => !v)} style={{ height: 28 }}>{ajustar ? "Fechar ajustes" : "Ajustar tudo no cenário"}</Botao>
+        <Botao tom="fantasma" onClick={onFechar} style={{ height: 28 }}>Fechar</Botao>
+      </div>
+      <div style={{ maxWidth: 900 }}>{texto}</div>
+      {c.avisos.length > 0 && <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11.5, color: "var(--pm-am)" }}>{c.avisos.map((a) => <li key={a}>{a}</li>)}</ul>}
+      {ajustar && <EditorSku c={c} cfg={cfg} cenario={cenario} />}
     </div>
   );
 }
