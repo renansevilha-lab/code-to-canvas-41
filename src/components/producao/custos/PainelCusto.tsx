@@ -6,6 +6,7 @@ import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "..
 import { brl, int, kg, useFotos } from "@/lib/producao";
 import { Produtividade } from "./Produtividade";
 import { LinhaCanal } from "./Precificacao";
+import { CustoNoSistema, LancarCustoDialog, diferente, useCmvSistema, type CmvSistema } from "./LancarCusto";
 import {
   FONTE_KG, FONTE_MOD, FONTE_PRECO_KG, num, pct, salvarSku, salvarSkus, useCenarioSkus, useCusto, useMargens, useMatriz, useMedicoes, useRecalcular,
   type Cenario, type CenarioSku, type CustoSku, type LinhaMatriz,
@@ -22,6 +23,11 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
   const [visual, setVisual] = useState<"cartoes" | "linhas">(() => { try { return localStorage.getItem("custos.visual") === "linhas" ? "linhas" : "cartoes"; } catch { return "cartoes"; } });
   const trocarVisual = (v: "cartoes" | "linhas") => { setVisual(v); try { localStorage.setItem("custos.visual", v); } catch { /* sem armazenamento */ } };
   const linhas = custo.data ?? [];
+  // custo que o sistema usa hoje (Pedidos Integrados / Promoções) × o do cenário; "Lançar" grava o do cenário (10/nov)
+  const sistemaQ = useCmvSistema(linhas.map((c) => c.sku));
+  const sistema = sistemaQ.data ?? {};
+  const [lancar, setLancar] = useState<CustoSku[] | null>(null);
+  const nDif = linhas.filter((c) => diferente(c, sistema[c.sku])).length;
   const porSku = useMemo(() => Object.fromEntries((skus.data ?? []).map((s) => [s.sku, s])), [skus.data]);
   const med = useMedicoes();
   // preços por canal (preco_cenario_matriz) para o bloco "Preço nos marketplaces" de cada cartão
@@ -61,16 +67,23 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
         </div>
         <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>{visual === "linhas" ? "Cada coluna é um custo. Clique num valor para ver como ele foi calculado." : "Um cartão por produto, com matéria-prima, preço nos marketplaces e ajustes."}</span>
         <div style={{ flex: 1 }} />
+        <Botao tom={nDif ? "primario" : "secundario"} onClick={() => setLancar(linhas)} disabled={!linhas.length} style={{ height: 30 }}
+          title="Grava o custo variável do cenário como o custo que os Pedidos Integrados, o DRE e as Promoções usam">
+          Lançar custos no sistema{nDif ? ` (${nDif} diferente${nDif > 1 ? "s" : ""})` : ""}
+        </Botao>
         <Legenda />
       </div>
+      <LancarCustoDialog itens={lancar} sistema={sistema} cenarioNome={cenario.nome} onFechar={() => setLancar(null)} />
       {visual === "linhas" ? (
-        <TabelaCustos linhas={linhas} fotos={fotos.data ?? {}} cenario={cenario} cfgs={porSku} prod={prod} matrizPorSku={matrizPorSku} mcs={mcs} precosCarregando={matriz.isLoading} />
+        <TabelaCustos linhas={linhas} fotos={fotos.data ?? {}} cenario={cenario} cfgs={porSku} prod={prod} matrizPorSku={matrizPorSku} mcs={mcs} precosCarregando={matriz.isLoading}
+          sistema={sistema} sistemaCarregando={sistemaQ.isLoading} onLancar={(c) => setLancar([c])} />
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(520px, 1fr))", gap: 12 }}>
           {linhas.map((c) => (
             <CartaoSku key={c.sku} c={c} foto={fotos.data?.[c.sku]} aberto={aberto === c.sku}
               onAbrir={() => setAberto(aberto === c.sku ? null : c.sku)} cfg={porSku[c.sku]} pronto={!!skus.data} cenario={cenario} prod={prod[c.sku]}
-              precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={matriz.isLoading} />
+              precos={matrizPorSku[c.sku]} mcs={mcs} precosCarregando={matriz.isLoading}
+              sistema={sistema[c.sku]} sistemaCarregando={sistemaQ.isLoading} onLancar={() => setLancar([c])} />
           ))}
         </div>
       )}
@@ -95,13 +108,14 @@ const valorColuna = (c: CustoSku, k: Coluna): number | null =>
 
 type ProdSku = { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null | undefined;
 
-function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, precosCarregando }: {
+function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, precosCarregando, sistema, sistemaCarregando, onLancar }: {
   linhas: CustoSku[]; fotos: Record<string, string>; cenario: Cenario; cfgs: Record<string, CenarioSku>; prod: Record<string, ProdSku>;
   matrizPorSku: Record<string, LinhaMatriz[]>; mcs: number[]; precosCarregando: boolean;
+  sistema: Record<string, CmvSistema>; sistemaCarregando: boolean; onLancar: (c: CustoSku) => void;
 }) {
   const [aberto, setAberto] = useState<{ sku: string; col: Coluna } | null>(null);
   const clicar = (sku: string, col: Coluna) => setAberto(aberto && aberto.sku === sku && aberto.col === col ? null : { sku, col });
-  const nCols = 2 + COLUNAS.length;
+  const nCols = 3 + COLUNAS.length;
   return (
     <Cartao>
       <div style={{ overflowX: "auto" }}>
@@ -114,6 +128,7 @@ function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, p
               </th>
             ))}
             <th style={{ ...th, textAlign: "right" }}>vs padrão</th>
+            <th style={{ ...th, textAlign: "right" }} title="O custo que os Pedidos Integrados, o DRE e as Promoções usam hoje">No sistema</th>
           </tr></thead>
           <tbody>
             {linhas.map((c) => {
@@ -147,6 +162,9 @@ function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, p
                     })}
                     <td style={{ ...td, textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums", color: Math.abs(dif) < 0.005 ? "var(--pm-t3)" : dif > 0 ? "var(--pm-r)" : "var(--pm-g)", whiteSpace: "nowrap" }}>
                       {Math.abs(dif) < 0.005 ? "= padrão" : `${dif > 0 ? "+" : ""}${brl(dif)}`}
+                    </td>
+                    <td style={{ ...td, textAlign: "right", fontSize: 12.5 }}>
+                      <CustoNoSistema c={c} s={sistema[c.sku]} carregando={sistemaCarregando} onLancar={() => onLancar(c)} compacto />
                     </td>
                   </tr>
                   {ab && (
@@ -262,7 +280,8 @@ function Legenda() {
   );
 }
 
-function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, precos, mcs, precosCarregando }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario;
+function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, precos, mcs, precosCarregando, sistema, sistemaCarregando, onLancar }: { c: CustoSku; foto?: string; aberto: boolean; onAbrir: () => void; cfg?: CenarioSku; pronto: boolean; cenario: Cenario;
+  sistema?: CmvSistema; sistemaCarregando: boolean; onLancar: () => void;
   prod?: { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null;
   precos?: LinhaMatriz[]; mcs: number[]; precosCarregando: boolean }) {
   const partes = [
@@ -308,6 +327,9 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
         <span>Medido <b>{c.cv_medido == null ? "—" : brl(c.cv_medido)}</b></span>
         <span>Cenário <b>{brl(c.cv)}</b></span>
         {Math.abs(c.cv - c.cv_padrao) >= 0.005 && <span style={{ color: c.cv > c.cv_padrao ? "var(--pm-r)" : "var(--pm-g)" }}>{c.cv > c.cv_padrao ? "+" : ""}{brl(c.cv - c.cv_padrao)} vs padrão</span>}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }} title="O custo que os Pedidos Integrados, o DRE e as Promoções usam hoje">
+          No sistema <CustoNoSistema c={c} s={sistema} carregando={sistemaCarregando} onLancar={onLancar} compacto />
+        </span>
       </div>
 
       {c.alerta_desperdicio && (
