@@ -226,7 +226,6 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
             sub={prod ? `${num(prod.un_h_linha, 1)} sacos/h de linha · ${prod.do_grupo ? "média do grupo (este produto tem menos de 2 lotes / 200 sacos limpos)" : `${prod.lotes} ${prod.lotes === 1 ? "lote" : "lotes"}, ${int(prod.un_total)} sacos`}` : undefined} />}
           {c.mod_rs_hora != null && <L r="Custo da hora de trabalho" v={`${brl(c.mod_rs_hora)}/homem-hora`} sub="média ponderada das pessoas dos lotes considerados" />}
           {c.mod_un_homem_hora != null && c.mod_rs_hora != null && <L r={<>{brl(c.mod_rs_hora)} ÷ {num(c.mod_un_homem_hora, 1)} sacos</>} v={brl(c.mod_rs_hora / c.mod_un_homem_hora)} />}
-          <div style={{ marginTop: 8, maxWidth: 420 }}><MaoDeObraRapida c={c} cenario={cenario} /></div>
         </>
       );
       case "premio": return (
@@ -238,7 +237,7 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
       case "cif": return (
         <>
           <p style={{ margin: "0 0 6px" }}>Custo indireto de fabricação por saco: energia, espaço, depreciação da seladora. É um valor informado no cenário (hoje {brl(c.cif ?? 0, 4)}), não medido.</p>
-          <L r="Indireto por saco" v={brl(c.cif ?? 0, 4)} sub={(c.cif ?? 0) === 0 ? "zerado — use 'Ajustar tudo no cenário' ou a ação em massa 'CIF R$/un' para informar" : "informado no cenário"} />
+          <L r="Indireto por saco" v={brl(c.cif ?? 0, 4)} sub={(c.cif ?? 0) === 0 ? "zerado — informe logo abaixo ou pela ação em massa 'CIF R$/un'" : "informado no cenário"} />
         </>
       );
       default: return (
@@ -263,7 +262,9 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
       </div>
       <div style={{ maxWidth: 900 }}>{texto}</div>
       {c.avisos.length > 0 && <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11.5, color: "var(--pm-am)" }}>{c.avisos.map((a) => <li key={a}>{a}</li>)}</ul>}
-      {ajustar && <EditorSku c={c} cfg={cfg} cenario={cenario} />}
+      {ajustar
+        ? <EditorSku key={`tudo-${c.sku}`} c={c} cfg={cfg} cenario={cenario} />
+        : col !== "total" && <div style={{ maxWidth: 900 }}><EditorSku key={`${col}-${c.sku}`} c={c} cfg={cfg} cenario={cenario} so={col} /></div>}
     </div>
   );
 }
@@ -486,7 +487,8 @@ function paraForm(cfg?: CenarioSku): Form {
   };
 }
 
-function EditorSku({ c, cfg, cenario }: { c: CustoSku; cfg?: CenarioSku; cenario: Cenario }) {
+function EditorSku({ c, cfg, cenario, so }: { c: CustoSku; cfg?: CenarioSku; cenario: Cenario; so?: Exclude<Coluna, "total"> }) {
+  const ver = (k: Exclude<Coluna, "total">) => !so || so === k;
   const recalcular = useRecalcular();
   const [f, setF] = useState<Form>(() => paraForm(cfg));
   const [estado, setEstado] = useState<"" | "salvando" | "salvo" | "erro">("");
@@ -530,10 +532,10 @@ function EditorSku({ c, cfg, cenario }: { c: CustoSku; cfg?: CenarioSku; cenario
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 8, borderTop: "1px solid var(--pm-b)" }}>
       <div style={{ fontSize: 12, color: estado === "erro" ? "var(--pm-r)" : "var(--pm-t3)" }}>
-        Cada mudança vale só para o cenário "{cenario.nome}" e não mexe nos dados de produção.
+        {so ? <b style={{ color: "var(--pm-t2)" }}>Editar aqui · </b> : null}Cada mudança vale só para o cenário "{cenario.nome}" e não mexe nos dados de produção.
         {estado === "salvando" && " Salvando…"}{estado === "salvo" && " Salvo — custo recalculado."}{estado === "erro" && " Número inválido ou erro ao salvar."}
       </div>
-      {grupo("Matéria-prima", <>
+      {ver("materia") && grupo("Matéria-prima", <>
         <Campo rotulo="Consumo (kg por saco)" dica={`padrão ${num(c.kg_un_padrao, 3)} · medido ${c.kg_un_medido == null ? "—" : num(c.kg_un_medido, 3)}${c.bags_medidos ? ` (${c.bags_medidos} big bags)` : ""}`}>
           <Escolha value={f.fonte_materia} onChange={(e) => mudar("fonte_materia", e.target.value)}>
             <option value="medido">Medido (fechamento do big bag)</option><option value="padrao">Padrão da ficha</option><option value="manual">Manual</option>
@@ -548,11 +550,11 @@ function EditorSku({ c, cfg, cenario }: { c: CustoSku; cfg?: CenarioSku; cenario
         {ent("preco_kg_manual", "R$/kg (manual)", undefined, f.preco_kg_fonte !== "manual")}
         {c.mistura && ent("preco_mistura_un_manual", `R$ por un de ${c.mistura_nome ?? "mistura"}`, `hoje ${brl(c.preco_mistura_un)} (custo do Tiny)`)}
       </>)}
-      {grupo("Embalagem", <>
+      {ver("embalagem") && grupo("Embalagem", <>
         {ent("embalagem_rs_un_manual", `Embalagem (R$/un)`, `${c.embalagem_nome ?? ""} · cadastro ${brl(c.embalagem, 4)} (vazio = cadastro)`)}
         {ent("etiqueta_rs_un_manual", "Etiqueta (R$/un)", `cadastro ${brl(c.etiqueta, 4)} (vazio = cadastro)`)}
       </>)}
-      {grupo("Mão de obra", <>
+      {ver("mod") && grupo("Mão de obra", <>
         <Campo rotulo="Fonte" dica={`medida: ${c.mod_un_homem_hora == null ? "—" : `${num(c.mod_un_homem_hora, 1)} un/homem-hora`} · ${brl(c.mod_rs_hora)}/h`}>
           <Escolha value={f.fonte_mod} onChange={(e) => mudar("fonte_mod", e.target.value)}>
             <option value="medido">Medida nos lotes</option><option value="manual_hora">Manual: R$/hora e un/homem-hora</option><option value="manual_un">Manual: R$ por saco</option>
@@ -562,7 +564,14 @@ function EditorSku({ c, cfg, cenario }: { c: CustoSku; cfg?: CenarioSku; cenario
         {ent("un_homem_hora_manual", "Sacos por homem-hora", undefined, f.fonte_mod !== "manual_hora")}
         {ent("mod_rs_un_manual", "R$ por saco", undefined, f.fonte_mod !== "manual_un")}
       </>)}
-      {grupo("Outros", <>
+      {ver("premio") && so && grupo("Prêmio por lote", <>
+        {ent("premio_rs_lote", "Prêmio por big bag (R$)", `÷ ${num(c.un_por_lote, 0)} sacos = ${brl(c.premio, 4)}/un`)}
+        {ent("un_por_lote", "Sacos por big bag", "vazio = 1.000 kg ÷ kg de farinha por saco")}
+      </>)}
+      {ver("cif") && so && grupo("Indireto (CIF)", <>
+        {ent("cif_rs_un", "Indireto — CIF (R$/un)", "energia, espaço, depreciação")}
+      </>)}
+      {!so && grupo("Outros", <>
         {ent("premio_rs_lote", "Prêmio por big bag (R$)", `÷ ${num(c.un_por_lote, 0)} sacos = ${brl(c.premio, 4)}/un`)}
         {ent("un_por_lote", "Sacos por big bag", "vazio = 1.000 kg ÷ kg de farinha por saco")}
         {ent("cif_rs_un", "Indireto — CIF (R$/un)", "energia, espaço, depreciação")}
