@@ -121,18 +121,34 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   const descontos = descQ.data ?? [];
   const desconto = descontos.find((d) => d.discount_id === descontoId) ?? null;
 
-  // ATUALIZAR: as variações do anúncio (espelho) e em que promoção ele já está (lido na Shopee)
-  const modelosQ = useQuery({
-    queryKey: ["ia-anuncio", "envio-promo-modelos", shopId, alvo.itemId],
-    enabled: atualizar, placeholderData: undefined, gcTime: 0,
-    queryFn: async (): Promise<ModeloEspelho[]> => {
+  // ATUALIZAR: as variações do anúncio e em que promoção ele já está, lidos AO VIVO na Shopee.
+  // 10/nov/2026: lia as variações do espelho (shopee_anuncios_variacao), que só se atualiza de madrugada. O anúncio
+  // simples que virou anúncio com variações no mesmo dia (46713408425, Ottz) aparecia sem variações: ia preço do item
+  // inteiro, a Shopee recusa em anúncio com variações, e ele ficou fora da promoção (a Shopee também tira o anúncio da
+  // promoção em que estava quando ele ganha variações). O espelho fica só como reserva se a leitura ao vivo falhar.
+  const lerModelos = async (): Promise<{ modelos: ModeloEspelho[]; temVariacao: boolean | null; aoVivo: boolean }> => {
+    try {
+      const r = await chamarVariacoesShopee("ler", { empresa, item_id: String(alvo.itemId) });
+      const an = r?.anuncio as { tem_variacao?: boolean; variacoes?: { model_id: number; sku: string; opcao: string; preco: number | null; preco_atual: number | null }[] } | undefined;
+      if (!an) throw new Error(r?.erro ?? "sem resposta");
+      const modelos = (an.variacoes ?? []).filter((v) => Number(v.model_id) > 0).map((v) => ({
+        model_id: Number(v.model_id), sku: v.sku || null, nome_variacao: v.opcao || null, preco: v.preco_atual ?? v.preco, preco_original: v.preco,
+      }));
+      return { modelos, temVariacao: !!an.tem_variacao, aoVivo: true };
+    } catch {
       const { data, error } = await supabaseExternal.from("shopee_anuncios_variacao").select("model_id, sku, nome_variacao, preco, preco_original")
         .eq("shop_id", shopId).eq("item_id", String(alvo.itemId));
       if (error) throw error;
-      return ((data ?? []) as ModeloEspelho[]).filter((m) => Number(m.model_id) > 0).map((m) => ({ ...m, model_id: Number(m.model_id) }));
-    },
+      const modelos = ((data ?? []) as ModeloEspelho[]).filter((m) => Number(m.model_id) > 0).map((m) => ({ ...m, model_id: Number(m.model_id) }));
+      return { modelos, temVariacao: null, aoVivo: false };
+    }
+  };
+  const modelosQ = useQuery({
+    queryKey: ["ia-anuncio", "envio-promo-modelos", shopId, alvo.itemId],
+    enabled: atualizar, placeholderData: undefined, gcTime: 0, staleTime: 0, retry: false,
+    queryFn: lerModelos,
   });
-  const modelos = atualizar ? (modelosQ.data ?? []) : [];
+  const modelos = atualizar ? (modelosQ.data?.modelos ?? []) : [];
   const ondeQ = useQuery({
     queryKey: ["ia-anuncio", "envio-promo-onde", shopId, alvo.itemId, descontos.map((d) => d.discount_id).join(",")],
     enabled: atualizar && descontos.length > 0, placeholderData: undefined, gcTime: 0, staleTime: 0,
@@ -189,17 +205,10 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     },
   });
   const calc = precosQ.data ?? {};
-  // nome da variação e CMV por linha (06/nov, pedido do dono). O espelho guarda só o índice da opção ("0", "1"…) em
-  // nome_variacao: o nome vem do anúncio ao vivo (só leitura) e, sem ele, do cadastro sem o nome do pai.
-  const aoVivoQ = useQuery({
-    queryKey: ["ia-anuncio", "envio-promo-opcoes", empresa, alvo.itemId],
-    enabled: atualizar && modelos.length > 0, staleTime: 5 * 60_000, retry: false,
-    queryFn: async (): Promise<Record<string, string>> => {
-      const r = await chamarVariacoesShopee("ler", { empresa, item_id: String(alvo.itemId) });
-      const vs = ((r?.anuncio?.variacoes ?? []) as { sku: string; opcao: string }[]);
-      return Object.fromEntries(vs.filter((v) => v.sku && v.opcao).map((v) => [v.sku, v.opcao]));
-    },
-  });
+  // nome da variação e CMV por linha (06/nov, pedido do dono). Lido ao vivo, o nome da opção vem junto das variações;
+  // pela reserva do espelho (só o índice "0", "1"…) cai no cadastro sem o nome do pai.
+  const opcaoAoVivo: Record<string, string> = modelosQ.data?.aoVivo
+    ? Object.fromEntries(modelos.filter((m) => m.sku && m.nome_variacao).map((m) => [String(m.sku), String(m.nome_variacao)])) : {};
   const infoQ = useQuery({
     queryKey: ["ia-anuncio", "envio-promo-info", skus.map((x) => x.sku).join(",")],
     enabled: skus.length > 0, staleTime: 5 * 60_000,
@@ -217,7 +226,7 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
     },
   });
   const nomeVariacao = (x: { sku: string; nome: string }): string => {
-    const vivo = aoVivoQ.data?.[x.sku];
+    const vivo = opcaoAoVivo[x.sku];
     if (vivo) return vivo;
     const cad = infoQ.data?.[x.sku]?.nome ?? null;
     if (cad && nome && cad.startsWith(`${nome} - `)) return cad.slice(nome.length + 3).trim();
@@ -243,14 +252,32 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
 
   async function cadastrar(d0: AnuncioPronto) {
     if (!desconto) return;
-    // atualizar: o envio não sabe as variações nem o preço cheio de cada uma — vêm do espelho
-    const d: AnuncioPronto = atualizar && !d0.modelos?.length && modelos.some((m) => m.sku)
-      ? { ...d0, modelos: modelos.filter((m) => m.sku).map((m) => ({ model_id: m.model_id, sku: String(m.sku) })),
-          precos: { ...Object.fromEntries(modelos.filter((m) => m.sku && (m.preco_original ?? m.preco)).map((m) => [String(m.sku), Number(m.preco_original ?? m.preco)])), ...d0.precos } }
+    // atualizar: o envio não sabe as variações nem o preço cheio de cada uma — relidas na Shopee AGORA (a variação pode ter
+    // sido criada minutos antes nesta mesma tela)
+    let vivo = modelosQ.data ?? null;
+    if (atualizar && !d0.modelos?.length) {
+      try { vivo = await lerModelos(); } catch { /* fica o que a tela já tinha */ }
+    }
+    const ms = atualizar ? (vivo?.modelos ?? []) : [];
+    if (atualizar && !d0.modelos?.length && vivo?.temVariacao && !ms.some((m) => m.sku)) {
+      setResultado({ ok: 0, falhas: ["o anúncio tem variações na Shopee, mas nenhuma com SKU: cadastre pelo Promoções › Minha Promoção"], nome: desconto.discount_name });
+      return;
+    }
+    const d: AnuncioPronto = atualizar && !d0.modelos?.length && ms.some((m) => m.sku)
+      ? { ...d0, modelos: ms.filter((m) => m.sku).map((m) => ({ model_id: m.model_id, sku: String(m.sku) })),
+          precos: { ...Object.fromEntries(ms.filter((m) => m.sku && (m.preco_original ?? m.preco)).map((m) => [String(m.sku), Number(m.preco_original ?? m.preco)])), ...d0.precos } }
       : d0;
+    // variação que a tela ainda não tinha (lida agora): preço promocional calculado na hora, na margem escolhida
+    const extra: Record<string, number> = {};
+    const faltam = (d.modelos ?? []).map((m) => m.sku).filter((s) => promoDe(s) == null);
+    if (faltam.length) {
+      const rs = await Promise.all(faltam.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: faixa })));
+      faltam.forEach((s, i) => { const v = Number((rs[i].data as { preco_sugerido?: number } | null)?.preco_sugerido); if (v > 0) extra[s] = v; });
+      if (vivo !== modelosQ.data) void modelosQ.refetch();
+    }
     const pulados: string[] = [];
     const vale = (s: string): number | null => {
-      const promo = promoDe(s); const cheio = d.precos[s];
+      const promo = promoDe(s) ?? extra[s] ?? null; const cheio = d.precos[s];
       if (!(promo && promo > 0)) { pulados.push(`${s}: sem preço promocional`); return null; }
       if (cheio != null && promo >= cheio) { pulados.push(`${s}: o promocional (${formatBRL(promo)}) não fica abaixo do preço cheio (${formatBRL(cheio)})`); return null; }
       return promo;
