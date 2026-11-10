@@ -1568,6 +1568,7 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   `modulo=em-campanha` + `shopee_anuncios_busca`, recusados na sessão, sem custo); "Fora de promoção" é um item da lista; tirar da promoção
   e aplicar preço passam pela prévia; "Adicionar produtos" ainda é o diálogo antigo (AdicionarAoDesconto). Relâmpago, Mercado Livre,
   Amazon e TikTok seguem com a tela antiga abaixo do cabeçalho novo — próximas fases.
+  **10/nov:** com preço digitado e não aplicado, o filtro de faixa de MC (`TabelaPromo`) usa a MC do preço de ANTES — a linha não sai da faixa no meio da edição; ao aplicar/descartar volta a valer o preço da promoção.
   **Fase 2 (21/out) = Relâmpago** (`ShopeeRelampago.tsx`): "Amanhã" = `flashsale_programacao` (editar preço vai pela prévia e grava SÓ na
   programação; estoque/limite/pausar gravam direto; teto = `tetoRelampago` e preço acima dele fica "Aguardando · a Shopee deve recusar";
   motivo da última rodada por SKU vem de `flashsale_criadas.detalhe.problemas`); dias anteriores = `flashsale_criadas` + itens ao vivo

@@ -345,8 +345,11 @@ export function TabelaPromo({
   });
   const passaBusca = (o: typeof base[number]) => !termos.length || termos.every((t) => semAcento(`${o.l.nome} ${o.l.sub ?? ""} ${o.l.sku ?? ""} ${o.l.code}`).includes(t));
   const passaF = (o: typeof base[number]) => !filtroLinha || filtroLinha(o.l);
+  // A faixa de MC é decidida pelo preço de ANTES da edição enquanto houver preço digitado e não aplicado: a linha não some
+  // do filtro no meio da digitação (pedido do dono, 10/nov). Depois de aplicar ou descartar, volta a valer o preço da promoção.
+  const mFaixa = (o: typeof base[number]) => (o.dt != null ? o.m0 : o.m);
   const FX = FAIXAS.find((f) => f.id === faixa) ?? FAIXAS[0];
-  const vis = base.filter((o) => passaBusca(o) && passaF(o) && (faixa === "todas" || (o.m && FX.t(o.m.pct))));
+  const vis = base.filter((o) => { const mf = mFaixa(o); return passaBusca(o) && passaF(o) && (faixa === "todas" || (mf && FX.t(mf.pct))); });
   const visKeys = vis.map((o) => o.l.key);
   const allOn = visKeys.length > 0 && visKeys.every((k) => sel.has(k));
   const nSel = linhas.filter((l) => sel.has(l.key)).length;
@@ -387,7 +390,7 @@ export function TabelaPromo({
               <span style={{ fontSize: 11.5, color: "var(--pm-t3)", margin: "0 2px 0 6px" }}>MC</span>
               {FAIXAS.map((f) => {
                 const on = faixa === f.id;
-                const n = base.filter((o) => passaBusca(o) && passaF(o) && (f.id === "todas" || (o.m && f.t(o.m.pct)))).length;
+                const n = base.filter((o) => passaBusca(o) && passaF(o) && (f.id === "todas" || ((mf) => !!mf && f.t(mf.pct))(mFaixa(o)))).length;
                 return (
                   <button key={f.id} type="button" onClick={() => setFaixa(f.id)}
                     style={{ height: 26, padding: "0 9px", borderRadius: 7, border: `1px solid ${on ? "var(--pm-a)" : "var(--pm-b)"}`, background: on ? "var(--pm-as)" : "var(--pm-s)", color: on ? "var(--pm-at)" : "var(--pm-t2)", cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5 }}>
