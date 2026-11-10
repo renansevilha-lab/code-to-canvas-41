@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -93,9 +93,9 @@ function bucketRegra(
 
 type SortKey =
   | "investimento" | "vendas" | "roas" | "ctr" | "acos" | "cpc"
-  | "orcamento_diario" | "impressoes" | "cliques";
+  | "orcamento_diario" | "impressoes" | "cliques" | "mc";
 
-const SORTABLE: SortKey[] = ["investimento", "vendas", "roas", "ctr", "acos", "cpc", "orcamento_diario", "impressoes", "cliques"];
+const SORTABLE: SortKey[] = ["investimento", "vendas", "roas", "ctr", "acos", "cpc", "orcamento_diario", "impressoes", "cliques", "mc"];
 
 interface AnuncioRow {
   campaign_id: number | string;
@@ -123,7 +123,19 @@ interface AnuncioRow {
   situacoes?: string[] | null;
   meta?: number | null;
   roas_equilibrio?: number | null;
+  /** MC do período (10/nov/2026): margem ÷ venda TOTAL do item no período, sem ADS e depois do ADS do item. */
+  venda_item?: number | null;
+  mc_pct?: number | null;
+  mc_pos_ads_pct?: number | null;
 }
+
+/** MC % do período (soma dos absolutos dos anúncios com gasto, cada item uma vez; % recalculado no banco). */
+type McPeriodo = {
+  venda: number | null; margem: number | null; gasto: number | null;
+  mc_pct: number | null; mc_pos_ads_pct: number | null; anuncios: number; sem_margem: number;
+  desde: string | null; parcial: boolean;
+  filtro: { anuncios: number; mc_pct: number | null; mc_pos_ads_pct: number | null } | null;
+};
 
 /** Situações (20/out/2026, pedido do dono: "bom ROAS mas poucos cliques, muitos cliques e baixo ROAS…").
  *  A regra mora no banco (ads_shopee_painel, p_situacao); "poucos/muitos" = abaixo/acima da MEDIANA dos
@@ -341,6 +353,7 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
   const [bolhas, setBolhas] = useState<{ investimento: number; roas: number; vendas: number; classif: Classificacao }[]>([]);
   const [situacoes, setSituacoes] = useState<Record<string, number>>({});
   const [limiares, setLimiares] = useState<Limiares | null>(null);
+  const [mc, setMc] = useState<McPeriodo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -366,7 +379,8 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
       if (cancelled) return;
       if (error) { setError(error.message); setLoading(false); return; }
       const d = (data ?? {}) as { total?: number; linhas?: AnuncioRow[]; resumo?: ResumoRow[]; bolhas?: Record<string, unknown>[];
-        situacoes?: Record<string, number>; limiares?: Limiares };
+        situacoes?: Record<string, number>; limiares?: Limiares; mc?: McPeriodo };
+      setMc(d.mc ?? null);
       setSituacoes(d.situacoes ?? {});
       setLimiares(d.limiares ?? null);
       setRows(d.linhas ?? []);
@@ -381,7 +395,7 @@ function usePainel(sp: SearchParams, de: string, ate: string) {
     return () => { cancelled = true; };
   }, [sp, de, ate]);
 
-  return { rows, total, resumo, bolhas, situacoes, limiares, loading, error };
+  return { rows, total, resumo, bolhas, situacoes, limiares, mc, loading, error };
 }
 
 function useFaixas() {
@@ -461,7 +475,7 @@ function AdsShopeePage() {
   const range = resolveRange(sp.period, sp.from, sp.to);
   const setRange = (r: PeriodRange) => update({ period: r.preset, from: r.from, to: r.to });
   const { rows: daily, loading: loadingDaily } = useDaily(sp.empresa, range.from, range.to);
-  const { rows: anuncios, total, resumo, bolhas: scatterPts, situacoes, limiares, loading: loadingAds, error: errAds } = usePainel(sp, range.from, range.to);
+  const { rows: anuncios, total, resumo, bolhas: scatterPts, situacoes, limiares, mc, loading: loadingAds, error: errAds } = usePainel(sp, range.from, range.to);
   // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
   const cfgQ = useShopeeAdsConfig(anuncios);
   // análise por anúncio (diálogo): clicar no nome do anúncio
@@ -627,7 +641,7 @@ function AdsShopeePage() {
         </Card>
 
         {/* KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-[14px]">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-[14px]">
           <Kpi label="Anúncios" value={formatNumber(totais.anuncios)} color="var(--color-chart-4)" />
           <Kpi label="Investimento" value={formatBRL(totais.inv)} color="var(--color-primary)" />
           <Kpi label="Vendas" value={formatBRL(totais.vendas)} color="var(--color-success)" />
@@ -642,6 +656,21 @@ function AdsShopeePage() {
             value={totais.acos > 0 ? formatPercent(totais.acos) : "—"}
             color="var(--color-warning)"
             highlight={totais.acos > 0 && totais.acos <= acosAlvo}
+          />
+          <Kpi
+            label="MC % no período"
+            value={mc?.mc_pct != null ? formatPercent(num(mc.mc_pct)) : "—"}
+            color="var(--color-chart-2)"
+            title={mc ? `Margem de contribuição dos ${formatNumber(mc.anuncios)} anúncios com gasto no período: margem (recebido − custo − imposto) ÷ venda TOTAL desses produtos, inclusive a que não veio do ADS. Soma dos valores, não média dos percentuais. Venda ${formatBRL(num(mc.venda))} · margem ${formatBRL(num(mc.margem))} · ADS ${formatBRL(num(mc.gasto))}.${mc.sem_margem ? ` ${mc.sem_margem} anúncio(s) sem venda ou sem custo ficam fora da margem (o gasto deles conta no pós-ADS).` : ""}` : undefined}
+            sub={mc?.mc_pos_ads_pct != null ? (
+              <>
+                <span className={cn(num(mc.mc_pos_ads_pct) < 0 ? "text-red-700 font-medium" : "")}>{formatPercent(num(mc.mc_pos_ads_pct))} depois do ADS</span>
+                {sp.sit || mc.filtro && mc.filtro.anuncios !== mc.anuncios ? (
+                  <span className="block">Filtro ({formatNumber(mc.filtro?.anuncios ?? 0)}): {mc.filtro?.mc_pct != null ? formatPercent(num(mc.filtro.mc_pct)) : "—"} · {mc.filtro?.mc_pos_ads_pct != null ? formatPercent(num(mc.filtro.mc_pos_ads_pct)) : "—"} depois</span>
+                ) : null}
+                {mc.parcial && mc.desde ? <span className="block text-amber-700">só desde {mc.desde.split("-").reverse().join("/")}</span> : null}
+              </>
+            ) : undefined}
           />
         </div>
 
@@ -901,20 +930,21 @@ function AdsShopeePage() {
                   <SortableHead label="ROAS" keyId="roas" sort={sp.sort} dir={sp.dir} onSort={onSort} align="center" />
                   <TableHead className="text-center" title="Meta de ROAS da campanha na Shopee (lápis = alterar meta e orçamento)">Meta ROAS</TableHead>
                   <SortableHead label="ACOS" keyId="acos" sort={sp.sort} dir={sp.dir} onSort={onSort} align="center" />
+                  <SortableHead label="MC %" keyId="mc" sort={sp.sort} dir={sp.dir} onSort={onSort} align="center" />
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loadingAds && (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center py-8">
+                    <TableCell colSpan={15} className="text-center py-8">
                       <Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Carregando…
                     </TableCell>
                   </TableRow>
                 )}
                 {!loadingAds && anuncios.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
                       Nenhum anúncio no filtro atual.
                     </TableCell>
                   </TableRow>
@@ -982,6 +1012,20 @@ function AdsShopeePage() {
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-center text-xs" title={a.mc_pct != null
+                        ? `Margem de contribuição do produto no período (venda total ${formatBRL(num(a.venda_item))}, não só a do ADS). Sem ADS ${formatPercent(num(a.mc_pct))}; depois do gasto de ADS do produto ${formatPercent(num(a.mc_pos_ads_pct))}.`
+                        : "Sem venda com custo no período"}>
+                        {a.mc_pct != null ? (
+                          <div className="leading-tight">
+                            <span className={cn("font-medium tabular-nums", num(a.mc_pct) < 10 && "text-amber-700", num(a.mc_pct) < 0 && "text-red-700")}>{formatPercent(num(a.mc_pct))}</span>
+                            {a.mc_pos_ads_pct != null && (
+                              <span className={cn("block text-[10.5px] tabular-nums", num(a.mc_pos_ads_pct) < 0 ? "text-red-700" : "text-muted-foreground")}>
+                                {formatPercent(num(a.mc_pos_ads_pct))} pós
+                              </span>
+                            )}
+                          </div>
+                        ) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell><StatusBadge status={a.status} /></TableCell>
                     </TableRow>
@@ -1059,15 +1103,16 @@ function RangeInput({
   );
 }
 
-function Kpi({ label, value, highlight, color }: { label: string; value: string; highlight?: boolean; color?: string }) {
+function Kpi({ label, value, highlight, color, sub, title }: { label: string; value: string; highlight?: boolean; color?: string; sub?: ReactNode; title?: string }) {
   return (
-    <Card className="relative overflow-hidden p-0">
+    <Card className="relative overflow-hidden p-0" title={title}>
       {color && <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />}
       <div className="p-4 pl-5 flex flex-col gap-1.5">
         <span className="text-[12px] font-semibold text-muted-foreground">{label}</span>
         <span className={cn("text-[26px] font-semibold tracking-[-0.03em] tabular-nums leading-none", highlight && "text-emerald-600 dark:text-emerald-400")}>
           {value}
         </span>
+        {sub && <span className="text-[11.5px] text-muted-foreground">{sub}</span>}
       </div>
     </Card>
   );

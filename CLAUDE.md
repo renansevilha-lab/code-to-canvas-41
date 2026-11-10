@@ -2187,6 +2187,12 @@ Pedido do dono: mostrar a meta de ROAS de cada anúncio, se está impulsionado, 
   número fixo. Na tela: chips com contagem e a regra no tooltip; selos de situação na linha (clique filtra). SQL em
   `docs/ads-shopee-painel.sql`. 30 dias até ontem: 20 escalar, 36 clique sem conversão, 6 CTR baixo, 3 gasto sem venda, 44 prejuízo,
   160 abaixo da meta (de 185).
+- **MC % do período (10/nov/2026, pedido do dono):** `ads_shopee_painel` v3 (mesma assinatura; resto da resposta idêntico
+  por md5 em 30 dias) junta `ads_metrica_anuncio_dia` (venda e margem do ITEM rateadas da `view_margem_pedido_v2`, venda total
+  e não só a do ADS): por linha `mc_pct` (sem ADS) e `mc_pos_ads_pct` (− gasto de ADS do item), ordem `mc`; na resposta `mc` =
+  soma dos absolutos dos anúncios com gasto (cada item uma vez) + `mc.filtro` (só os do filtro) + `desde`/`parcial` (a MV guarda
+  60 dias). O `mc_pct` antigo (30 d fixos da `ads_margem_anuncio`, usado no ROAS de equilíbrio e em "prejuízo") virou `mc30_pct`.
+  Tela: cartão "MC % no período" (com o pós-ADS e o do filtro) e coluna "MC %". 30 dias até 09/nov: 15,9% sem ADS, 8,1% depois.
 - **"Impulsionando" das campanhas de ADS NÃO vem pela API (conferido 20/out):** o selo da Shopee na campanha 116316230 (Areia Bumi Pet
   8kg a 20kg [2], Ottz) não aparece em nenhum campo de `get_product_level_campaign_setting_info` (info 1–4, idêntico ao de uma campanha
   sem o selo) e `product/get_boosted_list` veio vazio. É o impulso de produto NOVO do GMV Max ("New Product Boost"), que não tem

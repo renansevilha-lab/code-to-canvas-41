@@ -19,6 +19,14 @@
 --     prejuizo              ROAS abaixo do equilíbrio (100 ÷ MC% sem ADS de 30 dias, ads_margem_anuncio) ou MC ≤ 0
 --     orcamento_limitando   orçamento esgotado (gasto ≥ 90%) em 3+ dias do período com ROAS excelente/bom
 --   As linhas também trazem `meta` (roas_target de hoje) e `roas_equilibrio`.
+--
+-- v3 (10/nov/2026, pedido do dono — "MC % média dos anúncios no período"): margem de contribuição DO PERÍODO por
+--   anúncio, da ads_metrica_anuncio_dia (venda e margem do item rateadas da view_margem_pedido_v2 = recebido − CMV −
+--   imposto; a mesma base do Pedidos Integrados; venda TOTAL do item, não só a atribuída ao ADS). Linha: `venda_item`,
+--   `mc_pct` (sem ADS) e `mc_pos_ads_pct` (margem − gasto de ADS do item). Resposta: `mc` = soma dos absolutos dos
+--   anúncios com gasto (cada item uma vez, mesmo em 2 campanhas) e recálculo do % — nunca média de percentuais —, com
+--   `mc.filtro` = o mesmo só dos anúncios do filtro atual e `mc.desde` (a MV guarda 60 dias; período mais antigo =
+--   `mc.parcial`). Ordem nova `mc`. O antigo `mc_pct` (30 dias fixos, ads_margem_anuncio) virou `mc30_pct`.
 -- ============================================================================
 create index if not exists shopee_ads_campanha_data on public.shopee_ads_campanha (data);
 
@@ -46,6 +54,12 @@ begin
       from public.shopee_ads_campanha c
      where c.data between p_de and p_ate
      group by c.campaign_id, c.shop_id),
+  mi as (
+    select m.shop_id, m.anuncio_id, sum(m.venda_total) filter (where m.margem is not null) venda_mc,
+           sum(m.venda_total) venda_item, sum(m.margem) margem_item, sum(m.gasto) gasto_item
+      from public.ads_metrica_anuncio_dia m
+     where m.marketplace = 'shopee' and m.nivel = 'anuncio' and m.data between p_de and p_ate
+     group by m.shop_id, m.anuncio_id),
   base as (
     select a.campaign_id, a.shop_id, a.empresa, a.anuncio, a.tipo_anuncio, a.posicionamento, a.item_id,
            coalesce(cf.status, a.status_reg) status, coalesce(cf.budget, a.orc_reg) orcamento_diario,
@@ -55,13 +69,17 @@ begin
            case when a.impressoes > 0 then round(a.cliques::numeric / a.impressoes * 100, 2) end ctr,
            case when a.cliques > 0 then round(a.investimento / a.cliques, 2) end cpc,
            a.investimento > 0 teve_gasto, a.primeiro_dia, a.ultimo_dia, a.dias_orcamento_esgotado,
-           cf.roas_target meta, mg.margem_contribuicao_pct mc_pct,
+           cf.roas_target meta, mg.margem_contribuicao_pct mc30_pct,
+           mi.venda_item, mi.venda_mc, mi.margem_item, mi.gasto_item,
+           case when mi.venda_mc > 0 then round(mi.margem_item / mi.venda_mc * 100, 2) end mc_pct,
+           case when mi.venda_mc > 0 then round((mi.margem_item - coalesce(mi.gasto_item, 0)) / mi.venda_mc * 100, 2) end mc_pos_ads_pct,
            case when mg.margem_contribuicao_pct > 0 then round(100 / mg.margem_contribuicao_pct, 2) end roas_equilibrio
       from ag a
       left join public.ads_config_atual cf on cf.mkt = 'shopee' and cf.shop_id = a.shop_id and cf.campaign_id = a.campaign_id::text
       left join public.shopee_anuncios an on an.item_id = a.item_id and an.shop_id = a.shop_id
       left join public.ads_margem_anuncio mg on mg.marketplace = 'shopee' and mg.nivel = 'anuncio'
-                                            and mg.shop_id = a.shop_id and mg.anuncio_id = a.item_id::text),
+                                            and mg.shop_id = a.shop_id and mg.anuncio_id = a.item_id::text
+      left join mi on mi.shop_id = a.shop_id and mi.anuncio_id = a.item_id::text),
   cl as (select b.*, public.classificar_roas(b.roas) classificacao_roas from base b),
   escopo0 as (select * from cl where p_empresa is null or empresa = p_empresa),
   lim as (
@@ -76,7 +94,7 @@ begin
         case when e.teve_gasto and e.impressoes >= l.med_impr and e.ctr < l.med_ctr * 0.6 then 'ctr_baixo' end,
         case when e.investimento >= 10 and coalesce(e.pedidos, 0) = 0 then 'gasto_sem_venda' end,
         case when e.teve_gasto and e.meta > 0 and coalesce(e.roas, 0) < e.meta * 0.8 then 'abaixo_meta' end,
-        case when e.teve_gasto and (e.mc_pct <= 0 or (e.roas_equilibrio is not null and coalesce(e.roas, 0) < e.roas_equilibrio)) then 'prejuizo' end,
+        case when e.teve_gasto and (e.mc30_pct <= 0 or (e.roas_equilibrio is not null and coalesce(e.roas, 0) < e.roas_equilibrio)) then 'prejuizo' end,
         case when e.teve_gasto and e.dias_orcamento_esgotado >= 3 and e.classificacao_roas in ('excelente', 'bom') then 'orcamento_limitando' end
       ], null) situacoes
       from escopo0 e cross join lim l),
@@ -94,16 +112,16 @@ begin
     select f.*, case p_ordem
         when 'vendas' then f.vendas when 'roas' then f.roas when 'ctr' then f.ctr when 'acos' then f.acos
         when 'cpc' then f.cpc when 'orcamento_diario' then f.orcamento_diario when 'impressoes' then f.impressoes
-        when 'cliques' then f.cliques else f.investimento end chave
+        when 'cliques' then f.cliques when 'mc' then f.mc_pct else f.investimento end chave
       from filt f
      order by case when p_dir = 'asc' then case p_ordem
         when 'vendas' then f.vendas when 'roas' then f.roas when 'ctr' then f.ctr when 'acos' then f.acos
         when 'cpc' then f.cpc when 'orcamento_diario' then f.orcamento_diario when 'impressoes' then f.impressoes
-        when 'cliques' then f.cliques else f.investimento end end asc nulls last,
+        when 'cliques' then f.cliques when 'mc' then f.mc_pct else f.investimento end end asc nulls last,
       case when p_dir <> 'asc' then case p_ordem
         when 'vendas' then f.vendas when 'roas' then f.roas when 'ctr' then f.ctr when 'acos' then f.acos
         when 'cpc' then f.cpc when 'orcamento_diario' then f.orcamento_diario when 'impressoes' then f.impressoes
-        when 'cliques' then f.cliques else f.investimento end end desc nulls last,
+        when 'cliques' then f.cliques when 'mc' then f.mc_pct else f.investimento end end desc nulls last,
       f.campaign_id
      offset greatest(coalesce(p_offset, 0), 0) limit least(greatest(coalesce(p_limit, 50), 1), 500))
   select jsonb_build_object(
@@ -119,6 +137,18 @@ begin
         'classif', classificacao_roas)) from escopo where teve_gasto), '[]'::jsonb),
     'situacoes', coalesce((select jsonb_object_agg(s.k, s.n) from (
         select k, count(*) n from escopo, unnest(situacoes) k group by k) s), '{}'::jsonb),
+    'mc', (select jsonb_build_object(
+        'venda', round(sum(t.venda_mc), 2), 'margem', round(sum(t.margem_item), 2), 'gasto', round(sum(t.gasto_item), 2),
+        'mc_pct', round(sum(t.margem_item) / nullif(sum(t.venda_mc), 0) * 100, 2),
+        'mc_pos_ads_pct', round((sum(t.margem_item) - coalesce(sum(t.gasto_item), 0)) / nullif(sum(t.venda_mc), 0) * 100, 2),
+        'anuncios', count(*), 'sem_margem', count(*) filter (where t.venda_mc is null),
+        'desde', (select min(data) from public.ads_metrica_anuncio_dia where marketplace = 'shopee' and nivel = 'anuncio'),
+        'parcial', p_de < (select min(data) from public.ads_metrica_anuncio_dia where marketplace = 'shopee' and nivel = 'anuncio'),
+        'filtro', (select jsonb_build_object('anuncios', count(*),
+            'mc_pct', round(sum(u.margem_item) / nullif(sum(u.venda_mc), 0) * 100, 2),
+            'mc_pos_ads_pct', round((sum(u.margem_item) - coalesce(sum(u.gasto_item), 0)) / nullif(sum(u.venda_mc), 0) * 100, 2))
+          from (select distinct on (shop_id, item_id) * from filt where teve_gasto) u))
+      from (select distinct on (shop_id, item_id) * from escopo where teve_gasto) t),
     'limiares', (select jsonb_build_object('cliques', round(med_cliques::numeric, 0), 'impressoes', round(med_impr::numeric, 0),
         'ctr', round(med_ctr::numeric, 2)) from lim)
   ) into v;
