@@ -2082,6 +2082,12 @@ vivo custa 3,3 s → matview com índice único, cron `reposicao-margem-30d` (`4
 concurrently), grant só `authenticated`. Medido na criação: 15984 ML Ottz 7,6% pelo Full × 13,1% fora;
 15704 e 16080 (SVL) negativos no Full.
 
+**ASIN copiável na Reposição da Amazon (10/nov/2026, pedido do dono):** abaixo do SKU, selo `B0…` que copia ao clicar
+(`src/components/fulfillment/AsinReposicao.tsx`, `useAsinsAmazon`). Fonte `pesquisa_amz_meus_skus` (conta ottz/svl → 900001/
+900002, refeita no domingo pelo cron 159) — cobria 100% dos SKUs Amazon da Reposição na data. SKU com mais de um anúncio na conta
+(ex.: 15825 e FBA-15825, 15627 × 15627_FBA): o selo mostra o do anúncio com estoque no CD (`estoque_fulfillment`), depois o que
+termina em FBA, com "+N"; o detalhe da linha lista todos (ASIN · SKU da Amazon · no CD). Só no visual novo.
+
 ## 5.9.4.3 ROAS objetivo das campanhas do ML pela API — sem permissão de escrita (19/out/2026)
 
 Pedido do dono: subir o ROAS objetivo da campanha "Kit 2 Bumi l Escmectita" (359638251) de 6,5 para 7. `ml-sync-ads`

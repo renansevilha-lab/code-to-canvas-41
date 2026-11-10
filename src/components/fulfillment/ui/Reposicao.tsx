@@ -6,6 +6,7 @@ import { NOME_EMP, type EmpF } from "@/components/fulfillment/ui/Cabecalho";
 import { MargemFullCell, chaveMargem, type MargemFull } from "@/components/fulfillment/MargemFull";
 import { arredondarCaixa, chaveCaixa, type CaixaSku } from "@/components/fulfillment/CaixaReposicao";
 import { ModelosCaixaAmazon } from "@/components/fulfillment/ModelosCaixaAmazon";
+import { SeloAsin, asinsDistintos, chaveAsin, copiarAsin, useAsinsAmazon } from "@/components/fulfillment/AsinReposicao";
 
 // ============================================================================
 // Fulfillment › Reposição no padrão do design (Claude Design,
@@ -73,6 +74,9 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
   const [painel, setPainel] = useState(false);
   const [modelos, setModelos] = useState<number | null>(null);
 
+  const temAmazon = rows.some((r) => r.marketplace === "amazon");
+  const { data: asins } = useAsinsAmazon(temAmazon);
+  const asinsDe = (r: LinhaRepo) => (r.marketplace === "amazon" ? asinsDistintos(asins?.get(chaveAsin(r.shop_id, r.sku))) : []);
   const caixaDe = (r: LinhaRepo) => (r.marketplace === "amazon" ? caixas?.get(chaveCaixa(r.shop_id, r.sku)) : undefined);
   const margemDe = (r: LinhaRepo) => margens?.get(chaveMargem(r.shop_id, r.sku));
   const valor = (r: LinhaRepo) => {
@@ -179,6 +183,7 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
     const foto = fotos[r.sku];
     const m = margemDe(r);
     const aberto = exp === k;
+    const asinsL = asinsDe(r);
     return (
       <Fragment key={k}>
         <div style={{ display: "grid", gridTemplateColumns: GRADE, gap: 10, alignItems: "center", padding: "9px 14px", borderTop: "1px solid var(--pm-b)", background: marcado ? "var(--pm-as)" : "transparent" }}>
@@ -191,7 +196,10 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
               : <span style={{ width: 36, height: 36, flex: "none", borderRadius: 8, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 600, color: "var(--pm-t3)" }}>{(r.produto ?? r.sku).split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase()}</span>}
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
               <span style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.produto ?? ""}>{r.produto ?? "—"}</span>
-              <span className={MONO} style={{ fontSize: 11, color: "var(--pm-t3)" }}>SKU {r.sku}{r.eh_kit ? " · kit" : ""}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                <span className={MONO} style={{ fontSize: 11, color: "var(--pm-t3)", flex: "none" }}>SKU {r.sku}{r.eh_kit ? " · kit" : ""}</span>
+                {asinsL.length > 0 && <SeloAsin a={asinsL[0]} extra={asinsL.length - 1} />}
+              </span>
             </div>
           </div>
           <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, minWidth: 0 }}>
@@ -255,6 +263,17 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
             {m && m.mc_pct_fora != null && <Det k="fora do Full" v={pct(n(m.mc_pct_fora))} />}
             {cx && <Det k="Modelo" v={cx.nome ?? `caixa com ${cx.un}`} />}
             {r.marketplace === "amazon" && !cx && <Det k="Modelo de caixa" v="não cadastrado" />}
+            {asinsL.length > 1 && (
+              <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                <span style={{ color: "var(--pm-t3)" }}>ASINs desta conta:</span>
+                {(asins?.get(chaveAsin(r.shop_id, r.sku)) ?? []).map((a) => (
+                  <button key={a.msku} type="button" onClick={() => copiarAsin(a.asin)} className="pm-hv" title="Copiar o ASIN"
+                    style={{ border: "1px solid var(--pm-bc)", borderRadius: 5, background: "var(--pm-s)", padding: "1px 6px", fontSize: 11, cursor: "pointer", color: "var(--pm-t2)" }}>
+                    <span className={MONO}>{a.asin}</span> · {a.msku}{a.cd != null ? ` · ${int(a.cd)} no CD` : " · sem estoque no CD"}
+                  </button>
+                ))}
+              </span>
+            )}
           </div>
         )}
       </Fragment>
