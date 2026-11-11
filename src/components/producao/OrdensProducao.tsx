@@ -1,6 +1,8 @@
 // Ordens de produção (04/nov/2026, pedido do dono): o que deve ser produzido, com quantidade, prazo, prioridade e
 // observações; cada ordem avisa a equipe no Discord. "Produzir" abre o Iniciar produção já com o produto e a ordem,
 // e os lotes ficam ligados a ela (o produzido vem da view_producao_op).
+// 11/nov: bônus/mão de obra por saco na ordem e edição da ordem — os dois só para o administrador (módulo 'todos');
+// o banco recusa de quem não é (gatilho trg_producao_op_guarda, docs/producao-op-bonus.sql).
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,7 +11,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { Botao, Campo, Cartao, Entrada, Escolha, Selo, tabela, td, th } from "./ui";
 import {
-  embalagensDaFicha, useInsumos, avisarProducao, erroMsg, int, useEquipeDiscord, useOrdensProducao, useParametros, type OrdemProducao,
+  brl, embalagensDaFicha, useInsumos, avisarProducao, erroMsg, int, useEquipeDiscord, useOrdensProducao, useParametros, type OrdemProducao,
 } from "@/lib/producao";
 
 const dia = (d: string | null) => (d ? d.slice(0, 10).split("-").reverse().slice(0, 2).join("/") : "—");
@@ -37,6 +39,8 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
   const [comFechadas, setComFechadas] = useState(false);
   const ops = useOrdensProducao(comFechadas);
   const [nova, setNova] = useState<string | null>(null);
+  const [editar, setEditar] = useState<OrdemProducao | null>(null);
+  const admin = !!perfil?.modulos.includes("todos");
   useEffect(() => { if (novaPara != null) setNova(novaPara); }, [novaPara]);
 
   async function fechar(op: OrdemProducao, status: "concluida" | "cancelada") {
@@ -113,7 +117,15 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
                         </div>
                       </div>
                     </td>
-                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{int(op.qtd)}</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      <div style={{ fontWeight: 700 }}>{int(op.qtd)}</div>
+                      {op.bonus_saco != null && (
+                        <div style={{ fontSize: 11.5, color: "var(--pm-t2)", whiteSpace: "nowrap" }} title="Bônus / mão de obra pago por saco produzido nesta ordem">
+                          bônus {brl(op.bonus_saco, Math.round(op.bonus_saco * 10000) % 100 ? 4 : 2)}/saco
+                          {op.produzido > 0 && <div style={{ fontWeight: 650, color: "var(--pm-t)" }}>{brl(op.bonus_total)} em {int(op.produzido)}</div>}
+                        </div>
+                      )}
+                    </td>
                     <td style={td}>
                       <div style={{ height: 8, borderRadius: 6, background: "var(--pm-s2)", overflow: "hidden", border: "1px solid var(--pm-bs)" }}>
                         <div style={{ width: `${pct}%`, height: "100%", background: pct >= 100 ? "var(--pm-g)" : "var(--pm-a)" }} />
@@ -133,11 +145,14 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
                         por {op.criado_por ?? "—"} em {quando(op.criado_em)}
                         {fechada && ` · ${op.status === "concluida" ? "concluída" : "cancelada"} por ${op.fechada_por ?? "—"} em ${quando(op.fechada_em)}`}
                         {op.motivo ? ` · ${op.motivo}` : ""}
+                        {op.editado_em && ` · editada por ${op.editado_por ?? "—"} em ${quando(op.editado_em)}`}
                       </div>
                     </td>
                     <td style={{ ...td, whiteSpace: "nowrap", textAlign: "right" }}>
+                      {fechada && admin && <Botao tom="fantasma" onClick={() => setEditar(op)}>Editar</Botao>}
                       {!fechada && (
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                          {admin && <Botao tom="fantasma" onClick={() => setEditar(op)}>Editar</Botao>}
                           {op.lote_aberto_id
                             ? <Botao onClick={() => onIrLote(op.lote_aberto_id!)}>Ver lote</Botao>
                             : op.falta > 0 && <Botao tom="primario" onClick={() => onProduzir(op)}>Produzir</Botao>}
@@ -154,11 +169,12 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
         </div>
       )}
       <NovaOrdem sku={nova} onFechar={() => { setNova(null); onNovaFechada(); }} />
+      <NovaOrdem sku={null} editar={editar} onFechar={() => setEditar(null)} />
     </Cartao>
   );
 }
 
-function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar: () => void }) {
+function NovaOrdem({ sku: skuInicial, editar, onFechar }: { sku: string | null; editar?: OrdemProducao | null; onFechar: () => void }) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const params = useParametros();
@@ -169,9 +185,12 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
   const [prioridade, setPrioridade] = useState<"normal" | "urgente">("normal");
   const [obs, setObs] = useState("");
   const [emb, setEmb] = useState("");
+  const [bonus, setBonus] = useState("");
+  const admin = !!perfil?.modulos.includes("todos");
+  const aberto = skuInicial != null || !!editar;
   const insumos = useInsumos();
   const daFicha = embalagensDaFicha(params.data?.find((p) => p.sku === sku) ?? null, insumos.data);
-  useEffect(() => { setEmb(""); }, [sku]);
+  useEffect(() => { if (!editar || sku !== editar.sku) setEmb(""); }, [sku, editar]);
   const embEscolhida = daFicha.find((e) => String(e.id) === emb) ?? null;
   const [marcar, setMarcar] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("producao.op.marcar") || "[]"); } catch { return []; }
@@ -179,8 +198,16 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
   const [salvando, setSalvando] = useState(false);
   useEffect(() => {
     if (skuInicial == null) return;
-    setSku(skuInicial); setQtd(""); setPrazo(""); setPrioridade("normal"); setObs("");
+    setSku(skuInicial); setQtd(""); setPrazo(""); setPrioridade("normal"); setObs(""); setBonus("");
   }, [skuInicial]);
+  useEffect(() => {
+    if (!editar) return;
+    setSku(editar.sku); setQtd(String(editar.qtd)); setPrazo(editar.prazo ?? ""); setPrioridade(editar.prioridade);
+    setObs(editar.obs ?? ""); setBonus(editar.bonus_saco != null ? String(Number(editar.bonus_saco)).replace(".", ",") : "");
+    const e = editar.embalagem_id;
+    setTimeout(() => setEmb(e != null ? String(e) : ""), 0);
+  }, [editar]);
+  const bonusNum = bonus.trim() ? Number(bonus.replace(/\./g, "").replace(",", ".")) : null;
 
   const comDiscord = (equipe.data ?? []).filter((p) => p.discord_user_id);
   const semDiscord = (equipe.data ?? []).filter((p) => !p.discord_user_id && p.id !== "equipe");
@@ -189,10 +216,24 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
     const n = Number(qtd);
     if (!sku) return toast.error("Escolha o produto.");
     if (!Number.isInteger(n) || n <= 0) return toast.error("Informe quantos sacos produzir.");
+    if (bonusNum != null && (!Number.isFinite(bonusNum) || bonusNum < 0)) return toast.error("Bônus por saco inválido.");
+    if (editar) {
+      setSalvando(true);
+      const { error } = await supabaseExternal.from("producao_op" as never).update({
+        sku, qtd: n, prazo: prazo || null, prioridade, obs: obs.trim() || null,
+        embalagem_id: embEscolhida ? embEscolhida.id : null, bonus_saco: bonusNum,
+        editado_em: new Date().toISOString(), editado_por: perfil?.nome ?? null,
+      } as never).eq("id", editar.id);
+      setSalvando(false);
+      if (error) return toast.error(erroMsg(error));
+      toast.success(`Ordem #${editar.id} atualizada.`);
+      void qc.invalidateQueries({ queryKey: ["producao"] });
+      return onFechar();
+    }
     setSalvando(true);
     const { data, error } = await supabaseExternal.from("producao_op" as never).insert({
       sku, qtd: n, prazo: prazo || null, prioridade, obs: obs.trim() || null, criado_por: perfil?.nome ?? null,
-      embalagem_id: embEscolhida ? embEscolhida.id : null,
+      embalagem_id: embEscolhida ? embEscolhida.id : null, ...(admin && bonusNum != null ? { bonus_saco: bonusNum } : {}),
     } as never).select("id").single();
     if (error) { setSalvando(false); return toast.error(erroMsg(error)); }
     const id = (data as unknown as { id: number }).id;
@@ -208,6 +249,7 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
         { nome: "Prazo", valor: prazo ? prazo.split("-").reverse().join("/") : "sem prazo", inline: true },
         { nome: "Pedida por", valor: perfil?.nome ?? "—", inline: true },
         ...(embEscolhida ? [{ nome: "Embalagem", valor: embEscolhida.nome, inline: true }] : []),
+        ...(admin && bonusNum != null ? [{ nome: "Bônus por saco", valor: brl(bonusNum, Math.round(bonusNum * 10000) % 100 ? 4 : 2), inline: true }] : []),
         ...(obs.trim() ? [{ nome: "Observações", valor: obs.trim() }] : []),
       ],
       marcar: ids,
@@ -219,9 +261,9 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
   }
 
   return (
-    <Dialog open={skuInicial != null} onOpenChange={(v) => !v && onFechar()}>
+    <Dialog open={aberto} onOpenChange={(v) => !v && onFechar()}>
       <DialogContent className="pm-ui max-w-lg" style={{ background: "var(--pm-s)", color: "var(--pm-t)" }}>
-        <DialogHeader><DialogTitle>Nova ordem de produção</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editar ? `Editar a ordem #${editar.id}` : "Nova ordem de produção"}</DialogTitle></DialogHeader>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <Campo rotulo="Produto">
             <Escolha value={sku} onChange={(e) => setSku(e.target.value)}>
@@ -247,11 +289,19 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
               </Escolha>
             </Campo>
           )}
+          {admin && (
+            <Campo rotulo="Bônus / mão de obra por saco (R$)" dica="o que é pago por saco produzido nesta ordem; só o administrador preenche e edita">
+              <Entrada inputMode="decimal" placeholder="ex.: 0,35" value={bonus} onChange={(e) => setBonus(e.target.value.replace(/[^\d,.]/g, "").slice(0, 10))} />
+              {bonusNum != null && Number.isFinite(bonusNum) && Number(qtd) > 0 && (
+                <div style={{ fontSize: 12, color: "var(--pm-t2)", marginTop: 3 }}>{int(Number(qtd))} sacos × {brl(bonusNum, Math.round(bonusNum * 10000) % 100 ? 4 : 2)} = <b>{brl(bonusNum * Number(qtd))}</b></div>
+              )}
+            </Campo>
+          )}
           <Campo rotulo="Observações">
             <textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={3} placeholder="ex.: usar o big bag 02; fechar em fardos de 2"
               style={{ padding: 10, borderRadius: 9, border: "1px solid var(--pm-bc)", background: "var(--pm-s)", color: "var(--pm-t)", fontSize: 13.5, resize: "vertical" }} />
           </Campo>
-          <div>
+          {!editar && <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--pm-t2)", marginBottom: 4 }}>Marcar no Discord</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               {comDiscord.map((p) => (
@@ -267,10 +317,10 @@ function NovaOrdem({ sku: skuInicial, onFechar }: { sku: string | null; onFechar
                 Sem o ID do Discord cadastrado (não dá para marcar): {semDiscord.map((p) => p.nome).join(", ")}.
               </div>
             )}
-          </div>
+          </div>}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Botao onClick={onFechar} disabled={salvando}>Cancelar</Botao>
-            <Botao tom="primario" onClick={criar} disabled={salvando}>{salvando ? "Criando…" : "Criar e avisar no Discord"}</Botao>
+            <Botao tom="primario" onClick={criar} disabled={salvando}>{editar ? (salvando ? "Salvando…" : "Salvar alterações") : salvando ? "Criando…" : "Criar e avisar no Discord"}</Botao>
           </div>
         </div>
       </DialogContent>

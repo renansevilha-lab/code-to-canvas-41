@@ -308,6 +308,8 @@ export interface OrdemProducao {
   situacao: "aberta" | "em_producao" | "atingida" | "concluida" | "cancelada"; atrasada: boolean;
   /** 06/nov: em qual embalagem produzir (null = a padrão da ficha) */
   embalagem_id: number | null; embalagem: string | null;
+  /** 11/nov: R$ pagos por saco (bônus/mão de obra); só o administrador grava. bonus_total = bônus × produzido. */
+  bonus_saco: number | null; bonus_total: number | null; editado_em: string | null; editado_por: string | null;
 }
 export const useOrdensProducao = (comFechadas = false) =>
   useQuery({
