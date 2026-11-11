@@ -39,7 +39,7 @@ import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPro
 const DESTINOS: { canal: string; pronto: boolean; nota: string }[] = [
   { canal: "shopee", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo, com o texto, o preço e as fotos aprovadas." },
   { canal: "mercado_livre", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo; a conferência passa pelo validador do Mercado Livre." },
-  { canal: "tiktok", pronto: false, nota: "Em preparação. Precisa enviar as fotos pela API e informar as medidas do pacote." },
+  { canal: "tiktok", pronto: true, nota: "Atualiza um produto que já existe ou cria um novo (por padrão como rascunho), com o texto, o preço e as fotos aprovadas. Só a loja da ACZ — a da Bumi ainda não autorizou o app." },
   { canal: "amazon", pronto: true, nota: "Atualiza um anúncio que já existe ou cria um novo (oferta num produto que já está no catálogo ou ficha nova), conferido pelo validador da Amazon. Só a conta ACZ; vendas pelo FBA." },
 ];
 
@@ -212,7 +212,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPa
             ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })}
             medidasIniciais={medidasComuns?.id === rascunho.id ? medidasComuns.m : null}
             onMedidas={(m) => setMedidasComuns((a) => ({ id: rascunho.id, m: { ...(a?.id === rascunho.id ? a.m : {}), ...m } }))} />
-        : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee ou o Mercado Livre nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
+        : <p className="text-sm text-muted-foreground">O envio direto de {nomeCanal(canal)} ainda não está pronto: escolha a Shopee, o Mercado Livre, a Amazon ou o TikTok nos cartões acima. O texto e as fotos aprovadas daqui podem ser copiados para o anúncio.</p>}
       </div>
     </CardContent></Card>
   );
@@ -242,7 +242,8 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
   const destino = { canal, empresa };
   const ml = canal === "mercado_livre";
   const amz = canal === "amazon";
-  const MK = ml ? "Mercado Livre" : amz ? "Amazon" : "Shopee";
+  const tk = canal === "tiktok";
+  const MK = ml ? "Mercado Livre" : amz ? "Amazon" : tk ? "TikTok" : "Shopee";
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(abertoInicial === true);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
@@ -802,9 +803,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
               valor={typeof op.gtin === "string" ? op.gtin : (amz && p.amazon?.caminho === "ficha" ? (p.amazon.ean_ficha ?? "") : (p.ean ?? ""))}
               onChange={(v) => setOp({ ...op, gtin: v })} />}
           </div>
-          {(ml || amz) && (p.atributos ?? []).length > 0 && (
+          {(ml || amz || tk) && (p.atributos ?? []).length > 0 && (
             <div className="border-t pt-3 space-y-2">
-              <div className="text-[11px] text-muted-foreground">{amz
+              <div className="text-[11px] text-muted-foreground">{tk
+                ? "Características da categoria no TikTok (as com * são obrigatórias; as preenchidas vieram de outro produto da mesma marca — confira; várias separadas por vírgula)"
+                : amz
                 ? "Dados que a Amazon pede para este tipo de produto (os com * são obrigatórios; os preenchidos são sugestões — confira)"
                 : "Características que o Mercado Livre pede nesta categoria (as com * são obrigatórias; as outras melhoram a ficha)"}</div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -830,7 +833,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
             <label className="flex items-start gap-2 text-sm cursor-pointer">
               <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
               <span>
-                {ml ? <>Criar e <b>pausar</b> em seguida</> : <>Criar <b>fora do ar</b> (não listado)</>}
+                {ml ? <>Criar e <b>pausar</b> em seguida</> : tk ? <>Criar como <b>rascunho</b> no TikTok (não vai para análise nem aparece aos compradores)</> : <>Criar <b>fora do ar</b> (não listado)</>}
                 <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e {ml ? "reative depois no Mercado Livre" : "ative depois"}.</span>
               </span>
             </label>

@@ -4155,6 +4155,30 @@ rollback em `docs/ia-termos-busca.sql`.
 - **Limites:** Amazon e ML não dão volume (só posição); a Shopee sugere só para anúncio que já existe; termo "a conferir"
   pode ser de outro tipo de produto (tofu, sílica numa areia de mandioca) — por isso nunca vai para palavras/Modelo.
 
+## 5.11.14 IA · Anúncios — envio ao TikTok Shop da Ottz/ACZ (11/nov/2026)
+
+Pedido do dono (a Bumi ainda não autorizou o app no TikTok, então começou pela loja da Ottz, `shop_id 7496181924415506972`).
+- **Edge fn `anuncio-tiktok` v1** (função NOVA, separada da `anuncio-publicar`; fonte em `supabase/functions/anuncio-tiktok/`;
+  JWT de usuário + módulo `ia`): `previa` e `enviar` com o MESMO contrato da `anuncio-publicar` (o `Envio` de `Publicar.tsx` serve
+  igual). A tela manda para ela quando `destino.canal = "tiktok"` (`chamarPublicar` em `src/lib/iaAnuncio.ts`); `existentes` segue
+  na `anuncio-publicar`. Carregar rascunho, fotos aprovadas, peso/medidas (Tiny → sistema → 40×30×15) e `base()` são cópias da
+  `anuncio-publicar` v17 — mudou lá, conferir aqui.
+- **Criar:** fotos por `POST /product/202309/images/upload` (multipart, campo `data` + `use_case MAIN_IMAGE`; a assinatura não leva o
+  corpo) → `POST /product/202309/products` (título ≤ 255, descrição em HTML, `skus[{seller_sku = nosso SKU, price BRL, inventory
+  [{warehouse_id, quantity}]}]`, `package_weight` kg, `package_dimensions` cm). Categoria, marca, depósito e atributos copiados de um
+  produto da MESMA marca que a loja já tem (`tiktok_produtos` → `GET /product/202309/products/{id}`), mais a sugestão
+  `POST /product/202309/categories/recommend`; atributos obrigatórios por `/categories/{id}/attributes` (a API escreve `is_requried`),
+  certificação exigida por `/rules` vira pendência. Padrão **rascunho** (`save_mode AS_DRAFT`); desmarcado = `LISTING` (o TikTok analisa
+  antes de mostrar).
+- **Atualizar** (produto do espelho `tiktok_produtos`, só os ATIVOS — produto em rascunho não aparece lá): título/descrição/fotos por
+  `POST /product/202309/products/{id}/partial_edit`, preço por `…/prices/update` (sku pelo `seller_sku`); fotos atuais = `main_images[].uri`.
+- Registro em `ia_publicacao` (`canal 'tiktok'`, `shop_id` bigint). Escrita uma vez só, sem repetição.
+- **Não testado ao vivo** (nem a prévia: exige login). O formato da criação/edição vem da documentação 202309; a 1ª recusa do TikTok
+  fica em `ia_publicacao.resposta`. Vínculo com o Tiny do produto criado direto (como na Shopee, §5.11.7) a conferir no 1º envio.
+- Para ligar a Bumi depois: autorizar (`tiktok-oauth`), pôr a loja em `LOJA_TT` da função e corrigir as rotinas que usam `ls[0]`
+  (`tiktok-promocoes`, `tiktok-sync-pedidos` extratos/devoluções, `tiktok-rastreio` `modulo=pedido`), a linha em `lojas` e a
+  `view_canais_sem_integracao` (auditoria de 11/nov).
+
 ## 5.12 Histórico de faturamento pelo Tiny — só totais (29/out/2026)
 
 Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedido; mostrar no Dashboard
@@ -4242,6 +4266,7 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 | `anuncio-publicar` | v17 (06/nov: título próprio da loja na Shopee, `memoria_calculo.titulos_loja`, §5.11.13.1); v14 (deploy 15; 20/out: palavras escondidas da Amazon e Modelo do ML pelos termos de busca, §5.11.13); v13 (deploy 14; 19/out: dados fiscais — NCM do Tiny, origem 0, papel e CEST — na criação Amazon, §5.11.12.3); v12 (deploy 13; 19/out: na Amazon, fora da Bumi a marca vai "Genérico" e a ficha nova sai sem o EAN do fabricante, §5.11.12.2); v11 (deploy 12; a Amazon também CRIA — oferta em ASIN existente ou ficha nova); v10 | Envia o anúncio da IA direto ao marketplace — Shopee e (v4) Mercado Livre; criar ou atualizar anúncio existente: `existentes`, `previa` (só lê), `enviar` com `confirmar: true`. v5: `destino {canal, empresa}` no corpo — o mesmo rascunho vai para qualquer loja; v6: ordem manual das fotos e fotos atuais por posição; v8: peso/medidas ignoram zero do cadastro (peso pelo sistema, embalagem padrão 40×30×15); v9: produto pai acha o anúncio Shopee pelos SKUs das variações (§5.11.11.10); v10: capa principal por loja (§5.11.11.11). JWT de usuário + módulo `ia` — ver §5.11.5, §5.11.7 e §5.11.11.3 |
 | `anuncio-shopee-variacoes` | v9 (06/nov: `fotos-opcoes` = troca a foto das opções de anúncio que já tem variações); v8 (opção até 30 letras); v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v10 (29/out: `kit-avulso` = kit tipo K sem pai, com a composição — §5.11.8) · v9 (deploy 12; 29/out: aceita produto com UMA variação só, pedido do dono) · v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
+| `anuncio-tiktok` | v1 | Envio do anúncio da IA ao TikTok Shop da Ottz/ACZ: `previa` e `enviar` (criar como rascunho ou atualizar), mesmo contrato da `anuncio-publicar`. JWT de usuário + módulo `ia` — ver §5.11.14 |
 | `tiny-vendas-historico` | v1 (deploy 2) | Totais de vendas por dia × conta × canal × situação lidos da listagem do Tiny (out/2024 →), para o histórico do Dashboard. Só lê no Tiny. Crons 170/171 — ver §5.12 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `producao-tiny` | v3 (28/out: + saída do componente da mistura, tofu 16080 no 16640) · v2 | Produção × Tiny: a entrada do produto acabado no depósito Geral ao encerrar o lote (matéria-prima fica no app), com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |

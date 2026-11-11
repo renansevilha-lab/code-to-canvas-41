@@ -219,7 +219,9 @@ export async function chamarAmazonVariacoes(modulo: "ler" | "previa" | "aplicar"
 /** Dados fiscais no Mercado Livre (NCM, origem, CEST por SKU): `previa` só lê; `aplicar` grava (edge fn `ml-fiscal`). */
 export const chamarMlFiscal = (modulo: "previa" | "aplicar", body: Record<string, unknown>) => chamarFuncao("ml-fiscal", modulo, body);
 /** Envio do anúncio ao marketplace: `existentes` e `previa` só leem; `enviar` cria ou atualiza o anúncio. */
-export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) => chamarFuncao("anuncio-publicar", modulo, body);
+// TikTok Shop (11/nov/2026): prévia e envio pela edge fn própria `anuncio-tiktok` (mesmo contrato); "existentes" segue na anuncio-publicar
+export const chamarPublicar = (modulo: "existentes" | "previa" | "enviar", body: Record<string, unknown>) =>
+  chamarFuncao(modulo !== "existentes" && (body.destino as { canal?: string } | undefined)?.canal === "tiktok" ? "anuncio-tiktok" : "anuncio-publicar", modulo, body);
 
 // ---- Aproveitar o que já foi gerado (edge fn `ia-aproveitar`, 12/out/2026): o mesmo produto em outro
 // canal (texto + fotos) e a família de kit (fotos do produto base nos kits dele). Não chama IA.
