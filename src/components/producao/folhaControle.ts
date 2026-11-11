@@ -16,6 +16,8 @@ export interface DadosFolha {
   /** R$ por saco bom (producao_parametros.pagamento_saco), dividido igualmente entre quem estava no lote */
   pagamento_saco?: number | null;
   gerado_por?: string | null;
+  /** folha tirada ANTES de iniciar (no diálogo "Iniciar produção"): o código do lote ainda não existe */
+  previa?: boolean;
 }
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as Record<string, string>)[c]);
@@ -145,12 +147,12 @@ export function folhaControleHtml(d: DadosFolha): string {
     <div class="topo">
       ${d.foto ? `<img src="${esc(d.foto)}" alt="">` : ""}
       <div style="flex:1">
-        <div class="cinza peq">FOLHA DE CONTROLE DA PRODUÇÃO · código para a datadora</div>
+        <div class="cinza peq">FOLHA DE CONTROLE DA PRODUÇÃO · ${d.previa ? "tirada antes de iniciar: o número final do lote sai ao iniciar (anote no lugar do __)" : "código para a datadora"}</div>
         <div class="codigo">${esc(l.codigo)}</div>
         <div><b>${esc(l.sku)}</b> · ${esc(l.produto)}</div>
       </div>
       <div style="text-align:right" class="peq">
-        <div>Início: <b>${dataHora(l.inicio_em)}</b></div>
+        <div>Início: <b>${d.previa ? "____/____ ____:____" : dataHora(l.inicio_em)}</b></div>
         <div>Big bag: <b>${esc(l.big_bag)}</b>${l.nf_numero ? ` · NF ${esc(l.nf_numero)}` : ""}</div>
         ${op ? `<div>Ordem de produção <b>#${op.id}</b>${op.prioridade === "urgente" ? " · <b>URGENTE</b>" : ""}${op.prazo ? ` · prazo ${op.prazo.slice(8, 10)}/${op.prazo.slice(5, 7)}` : ""}</div>` : ""}
       </div>

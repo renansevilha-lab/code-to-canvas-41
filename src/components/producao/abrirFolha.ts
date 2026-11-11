@@ -1,6 +1,6 @@
 // Lê o que a folha de controle precisa (lote, ficha, ordem, equipe, manual, foto) e abre para imprimir.
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { lerManual, type Ficha, type Lote, type OrdemProducao } from "@/lib/producao";
+import { farinhaPorSaco, lerManual, type BigBag, type Ficha, type Insumo, type Lote, type OrdemProducao, type Parametro } from "@/lib/producao";
 import { abrirAbaEspera, escreverEImprimir, folhaControleHtml, manualHtml } from "./folhaControle";
 
 async function um<T>(q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T | null> {
@@ -42,6 +42,44 @@ export async function abrirFolhaControle(loteId: number, janela?: Window | null,
       if (lista[lista.length - 1] !== nm) equipe[x.etapa] = [...lista, nm].join(" → ");
     }
     escreverEImprimir(w, folhaControleHtml({ lote, ficha, op, equipe, manual, foto: foto?.foto ?? null, pagamento_saco: param?.pagamento_saco ?? null, gerado_por: geradoPor }));
+  } catch (e) {
+    w.close();
+    throw e;
+  }
+}
+
+/** Folha tirada no diálogo "Iniciar produção", ANTES de o lote existir (11/nov, pedido do dono): monta o lote com o que
+ *  foi escolhido na tela (produto, big bag, embalagem, sacos, ordem, equipe). O número final do lote nasce ao iniciar. */
+export async function abrirFolhaPrevia(
+  p: { par: Parametro; bag: BigBag; emb: Insumo | null; qtd: number | null; op: OrdemProducao | null; equipe: Record<string, string>; nomeProduto?: string | null },
+  janela?: Window | null, geradoPor?: string | null,
+) {
+  const w = janela ?? abrirAbaEspera();
+  if (!w) throw new Error("O navegador bloqueou a nova aba. Libere pop-ups para este site e tente de novo.");
+  try {
+    const { par, bag, emb, qtd, op } = p;
+    const [ficha, manual, foto, param] = await Promise.all([
+      um<Ficha>(supabaseExternal.from("view_producao_ficha").select("*").eq("sku", par.sku).limit(1)),
+      lerManual(),
+      um<{ foto: string | null }>(supabaseExternal.from("view_foto_produto").select("foto").eq("sku", par.sku).limit(1)),
+      um<{ pagamento_saco: number | null }>(supabaseExternal.from("producao_parametros" as never).select("pagamento_saco").eq("sku", par.sku).limit(1)),
+    ]);
+    const hoje = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace(/-/g, "");
+    const mistura = par.mistura_un_kg && par.mistura_farinha_kg;
+    const lote = {
+      id: 0, codigo: `${par.prefixo_lote}-${hoje}-__`, sku: par.sku, produto: ficha?.produto ?? p.nomeProduto ?? null, status: "aberta",
+      qtd_planejada: qtd, inicio_em: new Date().toISOString(), big_bag: bag.codigo, nf_numero: bag.nf_numero,
+      embalagem: emb?.nome ?? null, precisa_etiqueta: !!emb?.precisa_etiqueta, boas: 0,
+      nominal_g: Number(par.peso_nominal_kg) * 1000, tolerancia_g: Number(par.tolerancia_g),
+      pesar_cada: par.pesar_cada, pesar_primeiros: par.pesar_primeiros, consumo_padrao_kg: Number(par.consumo_padrao_kg),
+      farinha_padrao_kg: farinhaPorSaco(par),
+      mistura_sku: ficha?.mistura_sku ?? null, mistura_nome: ficha?.mistura ?? null,
+      mistura_un_por_saco: mistura ? Number(par.consumo_padrao_kg) / (Number(par.mistura_farinha_kg) + Number(par.mistura_un_kg)) : null,
+    } as unknown as Lote;
+    escreverEImprimir(w, folhaControleHtml({
+      lote, ficha, op, equipe: p.equipe, manual, foto: foto?.foto ?? null,
+      pagamento_saco: param?.pagamento_saco ?? null, gerado_por: geradoPor, previa: true,
+    }));
   } catch (e) {
     w.close();
     throw e;

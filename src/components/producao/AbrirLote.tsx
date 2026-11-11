@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
-import { abrirFolhaControle } from "./abrirFolha";
+import { abrirFolhaControle, abrirFolhaPrevia } from "./abrirFolha";
 import { abrirAbaEspera } from "./folhaControle";
 import { usePerfil } from "@/hooks/usePerfil";
 import {
@@ -104,6 +104,17 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
       setQtd(String(opSel ? Math.min(rende, opSel.falta) : rende));
     }
   }, [bagSel?.id, opSel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 11/nov (dono): baixar/imprimir a folha já no diálogo, antes de iniciar (a impressão do navegador tem "Salvar como PDF")
+  async function folhaAgora() {
+    if (!par || !bagSel) return toast.error("Escolha o produto e o big bag.");
+    const aba = abrirAbaEspera();
+    const nomes = Object.fromEntries((pessoas.data ?? []).map((p) => [p.id, p.nome]));
+    const equipe = Object.fromEntries(etapas.filter((e) => quem[e.id]).map((e) => [e.id, nomes[quem[e.id] as string] ?? ""]));
+    try {
+      await abrirFolhaPrevia({ par, bag: bagSel, emb: embSel, qtd: qtd ? Number(qtd) : null, op: opSel, equipe, nomeProduto: nomesQ.data?.[par.sku] }, aba, perfil?.nome);
+    } catch (e) { toast.error(`Folha de controle: ${erroMsg(e)}`); }
+  }
 
   async function abrir() {
     if (!par || !bagSel) return toast.error("Escolha o produto e o big bag.");
@@ -236,7 +247,9 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
             <input type="checkbox" checked={folha} onChange={(e) => setFolha(e.target.checked)} />
             Imprimir a folha de controle (ficha, planejado, equipe, mão de obra por saco e checklist)
           </label>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <Botao onClick={folhaAgora} disabled={!bagSel} title="Abre a folha para imprimir ou salvar em PDF, sem iniciar o lote">Folha de controle (PDF)</Botao>
+            <div style={{ flex: 1 }} />
             <Botao onClick={onFechar}>Cancelar</Botao>
             <Botao tom="primario" onClick={abrir} disabled={salvando || !bagSel}>{salvando ? "Iniciando…" : "Iniciar produção"}</Botao>
           </div>
