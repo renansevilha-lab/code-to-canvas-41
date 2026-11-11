@@ -14,7 +14,7 @@ interface ParamRow {
   sku: string; farinha_id: number | null; embalagem_padrao_id: number | null; prefixo_lote: string; peso_nominal_kg: number;
   sobrepeso_pct: number; perda_pct: number; tolerancia_g: number; custo_insumo_kg: number; pesar_cada: number | null;
   pesar_primeiros: number; meta_estoque_un: number | null; ativo: boolean; mistura_insumo_id: number | null;
-  mistura_un_kg: number | null; mistura_farinha_kg: number | null; seladora_temp_c: number | null;
+  mistura_un_kg: number | null; mistura_farinha_kg: number | null; seladora_temp_c: number | null; pagamento_saco: number | null;
   processo: ParamProcesso[] | null; instrucoes: string | null; embalagens_alternativas: number[] | null;
 }
 interface Config { id: number; mod_mensal: number; cif_mensal: number; capacidade_normal_un: number }
@@ -86,7 +86,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
       emb: p.embalagem_padrao_id != null ? String(p.embalagem_padrao_id) : "", embPreco: txt(emb?.custo_referencia),
       novaNome: "", etq: emb?.etiqueta_id != null ? String(emb.etiqueta_id) : "", etqPreco: txt(etq?.custo_referencia),
       mod: txt(cfg.mod_mensal), cif: txt(cfg.cif_mensal), cap: txt(cfg.capacidade_normal_un),
-      temp: txt(p.seladora_temp_c),
+      temp: txt(p.seladora_temp_c), pag: txt(p.pagamento_saco),
     });
     setAtivo(p.ativo);
     setEtiquetaSim(!!emb?.precisa_etiqueta);
@@ -124,7 +124,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
     const v = {
       peso: dec(f.peso), tol: num(f.tol), sobre: dec(f.sobre), perda: dec(f.perda), pesarCada: num(f.pesarCada), pesarPrim: num(f.pesarPrim),
       meta: num(f.meta), farinhaKg: dec(f.farinhaKg), misturaUnKg: dec(f.misturaUnKg), misturaFarKg: dec(f.misturaFarKg),
-      embPreco: dec(f.embPreco), etqPreco: dec(f.etqPreco), mod: num(f.mod), cif: num(f.cif), cap: num(f.cap), temp: dec(f.temp),
+      embPreco: dec(f.embPreco), etqPreco: dec(f.etqPreco), mod: num(f.mod), cif: num(f.cif), cap: num(f.cap), temp: dec(f.temp), pag: dec(f.pag),
     };
     const ruim = Object.entries(v).find(([, n]) => Number.isNaN(n));
     if (ruim) return toast.error("Há um número que não deu para ler. Use só dígitos e vírgula.");
@@ -180,7 +180,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
         mistura_insumo_id: f.mistura ? Number(f.mistura) : null, mistura_un_kg: f.mistura ? v.misturaUnKg : null,
         mistura_farinha_kg: f.mistura ? v.misturaFarKg : null, embalagem_padrao_id: embalagem,
         embalagens_alternativas: alternativas.filter((x) => x !== Number(embalagem)),
-        seladora_temp_c: v.temp, processo: proc, instrucoes: instrucoes.trim() || null, updated_at: new Date().toISOString(),
+        seladora_temp_c: v.temp, pagamento_saco: v.pag, processo: proc, instrucoes: instrucoes.trim() || null, updated_at: new Date().toISOString(),
       } as never).eq("sku", sku);
       if (error) throw error;
       toast.success("Ficha salva. O custo padrão foi recalculado.");
@@ -296,6 +296,7 @@ export function EditarFicha({ sku, onFim }: { sku: string; onFim: () => void }) 
       {bloco("Processo")}
       <div style={grade}>
         <Campo rotulo="Temperatura da seladora (°C)"><Entrada inputMode="decimal" value={f.temp} onChange={set("temp")} /></Campo>
+        <Campo rotulo="Mão de obra por saco bom (R$)" dica="sai na folha de controle; dividido igualmente entre quem estava no lote"><Entrada inputMode="decimal" value={f.pag ?? ""} onChange={set("pag")} /></Campo>
       </div>
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--pm-t2)" }}>Outros parâmetros</div>
       {processo.map((x, i) => (

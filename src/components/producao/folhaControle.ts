@@ -1,9 +1,9 @@
 // Folha de controle da produção (11/nov/2026, pedido do dono): impressa ao iniciar cada lote, fica na bancada.
-// Ficha do produto + quantidades planejadas + equipe por etapa + checklists e espaços para anotar à mão
-// (pesagem, paradas, refugo, fardos, encerramento) + o manual de processos com o registro de treinamento.
+// UMA página (o dono pediu o básico): ficha do produto, quantidades planejadas, equipe por etapa, mão de obra por
+// saco e o checklist "antes de começar". O manual de processos (com o registro de treinamento) sai à parte (manualHtml).
 // Só HTML (imprimir / salvar em PDF pelo navegador); os dados chegam prontos de abrirFolhaControle.
 import type { Ficha, Lote, ManualSecao, OrdemProducao } from "@/lib/producao";
-import { ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, QUANDO_MANUAL } from "@/lib/producao";
+import { ETAPAS, QUANDO_MANUAL } from "@/lib/producao";
 
 export interface DadosFolha {
   lote: Lote;
@@ -13,6 +13,8 @@ export interface DadosFolha {
   equipe: Record<string, string>;
   manual: ManualSecao[];
   foto?: string | null;
+  /** R$ por saco bom (producao_parametros.pagamento_saco), dividido igualmente entre quem estava no lote */
+  pagamento_saco?: number | null;
   gerado_por?: string | null;
 }
 
@@ -39,10 +41,11 @@ export function pesagensPlanejadas(qtd: number | null, primeiros: number, cada: 
 
 const CSS = `
 *{box-sizing:border-box}
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1d1d1f;margin:0;font-size:11.5px;line-height:1.35}
-.pag{padding:10mm 11mm;page-break-after:always}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1d1d1f;margin:0;font-size:11px;line-height:1.3}
+.pag{padding:8mm 10mm;page-break-after:always}
 .pag:last-child{page-break-after:auto}
-h1{font-size:15px;margin:0} h2{font-size:12.5px;margin:12px 0 5px;padding-bottom:3px;border-bottom:2px solid #6E56CF;text-transform:uppercase;letter-spacing:.4px}
+.pagto{display:grid;grid-template-columns:1fr 1fr 2fr;gap:6px;margin:4px 0 6px}.pagto div{border:1.5px solid #111;border-radius:6px;padding:5px 8px}.pagto span{display:block;font-size:9.5px;color:#555}.pagto b{font-size:15px}.pagto small{display:block;font-size:9px;color:#555}
+h1{font-size:15px;margin:0} h2{font-size:12px;margin:8px 0 4px;padding-bottom:3px;border-bottom:2px solid #6E56CF;text-transform:uppercase;letter-spacing:.4px}
 h3{font-size:12px;margin:8px 0 3px}
 .topo{display:flex;gap:12px;align-items:center;border:2px solid #1d1d1f;border-radius:8px;padding:8px 10px}
 .topo img{width:62px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #ccc}
@@ -51,15 +54,16 @@ h3{font-size:12px;margin:8px 0 3px}
 .grade{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .kpi{border:1px solid #bbb;border-radius:6px;padding:5px 7px} .kpi span{display:block;font-size:9.5px;color:#666;text-transform:uppercase;letter-spacing:.3px}
 .kpi b{font-size:15px} .kpi small{display:block;font-size:9.5px;color:#666}
-table{border-collapse:collapse;width:100%} th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
+table{border-collapse:collapse;width:100%} th,td{border:1px solid #999;padding:3px 6px;text-align:left;vertical-align:top}
 th{background:#efedf8;font-size:10.5px}
 td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.alto td{height:22px}
+.alto td{height:18px}
 .cx{display:inline-block;width:12px;height:12px;border:1.5px solid #1d1d1f;border-radius:2px;vertical-align:-2px;margin-right:6px}
 ul.chk{list-style:none;margin:0;padding:0} ul.chk li{padding:3px 0;border-bottom:1px dotted #bbb;display:flex;gap:4px}
 ul.chk li .cx{flex-shrink:0;margin-top:1px}
 .esc{display:flex;gap:6px;align-items:flex-end;margin:6px 0} .esc span{white-space:nowrap} .esc i{flex:1;border-bottom:1px solid #1d1d1f;height:14px;min-width:60px}
 .duas{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tres{display:grid;grid-template-columns:repeat(3,1fr);gap:10px} .tres ul.chk li{font-size:10.5px;padding:2px 0} .tres h3{margin-top:2px}
 .pesos{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .pesos table td{height:19px;font-size:10px} .pesos th{font-size:9.5px;padding:3px}
 .obs{border:1px solid #999;border-radius:6px;min-height:52px;padding:5px 7px;white-space:pre-wrap}
@@ -102,11 +106,7 @@ export function folhaControleHtml(d: DadosFolha): string {
   const etapas = ETAPAS.filter((e) => e.id !== "etiquetagem" || comEtiqueta);
   const manual = manualDoLote(d.manual, l.sku, comEtiqueta);
   const antes = manual.filter((m) => m.quando === "antes");
-  const depois = manual.filter((m) => m.quando === "depois");
   const minimo = l.nominal_g - l.tolerancia_g;
-  // a regra pede poucas pesagens (90 sacos = 14); sobra linha para repesar e para quem pesa mais
-  const nPes = Math.min(160, Math.max(40, pesagensPlanejadas(qtd, l.pesar_primeiros, l.pesar_cada)));
-  const regraPeso = l.pesar_cada ? `os ${n(l.pesar_primeiros)} primeiros e depois 1 a cada ${n(l.pesar_cada)}` : "todos os sacos";
   const farinhaTotal = qtd ? qtd * Number(l.farinha_padrao_kg) : null;
   const pacotes = qtd && l.mistura_un_por_saco ? Math.ceil(qtd * Number(l.mistura_un_por_saco)) : null;
   const processo = [
@@ -114,17 +114,24 @@ export function folhaControleHtml(d: DadosFolha): string {
     ...(f?.processo ?? []).filter((x) => x.nome || x.valor),
   ];
   const fechado = l.status !== "aberta";
+  // mão de obra: R$ por saco bom, dividido igualmente entre quem estava no lote
+  const pag = d.pagamento_saco != null ? Number(d.pagamento_saco) : null;
+  const pessoas = [...new Set(Object.values(d.equipe).flatMap((x) => x.split(" → ")).filter(Boolean))];
+  const sacosPag = fechado ? Number(l.boas ?? 0) : qtd;
+  const totalPag = pag != null && sacosPag ? pag * sacosPag : null;
+  const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const pagto = pag == null
+    ? `<div class="cinza peq">Mão de obra por saco não cadastrada na ficha deste produto (Editar ficha).</div>`
+    : `<div class="pagto">
+        <div><span>Pago por saco bom</span><b>${brl(pag)}</b></div>
+        <div><span>${fechado ? `${n(sacosPag)} sacos bons` : qtd ? `Planejado: ${n(qtd)} sacos` : "Sacos do lote"}</span><b>${totalPag != null ? brl(totalPag) : "—"}</b></div>
+        <div><span>Dividido igualmente entre quem estiver no lote</span><b>${totalPag != null && pessoas.length ? `${brl(totalPag / pessoas.length)} cada` : "—"}</b>
+          <small>${pessoas.length ? `${pessoas.length} pessoa(s) escalada(s): ${esc(pessoas.join(", "))}` : "ninguém escalado ainda"}${fechado ? "" : " · o valor final é pelos sacos bons do encerramento"}</small></div>
+      </div>`;
   const titulo = `Folha de controle ${l.codigo}`;
 
   const kpi = (rot: string, val: string, sub = "") => `<div class="kpi"><span>${esc(rot)}</span><b>${val}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
 
-  // tabela de pesagem em 4 colunas
-  const porColuna = Math.ceil(nPes / 4);
-  const colunas = Array.from({ length: 4 }, (_, c) => {
-    const ini = c * porColuna;
-    const linhas = Array.from({ length: Math.max(0, Math.min(porColuna, nPes - ini)) }, (_, i) => `<tr><td class="num">${ini + i + 1}</td><td></td><td></td><td></td></tr>`).join("");
-    return linhas ? `<table><thead><tr><th>nº</th><th>hora</th><th>peso (g)</th><th>quem</th></tr></thead><tbody>${linhas}</tbody></table>` : "";
-  }).join("");
 
   const materiais = [
     { item: `Farinha do big bag ${l.big_bag}`, det: f?.farinha ?? "", por: kg(l.farinha_padrao_kg, 3), total: farinhaTotal != null ? kg(farinhaTotal, 0) : "—" },
@@ -165,60 +172,24 @@ export function folhaControleHtml(d: DadosFolha): string {
       <tbody>${materiais.map((m) => `<tr><td><b>${esc(m.item)}</b></td><td>${esc(m.det)}</td><td class="num">${m.por}</td><td class="num"><b>${m.total}</b></td><td></td></tr>`).join("")}</tbody></table>
     ${qtd ? "" : `<div class="cinza peq">Sem quantidade planejada no lote: anote o total à mão.</div>`}
 
-    <h2>Equipe</h2>
+    <h2>Equipe e mão de obra</h2>
+    ${pagto}
     <table class="alto"><thead><tr><th style="width:24%">Etapa</th><th style="width:26%">Escalado</th><th>Quem fez (se mudou)</th><th style="width:11%">Início</th><th style="width:11%">Fim</th><th style="width:13%">Rubrica</th></tr></thead>
       <tbody>${etapas.map((e) => `<tr><td>${esc(e.nome)}</td><td><b>${esc(d.equipe[e.id] ?? "")}</b></td><td></td><td></td><td></td><td></td></tr>`).join("")}</tbody></table>
 
     <h2>Antes de começar</h2>
-    ${antes.length ? `<div class="duas">${antes.map((s) => `<div><h3>${esc(s.titulo)}</h3><ul class="chk">${s.passos.map((p) => `<li>${caixa}<span>${esc(p)}</span></li>`).join("")}</ul></div>`).join("")}</div>` : `<p class="cinza">Sem checklist cadastrado no manual.</p>`}
+    ${antes.length ? `<div class="${antes.length >= 3 ? "tres" : "duas"}">${antes.map((s) => `<div><h3>${esc(s.titulo)}</h3><ul class="chk">${s.passos.map((p) => `<li>${caixa}<span>${esc(p)}</span></li>`).join("")}</ul></div>`).join("")}</div>` : `<p class="cinza">Sem checklist cadastrado no manual.</p>`}
     <div class="duas" style="margin-top:4px">
       ${linhaEscrever("Balança conferida com peso de", "")}
       ${linhaEscrever("leu (g):")}
     </div>
     ${linhaEscrever("Conferido por (assinatura):")}
-    <div class="rod">Gerada em ${dataHora(new Date().toISOString())}${d.gerado_por ? ` por ${esc(d.gerado_por)}` : ""} · Os números oficiais são os do app (contagem, pesagem e fardos); a folha é o apoio da bancada.</div>
+    <div class="rod">Gerada em ${dataHora(new Date().toISOString())}${d.gerado_por ? ` por ${esc(d.gerado_por)}` : ""} · Os números oficiais são os do app (contagem, pesagem, refugo e fardos). Manual de processos: Produção › Painel › Manual de processos.</div>
   </div>`;
 
-  const pag2 = `
-  <div class="pag">
-    <h1>${esc(l.codigo)} <span class="cinza" style="font-weight:400;font-size:12px">· ${esc(l.sku)} · ${esc(l.produto)}</span></h1>
-    <h2>Pesagem — ${regraPeso} · mínimo ${n(minimo)} g · alvo ${n(Number(l.consumo_padrao_kg) * 1000)} g</h2>
-    <div class="pesos">${colunas}</div>
-    <div class="cinza peq" style="margin-top:3px">Abaixo de ${n(minimo)} g: completar e pesar de novo. Dois seguidos abaixo: parar e conferir a balança e a dosagem.</div>
-
-    <div class="duas">
-      <div>
-        <h2>Paradas</h2>
-        <table class="alto"><thead><tr><th style="width:17%">Início</th><th style="width:17%">Fim</th><th>Motivo</th></tr></thead>
-          <tbody>${Array(6).fill(`<tr><td></td><td></td><td></td></tr>`).join("")}</tbody></table>
-        <div class="cinza peq">Motivos: ${MOTIVOS_PARADA.map((m) => esc(m.nome)).join(" · ")}. Troca de big bag: anote o código do novo.</div>
-      </div>
-      <div>
-        <h2>Refugo</h2>
-        <table class="alto"><thead><tr><th style="width:42%">Motivo</th><th>Riscos (|||)</th><th style="width:16%">Total</th></tr></thead>
-          <tbody>${MOTIVOS_REFUGO.filter((m) => m.etapa !== "etiquetagem" || comEtiqueta).map((m) => `<tr><td>${esc(m.nome)}</td><td></td><td></td></tr>`).join("")}</tbody></table>
-      </div>
-    </div>
-
-    <h2>Fardos</h2>
-    <table class="alto"><thead><tr><th style="width:18%">Fardo de</th><th>Riscos (|||)</th><th style="width:16%">Fardos</th><th style="width:16%">Sacos</th></tr></thead>
-      <tbody>${[2, 3, 5].map((s) => `<tr><td>${s} sacos</td><td></td><td></td><td></td></tr>`).join("")}<tr><td>outro: ___</td><td></td><td></td><td></td></tr></tbody></table>
-
-    <h2>Encerramento</h2>
-    <div class="grade">
-      ${kpi("Sacos bons", fechado ? n(l.boas) : "&nbsp;", fechado ? "pelo app" : "anotar")}
-      ${kpi("Refugo", fechado ? n(l.refugo) : "&nbsp;", fechado ? "pelo app" : "anotar")}
-      ${kpi("Sacos em fardo", fechado ? n(l.sacos_em_fardo) : "&nbsp;", fechado ? "pelo app" : "anotar")}
-      ${kpi("Sobra no big bag", fechado && l.sobra_kg != null ? kg(l.sobra_kg, 1) : "&nbsp;", fechado ? "pelo app" : "anotar (ou: acabou)")}
-    </div>
-    ${depois.length ? `<h3>Ao terminar</h3><ul class="chk">${depois.flatMap((s) => s.passos).map((p) => `<li>${caixa}<span>${esc(p)}</span></li>`).join("")}</ul>` : ""}
-    <h3>Ocorrências</h3>
-    <div class="obs"></div>
-    <div class="duas">${linhaEscrever("Término (hora):")}${linhaEscrever("Responsável pelo lote:")}</div>
-  </div>`;
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(titulo)}</title><style>${CSS}</style></head><body>
-${pag1}${pag2}${blocoManual(manual, `Manual de processos — ${l.codigo}`, Object.values(d.equipe).flatMap((x) => x.split(" → ")))}
+${pag1}
 </body></html>`;
 }
 

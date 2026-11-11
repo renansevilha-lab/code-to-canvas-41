@@ -89,3 +89,9 @@ insert into public.producao_manual (ordem, titulo, quando, etapa, passos, observ
 
 -- Rollback:
 -- drop table if exists public.producao_manual;
+
+-- 11/nov/2026 (mesmo dia): folha com UMA página + mão de obra por saco (migração producao_pagamento_saco).
+-- R$ pago por saco BOM, dividido igualmente entre quem estava no lote (regra do bônus: Mix R$ 2,50, 100% mandioca R$ 1,80).
+alter table public.producao_parametros add column if not exists pagamento_saco numeric(10,2);
+update public.producao_parametros set pagamento_saco = case when mistura_insumo_id is not null then 2.50 else 1.80 end where pagamento_saco is null;
+-- Rollback: alter table public.producao_parametros drop column if exists pagamento_saco;

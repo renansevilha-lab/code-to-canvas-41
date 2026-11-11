@@ -33,7 +33,7 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
   const [salvando, setSalvando] = useState(false);
   const [opId, setOpId] = useState("");
   const { perfil } = usePerfil();
-  // 11/nov (dono): ao iniciar, sai a folha de controle (ficha, planejado, equipe, checklists e manual) para imprimir
+  // 11/nov (dono): ao iniciar, sai a folha de controle (1 página: ficha, planejado, equipe, mão de obra e checklist) para imprimir
   const [folha, setFolha] = useState(() => {
     try { return localStorage.getItem("producao.folha") !== "0"; } catch { return true; }
   });
@@ -234,7 +234,7 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
           </div>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
             <input type="checkbox" checked={folha} onChange={(e) => setFolha(e.target.checked)} />
-            Imprimir a folha de controle (ficha, planejado, equipe, checklists e manual)
+            Imprimir a folha de controle (ficha, planejado, equipe, mão de obra por saco e checklist)
           </label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <Botao onClick={onFechar}>Cancelar</Botao>

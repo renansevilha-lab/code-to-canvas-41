@@ -16,11 +16,12 @@ export async function abrirFolhaControle(loteId: number, janela?: Window | null,
   try {
     const lote = await um<Lote>(supabaseExternal.from("view_producao_lote").select("*").eq("id", loteId).limit(1));
     if (!lote) throw new Error("Lote não encontrado.");
-    const [ficha, ordem, manual, foto] = await Promise.all([
+    const [ficha, ordem, manual, foto, param] = await Promise.all([
       um<Ficha>(supabaseExternal.from("view_producao_ficha").select("*").eq("sku", lote.sku).limit(1)),
       um<{ op_id: number | null }>(supabaseExternal.from("producao_ordem").select("op_id").eq("id", loteId).limit(1)),
       lerManual(),
       um<{ foto: string | null }>(supabaseExternal.from("view_foto_produto").select("foto").eq("sku", lote.sku).limit(1)),
+      um<{ pagamento_saco: number | null }>(supabaseExternal.from("producao_parametros" as never).select("pagamento_saco").eq("sku", lote.sku).limit(1)),
     ]);
     const op = ordem?.op_id
       ? await um<OrdemProducao>(supabaseExternal.from("view_producao_op" as never).select("*").eq("id", ordem.op_id).limit(1))
@@ -40,7 +41,7 @@ export async function abrirFolhaControle(loteId: number, janela?: Window | null,
       const lista = equipe[x.etapa] ? equipe[x.etapa].split(" → ") : [];
       if (lista[lista.length - 1] !== nm) equipe[x.etapa] = [...lista, nm].join(" → ");
     }
-    escreverEImprimir(w, folhaControleHtml({ lote, ficha, op, equipe, manual, foto: foto?.foto ?? null, gerado_por: geradoPor }));
+    escreverEImprimir(w, folhaControleHtml({ lote, ficha, op, equipe, manual, foto: foto?.foto ?? null, pagamento_saco: param?.pagamento_saco ?? null, gerado_por: geradoPor }));
   } catch (e) {
     w.close();
     throw e;
