@@ -4545,6 +4545,16 @@ ao centavo. Foi assim que a reescrita da margem foi validada com segurança.
   (`AuthGate`); edge function que lê com a chave pública repassa o JWT do usuário. O alerta do Supabase olha RLS desligado,
   não grants: ~110 tabelas seguem sem RLS (acesso = `authenticated`, app de uma empresa só) e ele vai continuar aparecendo
   até ligar RLS com política `to authenticated using (true)` nelas.
+- **Disk IO enchendo (11/nov/2026):** desde 05/11, 12,4 GB de WAL + 5,8 GB de temporário em 6 dias. Metade era o
+  `tiny-sync?modulo=pedidos&dias=5` (cron 6) regravando os ~2.600 pedidos dos últimos 5 dias INTEIROS a cada 10 min,
+  sem checar mudança (~375 mil regravações/dia em `pedidos_tiny`, 108 mil linhas). O de 90 dias (cron 8) só trabalha
+  de madrugada (só chama com `sync_state.ativo`), ~34 mil/noite. Feito (opção B do dono): cron 6 → `5,35 0,1,6,9-23`
+  (30 em 30 min das 6h às 22h BRT + 03h05); cron 62 começa com `set work_mem = 32MB` (os refresh de
+  `view_kpi_pedidos_dia`/`mv_dre_pedidos_mes` derramavam ~8–9 MB cada por rodada em disco com os 2 MB padrão — a 1ª
+  rodada depois escreveu 0). Não pode ser 1×/dia: Separação, A enviar/Risco, aviso de Entrega Rápida, TAG+aprovação e
+  devolução auto leem `pedidos_tiny`. Alerta `disco_io_relatorio()` (cron `disco-io-relatorio`, 22h07 de 11/nov,
+  canal atualizacoes) compara antes × depois e se desagenda; baseline em `debug_fulfillment` modulo `disco-io`.
+  Pendente: o sync pular pedido sem mudança (mexe na `tiny-sync`; 4 views leem `pedidos_tiny.atualizado_em`).
 - **`VACUUM FULL` não roda no editor do Supabase** ("cannot run inside a
   transaction block"). `TRUNCATE` libera espaço na hora.
 
