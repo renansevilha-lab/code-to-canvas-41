@@ -355,3 +355,20 @@ export const useOpDoLote = (loteId: number | null) =>
       return o[0] ?? null;
     },
   });
+
+// --- Manual de processos (11/nov/2026): seções com passos (limpeza, conferência, envase…), base da folha de controle
+//     impressa ao iniciar o lote e do manual de treinamento. SQL em docs/producao-folha-controle.sql. ---
+export interface ManualSecao {
+  id: number; ordem: number; titulo: string; quando: "antes" | "durante" | "depois" | "sempre";
+  etapa: Etapa | null; sku: string | null; passos: string[]; observacao: string | null; ativo: boolean;
+  atualizado_em: string; atualizado_por: string | null;
+}
+export const QUANDO_MANUAL: Array<{ id: ManualSecao["quando"]; nome: string }> = [
+  { id: "antes", nome: "Antes de começar" },
+  { id: "durante", nome: "Durante a produção" },
+  { id: "depois", nome: "Ao terminar" },
+  { id: "sempre", nome: "Sempre" },
+];
+export const lerManual = () =>
+  ler<ManualSecao[]>(supabaseExternal.from("producao_manual" as never).select("*").order("ordem").order("id"));
+export const useManual = () => useQuery({ queryKey: ["producao", "manual"], queryFn: lerManual });

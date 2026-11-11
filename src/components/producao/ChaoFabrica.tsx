@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Cartao, Entrada, Escolha, Numero, Selo } from "./ui";
 import { DialogoLancarTiny } from "./TinyProducao";
+import { abrirFolhaControle } from "./abrirFolha";
+import { usePerfil } from "@/hooks/usePerfil";
 import {
   ETAPAS, MOTIVOS_PARADA, MOTIVOS_REFUGO, brl, dataBR, erroMsg, horaBR, int, kg, minutos, nomeMotivoParada, periodoBR, useConsumoLote, useFicha, useFotos, useOpDoLote, useInsumos,
   proximaPesagem, useLote, usePessoas, type Etapa, type Lote,
@@ -22,6 +24,7 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
   const [painel, setPainel] = useState<null | "refugo" | "parada" | "pessoas" | "encerrar">(null);
 
   const l = lote.data;
+  const { perfil } = usePerfil();
   const recarregar = () => qc.invalidateQueries({ queryKey: ["producao"] });
   const nomePessoa = (pid?: string) => pessoas.data?.find((p) => p.id === pid)?.nome ?? pid ?? "—";
   const quemEnvase = l?.pessoas?.envase ?? null;
@@ -74,6 +77,8 @@ export function ChaoFabrica({ id, onVoltar }: { id: number; onVoltar: () => void
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Botao tom="fantasma" onClick={onVoltar}>‹ Produção</Botao>
         <div style={{ flex: 1 }} />
+        <Botao onClick={() => void abrirFolhaControle(id, null, perfil?.nome).catch((e) => toast.error(erroMsg(e)))}
+          title="Ficha, planejado, equipe, checklists, espaços para anotar e o manual — para imprimir ou salvar em PDF">Folha de controle</Botao>
         {fechado ? <Selo>{l.status}</Selo> : l.parado_agora ? <Selo tom="r">parado · {nomeMotivoParada(l.parada_motivo)}</Selo> : <Selo tom="g">rodando</Selo>}
       </div>
       <Cartao>

@@ -6,6 +6,9 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Botao, Campo, Entrada, Escolha } from "./ui";
+import { abrirFolhaControle } from "./abrirFolha";
+import { abrirAbaEspera } from "./folhaControle";
+import { usePerfil } from "@/hooks/usePerfil";
 import {
   ETAPAS, embalagensDaFicha, erroMsg, farinhaCurta, farinhaPorSaco, int, kg, useBigBags, useInsumos, useOrdensProducao, useParametros, usePessoas, type Etapa, type OrdemProducao,
 } from "@/lib/producao";
@@ -29,6 +32,11 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
   });
   const [salvando, setSalvando] = useState(false);
   const [opId, setOpId] = useState("");
+  const { perfil } = usePerfil();
+  // 11/nov (dono): ao iniciar, sai a folha de controle (ficha, planejado, equipe, checklists e manual) para imprimir
+  const [folha, setFolha] = useState(() => {
+    try { return localStorage.getItem("producao.folha") !== "0"; } catch { return true; }
+  });
 
   const par = params.data?.find((p) => p.sku === sku) ?? null;
   // 08/nov (dono): na escolha do produto e do big bag, mostrar a MATÉRIA-PRIMA (o código do bag — JAJU-3310-02 — não diz
@@ -101,20 +109,29 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
     if (!par || !bagSel) return toast.error("Escolha o produto e o big bag.");
     if (!quem.envase) return toast.error("Diga quem está no envase.");
     const pessoasEtapa = Object.fromEntries(etapas.map((e) => [e.id, quem[e.id] ?? ""]));
+    // a aba da folha abre no clique (depois do await o navegador bloquearia)
+    const aba = folha ? abrirAbaEspera() : null;
     setSalvando(true);
     const { data, error } = await supabaseExternal.rpc("producao_abrir_lote" as never, {
       p_sku: par.sku, p_big_bag: bagSel.id, p_embalagem: emb ? Number(emb) : null,
       p_qtd_planejada: qtd ? Number(qtd) : null, p_pessoas: pessoasEtapa,
     } as never);
     setSalvando(false);
-    if (error) return toast.error(erroMsg(error));
-    try { localStorage.setItem("producao.quem", JSON.stringify(quem)); } catch { /* sem armazenamento local */ }
+    if (error) { aba?.close(); return toast.error(erroMsg(error)); }
+    try {
+      localStorage.setItem("producao.quem", JSON.stringify(quem));
+      localStorage.setItem("producao.folha", folha ? "1" : "0");
+    } catch { /* sem armazenamento local */ }
     const lote = data as unknown as { id: number; codigo: string };
     if (opSel) {
       const { error: e2 } = await supabaseExternal.from("producao_ordem" as never).update({ op_id: opSel.id } as never).eq("id", lote.id);
       if (e2) toast.error(`Lote aberto, mas não ficou ligado à ordem #${opSel.id}: ${erroMsg(e2)}`);
     }
     toast.success(`Lote ${lote.codigo} aberto${opSel ? ` para a ordem #${opSel.id}` : ""}. Ajuste a datadora para esse código.`);
+    if (folha) {
+      if (!aba) toast.error("O navegador bloqueou a folha de controle: libere pop-ups e use o botão “Folha de controle” no lote.");
+      else void abrirFolhaControle(lote.id, aba, perfil?.nome).catch((e) => toast.error(`Folha de controle: ${erroMsg(e)}`));
+    }
     void qc.invalidateQueries({ queryKey: ["producao"] });
     onAberto(lote.id);
   }
@@ -215,6 +232,10 @@ export function AbrirLote({ aberto, op, onFechar, onAberto }: {
               </div>
             ))}
           </div>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+            <input type="checkbox" checked={folha} onChange={(e) => setFolha(e.target.checked)} />
+            Imprimir a folha de controle (ficha, planejado, equipe, checklists e manual)
+          </label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <Botao onClick={onFechar}>Cancelar</Botao>
             <Botao tom="primario" onClick={abrir} disabled={salvando || !bagSel}>{salvando ? "Iniciando…" : "Iniciar produção"}</Botao>
