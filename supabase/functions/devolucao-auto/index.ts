@@ -1,5 +1,8 @@
 // ============================================================================
-// devolucao-auto v6 (18/out/2026) — motor de NF de DEVOLUCAO automatica.
+// devolucao-auto v7 (12/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// v7: ?modulo=varrer-historico&conta=svl|ottz [&orcamento=22][&tipo=pedidos|notas_s|notas_e]
+//   inventario historico (so leitura no Tiny): pedidos cancelados, NF de saida e NF de devolucao
+//   por janela (devolucao_hist_*), base da view_devolucao_hist_candidatos. Crons 173 (SVL) e 174 (Ottz, madrugada).
 // v5: bloqueio da API v2 do Tiny (cod 6) vira COOLDOWN GLOBAL de 10 min — a
 //   rodada inteira espera (antes so o pedido esperava e a rodada seguinte batia
 //   na v2 com outro pedido, o que reinicia o bloqueio).
@@ -263,6 +266,126 @@ async function emitirPendentes(supabase: SB, max: number, dry: boolean) {
   return { ...resumo, emitidas: feitas.filter((f) => f.autorizada).length, pausado_656: parou656, feitas, tempo_ms: Date.now() - inicio };
 }
 
+// ---------------------------------------------------------------- v7: varredura historica (12/nov/2026)
+// Inventario, so LEITURA no Tiny, por conta: pedidos cancelados, notas de saida e notas de devolucao
+// (series 12 SVL / 13 Ottz), janela a janela (devolucao_hist_estado). A listagem /notas ja traz
+// origem.id (pedido), chave e situacao — nao consulta pedido a pedido. Janela que o Tiny recusa por
+// "consulta levou muito tempo" e dividida em dias. Resultado em view_devolucao_hist_candidatos.
+const SERIES_DEVOLUCAO: Record<string, string> = { svl: "12", ottz: "13" };
+const ORDEM_TIPO: Record<string, number> = { pedidos: 0, notas_s: 1, notas_e: 2 };
+const digits = (s: unknown) => String(s ?? "").replace(/\D/g, "");
+
+async function varrerHistorico(supabase: SB, conta: string, token: string, orcamentoMs: number, soTipo: string | null) {
+  const inicio = Date.now();
+  const out: any = { janelas: [] as any[], paginas: 0, pedidos: 0, notas: 0, divididas: 0, erros: [] as string[] };
+  const serieDev = SERIES_DEVOLUCAO[conta];
+  while (Date.now() - inicio < orcamentoMs) {
+    // proxima janela: nao concluida, poucas tentativas; pedidos antes das notas; mais antiga primeiro
+    let q = supabase.from("devolucao_hist_estado").select("*").eq("conta", conta).is("concluido_em", null).lt("tentativas", 4)
+      .order("janela_de", { ascending: true }).limit(40);
+    if (soTipo) q = q.eq("tipo", soTipo);
+    const { data: cands, error: eSel } = await q;
+    if (eSel) throw new Error(`estado: ${eSel.message}`);
+    const lista = ((cands || []) as any[]).sort((a, b) => (ORDEM_TIPO[a.tipo] - ORDEM_TIPO[b.tipo]) || String(a.janela_de).localeCompare(String(b.janela_de)));
+    const j = lista[0];
+    if (!j) { out.concluido = true; break; }
+
+    const tipo = String(j.tipo);
+    const base = tipo === "pedidos"
+      ? `/pedidos?situacao=2&dataInicial=${j.janela_de}&dataFinal=${j.janela_ate}&limit=100`
+      : `/notas?tipo=${tipo === "notas_s" ? "S" : "E"}&dataInicial=${j.janela_de}&dataFinal=${j.janela_ate}&limit=100`;
+    let offset = Number(j.lidos || 0);
+    let total = Number.isFinite(Number(j.total_api)) && j.total_api != null ? Number(j.total_api) : Infinity;
+    let paginas = Number(j.paginas || 0);
+    const janela: any = { tipo, de: j.janela_de, ate: j.janela_ate, paginas: 0, linhas: 0 };
+    try {
+      while (offset < total && Date.now() - inicio < orcamentoMs) {
+        const r = await tinyFetch(token, `${base}&offset=${offset}`);
+        paginas++; janela.paginas++; out.paginas++;
+        const itens: any[] = r?.itens || [];
+        total = Number(r?.paginacao?.total ?? itens.length);
+        if (tipo === "pedidos") {
+          const linhas = itens.filter((p) => p?.id).map((p) => ({
+            conta, tiny_pedido_id: Number(p.id), numero_pedido: p.numeroPedido != null ? Number(p.numeroPedido) : null,
+            numero_ecommerce: String(p.ecommerce?.numeroPedidoEcommerce ?? "").trim() || null,
+            canal: fixEnc(p.ecommerce?.nome) || null,
+            data_pedido: p.dataCriacao && p.dataCriacao !== "0000-00-00" ? p.dataCriacao : null,
+            valor: p.valor != null ? Number(p.valor) : null,
+            cliente_nome: fixEnc(p.cliente?.nome) || null, situacao: p.situacao != null ? Number(p.situacao) : null,
+            visto_em: new Date().toISOString(),
+          }));
+          if (linhas.length) {
+            const { error } = await supabase.from("devolucao_hist_pedidos").upsert(linhas, { onConflict: "conta,tiny_pedido_id" });
+            if (error) throw new Error(`upsert pedidos: ${error.message}`);
+          }
+          out.pedidos += linhas.length; janela.linhas += linhas.length;
+        } else {
+          const ehE = tipo === "notas_e";
+          const linhas = itens
+            .filter((n) => n?.id && (!ehE || String(n.serie) === serieDev)) // devolucao: so a serie da conta (a Ottz tem milhares de NF de entrada do Full/fornecedor)
+            .map((n) => ({
+              conta, id_nota: Number(n.id), tipo: ehE ? "E" : "S", serie: n.serie != null ? String(n.serie) : null,
+              numero: n.numero != null ? String(n.numero) : null,
+              chave: digits(n.chaveAcesso).length === 44 ? digits(n.chaveAcesso) : null,
+              situacao: n.situacao != null ? String(n.situacao) : null,
+              data_emissao: n.dataEmissao && n.dataEmissao !== "0000-00-00" ? n.dataEmissao : null,
+              valor: n.valor != null ? Number(n.valor) : null,
+              cpf_cnpj: digits(n.cliente?.cpfCnpj) || null, cliente_nome: fixEnc(n.cliente?.nome) || null,
+              origem_pedido_id: n.origem?.id && String(n.origem?.tipo || "").toLowerCase() === "venda" ? Number(n.origem.id) : null,
+              origem_tipo: n.origem?.tipo ?? null,
+              numero_ecommerce: String(n.ecommerce?.numeroPedidoEcommerce ?? "").trim() || null,
+              canal: fixEnc(n.ecommerce?.nome) || null,
+              itens: (n.itens || []).map((i: any) => ({ codigo: i.codigo, qtd: i.quantidade, valor: i.valorTotal })),
+              visto_em: new Date().toISOString(),
+            }));
+          if (linhas.length) {
+            const { error } = await supabase.from("devolucao_hist_notas").upsert(linhas, { onConflict: "conta,id_nota" });
+            if (error) throw new Error(`upsert notas: ${error.message}`);
+          }
+          out.notas += linhas.length; janela.linhas += linhas.length;
+        }
+        offset += itens.length;
+        const fim = itens.length < 100 || offset >= total;
+        await supabase.from("devolucao_hist_estado").update({
+          total_api: Number.isFinite(total) ? total : null, lidos: offset, paginas, erro: null,
+          concluido_em: fim ? new Date().toISOString() : null, atualizado_em: new Date().toISOString(),
+        }).eq("conta", conta).eq("tipo", tipo).eq("janela_de", j.janela_de);
+        if (fim) { janela.concluida = true; break; }
+        await sleep(350);
+      }
+    } catch (e) {
+      const msg = String((e as Error).message || e);
+      const dias = Math.round((Date.parse(`${j.janela_ate}T00:00:00Z`) - Date.parse(`${j.janela_de}T00:00:00Z`)) / 86400000) + 1;
+      if (/levou muito tempo/i.test(msg) && dias > 1) {
+        // janela grande demais para o Tiny: vira janelas de 1 dia (ou metades)
+        const passo = dias > 4 ? 1 : 1;
+        const novas: any[] = [];
+        for (let k = 0; k < dias; k += passo) {
+          const de = new Date(Date.parse(`${j.janela_de}T00:00:00Z`) + k * 86400000).toISOString().slice(0, 10);
+          const ate = new Date(Date.parse(`${j.janela_de}T00:00:00Z`) + Math.min(k + passo - 1, dias - 1) * 86400000).toISOString().slice(0, 10);
+          novas.push({ conta, tipo, janela_de: de, janela_ate: ate });
+        }
+        await supabase.from("devolucao_hist_estado").delete().eq("conta", conta).eq("tipo", tipo).eq("janela_de", j.janela_de);
+        const { error } = await supabase.from("devolucao_hist_estado").upsert(novas, { onConflict: "conta,tipo,janela_de", ignoreDuplicates: true });
+        if (error) throw new Error(`dividir janela: ${error.message}`);
+        out.divididas++; janela.dividida = novas.length;
+      } else {
+        await supabase.from("devolucao_hist_estado").update({
+          erro: msg.slice(0, 300), tentativas: Number(j.tentativas || 0) + 1, atualizado_em: new Date().toISOString(),
+        }).eq("conta", conta).eq("tipo", tipo).eq("janela_de", j.janela_de);
+        janela.erro = msg.slice(0, 200); out.erros.push(`${tipo} ${j.janela_de}: ${msg.slice(0, 120)}`);
+        out.janelas.push(janela);
+        if (/Tiny 429|retries em/i.test(msg)) break; // limite do Tiny: encerra a rodada
+        continue;
+      }
+    }
+    out.janelas.push(janela);
+  }
+  const { count: faltam } = await supabase.from("devolucao_hist_estado").select("conta", { count: "exact", head: true })
+    .eq("conta", conta).is("concluido_em", null).lt("tentativas", 4);
+  return { ...out, janelas_faltam: faltam ?? null, tempo_ms: Date.now() - inicio };
+}
+
 /** Traduz a resposta do nf-devolucao?modulo=criar em estado do motor. */
 function estadoDe(r: any, tentativas: number, caso: string): { estado: string; reagendarMin?: number; parar?: boolean } {
   const c = r?.codigo;
@@ -307,6 +430,19 @@ serve(async (req: Request) => {
     try {
       const max = Math.min(Math.max(parseInt(url.searchParams.get("max") || "3", 10), 1), 6);
       return json({ modulo, conta, ...(await emitirPendentes(supabase, max, url.searchParams.get("dry") === "1")) });
+    } catch (e) {
+      return json({ erro: (e as Error).message }, 500);
+    }
+  }
+
+  if (modulo === "varrer-historico") {
+    const c = url.searchParams.get("conta") === "ottz" ? "ottz" : "svl";
+    const { data: tk2 } = await supabase.from("oauth_tokens_tiny").select("access_token").eq("conta", c).limit(1).single();
+    if (!tk2?.access_token) return json({ erro: `token Tiny ${c} ausente` }, 401);
+    const orc = Math.min(Math.max(parseInt(url.searchParams.get("orcamento") || "22", 10), 5), 50) * 1000;
+    const tipo = url.searchParams.get("tipo") || null;
+    try {
+      return json({ modulo, conta: c, ...(await varrerHistorico(supabase, c, tk2.access_token as string, orc, tipo)) });
     } catch (e) {
       return json({ erro: (e as Error).message }, 500);
     }
@@ -414,7 +550,7 @@ serve(async (req: Request) => {
       return json({ modulo, conta, dry, espelho: esp, processados: resultados.length, resultados, tempo_ms: Date.now() - inicio });
     }
 
-    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar"] }, 400);
+    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar", "emitir", "varrer-historico"] }, 400);
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);
   }
