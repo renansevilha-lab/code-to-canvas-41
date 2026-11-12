@@ -229,8 +229,18 @@ export function traduzirErroShopee(msg: string | null | undefined): string {
 // no Tiny na hora: listagem de produtos (se o SKU nem existe; no máx. 1×/10 min) +
 // detalhe de cada SKU (custo e composição do kit) e recalcula a margem. Cada SKU é
 // tentado UMA vez por sessão — custo que não existe no próprio Tiny não vira laço.
+//
+// 12/nov/2026: derrubou o banco. Com ~430 SKUs "sem custo" na tela, cada lote de 30 marcava
+// os SKUs como tentados, o setEstado re-renderizava, `pendentes` virava os PRÓXIMOS 30 e o
+// efeito disparava outro lote sem esperar o anterior: ~110 chamadas/min ao tiny-sync-produtos
+// por 4 min (15h23–15h27). Agora: um lote por vez no app inteiro, no máximo 60 SKUs por
+// carregamento de página, e nada quando a lista "sem custo" é grande demais para ser produto
+// novo (aí é a base de margem que falhou ou veio parcial).
 const tentadosTiny = new Set<string>();
 let ultimaListagemTiny = 0;
+let buscaTinyEmAndamento = false;
+const MAX_TINY_POR_SESSAO = 60;
+const MAX_SEM_CUSTO_PLAUSIVEL = 40;
 
 async function chamarTinyProdutos(qs: string) {
   const { data } = await supabaseExternal.auth.getSession();
@@ -248,14 +258,17 @@ export function useCustoTinyAutomatico(skus: string[], bases: Map<string, McBase
   const qc = useQueryClient();
   const [estado, setEstado] = useState<{ buscando: number } | { resolvidos: number; semCusto: string[] } | null>(null);
   const semCusto = bases ? skus.filter((s) => { const b = bases.get(s); return !b || b.cmv == null; }) : [];
-  const pendentes = semCusto.filter((s) => !tentadosTiny.has(s));
+  const plausivel = semCusto.length <= MAX_SEM_CUSTO_PLAUSIVEL;
+  const vagas = Math.max(0, MAX_TINY_POR_SESSAO - tentadosTiny.size);
+  const pendentes = plausivel ? semCusto.filter((s) => !tentadosTiny.has(s)).slice(0, vagas) : [];
   const chave = pendentes.join("|");
 
   useEffect(() => {
-    if (!pendentes.length) return;
+    if (!pendentes.length || buscaTinyEmAndamento) return;
     let cancelado = false;
     const alvo = pendentes.slice(0, 30);
     alvo.forEach((s) => tentadosTiny.add(s));
+    buscaTinyEmAndamento = true;
     setEstado({ buscando: alvo.length });
     (async () => {
       try {
@@ -269,6 +282,7 @@ export function useCustoTinyAutomatico(skus: string[], bases: Map<string, McBase
           await Promise.all(alvo.slice(i, i + 3).map((s) => chamarTinyProdutos(`modulo=detalhar&sku=${encodeURIComponent(s)}`).catch(() => null)));
         }
       } catch { /* melhor-esforço: a tela segue com o que tem */ }
+      finally { buscaTinyEmAndamento = false; }
       if (cancelado) return;
       await qc.invalidateQueries({ queryKey: chaveBases });
       const atualizadas = qc.getQueryData<Map<string, McBase>>(chaveBases);
