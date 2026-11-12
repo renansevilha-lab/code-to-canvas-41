@@ -701,6 +701,25 @@ pode faltar** mesmo com envio agendado — "sem envio agendado" de verdade é
 `status_pedido = 'READY_TO_SHIP'` (ex.: 2609057QVR7FG5, concluído no Tiny e
 nunca arranjado na Shopee).
 
+## 5.1.1 Pedido Shopee faturado no Tiny e sem envio confirmado (12/nov/2026)
+
+Relato do dono: pedidos da Ottz sem etiqueta. Sinal no banco: `pedidos.status_pedido = 'READY_TO_SHIP'` + `pedidos_tiny.situacao =
+'faturada'` (o espelho da Shopee NÃO estava velho: conferido ao vivo, `shopee-ship?modulo=ship-param` devolve `info_needed` = envio não
+confirmado; pedido arranjado responde "Package … not eligible for rescheduling"). Em 12/nov 10h: 23 pedidos de 11/11, prazo no dia.
+- **Causa:** em 22 deles a Shopee JÁ tinha os dados da nota (`get_order_detail` com `response_optional_fields=invoice_data` → `status
+  "valid"`) — o Tiny emitiu a NF, mandou a nota e **não confirmou o envio** (`ship_order`). Em 1 (2611123MBJ47R1, NF 60140/20 de 11/11
+  16h43) a nota nem tinha chegado (`invoice_data.status "pending"`).
+- **`pedidos_tiny` não guarda NF:** `numero_nota_fiscal`/`chave_nfe`/`data_emissao_nfe` vazios. A nota vem AO VIVO: v3 `GET /pedidos/{id}`
+  → `notaFiscal {id, numero, serie, situacao 6 = autorizada, chaveAcesso, dataEmissao, horaEmissao}` e `GET /notas/{id}` (itens com CFOP).
+- **Edge fn `shopee-nf-dados` v2** (fonte no repositório): `ver` (nota no Tiny + invoice_data/status na Shopee), `ver-xml`/`enviar-xml`
+  (XML da nota pela v2 do Tiny `nota.fiscal.obter.xml.php` → `POST /api/v2/order/upload_invoice_doc` multipart `order_sn`,
+  `file_type 4`, `file` — **funciona**: a nota ficou "valid") e `enviar` (`add_invoice_data` por campos — **recusado com "interceptor"**,
+  o app não tem acesso). Escrita: sessão de usuário com módulo galpao ou a chave de ensaio (só os 23 pedidos, expira 13/nov 03:00 UTC).
+  Tentativas em `debug_fulfillment` (`modulo shopee-nf-dados`).
+- **Feito com o OK do dono:** os 23 → nota (só o 1º precisou) → `shopee-ship?modulo=confirmar` (endereço padrão, coleta recomendada) →
+  rastreio → etiqueta gerada no cache (`imprimir&dry=1`). `ship-param` deu HTTP 500 passageiro em 4; repetidos e confirmados.
+- **Pendente:** alerta/botão para isso não depender de investigação (faturado no Tiny + Shopee sem envio confirmado há > 1 h).
+
 **Cache de etiquetas (`etiquetas_cache`, coluna `zpl_conteudo`):**
 - Preenchido pelo módulo `pregerar` do `shopee-sync-ads` (cron a cada 3 min, por
   loja: `pregerar-etiquetas-ottz` min 0,3,6…; `-svl` min 1,4,7…) OU on-demand
@@ -4267,6 +4286,7 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 | `anuncio-shopee-variacoes` | v9 (06/nov: `fotos-opcoes` = troca a foto das opções de anúncio que já tem variações); v8 (opção até 30 letras); v7 (16/out: `ler` e `ampliar` — opções novas em anúncio que já está no ar, §5.11.11.12); v6 (deploy 6; v6 = duas grades, cor × quantidade — §5.11.8; v4: peso e medidas por variação; `ativar` põe no ar depois das variações, com 1 nova tentativa; módulo `ativar`) | 2º passo do envio à Shopee: cria as opções (variações) num anúncio simples já criado — `init_tier_variation`. `previa`, `criar`. JWT de usuário + módulo `ia` — ver §5.11.11 |
 | `tiny-produto-variacoes` | v10 (29/out: `kit-avulso` = kit tipo K sem pai, com a composição — §5.11.8) · v9 (deploy 12; 29/out: aceita produto com UMA variação só, pedido do dono) · v7 (deploy 10; 22/out: 429 do Tiny repetido e tratado como pendente, módulo `completar-kits` — §5.11.8) · v6 (deploy 9 — o 9 só acrescenta a rota temporária `inativar-16523`; várias bases e duas grades — cor × quantidade, módulo `grade` — §5.11.8; v5: `fotos-anuncio` manda as fotos do anúncio ao Tiny — §5.11.11.1) | Cria no Tiny, a partir de um produto simples, o produto com variações em que cada variação é kit do base (v3 cria, v2 transforma em kit). `sugerir` (SKUs livres conferidos ao vivo no Tiny), `previa`, `criar` (herda a foto principal do base e marca `criado_app_em`), `kit`, `foto`. JWT de usuário + módulo `ia` — ver §5.11.8 |
 | `anuncio-tiktok` | v1 | Envio do anúncio da IA ao TikTok Shop da Ottz/ACZ: `previa` e `enviar` (criar como rascunho ou atualizar), mesmo contrato da `anuncio-publicar`. JWT de usuário + módulo `ia` — ver §5.11.14 |
+| `shopee-nf-dados` | v2 | Pedido Shopee faturado no Tiny e travado: lê a nota ao vivo no Tiny e manda o XML à Shopee (`upload_invoice_doc`) — ver §5.1.1 |
 | `tiny-vendas-historico` | v1 (deploy 2) | Totais de vendas por dia × conta × canal × situação lidos da listagem do Tiny (out/2024 →), para o histórico do Dashboard. Só lê no Tiny. Crons 170/171 — ver §5.12 |
 | `tiny-produto-importar` | v1 | Traz/atualiza no espelho `produtos` um produto do Tiny NA HORA (código exato → detalhe; kit, variações e pai junto). Só lê no Tiny. Sessão de usuário — ver §5.11.11.12 |
 | `producao-tiny` | v3 (28/out: + saída do componente da mistura, tofu 16080 no 16640) · v2 | Produção × Tiny: a entrada do produto acabado no depósito Geral ao encerrar o lote (matéria-prima fica no app), com prévia e registro em `producao_tiny_lanc`. JWT de usuário + `galpao` — ver §5.5.2 |
