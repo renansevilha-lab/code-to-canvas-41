@@ -205,7 +205,7 @@ coleta como despesa do mês; tarifas por pedido conciliam com `pedidos`).
   `auto_sku`; senão OC única → `auto_fornecedor`). `view_compras_conciliacao`
   (NF × OC, Δ valor, itens divergentes) e `_itens` (qtd/preço OC × NF por SKU).
   Painel "NF do fornecedor × ordem de compra" em `/compras` com vincular/
-  desvincular manual (`match_metodo='manual'`). **Escrita em LOTE** nos
+  desvincular manual (`match_metodo='manual'`). **Frete (CT-e) ignorado (12/nov/2026):** gatilho `trg_compras_nf_marca_frete` (BEFORE INSERT) marca `ignorar` nas notas de SHPS/SHPX (Shopee), TikTok Logistics e sem fornecedor abaixo de R$ 100 — ~9,3 mil "Serviço CTe" de R$ 2–15 que poluíam a busca (a regra da função não casava "SHPS"); as listas que filtram `ignorar = false` (Produção › Entrada pela NF, Compras) ficam só com fornecedores. SQL em `docs/compras-nf-ignorar-frete.sql`. **Escrita em LOTE** nos
   cabeçalhos (a v3 fazia 1 update por NF: 274 NFs = 74 s sem chegar aos itens).
 - **Conciliação de devoluções/reembolsos:** `view_conciliacao_devolucoes`
   (Shopee `shopee_devolucoes` + ML cancelados/parcialmente reembolsados ×
