@@ -58,6 +58,7 @@ import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { rangeToSPIso } from "@/lib/date";
 import { usePerfil } from "@/hooks/usePerfil";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
+import { EditorPrecoPromo } from "@/components/pedidos/EditorPrecoPromo";
 import {
   periodoAnterior,
   resolveRange,
@@ -1565,6 +1566,8 @@ function PedidoExpandido({ p }: { p: PedidoIntegrado }) {
             <CustoManual pedido={p} skus={(p.skus ?? "").split(",").map((x) => x.trim()).filter(Boolean)} />
           </div>
         )}
+
+        <EditorPrecoPromo pedido={p} />
 
         {shopee && (
           <a

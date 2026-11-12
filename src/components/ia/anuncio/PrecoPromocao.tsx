@@ -45,15 +45,18 @@ const paraNumero = (s: string) => Number(String(s).replace(/\./g, "").replace(",
 const dia = (seg: number) => new Date(seg * 1000).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const COLS_ANUNCIO = "item_id, nome, status, sku_pai, tem_variacao, preco_min, preco_max, estoque_total, imagem_url";
 
-export function PrecoPromocao({ sku, empresa }: { sku: string; empresa: string }) {
-  // a loja da tela vem primeiro; a outra aparece logo abaixo
-  const lojas = [...LOJAS].sort((a, z) => Number(z.shop_id === (empresa === "svl" ? 759046323 : 522186766)) - Number(a.shop_id === (empresa === "svl" ? 759046323 : 522186766)));
+export function PrecoPromocao({ sku, empresa, soDaEmpresa, semRodape }: { sku: string; empresa: string; soDaEmpresa?: boolean; semRodape?: boolean }) {
+  // a loja da tela vem primeiro; a outra aparece logo abaixo (soDaEmpresa = só a loja da empresa — Pedidos Integrados)
+  const daEmpresa = empresa === "svl" ? 759046323 : 522186766;
+  const lojas = [...LOJAS].sort((a, z) => Number(z.shop_id === daEmpresa) - Number(a.shop_id === daEmpresa)).filter((l) => !soDaEmpresa || l.shop_id === daEmpresa);
   return (
     <div className="space-y-4">
       {lojas.map((l) => <Loja key={l.shop_id} sku={sku} shopId={l.shop_id} nome={l.nome} />)}
-      <p className="text-[11px] text-muted-foreground">
-        Mercado Livre, Amazon e TikTok entram depois — por enquanto as promoções deles continuam nas telas próprias.
-      </p>
+      {!semRodape && (
+        <p className="text-[11px] text-muted-foreground">
+          Mercado Livre, Amazon e TikTok entram depois — por enquanto as promoções deles continuam nas telas próprias.
+        </p>
+      )}
     </div>
   );
 }
