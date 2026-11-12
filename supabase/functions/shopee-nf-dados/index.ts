@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-nf-dados v1 (12/nov/2026)
+// Edge Function: shopee-nf-dados v2 (12/nov/2026) — v2: ?modulo=ver-xml / enviar-xml (arquivo XML, upload_invoice_doc)
 // ----------------------------------------------------------------------------
 // Pedido Shopee com a NF emitida no Tiny e o envio NUNCA confirmado na Shopee (o Tiny não
 // passou os dados fiscais). Esta função lê a nota AO VIVO no Tiny e manda os dados fiscais
@@ -128,6 +128,23 @@ async function montar(orderSn: string) {
   };
 }
 
+/** XML da NF-e (nfeProc puro) pela API v2 do Tiny — a v2 devolve um envelope <retorno><xml_nfe>. */
+async function xmlNota(idNota: string | number): Promise<string> {
+  const tk = (Deno.env.get("TINY_V2_TOKEN") || "").trim();
+  if (!tk) throw new Error("falta o secret TINY_V2_TOKEN");
+  const r = await fetch("https://api.tiny.com.br/api2/nota.fiscal.obter.xml.php", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: tk, id: String(idNota) }).toString(),
+  });
+  let txt = await r.text();
+  if (!txt.includes("<nfeProc") && txt.includes("&lt;nfeProc")) {
+    txt = txt.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  }
+  const i = txt.indexOf("<nfeProc"); const f = txt.lastIndexOf("</nfeProc>");
+  if (i < 0 || f < 0) throw new Error(`o Tiny não devolveu o XML da nota: ${txt.replace(/\s+/g, " ").slice(0, 200)}`);
+  return `<?xml version="1.0" encoding="UTF-8"?>${txt.slice(i, f + "</nfeProc>".length)}`;
+}
+
 async function autorizado(req: Request, orderSn: string, url: URL): Promise<string | null> {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   let pl: Record<string, unknown> = {};
@@ -152,6 +169,28 @@ Deno.serve(async (req) => {
     if (!quem) return json({ ok: false, erro: "sem acesso (faça login com o módulo galpão)" }, 401);
     const m = await montar(orderSn);
     if (modulo === "ver") return json({ ok: true, order_sn: orderSn, tiny: m.tiny, shopee: m.shopee, enviaria: m.corpo, pendencias: m.pendencias });
+    // v2: o ARQUIVO XML da nota (v2.order.upload_invoice_doc, multipart) — a chamada por campos deu "interceptor"
+    if (modulo === "ver-xml" || modulo === "enviar-xml") {
+      const xml = await xmlNota(m.tiny.nota.id);
+      const temChave = xml.includes(m.corpo.invoice_data.access_key);
+      if (modulo === "ver-xml") return json({ ok: true, order_sn: orderSn, bytes: xml.length, chave_no_xml: temChave, inicio: xml.slice(0, 160) });
+      if (url.searchParams.get("confirmar") !== "1") return json({ ok: false, erro: "envio exige confirmar=1" }, 400);
+      if (m.pendencias.length || !temChave) return json({ ok: false, erro: "há pendências", pendencias: [...m.pendencias, ...(temChave ? [] : ["o XML não tem a chave da nota"])] }, 400);
+      const fileType = url.searchParams.get("file_type") || "4";
+      const fd = new FormData();
+      fd.append("order_sn", orderSn);
+      fd.append("file_type", fileType);
+      fd.append("file", new Blob([xml], { type: "text/xml" }), `NFe${m.corpo.invoice_data.access_key}.xml`);
+      const resp = await lerJson(await fetch((await urlLoja(m.c, "/api/v2/order/upload_invoice_doc")).toString(), { method: "POST", body: fd }));
+      const depois = await shopeeGet(m.c, "/api/v2/order/get_order_detail", { order_sn_list: orderSn, response_optional_fields: "order_status,invoice_data,package_list" });
+      const ordem = depois?.response?.order_list?.[0] ?? null;
+      await db.from("debug_fulfillment").insert({
+        modulo: "shopee-nf-dados", etapa: `${orderSn}:xml`, status_http: resp?.error ? 409 : 200,
+        resultado: { quem, file_type: fileType, bytes: xml.length, resposta: resp, depois: { status: ordem?.order_status ?? null, invoice_data: ordem?.invoice_data ?? null } },
+      });
+      return json({ ok: !resp?.error, order_sn: orderSn, file_type: fileType, bytes: xml.length, resposta: resp,
+        depois: { status: ordem?.order_status ?? null, invoice_data: ordem?.invoice_data ?? null } });
+    }
     if (modulo !== "enviar") return json({ ok: false, erro: "use ?modulo=ver ou enviar" }, 400);
     if (url.searchParams.get("confirmar") !== "1") return json({ ok: false, erro: "envio exige confirmar=1" }, 400);
     if (m.pendencias.length) return json({ ok: false, erro: "há pendências", pendencias: m.pendencias, enviaria: m.corpo }, 400);
