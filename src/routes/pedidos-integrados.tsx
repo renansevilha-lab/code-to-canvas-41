@@ -505,6 +505,7 @@ function PedidosIntegradosPage() {
 
   const paged = listQuery.data?.rows ?? [];
   const totalRows = listQuery.data?.count ?? 0;
+  const variacoes = useVariacoes(paged);
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
 
   // chart data (agregado no banco)
@@ -852,6 +853,7 @@ function PedidosIntegradosPage() {
                     <PedidoRow
                       key={p.order_sn}
                       p={p}
+                      variacoes={variacoes}
                       visiveis={visiveis}
                       nCols={nCols}
                       expanded={expandedId === p.order_sn}
@@ -1276,14 +1278,48 @@ function Th({
   );
 }
 
+/** Nome da variação (ex.: "8KG") dos SKUs da página: no Tiny a variação se chama "<nome do pai> - <opção>".
+ *  Lê só os SKUs visíveis (produtos é grande; corte de 1.000 do PostgREST). */
+function useVariacoes(rows: PedidoIntegrado[]): Map<string, string> {
+  const skus = useMemo(
+    () => [...new Set(rows.flatMap((r) => (r.skus ?? "").split(",").map((x) => x.trim()).filter(Boolean)))].sort(),
+    [rows],
+  );
+  const q = useQuery({
+    queryKey: ["pi-variacoes", skus],
+    enabled: skus.length > 0,
+    staleTime: 30 * 60_000,
+    queryFn: async () => {
+      const mapa = new Map<string, string>();
+      const { data: vs } = await supabaseExternal.from("produtos").select("sku, nome, sku_pai").in("sku", skus).not("sku_pai", "is", null);
+      const lista = (vs ?? []) as Array<{ sku: string; nome: string | null; sku_pai: string | null }>;
+      const pais = [...new Set(lista.map((v) => v.sku_pai as string))];
+      if (!pais.length) return mapa;
+      const { data: ps } = await supabaseExternal.from("produtos").select("sku, nome").in("sku", pais);
+      const nomePai = new Map(((ps ?? []) as Array<{ sku: string; nome: string | null }>).map((x) => [x.sku, x.nome ?? ""]));
+      for (const v of lista) {
+        const pai = nomePai.get(v.sku_pai as string);
+        const nome = v.nome ?? "";
+        let op = pai && nome.startsWith(pai + " - ") ? nome.slice(pai.length + 3) : (nome.match(/ - ([^-]+)$/)?.[1] ?? "");
+        op = op.trim();
+        if (op) mapa.set(v.sku, op);
+      }
+      return mapa;
+    },
+  });
+  return q.data ?? new Map();
+}
+
 function PedidoRow({
   p,
+  variacoes,
   visiveis,
   nCols,
   expanded,
   onToggle,
 }: {
   p: PedidoIntegrado;
+  variacoes: Map<string, string>;
   visiveis: Set<ColunaId>;
   nCols: number;
   expanded: boolean;
@@ -1314,7 +1350,19 @@ function PedidoRow({
                   <span className="text-muted-foreground font-normal"> + {(p.qtd_itens ?? 1) - 1}</span>
                 )}
               </div>
-              <div className="truncate text-[11px] text-muted-foreground font-mono">{p.skus ?? "—"}</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {p.skus
+                  ? p.skus.split(",").map((x) => x.trim()).filter(Boolean).map((sku, i) => (
+                      <span key={sku + i}>
+                        {i > 0 && ", "}
+                        <span className="font-mono">{sku}</span>
+                        {variacoes.get(sku) && (
+                          <span className="ml-1 rounded bg-muted px-1 py-px text-[10.5px] font-semibold text-foreground/80">{variacoes.get(sku)}</span>
+                        )}
+                      </span>
+                    ))
+                  : "—"}
+              </div>
             </div>
           </div>
         </td>
