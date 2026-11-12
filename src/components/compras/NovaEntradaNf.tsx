@@ -1,16 +1,17 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FileUp, Loader2, Package as PackageIcon, Search } from "lucide-react";
+import { AlertTriangle, FileUp, Info, Loader2, Package as PackageIcon, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { formatBRL, formatNumber } from "@/lib/format";
+import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { parseNfe, similaridade, soDigitos, unidadesDe, valorLiquido, type ItemXml, type NfXml } from "@/lib/nfe";
@@ -44,7 +45,35 @@ interface Fornecedor {
   fornecedor_fantasia: string | null;
 }
 interface ItemHist { sku: string | null; gtin: string | null; descricao: string | null }
-interface Produto { sku: string; nome: string | null; id_tiny: number | null; foto_capa: string | null }
+interface Produto { sku: string; nome: string | null; id_tiny: number | null; foto_capa: string | null; custo: number | null; tipo: string | null }
+
+// Histórico de custo de um SKU, para comparar com o que a NF traz.
+interface CompraAnterior { numero: string; data: string | null; fornecedor: string | null; preco: number; qtd: number }
+interface HistCusto {
+  manual: { custo: number; desde: string } | null; // cmv_manual vigente hoje
+  formacao: { custo: number; anterior: number | null; em: string | null; ordem: string | null } | null;
+  compras: CompraAnterior[]; // últimas compras (preço por unidade), fora esta NF
+}
+interface CustoLinha { liq: number; porFardo: number; un: number; unCom: number; extra: number }
+interface ExtrasNf { total: number; base: number; partes: { frete: number; ipi: number; st: number; outras: number; desconto: number } }
+
+const R4 = (v: number) => Math.round(v * 10000) / 10000;
+const brl4 = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const dataBr = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
+
+function Delta({ novo, base, compacto }: { novo: number; base: number | null | undefined; compacto?: boolean }) {
+  if (base == null || !(base > 0) || !(novo > 0)) return null;
+  const d = novo - base;
+  const pct = (d / base) * 100;
+  const igual = Math.abs(pct) < 0.5;
+  const cor = igual ? "text-muted-foreground" : d > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400";
+  return (
+    <span className={cn("tabular-nums font-semibold", cor)}>
+      {igual ? "igual" : `${d > 0 ? "+" : "−"}${formatPercent(Math.abs(pct))}`}
+      {!compacto && !igual && <span className="font-normal"> ({d > 0 ? "+" : "−"}{brl4(Math.abs(d))})</span>}
+    </span>
+  );
+}
 
 function Foto({ url }: { url?: string | null }) {
   const [erro, setErro] = useState(false);
@@ -255,12 +284,89 @@ export function NovaEntradaNf({
     enabled: skusLinhas.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<Record<string, Produto>> => {
-      const { data, error } = await supabaseExternal.from("produtos").select("sku, nome, id_tiny, foto_capa").in("sku", skusLinhas);
+      const { data, error } = await supabaseExternal.from("produtos").select("sku, nome, id_tiny, foto_capa, custo, tipo").in("sku", skusLinhas);
       if (error) throw error;
       return Object.fromEntries(((data ?? []) as Produto[]).map((p) => [p.sku, p]));
     },
   });
   const prods = prodQ.data ?? {};
+
+  // Histórico de custo dos SKUs da nota: custo manual vigente, última formação de custo e últimas compras.
+  const histQ = useQuery({
+    queryKey: ["compras", "nova-nf-hist-custo", skusLinhas, nf?.numero ?? ""],
+    enabled: skusLinhas.length > 0 && !!nf,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Record<string, HistCusto>> => {
+      const hoje = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+      const [man, form, its] = await Promise.all([
+        supabaseExternal.from("cmv_manual").select("sku, custo, vigente_desde").in("sku", skusLinhas)
+          .lte("vigente_desde", hoje).order("vigente_desde", { ascending: false }),
+        supabaseExternal.from("compras_custo_itens").select("sku, ordem_tiny_id, custo_final, custo_anterior, aplicado_em")
+          .in("sku", skusLinhas).not("custo_final", "is", null).order("aplicado_em", { ascending: false, nullsFirst: false }).limit(200),
+        supabaseExternal.from("compra_ordem_itens").select("sku, ordem_tiny_id, preco, quantidade")
+          .in("sku", skusLinhas).gt("preco", 0).limit(2000),
+      ]);
+      const itens = (its.data ?? []) as { sku: string; ordem_tiny_id: number; preco: number; quantidade: number }[];
+      const formacoes = (form.data ?? []) as { sku: string; ordem_tiny_id: number; custo_final: number; custo_anterior: number | null; aplicado_em: string | null }[];
+      type Ordem = { tiny_id: number; numero: string; data_pedido: string | null; fornecedor_nome: string | null; fornecedor_fantasia: string | null; kanban_status: string | null };
+      const ids = [...new Set([...itens.map((i) => i.ordem_tiny_id), ...formacoes.map((x) => x.ordem_tiny_id)])];
+      const ordens = new Map<number, Ordem>();
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data } = await supabaseExternal.from("compras_ordens")
+          .select("tiny_id, numero, data_pedido, fornecedor_nome, fornecedor_fantasia, kanban_status").in("tiny_id", ids.slice(i, i + 300));
+        for (const o of (data ?? []) as Ordem[]) ordens.set(o.tiny_id, o);
+      }
+      const estaNf = nf ? new Set([`NF-${nf.numero}`, `NF-${nf.numeroBruto}`]) : new Set<string>();
+      const out: Record<string, HistCusto> = {};
+      for (const sku of skusLinhas) {
+        const m = ((man.data ?? []) as { sku: string; custo: number; vigente_desde: string }[]).find((x) => x.sku === sku);
+        const fo = formacoes.find((x) => x.sku === sku);
+        const compras = itens.filter((i) => i.sku === sku)
+          .map((i) => ({ i, o: ordens.get(i.ordem_tiny_id) }))
+          .filter(({ o }) => o && o.kanban_status !== "excluida" && !estaNf.has(o.numero))
+          .map(({ i, o }) => ({ numero: o!.numero, data: o!.data_pedido, fornecedor: o!.fornecedor_fantasia || o!.fornecedor_nome, preco: Number(i.preco), qtd: Number(i.quantidade) }))
+          .sort((a, b) => String(b.data ?? "").localeCompare(String(a.data ?? "")))
+          .slice(0, 5);
+        out[sku] = {
+          manual: m ? { custo: Number(m.custo), desde: m.vigente_desde } : null,
+          formacao: fo ? { custo: Number(fo.custo_final), anterior: fo.custo_anterior == null ? null : Number(fo.custo_anterior), em: fo.aplicado_em, ordem: ordens.get(fo.ordem_tiny_id)?.numero ?? null } : null,
+          compras,
+        };
+      }
+      return out;
+    },
+  });
+  const hist = histQ.data ?? {};
+
+  // Despesas da nota fora das linhas (frete, IPI, ST, outras − desconto do cabeçalho), rateadas
+  // pelo valor líquido de cada linha — a mesma regra padrão da Formação de custo.
+  const extrasNf = useMemo((): ExtrasNf | null => {
+    if (!nf?.totais) return null;
+    const t = nf.totais;
+    const descItens = nf.itens.reduce((acc, x) => acc + (x.vDesc ?? 0), 0);
+    const total = t.frete + t.ipi + t.st + t.outras - Math.max(0, t.desconto - descItens);
+    const base = nf.itens.reduce((acc, x) => acc + valorLiquido(x), 0);
+    return { total, base, partes: t };
+  }, [nf]);
+  function custoLinha(l: Linha): CustoLinha {
+    const liq = valorLiquido(l.xml);
+    const extra = extrasNf && extrasNf.base > 0 ? (extrasNf.total * liq) / extrasNf.base : 0;
+    return {
+      liq,
+      porFardo: R4(l.xml.qCom > 0 ? liq / l.xml.qCom : 0),
+      un: R4(l.unidades > 0 ? liq / l.unidades : 0),
+      unCom: R4(l.unidades > 0 ? (liq + extra) / l.unidades : 0),
+      extra,
+    };
+  }
+  // Custo de referência hoje: custo manual vigente (é o que Pedidos/DRE usam), senão o cadastro do Tiny.
+  function referencia(sku: string): { valor: number; origem: string } | null {
+    const h = hist[sku];
+    if (h?.manual) return { valor: h.manual.custo, origem: "custo manual vigente" };
+    const p = prods[sku];
+    if (p && p.custo != null && Number(p.custo) > 0 && p.tipo !== "K") return { valor: Number(p.custo), origem: "custo no cadastro (Tiny)" };
+    return null;
+  }
 
   const incluidas = linhas.filter((l) => l.incluir && l.unidades > 0);
   const semSku = incluidas.filter((l) => !l.sku.trim()).length;
@@ -470,6 +576,7 @@ export function NovaEntradaNf({
                     <th className="py-1 pr-2 font-medium">Nosso SKU</th>
                     <th className="py-1 pr-2 font-medium text-right" title="Quantas unidades do nosso SKU vêm em 1 unidade da NF (fardo com 5 = 5)">Un. por FD/CX</th>
                     <th className="py-1 pr-2 font-medium text-right">Unidades</th>
+                    <th className="py-1 pl-3 font-medium text-right" title="Custo pelo valor líquido da linha da NF (já com o desconto do item). c/ frete+IPI = despesas da nota rateadas pelo valor">Custo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -546,6 +653,33 @@ export function NovaEntradaNf({
                           />
                           {l.nota && <div className="text-[10px] text-muted-foreground mt-0.5 max-w-[180px] ml-auto">{l.nota}</div>}
                         </td>
+                        <td className="py-1.5 pl-3 text-right whitespace-nowrap">
+                          {(() => {
+                            const c = custoLinha(l);
+                            const ref = sku ? referencia(sku) : null;
+                            const comExtras = !!extrasNf && Math.abs(c.unCom - c.un) >= 0.005;
+                            const novo = comExtras ? c.unCom : c.un;
+                            return (
+                              <div className="flex items-start justify-end gap-1.5">
+                                <div className="flex flex-col items-end leading-tight">
+                                  <span className="text-[11px] text-muted-foreground tabular-nums">{brl4(c.porFardo)} / {l.xml.uCom || "un NF"}</span>
+                                  <span className="text-[13px] font-semibold tabular-nums">{brl4(c.un)} / un</span>
+                                  {comExtras && <span className="text-[11px] tabular-nums text-foreground/80" title="Com frete, IPI, ST e outras despesas da nota rateadas pelo valor">c/ frete+IPI {brl4(c.unCom)}</span>}
+                                  {ref && <span className="text-[11px]">vs atual <Delta novo={novo} base={ref.valor} compacto /></span>}
+                                </div>
+                                {sku && (
+                                  <InfoCusto
+                                    sku={sku} nome={p?.nome ?? null} tipo={p?.tipo ?? null}
+                                    cadastro={p?.custo == null ? null : Number(p.custo)}
+                                    hist={hist[sku]} carregando={histQ.isFetching}
+                                    linha={c} uCom={l.xml.uCom} fator={l.fator} comExtras={comExtras}
+                                    extras={extrasNf} referencia={ref}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
                       </tr>
                     );
                   })}
@@ -585,5 +719,95 @@ export function NovaEntradaNf({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Botão de INFO: cruza o custo desta NF com o custo de hoje e as compras anteriores.
+function InfoCusto({
+  sku, nome, tipo, cadastro, hist, carregando, linha, uCom, fator, comExtras, extras, referencia,
+}: {
+  sku: string; nome: string | null; tipo: string | null; cadastro: number | null;
+  hist: HistCusto | undefined; carregando: boolean;
+  linha: CustoLinha; uCom: string; fator: number; comExtras: boolean;
+  extras: ExtrasNf | null;
+  referencia: { valor: number; origem: string } | null;
+}) {
+  const novo = comExtras ? linha.unCom : linha.un;
+  const ultima = hist?.compras[0];
+  const Item = ({ rot, valor, sub, destaque }: { rot: string; valor: number | null | undefined; sub?: string; destaque?: boolean }) => (
+    <div className="flex items-baseline justify-between gap-3 py-1 border-b last:border-0">
+      <div className="min-w-0">
+        <div className={cn("text-[12px]", destaque && "font-semibold")}>{rot}</div>
+        {sub && <div className="text-[10.5px] text-muted-foreground">{sub}</div>}
+      </div>
+      <div className="text-right shrink-0">
+        <div className={cn("text-[12px] tabular-nums", destaque && "font-semibold")}>{valor != null && valor > 0 ? brl4(valor) : "—"}</div>
+        {valor != null && valor > 0 && <div className="text-[10.5px]">nesta NF <Delta novo={novo} base={valor} /></div>}
+      </div>
+    </div>
+  );
+  const un = uCom || "un da NF";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" title="Comparar com o custo atual e as compras anteriores"
+          className="mt-0.5 h-6 w-6 shrink-0 rounded-md border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted">
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[400px] p-3 text-xs">
+        <div className="font-semibold text-[13px] leading-snug">{sku} · {nome ?? "—"}</div>
+        <div className="mt-2 rounded-md bg-muted/50 p-2 space-y-0.5">
+          <div className="flex justify-between gap-3"><span>Valor líquido da linha</span><span className="tabular-nums">{formatBRL(linha.liq)}</span></div>
+          <div className="flex justify-between gap-3"><span>Por {un}</span><span className="tabular-nums">{brl4(linha.porFardo)}</span></div>
+          <div className="flex justify-between gap-3"><span>Por unidade ({formatNumber(fator, 3)} un por {un})</span><span className="tabular-nums font-semibold">{brl4(linha.un)}</span></div>
+          {extras && (
+            <div className="flex justify-between gap-3" title={`Frete ${formatBRL(extras.partes.frete)} · IPI ${formatBRL(extras.partes.ipi)} · ST ${formatBRL(extras.partes.st)} · outras ${formatBRL(extras.partes.outras)}`}>
+              <span>+ despesas da nota rateadas ({formatBRL(linha.extra)})</span>
+              <span className="tabular-nums font-semibold">{brl4(linha.unCom)}</span>
+            </div>
+          )}
+          {!extras && <div className="text-[10.5px] text-muted-foreground">NF do Tiny: frete e IPI do cabeçalho só entram na Formação de custo.</div>}
+        </div>
+
+        <div className="mt-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">Comparando (custo por unidade)</div>
+        {carregando && !hist && <div className="py-2 text-muted-foreground flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> carregando…</div>}
+        <div>
+          {tipo === "K"
+            ? <Item rot="Cadastro (Tiny)" valor={null} sub="produto é kit — o custo do Tiny não vale para kit" />
+            : <Item rot="Cadastro (Tiny)" valor={cadastro} sub="custo do produto no Tiny (copiado todo dia às 05h)" destaque={referencia?.origem === "custo no cadastro (Tiny)"} />}
+          {hist?.manual && <Item rot="Custo manual vigente" valor={hist.manual.custo} sub={`desde ${dataBr(hist.manual.desde)} — é o que Pedidos e DRE usam`} destaque />}
+          {hist?.formacao && (
+            <Item rot="Última formação de custo" valor={hist.formacao.custo}
+              sub={`OC #${hist.formacao.ordem ?? "?"} · ${dataBr(hist.formacao.em)}${hist.formacao.anterior ? ` · antes era ${brl4(hist.formacao.anterior)}` : ""}`} />
+          )}
+          {ultima && <Item rot="Última compra" valor={ultima.preco} sub={`#${ultima.numero} · ${dataBr(ultima.data)} · ${ultima.fornecedor ?? ""} · ${formatNumber(ultima.qtd)} un`} />}
+        </div>
+        {hist && hist.compras.length > 1 && (
+          <>
+            <div className="mt-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">Compras anteriores</div>
+            <table className="w-full mt-0.5">
+              <tbody>
+                {hist.compras.map((c, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-0.5 pr-2 whitespace-nowrap">{dataBr(c.data)}</td>
+                    <td className="py-0.5 pr-2 truncate max-w-[160px]" title={c.fornecedor ?? ""}>#{c.numero} · {c.fornecedor ?? "—"}</td>
+                    <td className="py-0.5 pr-2 text-right tabular-nums">{formatNumber(c.qtd)} un</td>
+                    <td className="py-0.5 text-right tabular-nums">{brl4(c.preco)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {hist && !hist.compras.length && !hist.formacao && <div className="mt-1 text-muted-foreground">Sem compra anterior deste SKU no app.</div>}
+        <div className="mt-2 text-[10.5px] text-muted-foreground leading-snug">
+          {referencia
+            ? <>Referência do "vs atual": {referencia.origem}. Diferença grande costuma ser fator errado (fardo × unidade) — confira "Un. por FD/CX".</>
+            : "Sem custo de referência para comparar."}
+          {" "}Criar a entrada não muda o custo: isso é feito na Formação de custo da ordem.
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
