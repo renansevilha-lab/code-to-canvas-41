@@ -1,7 +1,8 @@
 // Produção › Bônus da equipe (12/nov/2026, pedido do dono). Acompanhamento do bônus da areia por pessoa:
 // cada lote encerrado paga R$/saco × sacos bons, dividido igualmente entre quem trabalhou nele.
 // Toda a conta e o controle de pagamento estão no banco (docs/producao-bonus.sql: producao_bonus,
-// producao_bonus_pagar, producao_bonus_desfazer). Por enquanto só o administrador (módulo 'todos') vê.
+// producao_bonus_pagar, producao_bonus_desfazer). Esta é a visão do administrador (módulo 'todos'); o resto do galpão
+// vê só o próprio bônus em MeuBonus.tsx, com a senha do Ponto (13/nov). "Zerar senha" = producao_bonus_zerar_senha.
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -120,6 +121,18 @@ export function BonusEquipe() {
     }
   }
 
+  async function zerarSenha(id: string, nome: string) {
+    if (!window.confirm(`Zerar a senha de ${nome}?
+
+No próximo acesso ao bônus (ou ao Ponto) ${nome} cria uma senha nova. A senha é a mesma do Ponto.`)) return;
+    try {
+      const r = await rpc<{ ok: boolean; erro?: string }>("producao_bonus_zerar_senha", { p_pessoa: id });
+      if (r.ok) toast.success(`Senha de ${nome} zerada.`); else toast.error(r.erro ?? "Não deu.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
+
   async function desfazer(p: Pagamento) {
     if (!window.confirm(`Desfazer o pagamento de ${brl(Number(p.valor))} para ${p.pessoa} (${dataBR(p.pago_em)})?\nOs ${p.lotes} lote(s) voltam para "a pagar".`)) return;
     try {
@@ -155,7 +168,8 @@ export function BonusEquipe() {
       <Cartao titulo="Bônus da equipe — areia" direita={segmento}>
         <div style={{ fontSize: 12, color: "var(--pm-t3)", marginBottom: 10 }}>
           Cada lote encerrado paga o valor por saco da ficha (Mão de obra por saco) × sacos bons, dividido igualmente entre quem trabalhou no lote.
-          O período é pela data de início do lote. Só você vê esta tela por enquanto.
+          O período é pela data de início do lote. Só você vê todos; cada pessoa da equipe vê só o próprio bônus nesta mesma aba,
+          escolhendo o nome e digitando a senha dela (a do Ponto).
         </div>
         {q.isLoading && <span style={{ color: "var(--pm-t3)" }}>Carregando…</span>}
         {q.error && <span style={{ color: "var(--pm-r)" }}>Não deu para ler: {(q.error as Error).message}</span>}
@@ -202,6 +216,7 @@ export function BonusEquipe() {
               <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, cursor: "pointer" }}>
                 <input type="checkbox" checked={soAPagar} onChange={(e) => setSoAPagar(e.target.checked)} /> Só o que falta pagar
               </label>
+              {pessoaAtual && <Botao tom="fantasma" onClick={() => void zerarSenha(pessoaAtual.pessoa_id, pessoaAtual.pessoa)}>Zerar senha</Botao>}
               {pessoaAtual && <Botao tom="fantasma" onClick={() => escolher(null)}>Ver todos</Botao>}
             </div>
           }

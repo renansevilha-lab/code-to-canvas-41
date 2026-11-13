@@ -9,6 +9,7 @@ import { AbrirLote } from "@/components/producao/AbrirLote";
 import { ChaoFabrica } from "@/components/producao/ChaoFabrica";
 import { CustosPrecos } from "@/components/producao/custos/CustosPrecos";
 import { BonusEquipe } from "@/components/producao/BonusEquipe";
+import { MeuBonus } from "@/components/producao/MeuBonus";
 import { usePerfil } from "@/hooks/usePerfil";
 import { Botao, Entrada } from "@/components/producao/ui";
 import type { OrdemProducao } from "@/lib/producao";
@@ -41,8 +42,10 @@ function ProducaoPage() {
   // Custos e Preços: só módulo custos (ou todos). Sem acesso, a aba nem aparece e o link volta ao painel.
   const { temAcesso, perfil, loading: carregandoPerfil } = usePerfil();
   const podeCustos = temAcesso("custos");
-  // Bônus da equipe: por enquanto só o administrador (o banco também recusa os outros: producao_bonus_acesso)
-  const podeBonus = !!perfil?.ativo && perfil.modulos.includes("todos");
+  // Bônus da equipe: o administrador vê todos (BonusEquipe); o resto do galpão vê SÓ o próprio, escolhendo o nome e
+  // digitando a senha (MeuBonus — o banco confere a senha e devolve só as linhas da pessoa)
+  const adminBonus = !!perfil?.ativo && perfil.modulos.includes("todos");
+  const podeBonus = !!perfil?.ativo && (adminBonus || temAcesso("galpao"));
   const semAcesso = (busca.aba === "custos" && !podeCustos) || (busca.aba === "bonus" && !podeBonus);
   const aba: Aba = semAcesso ? "painel" : busca.aba;
   useEffect(() => {
@@ -87,7 +90,7 @@ function ProducaoPage() {
               ...(podeBonus ? [{ id: "bonus", nome: "Bônus da equipe", onClick: () => ir({ aba: "bonus" }) }] : []),
             ]}
           />
-          {aba === "custos" ? <CustosPrecos /> : aba === "bonus" ? <BonusEquipe /> : aba === "painel"
+          {aba === "custos" ? <CustosPrecos /> : aba === "bonus" ? (adminBonus ? <BonusEquipe /> : <MeuBonus />) : aba === "painel"
             ? <Painel onAbrirLote={() => { setOpInicial(null); setAbrindo(true); }} onIrLote={irLote} onIrEntradas={() => ir({ aba: "entradas" })}
                 onProduzir={(op) => { setOpInicial(op); setAbrindo(true); }} />
             : <Entradas />}
