@@ -54,6 +54,7 @@ import { formatBRL, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MetaRoasCelula, SeloImpulsionado, textoOrcamento, useShopeeAdsConfig } from "@/components/ads/ShopeeAdsConfig";
 import { AnaliseAnuncioAds } from "@/components/ads/AnaliseAnuncioAds";
+import { BlocoOQueFazer, EtiquetaMarcacao, PainelTestesAB, marcacoesDoItem, useMarcacoes } from "@/components/ads/MarcacoesTeste";
 import { DashboardPeriodFilter } from "@/components/DashboardPeriodFilter";
 import { resolveRange, type PeriodPreset, type PeriodRange } from "@/lib/dashboard/period";
 
@@ -479,7 +480,9 @@ function AdsShopeePage() {
   // meta de ROAS, orçamento e impulsionado — ao vivo na Shopee, só da página visível
   const cfgQ = useShopeeAdsConfig(anuncios);
   // análise por anúncio (diálogo): clicar no nome do anúncio
-  const [analise, setAnalise] = useState<{ shopId: number | string; campaignId: number | string; nome: string } | null>(null);
+  const [analise, setAnalise] = useState<{ shopId: number | string; campaignId: number | string; nome: string; itemId?: number | string | null } | null>(null);
+  // marcações de teste A/B por anúncio (13/nov): etiqueta na linha, painel acima da lista e "O que fazer" na análise
+  const marcQ = useMarcacoes();
 
   // Contadores por classificação (totais dentro do escopo empresa)
   const countsByClassif = useMemo(() => {
@@ -911,6 +914,8 @@ function AdsShopeePage() {
         )}
         {cfgQ.isError && <div className="text-xs text-amber-700 px-1">Não consegui ler a meta de ROAS na Shopee: {(cfgQ.error as Error).message}</div>}
 
+        <PainelTestesAB />
+
         {/* Lista */}
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -963,7 +968,7 @@ function AdsShopeePage() {
                       <TableCell className="max-w-[280px]">
                         <button type="button" className="font-medium text-sm truncate block max-w-full text-left hover:underline hover:text-primary"
                           title={`${a.anuncio ?? ""} — clique para ver a análise por dia`}
-                          onClick={() => a.shop_id != null && setAnalise({ shopId: a.shop_id, campaignId: a.campaign_id, nome: a.anuncio ?? String(a.campaign_id) })}>
+                          onClick={() => a.shop_id != null && setAnalise({ shopId: a.shop_id, campaignId: a.campaign_id, nome: a.anuncio ?? String(a.campaign_id), itemId: a.item_id })}>
                           {a.anuncio}
                         </button>
                         <div className="text-[11px] text-muted-foreground truncate">
@@ -971,6 +976,14 @@ function AdsShopeePage() {
                           {a.tipo_anuncio && <span className="capitalize">{a.tipo_anuncio}</span>}
                           {impulsionado && <span className="ml-2"><SeloImpulsionado /></span>}
                         </div>
+                        {marcacoesDoItem(marcQ.data?.porItem, a.shop_id, a.item_id).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {marcacoesDoItem(marcQ.data?.porItem, a.shop_id, a.item_id).map((m) => (
+                              <EtiquetaMarcacao key={m.id} m={m}
+                                onClick={() => a.shop_id != null && setAnalise({ shopId: a.shop_id, campaignId: a.campaign_id, nome: a.anuncio ?? String(a.campaign_id), itemId: a.item_id })} />
+                            ))}
+                          </div>
+                        )}
                         {(a.situacoes?.length ?? 0) > 0 && (
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {a.situacoes!.map((k) => {
@@ -1049,7 +1062,13 @@ function AdsShopeePage() {
           )}
         </Card>
 
-        {analise && <AnaliseAnuncioAds shopId={analise.shopId} campaignId={analise.campaignId} nome={analise.nome} periodo={range} onFechar={() => setAnalise(null)} />}
+        {analise && <AnaliseAnuncioAds shopId={analise.shopId} campaignId={analise.campaignId} nome={analise.nome} periodo={range} onFechar={() => setAnalise(null)}
+          topo={marcacoesDoItem(marcQ.data?.porItem, analise.shopId, analise.itemId).length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">O que fazer</div>
+              {marcacoesDoItem(marcQ.data?.porItem, analise.shopId, analise.itemId).map((m) => <BlocoOQueFazer key={m.id} m={m} />)}
+            </div>
+          ) : undefined} />}
 
         <Tooltip>
           <TooltipTrigger asChild>

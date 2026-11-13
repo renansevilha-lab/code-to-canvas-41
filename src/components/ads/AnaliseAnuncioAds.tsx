@@ -55,12 +55,14 @@ const TOM: Record<string, { cls: string; icone: typeof Info }> = {
   info: { cls: "border-border bg-muted/30 text-muted-foreground", icone: Info },
 };
 
-export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, periodo }: {
+export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, periodo, topo }: {
   shopId?: number | string; campaignId: number | string; nome: string; onFechar: () => void;
   /** Mercado Livre: anúncio (MLB) ou, sem item, a campanha inteira */
   ml?: { item?: string | null };
   /** período inicial (o da tela que abriu); dentro da análise dá para trocar */
   periodo?: PeriodRange;
+  /** bloco no topo do diálogo (ex.: "O que fazer" do teste A/B, 13/nov) */
+  topo?: ReactNode;
 }) {
   const ehMl = !!ml;
   // filtro de data da análise (20/out): começa no período da tela; padrão 30 dias
@@ -125,6 +127,8 @@ export function AnaliseAnuncioAds({ shopId, campaignId, nome, onFechar, ml, peri
             </div>
           )}
         </DialogHeader>
+
+        {topo}
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <DashboardPeriodFilter value={range} onChange={setRange} />
