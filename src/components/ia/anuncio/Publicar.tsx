@@ -137,7 +137,7 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPa
   const ex = exQ.data;
   const listaDe = (c: string, e: string) => listaDeExistentes(ex, c, e);
   const pronto = DESTINOS.find((d) => d.canal === canal)?.pronto === true;
-  // clicar em "enviar para cá" já abre a conferência (o número muda a cada clique e remonta o Envio aberto)
+  // clicar em "enviar para cá" já abre a conferência (o número muda a cada clique e abre o Envio, sem remontar)
   const [abrir, setAbrir] = useState(0);
   useEffect(() => { if (abrirSinal) setAbrir((n) => n + 1); }, [abrirSinal]);
   useEffect(() => { if (itemInicial) setAbrir((n) => n + 1); }, [itemInicial]);
@@ -207,8 +207,8 @@ export function Publicar({ rascunho, canal, empresa, onDestino, noEnvio, promoPa
       </div>
       <div ref={caixa} className="scroll-mt-20 scroll-mb-6">
       {pronto
-        ? <Envio key={`${rascunho.id}-${canal}-${empresa}-${abrir}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
-            abertoInicial={abrir > 0} itemInicial={itemInicial} outros={outros} noEnvio={noEnvio} promoPara={promoPara} demais={demais} onIr={irPara}
+        ? <Envio key={`${rascunho.id}-${canal}-${empresa}`} rascunho={rascunho} canal={canal} empresa={empresa} jaExiste={listaDe(canal, empresa) ?? null}
+            abertoInicial={abrir > 0} abrirSinal={abrir} itemInicial={itemInicial} outros={outros} noEnvio={noEnvio} promoPara={promoPara} demais={demais} onIr={irPara}
             ordemInicial={ordemComum?.id === rascunho.id ? ordemComum.ordem : null} onOrdem={(o) => setOrdemComum({ id: rascunho.id, ordem: o })}
             medidasIniciais={medidasComuns?.id === rascunho.id ? medidasComuns.m : null}
             onMedidas={(m) => setMedidasComuns((a) => ({ id: rascunho.id, m: { ...(a?.id === rascunho.id ? a.m : {}), ...m } }))} />
@@ -228,8 +228,8 @@ interface Outro { empresa: string; rotulo: string; e: Existente }
 /** Peso e medidas da embalagem: digitados na conferência de um destino, acompanham a troca de marketplace/loja. */
 const MEDIDAS = ["peso_kg", "comprimento_cm", "largura_cm", "altura_cm"] as const;
 
-function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial, outros, noEnvio, promoPara, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
-  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; itemInicial?: string; outros?: Outro[]; noEnvio?: ReactNode;
+function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, itemInicial, outros, noEnvio, promoPara, demais, onIr, ordemInicial, onOrdem, medidasIniciais, onMedidas }: {
+  rascunho: IaRascunho; canal: string; empresa: string; jaExiste: Existente[] | null; abertoInicial?: boolean; abrirSinal?: number; itemInicial?: string; outros?: Outro[]; noEnvio?: ReactNode;
   promoPara?: (empresa: string, itemId: string) => ReactNode;
   demais?: Demais[]; onIr?: (canal: string, empresa: string) => void;
   /** ordem das fotos já arrumada em outro destino deste anúncio */
@@ -246,6 +246,10 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, itemInicial,
   const MK = ml ? "Mercado Livre" : amz ? "Amazon" : tk ? "TikTok" : "Shopee";
   const NO = ml ? "no" : "na"; const ART = ml ? "o" : "a";
   const [aberto, setAberto] = useState(abertoInicial === true);
+  // "Conferir envio" do cabeçalho / "enviar para cá" no MESMO destino só abre a conferência, sem remontar.
+  // Antes o número do clique ia na key do Envio: cada clique jogava fora o que a pessoa tinha ajustado
+  // (fotos marcadas, preço promocional, título) e refazia a conferência com o padrão (13/nov, relato do dono).
+  useEffect(() => { if (abrirSinal) setAberto(true); }, [abrirSinal]);
   // o que a pessoa ajustou na conferência (vazio = o que a função sugerir)
   const alvoInicial: Op = itemInicial ? { modo: "atualizar", item_id: itemInicial } : {};
   const [op, setOp] = useState<Op>(() => ({ ...opInicial(canal), ...(medidasIniciais ?? {}), ...alvoInicial }));
