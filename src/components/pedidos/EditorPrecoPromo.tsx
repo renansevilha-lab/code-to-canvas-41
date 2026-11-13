@@ -51,7 +51,7 @@ export function EditorPrecoPromo({ pedido }: { pedido: PedidoBase }) {
                 O preço da Minha Promoção muda na Shopee na hora (com confirmação). A relâmpago diária vale a partir da próxima que o app criar.
                 O preço cheio do anúncio não muda por aqui.
               </p>
-              {atual && <PrecoPromocao key={`${atual}-${outraLoja}`} sku={atual} empresa={empresa} soDaEmpresa={!outraLoja} semRodape />}
+              {atual && <PrecoPromocao key={`${atual}-${outraLoja}`} sku={atual} empresa={empresa} soDaEmpresa={!outraLoja} semRodape focoNoSku />}
             </div>
           ) : (
             <div className="space-y-3 text-sm">
