@@ -3,6 +3,9 @@
 // e os lotes ficam ligados a ela (o produzido vem da view_producao_op).
 // 11/nov: bônus/mão de obra por saco na ordem e edição da ordem — os dois só para o administrador (módulo 'todos');
 // o banco recusa de quem não é (gatilho trg_producao_op_guarda, docs/producao-op-bonus.sql).
+// 14/nov: fila de prioridade — as abertas aparecem na ordem de producao_op.posicao (1 = produzir primeiro) e o
+// administrador arrasta a linha (ou usa ▲▼) para mudar; grava a fila inteira por producao_op_reordenar
+// (docs/producao-op-prioridade.sql). Ordem nova entra no fim da fila.
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -42,6 +45,9 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
   const [editar, setEditar] = useState<OrdemProducao | null>(null);
   const admin = !!perfil?.modulos.includes("todos");
   useEffect(() => { if (novaPara != null) setNova(novaPara); }, [novaPara]);
+  const [arrastando, setArrastando] = useState<number | null>(null);
+  const [sobre, setSobre] = useState<number | null>(null);
+  const [filaLocal, setFilaLocal] = useState<number[] | null>(null); // ordem otimista até o banco responder
 
   async function fechar(op: OrdemProducao, status: "concluida" | "cancelada") {
     let motivo: string | null = null;
@@ -67,7 +73,42 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
     void qc.invalidateQueries({ queryKey: ["producao"] });
   }
 
-  const lista = ops.data ?? [];
+  const todas = ops.data ?? [];
+  const abertasBanco = todas.filter((o) => o.status === "aberta")
+    .sort((a, b) => (a.posicao ?? 1e9) - (b.posicao ?? 1e9) || b.criado_em.localeCompare(a.criado_em));
+  const porId = new Map(abertasBanco.map((o) => [o.id, o]));
+  const abertas = filaLocal && filaLocal.length === abertasBanco.length && filaLocal.every((id) => porId.has(id))
+    ? filaLocal.map((id) => porId.get(id)!) : abertasBanco;
+  const fechadasLista = todas.filter((o) => o.status !== "aberta")
+    .sort((a, b) => (b.fechada_em ?? b.criado_em).localeCompare(a.fechada_em ?? a.criado_em));
+  const lista = [...abertas, ...fechadasLista];
+
+  async function gravarFila(ids: number[]) {
+    setFilaLocal(ids);
+    try {
+      const { error } = await supabaseExternal.rpc("producao_op_reordenar" as never, { p_ids: ids } as never);
+      if (error) throw error;
+      await qc.invalidateQueries({ queryKey: ["producao", "ops"] });
+    } catch (e) {
+      toast.error(`Não deu para mudar a prioridade: ${erroMsg(e)}`);
+    } finally {
+      setFilaLocal(null);
+    }
+  }
+  function mover(id: number, para: number) {
+    const ids = abertas.map((o) => o.id);
+    const de = ids.indexOf(id);
+    if (de < 0 || para < 0 || para >= ids.length || de === para) return;
+    ids.splice(de, 1);
+    ids.splice(para, 0, id);
+    void gravarFila(ids);
+  }
+  function soltar(alvo: number) {
+    const id = arrastando;
+    setArrastando(null); setSobre(null);
+    if (id == null || id === alvo) return;
+    mover(id, abertas.findIndex((o) => o.id === alvo));
+  }
   return (
     <Cartao
       titulo="Ordens de produção"
@@ -90,6 +131,7 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
         <div style={{ overflowX: "auto" }}>
           <table style={tabela}>
             <thead><tr>
+              <th style={{ ...th, width: 54 }} title={admin ? "Arraste a linha (ou use as setas) para mudar a prioridade" : "Fila de prioridade"}>Fila</th>
               <th style={th}>Ordem</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Pedido</th>
               <th style={{ ...th, minWidth: 150 }}>Produzido</th><th style={th}>Prazo</th><th style={th}>Observações</th><th style={th} />
             </tr></thead>
@@ -98,8 +140,36 @@ export function OrdensProducao({ fotos, onProduzir, onIrLote, novaPara, onNovaFe
                 const pct = Math.min(100, (op.produzido / op.qtd) * 100);
                 const s = SITUACAO[op.situacao];
                 const fechada = op.status !== "aberta";
+                const pos = fechada ? -1 : abertas.indexOf(op);
+                const podeArrastar = admin && !fechada && abertas.length > 1;
                 return (
-                  <tr key={op.id} style={{ opacity: fechada ? 0.65 : 1 }}>
+                  <tr key={op.id}
+                    draggable={podeArrastar}
+                    onDragStart={podeArrastar ? (e) => { setArrastando(op.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                    onDragEnd={() => { setArrastando(null); setSobre(null); }}
+                    onDragOver={podeArrastar && arrastando != null ? (e) => { e.preventDefault(); if (sobre !== op.id) setSobre(op.id); } : undefined}
+                    onDrop={podeArrastar ? (e) => { e.preventDefault(); soltar(op.id); } : undefined}
+                    style={{
+                      opacity: fechada ? 0.65 : arrastando === op.id ? 0.4 : 1,
+                      cursor: podeArrastar ? "grab" : undefined,
+                      boxShadow: sobre === op.id && arrastando !== op.id ? "inset 0 3px 0 var(--pm-a)" : undefined,
+                    }}>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      {!fechada && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {podeArrastar && <span aria-hidden style={{ color: "var(--pm-t3)", fontSize: 14, letterSpacing: -2, cursor: "grab" }}>⋮⋮</span>}
+                          <span style={{ fontWeight: 800, fontSize: 15, minWidth: 18, textAlign: "center" }}>{pos + 1}º</span>
+                          {podeArrastar && (
+                            <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1 }}>
+                              <button type="button" title="Subir na fila" disabled={pos === 0} onClick={() => mover(op.id, pos - 1)}
+                                style={{ border: 0, background: "none", cursor: pos === 0 ? "default" : "pointer", color: pos === 0 ? "var(--pm-bs)" : "var(--pm-t2)", fontSize: 10, padding: 0 }}>▲</button>
+                              <button type="button" title="Descer na fila" disabled={pos === abertas.length - 1} onClick={() => mover(op.id, pos + 1)}
+                                style={{ border: 0, background: "none", cursor: pos === abertas.length - 1 ? "default" : "pointer", color: pos === abertas.length - 1 ? "var(--pm-bs)" : "var(--pm-t2)", fontSize: 10, padding: 0 }}>▼</button>
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td style={td}>
                       <div style={{ fontWeight: 700 }}>#{op.id}</div>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>

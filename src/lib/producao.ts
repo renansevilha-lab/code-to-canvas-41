@@ -308,6 +308,8 @@ export interface OrdemProducao {
   situacao: "aberta" | "em_producao" | "atingida" | "concluida" | "cancelada"; atrasada: boolean;
   /** 06/nov: em qual embalagem produzir (null = a padrão da ficha) */
   embalagem_id: number | null; embalagem: string | null;
+  /** 14/nov: posição na fila de prioridade (1 = produzir primeiro); o administrador arrasta para mudar */
+  posicao: number | null;
   /** 11/nov: R$ pagos por saco (bônus/mão de obra); só o administrador grava. bonus_total = bônus × produzido. */
   bonus_saco: number | null; bonus_total: number | null; editado_em: string | null; editado_por: string | null;
 }
@@ -315,7 +317,8 @@ export const useOrdensProducao = (comFechadas = false) =>
   useQuery({
     queryKey: ["producao", "ops", comFechadas],
     queryFn: () => {
-      let q = supabaseExternal.from("view_producao_op" as never).select("*").order("criado_em", { ascending: false }).limit(60);
+      let q = supabaseExternal.from("view_producao_op" as never).select("*")
+        .order("posicao", { ascending: true, nullsFirst: false }).order("criado_em", { ascending: false }).limit(60);
       if (!comFechadas) q = q.eq("status", "aberta");
       return ler<OrdemProducao[]>(q);
     },
