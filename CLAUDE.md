@@ -4182,6 +4182,32 @@ rollback em `docs/ia-termos-busca.sql`.
 - **Limites:** Amazon e ML não dão volume (só posição); a Shopee sugere só para anúncio que já existe; termo "a conferir"
   pode ser de outro tipo de produto (tofu, sílica numa areia de mandioca) — por isso nunca vai para palavras/Modelo.
 
+## 5.11.13.4 Aba Anúncios em três visões: Produtos · Anúncios no ar · Mudanças (16/nov/2026)
+
+Pedido do dono ("melhorar todo o layout da aba de anúncios, UX e acompanhamento"); proposta aprovada em
+https://claude.ai/artifact/97jDGeVyqvZr6xZhfzwmj1 ("pode aplicar, abre em Anúncios no ar, começa pela Shopee").
+- **Rota `/ia/anuncios?ver=`**: sem `ver` = **Anúncios no ar** (padrão), `produtos` = a lista de sempre (criar/enviar com IA),
+  `mudancas`. Seletor `SeletorVisao` no topo das três. Os "voltar" de `/ia/gerar` vão para `?ver=produtos`. Telas em
+  `src/components/ia/anuncios/Acompanhamento.tsx` (só apresentação; a lista de produtos fica de reserva na `ProtecaoPacking`).
+- **Anúncios no ar** (Shopee, uma linha por anúncio/loja): preço, vendas 7 d × 7 d antes, ADS com ROAS × meta (barra), margem antes e
+  depois do ADS, estoque do anúncio em dias de venda, última mudança, etiqueta do teste A/B. Faixa **Pede atenção** (cada cartão
+  filtra): estoque (vende ≥ 7 un/7 d e dura < 7 dias), vendas caindo (≥ R$ 500 antes e −30%), prejuízo depois do ADS (ADS ≥ R$ 20 e
+  margem pós-ADS < 0), testes com pendência, mudanças do sistema em medição (7 dias). Linha aberta = vendas por dia (28 d, roxo = dia
+  com mudança), histórico com o resultado de cada mudança, bloco do teste (`BlocoOQueFazer`), Editar anúncio / Análise de ADS / Ver na Shopee.
+- **Mudanças**: tudo que mudou em 30 dias — `app` (envios do sistema, `ia_publicacao`), `teste` (`anuncio_teste_log` +
+  `ads_config_historico` origem teste_ab), `fora` (retrato diário `ads_anuncio_snapshot`: preço de venda, promoção, situação; e ADS
+  capturado de fora) — com **resultado** = receita dos 7 dias antes × dos 7 dias a partir do dia (só dias fechados; < 7 dias = "medindo").
+  Filtros: origem, piorou (≥ 3 dias medidos, ≥ R$ 200 antes e −30% por dia), falhou, o que mudou, loja.
+- **Banco** (`docs/anuncios-no-ar.sql`, migrações `anuncios_no_ar` e `anuncios_no_ar_estoque_variacoes`; só funções): `anuncio_mudancas_lista(dias,
+  itens?)` (fonte única das mudanças; o preço trocado pelo teste não repete como "fora"), `anuncio_mudanca_efeito`, e as RPCs
+  `anuncios_no_ar(...)`, `anuncios_mudancas(...)`, `anuncio_no_ar_detalhe(shop, item)` (security definer; `tem_modulo('ia')` ou `'ads'`).
+  ~0,5 s cada. Vendas/margem/ADS = `ads_metrica_anuncio_dia` (MV diária das 06h20: os números são até ONTEM); estoque =
+  `shopee_anuncios.estoque_total` ou a soma das variações (espelho do catálogo, não o galpão).
+- **Limites:** só Shopee (ML não tem venda por anúncio, só por SKU; Amazon/TikTok sem ADS) — os outros aparecem apagados no seletor;
+  mudança de foto/texto feita no Seller Center não é detectada (o retrato só guarda preço, promoção e situação); o T3-B (anúncio a
+  criar) não tem linha, aparece só no painel de testes. `ads_config_registrar` grava TODAS as diferenças com a origem passada: o
+  orçamento 12 → 15 da campanha 110376031 saiu como teste_ab sem ter sido enviado (corrigido para externo). Não conferido com login.
+
 ## 5.11.14 IA · Anúncios — envio ao TikTok Shop da Ottz/ACZ (11/nov/2026)
 
 Pedido do dono (a Bumi ainda não autorizou o app no TikTok, então começou pela loja da Ottz, `shop_id 7496181924415506972`).

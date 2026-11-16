@@ -20,6 +20,7 @@ import { LOGO, idade, int } from "@/components/dashboard/formato";
 import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
 import { AnunciosAchados } from "@/components/ia/anuncio/AnunciosAchados";
 import { EtiquetaMarcacao, PainelTestesAB, marcacoesDoSku, useMarcacoes } from "@/components/ads/MarcacoesTeste";
+import { AnunciosNoAr, MudancasAnuncios, SeletorVisao, type Visao } from "@/components/ia/anuncios/Acompanhamento";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
 import {
   CANAIS, CANAIS_COM_HISTORICO, ROTULO_ETAPA, nomeCanal, nomeEmpresa,
@@ -33,7 +34,13 @@ import {
 // são feitos no banco (RPC ia_catalogo) — são ~2,3 mil produtos.
 // ============================================================================
 
-type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string };
+// ver: visão da aba (16/nov) — sem valor = "Anúncios no ar" (padrão pedido pelo dono), "produtos" = a lista de sempre, "mudancas".
+// loja/at/ord/mud7 = filtros de Anúncios no ar; f/campo = filtros de Mudanças.
+type Busca = {
+  q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string;
+  ver?: string; loja?: string; at?: string; ord?: string; mud7?: string; f?: string; campo?: string;
+};
+const umDe = (v: unknown, ops: string[]) => (ops.includes(String(v)) ? String(v) : undefined);
 
 const SITUACOES = [
   { id: "todos", rotulo: "Todos" },
@@ -88,14 +95,23 @@ export const Route = createFileRoute("/ia/anuncios")({
     ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== ORDEM_PADRAO ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
     teste: s.teste === "1" ? "1" : undefined,
+    ver: umDe(s.ver, ["produtos", "mudancas"]),
+    loja: umDe(s.loja, ["ottz", "svl"]),
+    at: umDe(s.at, ["estoque", "caindo", "prejuizo", "teste", "medicao"]),
+    ord: umDe(s.ord, ["queda", "mexido", "margem", "estoque"]),
+    mud7: s.mud7 === "1" ? "1" : undefined,
+    f: umDe(s.f, ["app", "teste", "fora", "piorou", "falhou"]),
+    campo: umDe(s.campo, ["preco", "conteudo", "ads", "promocao"]),
   }),
   component: AnunciosPage,
 });
 
 function AnunciosPage() {
-  const { q, marca, sit, tipo, sem, giro, ordem, p, teste } = Route.useSearch();
+  const busca = Route.useSearch();
+  const { q, marca, sit, tipo, sem, giro, ordem, p, teste } = busca;
+  const ver: Visao = busca.ver === "produtos" ? "produtos" : busca.ver === "mudancas" ? "mudancas" : "noar";
   const nav = useNavigate({ from: "/ia/anuncios" });
-  const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true });
+  const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true, resetScroll: false });
   const pagina = p ?? 1;
 
   // busca com atraso: só vai ao banco quando a pessoa para de digitar
@@ -108,6 +124,7 @@ function AnunciosPage() {
   const catQ = useQuery({
     queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? ORDEM_PADRAO, pagina],
     placeholderData: (anterior) => anterior,
+    enabled: ver === "produtos",
     queryFn: async (): Promise<IaCatalogo> => {
       const { data, error } = await supabaseExternal.rpc("ia_catalogo", {
         p_busca: q ?? null, p_marca: marca ?? null, p_situacao: sit ?? "todos", p_sem_canal: sem ?? null,
@@ -176,6 +193,14 @@ function AnunciosPage() {
       {coresAberto && <CriarVariacoesCores skus={selecionados} onFechar={() => { setCoresAberto(false); setSelecionados([]); }} />}
     </>
   );
+  // visões de acompanhamento (16/nov): Anúncios no ar (padrão) e Mudanças; a lista de produtos fica de reserva se quebrarem
+  if (ver !== "produtos") {
+    return (
+      <ProtecaoPacking antigo={antigo()}>
+        {ver === "mudancas" ? <MudancasAnuncios busca={busca} set={set} /> : <AnunciosNoAr busca={busca} set={set} />}
+      </ProtecaoPacking>
+    );
+  }
   // visual novo (pacote "Anúncios" do Claude Design); a tela antiga fica de reserva se o novo quebrar
   return (
     <>
@@ -866,6 +891,7 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
             retrato de estoque {fmtDataHora(cat!.giro_em!)} · {giroEm.txt}
           </span>
         )}
+        <SeletorVisao ver="produtos" onVer={(v) => set({ ver: v === "noar" ? undefined : v, q: undefined, sit: undefined, tipo: undefined, sem: undefined, marca: undefined, giro: undefined, ordem: undefined, teste: undefined })} />
         {(marcQ.data?.lista.length ?? 0) > 0 && (
           <button type="button" style={chipA(!!teste)} className={teste ? "pm-hv-a" : "pm-hv"} onClick={() => set({ teste: teste ? undefined : "1" })}
             title="Anúncios marcados em testes A/B: o que fazer, enviar à Shopee e histórico de mudanças">

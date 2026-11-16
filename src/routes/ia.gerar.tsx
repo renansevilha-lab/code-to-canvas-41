@@ -189,7 +189,7 @@ function GerarAnuncioPage() {
   if (!sku) {
     return (
       <div className="p-6 md:p-10 max-w-3xl mx-auto">
-        <p className="text-muted-foreground">Escolha um produto no <Link to="/produtos" className="underline">Catálogo</Link> ou em <Link to="/ia/anuncios" className="underline">Anúncios</Link>.</p>
+        <p className="text-muted-foreground">Escolha um produto no <Link to="/produtos" className="underline">Catálogo</Link> ou em <Link to="/ia/anuncios" search={{ ver: "produtos" }} className="underline">Anúncios</Link>.</p>
       </div>
     );
   }
@@ -354,7 +354,7 @@ function GerarAnuncioPage() {
   const antigo = (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button asChild size="sm" variant="ghost" className="gap-1"><Link to="/ia/anuncios"><ArrowLeft className="h-4 w-4" />Anúncios</Link></Button>
+        <Button asChild size="sm" variant="ghost" className="gap-1"><Link to="/ia/anuncios" search={{ ver: "produtos" }}><ArrowLeft className="h-4 w-4" />Anúncios</Link></Button>
         <h1 className="text-2xl font-bold tracking-tight">Gerar anúncio</h1>
         <span className="text-sm text-muted-foreground">· {nomeCanal(canal)} · {empresa === "svl" ? "SVL" : "Ottz/ACZ"}</span>
       </div>

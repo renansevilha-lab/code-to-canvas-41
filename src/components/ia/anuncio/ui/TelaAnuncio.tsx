@@ -78,7 +78,7 @@ export function CabecalhoAnuncio({ produto, custo, faixa, canal, empresa, onDest
   return (
     <div style={{ position: "sticky", top: 69, zIndex: 20, background: "var(--pm-s)", border: "1px solid var(--pm-bs)", borderRadius: 14, boxShadow: "var(--pm-shm)", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 14px", padding: "10px 14px" }}>
-        <Link to="/ia/anuncios" title="Voltar à lista" className="pm-hv" style={{ ...btnSec, paddingLeft: 6 }}><ChevronLeft className="h-4 w-4" />Lista</Link>
+        <Link to="/ia/anuncios" search={{ ver: "produtos" }} title="Voltar à lista de produtos" className="pm-hv" style={{ ...btnSec, paddingLeft: 6 }}><ChevronLeft className="h-4 w-4" />Lista</Link>
         {produto.foto
           ? <img src={produto.foto} alt="" style={{ width: 48, height: 48, flex: "none", borderRadius: 10, objectFit: "cover", background: "#fff", border: "1px solid var(--pm-bs)" }} />
           : <span style={{ width: 48, height: 48, flex: "none", borderRadius: 10, background: "var(--pm-s2)", border: "1px solid var(--pm-bs)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "var(--pm-t2)" }}>{ini}</span>}
