@@ -100,6 +100,7 @@ export const NAV_GROUPS: NavGroup[] = [
         title: "Equipe", url: "/processos", icon: ClipboardCheck, modulo: "galpao",
         abas: [
           { nome: "Manual de Operação", url: "/processos" },
+          { nome: "Rotinas da Operação", url: "/rotinas" },
           { nome: "Registro de horas", url: "/registro-horas" },
         ],
       },

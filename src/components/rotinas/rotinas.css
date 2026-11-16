@@ -1,0 +1,121 @@
+/* ===========================================================================
+   Rotinas da Operação (/rotinas, 16/nov/2026) — identidade do manual interativo: papel kraft, laranja e navy.
+   Tokens próprios (--rot-*), claro e escuro; o resto do app não muda.
+   =========================================================================== */
+.rot-ui {
+  --rot-fundo: #F4F1E9; --rot-cartao: #FFFFFF; --rot-t: #1B2733; --rot-t2: #5A6572; --rot-linha: #DCD6C8;
+  --rot-navy: #1B2733; --rot-navy-t: #FFFFFF; --rot-navy-t2: #DCD6C8;
+  --rot-lar: #E8611C; --rot-lar-t: #B94A10; --rot-lar-f: #FBE9DD;
+  --rot-verde: #2F6F4F; --rot-verde-f: #E4F0E9;
+  --rot-azul: #2E5A7D; --rot-azul-f: #E8EFF5;
+  --rot-verm: #A3302A; --rot-verm-f: #FBEDEC;
+  --rot-hv: #F0ECE2;
+  background: var(--rot-fundo); color: var(--rot-t); font-family: Inter, system-ui, sans-serif;
+  border-radius: 16px; padding: 18px 16px 48px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.dark .rot-ui {
+  --rot-fundo: #15191E; --rot-cartao: #1F252C; --rot-t: #EEF0F2; --rot-t2: #A7B0BA; --rot-linha: #333B44;
+  --rot-navy: #0E1318; --rot-navy-t: #FFFFFF; --rot-navy-t2: #A7B0BA;
+  --rot-lar: #F07A3A; --rot-lar-t: #F7A274; --rot-lar-f: #3A2418;
+  --rot-verde: #7CC79E; --rot-verde-f: #1C3328;
+  --rot-azul: #8DB6D8; --rot-azul-f: #1C2B38;
+  --rot-verm: #EE8A83; --rot-verm-f: #3A1F1D;
+  --rot-hv: #262D35;
+}
+@media (min-width: 768px) { .rot-ui { padding: 24px 28px 56px; } }
+.rot-ui * { box-sizing: border-box; }
+.rot-ui button, .rot-ui a, .rot-ui textarea { font: inherit; color: inherit; }
+.rot-ui button:focus-visible, .rot-ui a:focus-visible, .rot-ui textarea:focus-visible { outline: 3px solid var(--rot-lar); outline-offset: 2px; }
+.rot-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.rot-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--rot-lar-t); }
+.rot-h1, .rot-h2, .rot-bt, .rot-fase-nome, .rot-code, .rot-regra-t, .rot-proib-c {
+  font-family: "Barlow Condensed", Inter, sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+}
+.rot-h1 { font-size: 30px; line-height: 1.05; margin: 2px 0 0; }
+.rot-data { font-size: 13px; color: var(--rot-t2); }
+.rot-topo-acoes { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rot-eu { font-size: 13px; color: var(--rot-t2); }
+.rot-eu b { color: var(--rot-t); }
+.rot-link { border: 0; background: none; color: var(--rot-lar-t) !important; cursor: pointer; text-decoration: underline; margin-left: 6px; padding: 0; }
+.rot-btn { border: 0; background: var(--rot-lar); color: #fff !important; font-weight: 700; border-radius: 10px; padding: 9px 16px; cursor: pointer; }
+.rot-btn:hover { filter: brightness(1.06); }
+.rot-btn:disabled { opacity: .5; cursor: default; }
+.rot-btn-sec { background: var(--rot-cartao); color: var(--rot-t) !important; border: 1px solid var(--rot-linha); padding: 6px 12px; font-size: 13px; }
+.rot-quem { background: var(--rot-lar-f); border: 1px solid var(--rot-lar); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-weight: 600; font-size: 14px; }
+.rot-quem-lista, .rot-atalhos { display: flex; gap: 8px; flex-wrap: wrap; }
+.rot-chip { display: inline-flex; border: 1px solid var(--rot-linha); background: var(--rot-cartao); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; }
+.rot-chip:hover { background: var(--rot-hv); }
+.rot-muted { color: var(--rot-t2); font-size: 13px; }
+.rot-erro { color: var(--rot-verm); font-weight: 600; }
+.rot-secao { scroll-margin-top: 80px; display: flex; flex-direction: column; gap: 8px; }
+.rot-faixa { background: var(--rot-navy); color: var(--rot-navy-t); border-radius: 14px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rot-faixa-esq { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.rot-code { white-space: nowrap; background: var(--rot-lar); color: #fff; font-size: 16px; padding: 2px 8px; border-radius: 6px; }
+.rot-h2 { margin: 0; font-size: 26px; line-height: 1; color: var(--rot-navy-t); }
+.rot-faixa-dir { display: flex; gap: 14px; font-size: 13px; color: var(--rot-navy-t2); flex-wrap: wrap; }
+.rot-faixa-dir b { color: var(--rot-navy-t); }
+.rot-desc { margin: 0; font-size: 13px; color: var(--rot-t2); }
+.rot-grade { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (min-width: 1024px) {
+  .rot-grade { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+  .rot-regras { position: sticky; top: 84px; }
+}
+.rot-regras { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rot-bt { font-size: 15px; color: var(--rot-t2); letter-spacing: .06em; }
+.rot-regra, .rot-temp { background: var(--rot-cartao); border: 1px solid var(--rot-linha); border-radius: 10px; padding: 10px 12px; }
+.rot-regra-pri { background: var(--rot-lar-f); border-color: var(--rot-lar); border-left: 5px solid var(--rot-lar); }
+.rot-regra-t { font-size: 16px; }
+.rot-regra-pri .rot-regra-t { color: var(--rot-lar-t); }
+.rot-regra-x { font-size: 14px; line-height: 1.4; }
+.rot-temp { border: 2px dashed var(--rot-lar); }
+.rot-temp-et { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; background: var(--rot-lar); color: #fff; border-radius: 5px; padding: 1px 7px; margin-bottom: 4px; }
+.rot-proib { border: 1px solid var(--rot-verm); border-radius: 10px; overflow: hidden; background: var(--rot-cartao); }
+.rot-proib-c { background: var(--rot-verm); color: #fff; padding: 6px 12px; font-size: 16px; }
+.dark .rot-proib-c { color: #1B0F0E; }
+.rot-proib-i { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; }
+.rot-proib-item { flex: 1 1 120px; background: var(--rot-verm-f); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; align-items: flex-start; }
+.rot-proib-item b { color: var(--rot-verm); }
+.rot-tabela { width: 100%; border-collapse: collapse; background: var(--rot-cartao); border: 1px solid var(--rot-linha); font-size: 13px; }
+.rot-tabela th, .rot-tabela td { padding: 6px 10px; border-bottom: 1px solid var(--rot-linha); text-align: left; }
+.rot-tabela th { color: var(--rot-t2); font-size: 12px; }
+.rot-etapas { background: var(--rot-cartao); border: 1px solid var(--rot-linha); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rot-progresso { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; }
+.rot-progresso-txt { font-size: 14px; }
+.rot-barra { grid-column: 1 / -1; height: 8px; border-radius: 6px; background: var(--rot-hv); overflow: hidden; }
+.rot-barra > div { height: 100%; background: var(--rot-verde); transition: width .25s; }
+.rot-fase-nome { font-size: 15px; color: var(--rot-lar-t); letter-spacing: .05em; margin-bottom: 6px; }
+.rot-linha { list-style: none; margin: 0 0 0 13px; padding: 0 0 0 0; border-left: 2px solid var(--rot-linha); display: flex; flex-direction: column; gap: 6px; }
+.rot-linha > li { margin-left: -14px; }
+.rot-etapa { width: 100%; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: start; text-align: left; background: var(--rot-cartao);
+  border: 1px solid var(--rot-linha); border-radius: 10px; padding: 9px 10px; cursor: pointer; }
+.rot-etapa:hover { background: var(--rot-hv); }
+.rot-etapa.feita { background: var(--rot-verde-f); border-color: var(--rot-verde); }
+.rot-etapa.hoje-nao { opacity: .55; cursor: default; }
+.rot-marca { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--rot-t); display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; background: var(--rot-cartao); }
+.rot-marca.num { background: var(--rot-navy); color: #fff; border-color: var(--rot-navy); }
+.rot-etapa.feita .rot-marca { background: var(--rot-verde); border-color: var(--rot-verde); color: #fff; }
+.rot-etapa-corpo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rot-etapa-t { font-weight: 600; font-size: 14.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.rot-etapa-d { font-size: 12.5px; color: var(--rot-t2); line-height: 1.35; overflow-wrap: anywhere; }
+.rot-etapa-quem { font-size: 11.5px; color: var(--rot-verde); font-weight: 600; }
+.rot-tag { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.rot-tag-niko { background: var(--rot-verde-f); color: var(--rot-verde); }
+.rot-tag-pessoa { background: var(--rot-lar-f); color: var(--rot-lar-t); }
+.rot-tag-sistema { background: var(--rot-azul-f); color: var(--rot-azul); }
+.rot-tag-producao { background: var(--rot-fundo); color: var(--rot-t); border: 1px solid var(--rot-linha); }
+@media (max-width: 480px) {
+  .rot-etapa { grid-template-columns: 26px minmax(0, 1fr); }
+  .rot-etapa .rot-tag { grid-column: 2; justify-self: start; }
+}
+.rot-perg { border: 1px solid var(--rot-linha); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.rot-perg.feita { border-color: var(--rot-verde); background: var(--rot-verde-f); }
+.rot-perg.pendente { border-color: var(--rot-lar); background: var(--rot-lar-f); }
+.rot-perg-t { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 14.5px; align-items: flex-start; }
+.rot-perg-op { display: flex; gap: 8px; }
+.rot-sn { border: 1px solid var(--rot-linha); background: var(--rot-cartao); border-radius: 8px; padding: 6px 18px; font-weight: 700; cursor: pointer; min-width: 64px; }
+.rot-sn.ativo { background: var(--rot-navy); color: #fff !important; border-color: var(--rot-navy); }
+.dark .rot-sn.ativo { background: var(--rot-lar); border-color: var(--rot-lar); }
+.rot-perg-det { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--rot-t2); }
+.rot-perg-det textarea { border: 1px solid var(--rot-linha); background: var(--rot-cartao); border-radius: 8px; padding: 8px; color: var(--rot-t); resize: vertical; width: 100%; }
+.rot-perg-dica { font-size: 12.5px; color: var(--rot-t2); }

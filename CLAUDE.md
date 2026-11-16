@@ -1377,6 +1377,14 @@ almoço; dia sem saída/volta = incompleto). O quadro "Hoje" e o "Relatório do 
 aparecem para o administrador (módulo `todos`). Ajuste manual de marcação
 ainda não existe (fazer por SQL). Testado ponta-a-ponta com pessoa temporária (12 casos).
 
+## 5.6.1 Rotinas da Operação — página + PDF a partir do manual (16/nov/2026)
+
+Pedido do dono: as rotinas da equipe (separação, expedição, produção) numa página do app (`/rotinas`, aba de Equipe, módulo galpao) e num PDF A4 de parede, com o MESMO conteúdo. Decisões A–E do dono:
+- **Conteúdo = o manual** (`manual_secoes` tipo processo + `manual_itens` + `producao_manual`), montado em `src/lib/rotinas.ts` (`montarRotinas` → `Rotina[]`; a página desenha e `rotinasPdfHtml` gera o PDF — botão "Baixar PDF" abre uma aba e imprime). Editar o manual (Equipe › Manual de Operação › modo edição) muda os dois. **Sem coluna nova**: convenções nas TAGS do item (`rotina:RESP-xx` = item da Rotina Matinal/Encerramento que aparece naquela rotina; `fase:<nome>`; `lugar:sistema` = etiqueta "No sistema"; `proibido` = quadro "Não é permitido") e nos CALLOUTS da seção (`warn`/`regra` com `titulo` opcional — a 1ª em laranja —, `info`, `temporario` = "Medida temporária", `{tipo:"numerar"}`). Sem tag: matinal = "Ao chegar", processo = "Durante o dia", pergunta = Encerramento. O /processos esconde as tags internas (`tagInterna`).
+- **Marcação:** rotinas diárias gravam em `manual_progresso` (o mesmo do Checklist do Dia: unique dia+item, dia em SP, `por` = membro pelo e-mail do login ou `localStorage manual.euId`), com tempo real. A **Produção de Areia (RESP-09, criada nesta data)** marca por produção em `rotina_execucao` / `rotina_execucao_marca` (chave `mi:<uuid>` ou `pm:<id>`); "Nova produção" encerra a atual e abre outra. RESP-09 = 2 passos do sistema (Iniciar produção, imprimir a folha) + as seções do Manual de processos da Produção (antes/durante/depois; "sempre" = regras fixas) — esse texto ainda é RASCUNHO de 11/nov.
+- Migração `rotinas_operacao` (SQL + rollback em `docs/rotinas-operacao.sql`): tags nos 12 itens de ROT-AM/ROT-PM e nos de RESP-02/03/04, `numerar` em RESP-02, seção e itens RESP-09, tabelas de execução (RLS authenticated). Textos e responsáveis do manual NÃO mudaram.
+- Visual próprio (`--rot-*` em `src/components/rotinas/rotinas.css`, claro/escuro; Barlow Condensed entrou no link de fontes do `__root`): kraft #F4F1E9, navy #1B2733, laranja #E8611C. Lacunas que o dono não preencheu (não inventadas): responsável próprio das etapas (herdam a seção), "não é permitido" só tem "no chão", números do nível crítico em branco, reembolso sem etapas, Trello em RESP-02/04, regras da produção (ordem obrigatória, stretch, bônus temporário). Não conferida com login.
+
 ## 5.7 Prazo de pagamento por fornecedor (base do ciclo de caixa)
 
 **Objetivo:** prazo do fornecedor = vencimento da parcela − âncora. Três âncoras

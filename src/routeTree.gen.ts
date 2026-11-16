@@ -43,6 +43,7 @@ import { Route as RelatoriosRouteImport } from './routes/relatorios'
 import { Route as RelatoriosAgentesRouteImport } from './routes/relatorios-agentes'
 import { Route as ReprocessarCmvRouteImport } from './routes/reprocessar-cmv'
 import { Route as RiscoCancelamentoRouteImport } from './routes/risco-cancelamento'
+import { Route as RotinasRouteImport } from './routes/rotinas'
 import { Route as SaudeMlRouteImport } from './routes/saude-ml'
 import { Route as SeparacaoRouteImport } from './routes/separacao'
 import { Route as TendenciasRouteImport } from './routes/tendencias'
@@ -223,6 +224,11 @@ const RiscoCancelamentoRoute = RiscoCancelamentoRouteImport.update({
   path: '/risco-cancelamento',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RotinasRoute = RotinasRouteImport.update({
+  id: '/rotinas',
+  path: '/rotinas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SaudeMlRoute = SaudeMlRouteImport.update({
   id: '/saude-ml',
   path: '/saude-ml',
@@ -304,6 +310,7 @@ export interface FileRoutesByFullPath {
   '/relatorios-agentes': typeof RelatoriosAgentesRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
+  '/rotinas': typeof RotinasRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -349,6 +356,7 @@ export interface FileRoutesByTo {
   '/relatorios-agentes': typeof RelatoriosAgentesRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
+  '/rotinas': typeof RotinasRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -395,6 +403,7 @@ export interface FileRoutesById {
   '/relatorios-agentes': typeof RelatoriosAgentesRoute
   '/reprocessar-cmv': typeof ReprocessarCmvRoute
   '/risco-cancelamento': typeof RiscoCancelamentoRoute
+  '/rotinas': typeof RotinasRoute
   '/saude-ml': typeof SaudeMlRoute
   '/separacao': typeof SeparacaoRoute
   '/tendencias': typeof TendenciasRoute
@@ -442,6 +451,7 @@ export interface FileRouteTypes {
     | '/relatorios-agentes'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
+    | '/rotinas'
     | '/saude-ml'
     | '/separacao'
     | '/tendencias'
@@ -487,6 +497,7 @@ export interface FileRouteTypes {
     | '/relatorios-agentes'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
+    | '/rotinas'
     | '/saude-ml'
     | '/separacao'
     | '/tendencias'
@@ -532,6 +543,7 @@ export interface FileRouteTypes {
     | '/relatorios-agentes'
     | '/reprocessar-cmv'
     | '/risco-cancelamento'
+    | '/rotinas'
     | '/saude-ml'
     | '/separacao'
     | '/tendencias'
@@ -578,6 +590,7 @@ export interface RootRouteChildren {
   RelatoriosAgentesRoute: typeof RelatoriosAgentesRoute
   ReprocessarCmvRoute: typeof ReprocessarCmvRoute
   RiscoCancelamentoRoute: typeof RiscoCancelamentoRoute
+  RotinasRoute: typeof RotinasRoute
   SaudeMlRoute: typeof SaudeMlRoute
   SeparacaoRoute: typeof SeparacaoRoute
   TendenciasRoute: typeof TendenciasRoute
@@ -829,6 +842,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RiscoCancelamentoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rotinas': {
+      id: '/rotinas'
+      path: '/rotinas'
+      fullPath: '/rotinas'
+      preLoaderRoute: typeof RotinasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/saude-ml': {
       id: '/saude-ml'
       path: '/saude-ml'
@@ -930,6 +950,7 @@ const rootRouteChildren: RootRouteChildren = {
   RelatoriosAgentesRoute: RelatoriosAgentesRoute,
   ReprocessarCmvRoute: ReprocessarCmvRoute,
   RiscoCancelamentoRoute: RiscoCancelamentoRoute,
+  RotinasRoute: RotinasRoute,
   SaudeMlRoute: SaudeMlRoute,
   SeparacaoRoute: SeparacaoRoute,
   TendenciasRoute: TendenciasRoute,

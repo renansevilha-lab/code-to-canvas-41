@@ -26,6 +26,7 @@ import {
   dataExtensoSP, diaSemanaSP, faltaDetalhe, hojeSP, horaCurtaSP, itemCompleto,
   montarRelatorio, exigeDetalhe, responsavelDe, rodaHoje, saudacao, turnoSugerido,
 } from "@/lib/manual";
+import { tagInterna } from "@/lib/rotinas";
 
 // ============================================================================
 // Manual de Operação — três telas numa rota só:
@@ -588,7 +589,7 @@ function LinhaItem(props: {
                 {dono.nome}
               </Badge>
             )}
-            {(item.tags ?? []).map((t) => (
+            {(item.tags ?? []).filter((t) => !tagInterna(t)).map((t) => (
               <Badge key={t} variant="secondary" className="text-[10px] py-0">
                 {t}
               </Badge>
@@ -769,7 +770,7 @@ function Responsabilidades(props: {
                               {donoPasso.nome}
                             </Badge>
                           )}
-                          {(p.tags ?? []).map((t) => (
+                          {(p.tags ?? []).filter((t) => !tagInterna(t)).map((t) => (
                             <Badge key={t} variant="secondary" className="text-[10px] py-0">{t}</Badge>
                           ))}
                         </div>

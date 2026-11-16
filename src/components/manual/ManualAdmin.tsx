@@ -231,7 +231,7 @@ function LinhaItemAdmin({
           </select>
         </Campo>
 
-        <Campo label="Tags (vírgula)">
+        <Campo label="Tags (vírgula) — Rotinas: rotina:RESP-xx · fase:Nome da fase · lugar:sistema · proibido">
           <Input value={f.tags} onChange={(e) => setF({ ...f, tags: e.target.value })} className="h-9" />
         </Campo>
 
@@ -443,7 +443,7 @@ function LinhaSecaoAdmin({
       <Campo label="Descrição">
         <Textarea value={f.descricao} onChange={(e) => setF({ ...f, descricao: e.target.value })} rows={2} />
       </Campo>
-      <Campo label='Callouts (JSON: [{"tipo":"warn","texto":"…"}])'>
+      <Campo label='Callouts (JSON: [{"tipo":"warn","texto":"…"}]) — Rotinas: "warn"/"regra" (com "titulo" opcional; a 1ª fica em laranja), "info", "temporario" (Medida temporária), {"tipo":"numerar"}'>
         <Textarea value={f.callouts} onChange={(e) => setF({ ...f, callouts: e.target.value })} rows={2} className="font-mono text-xs" />
       </Campo>
       <Campo label='Tabela de referência (JSON: {"head":[…],"rows":[[…]]}) — vazio = nenhuma'>

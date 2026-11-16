@@ -103,6 +103,7 @@ const ROTA_MODULO: Array<[string, string]> = [
   ["/risco-cancelamento", "galpao"],
   ["/a-enviar", "galpao"],
   ["/processos", "galpao"],
+  ["/rotinas", "galpao"],
   ["/registro-horas", "galpao"],
   ["/fulfillment", "galpao"],
   ["/compras", "galpao"],
