@@ -14,6 +14,8 @@ import {
 
 // 16/nov (pedido do dono): coluna Envase (R$ pago à equipe por saco, da ficha) e matéria-prima sempre = R$/kg × kg do
 // saco, sem perdas e sem o consumo medido no big bag (custo_cenario_calcular, docs/producao-custo-envase.sql).
+// Mesmo dia: a mão de obra do custo é SÓ o bônus de envase cadastrado na ficha — a medida pelos lotes/salários saiu do
+// custo e da tela (migração producao_custo_so_envase; o banco ainda devolve mod/mod_fonte só como informação).
 const CORES = { materia: "#8B6F47", embalagem: "#5B8DEF", mod: "#E0A030", envase: "#2F9E6E", premio: "#9C6ADE", cif: "#7A8699" };
 
 export function PainelCusto({ cenario }: { cenario: Cenario }) {
@@ -102,7 +104,7 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
 type Coluna = "materia" | "embalagem" | "mod" | "envase" | "premio" | "cif" | "total";
 const COLUNAS: Array<{ k: Coluna; nome: string; cor?: string }> = [
   { k: "materia", nome: "Matéria-prima", cor: CORES.materia }, { k: "embalagem", nome: "Embalagem + etiqueta", cor: CORES.embalagem },
-  { k: "mod", nome: "Mão de obra", cor: CORES.mod }, { k: "envase", nome: "Envase", cor: CORES.envase }, { k: "premio", nome: "Prêmio por lote", cor: CORES.premio },
+  { k: "envase", nome: "Mão de obra (envase)", cor: CORES.envase }, { k: "premio", nome: "Prêmio por lote", cor: CORES.premio },
   { k: "cif", nome: "Indireto (CIF)", cor: CORES.cif }, { k: "total", nome: "Custo variável" },
 ];
 const valorColuna = (c: CustoSku, k: Coluna): number | null =>
@@ -229,7 +231,7 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
       case "envase": return (
         <>
           <p style={{ margin: "0 0 6px" }}>Valor pago à equipe por saco envasado (bônus de produção), dividido entre quem trabalhou no lote. Vem da ficha do produto — muda em Painel do dia › ficha › "Editar ficha" (Mão de obra por saco). Ordem de produção com bônus próprio paga o valor dela.</p>
-          <L r="Envase por saco" v={brl(c.envase ?? 0)} sub={(c.envase ?? 0) === 0 ? "a ficha não tem valor por saco" : "valor por saco da ficha"} />
+          <L r="Mão de obra (envase) por saco" v={brl(c.envase ?? 0)} sub={(c.envase ?? 0) === 0 ? "a ficha não tem valor por saco" : "valor por saco da ficha"} />
         </>
       );
       case "premio": return (
@@ -247,8 +249,8 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
       default: return (
         <>
           <p style={{ margin: "0 0 6px" }}>Soma das colunas. É o custo variável de fabricar um saco — sem mão de obra fixa, sem venda.</p>
-          <L r="Matéria-prima" v={brl(c.materia)} /><L r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} /><L r="Mão de obra" v={c.mod == null ? "—" : brl(c.mod)} />
-          <L r="Envase" v={brl(c.envase ?? 0)} /><L r="Prêmio por lote" v={brl(c.premio ?? 0)} /><L r="Indireto (CIF)" v={brl(c.cif ?? 0)} />
+          <L r="Matéria-prima" v={brl(c.materia)} /><L r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} />
+          <L r="Mão de obra (envase)" v={brl(c.envase ?? 0)} /><L r="Prêmio por lote" v={brl(c.premio ?? 0)} /><L r="Indireto (CIF)" v={brl(c.cif ?? 0)} />
           <L r={<b>Custo variável</b>} v={<span style={{ fontSize: 15 }}>{brl(c.cv)}</span>} />
           <div style={{ marginTop: 10 }}><PrecosMarketplace c={c} precos={precos} mcs={mcs} carregando={precosCarregando} cenario={cenario} /></div>
         </>
@@ -276,7 +278,7 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
 function Legenda() {
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--pm-t2)" }}>
-      {[["materia", "Matéria-prima"], ["embalagem", "Embalagem + etiqueta"], ["mod", "Mão de obra"], ["envase", "Envase"], ["premio", "Prêmio por lote"], ["cif", "Indireto (CIF)"]].map(([k, n]) => (
+      {[["materia", "Matéria-prima"], ["embalagem", "Embalagem + etiqueta"], ["envase", "Mão de obra (envase)"], ["premio", "Prêmio por lote"], ["cif", "Indireto (CIF)"]].map(([k, n]) => (
         <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: CORES[k as keyof typeof CORES] }} />{n}
         </span>
@@ -290,7 +292,7 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
   prod?: { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null;
   precos?: LinhaMatriz[]; mcs: number[]; precosCarregando: boolean }) {
   const partes = [
-    { k: "materia", v: c.materia }, { k: "embalagem", v: c.embalagem + c.etiqueta }, { k: "mod", v: c.mod ?? 0 },
+    { k: "materia", v: c.materia }, { k: "embalagem", v: c.embalagem + c.etiqueta },
     { k: "envase", v: c.envase ?? 0 }, { k: "premio", v: c.premio ?? 0 }, { k: "cif", v: c.cif ?? 0 },
   ];
   const total = partes.reduce((s, p) => s + p.v, 0) || 1;
@@ -320,8 +322,7 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", fontSize: 12.5 }}>
         <Linha r="Matéria-prima" v={brl(c.materia)} cor={CORES.materia} />
         <Linha r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} cor={CORES.embalagem} />
-        <MaoDeObraRapida c={c} cenario={cenario} />
-        <Linha r="Envase" v={brl(c.envase ?? 0)} cor={CORES.envase} />
+        <Linha r="Mão de obra (envase)" v={brl(c.envase ?? 0)} cor={CORES.envase} />
         <Linha r="Prêmio + CIF" v={brl((c.premio ?? 0) + (c.cif ?? 0))} cor={CORES.premio} />
       </div>
 
@@ -555,7 +556,7 @@ function EditorSku({ c, cfg, cenario, so }: { c: CustoSku; cfg?: CenarioSku; cen
         {ent("embalagem_rs_un_manual", `Embalagem (R$/un)`, `${c.embalagem_nome ?? ""} · cadastro ${brl(c.embalagem, 4)} (vazio = cadastro)`)}
         {ent("etiqueta_rs_un_manual", "Etiqueta (R$/un)", `cadastro ${brl(c.etiqueta, 4)} (vazio = cadastro)`)}
       </>)}
-      {ver("mod") && grupo("Mão de obra", <>
+      {false && ver("mod") && grupo("Mão de obra", <>
         <Campo rotulo="Fonte" dica={`medida: ${c.mod_un_homem_hora == null ? "—" : `${num(c.mod_un_homem_hora, 1)} un/homem-hora`} · ${brl(c.mod_rs_hora)}/h`}>
           <Escolha value={f.fonte_mod} onChange={(e) => mudar("fonte_mod", e.target.value)}>
             <option value="medido">Medida nos lotes</option><option value="manual_hora">Manual: R$/hora e un/homem-hora</option><option value="manual_un">Manual: R$ por saco</option>
