@@ -12,7 +12,9 @@ import {
   type Cenario, type CenarioSku, type CustoSku, type LinhaMatriz,
 } from "@/lib/custos";
 
-const CORES = { materia: "#8B6F47", embalagem: "#5B8DEF", mod: "#E0A030", premio: "#9C6ADE", cif: "#7A8699" };
+// 16/nov (pedido do dono): coluna Envase (R$ pago à equipe por saco, da ficha) e matéria-prima sempre = R$/kg × kg do
+// saco, sem perdas e sem o consumo medido no big bag (custo_cenario_calcular, docs/producao-custo-envase.sql).
+const CORES = { materia: "#8B6F47", embalagem: "#5B8DEF", mod: "#E0A030", envase: "#2F9E6E", premio: "#9C6ADE", cif: "#7A8699" };
 
 export function PainelCusto({ cenario }: { cenario: Cenario }) {
   const custo = useCusto(cenario.id);
@@ -97,14 +99,15 @@ export function PainelCusto({ cenario }: { cenario: Cenario }) {
 // Visual em linhas: uma linha por produto, uma coluna por custo. Clicar numa célula abre, embaixo da
 // linha, a explicação daquele custo (de onde veio cada número) — e, na mão de obra, o campo de trocar.
 // ---------------------------------------------------------------------------
-type Coluna = "materia" | "embalagem" | "mod" | "premio" | "cif" | "total";
+type Coluna = "materia" | "embalagem" | "mod" | "envase" | "premio" | "cif" | "total";
 const COLUNAS: Array<{ k: Coluna; nome: string; cor?: string }> = [
   { k: "materia", nome: "Matéria-prima", cor: CORES.materia }, { k: "embalagem", nome: "Embalagem + etiqueta", cor: CORES.embalagem },
-  { k: "mod", nome: "Mão de obra", cor: CORES.mod }, { k: "premio", nome: "Prêmio por lote", cor: CORES.premio },
+  { k: "mod", nome: "Mão de obra", cor: CORES.mod }, { k: "envase", nome: "Envase", cor: CORES.envase }, { k: "premio", nome: "Prêmio por lote", cor: CORES.premio },
   { k: "cif", nome: "Indireto (CIF)", cor: CORES.cif }, { k: "total", nome: "Custo variável" },
 ];
 const valorColuna = (c: CustoSku, k: Coluna): number | null =>
-  k === "materia" ? c.materia : k === "embalagem" ? c.embalagem + c.etiqueta : k === "mod" ? c.mod : k === "premio" ? c.premio ?? 0 : k === "cif" ? c.cif ?? 0 : c.cv;
+  k === "materia" ? c.materia : k === "embalagem" ? c.embalagem + c.etiqueta : k === "mod" ? c.mod : k === "envase" ? c.envase ?? 0
+    : k === "premio" ? c.premio ?? 0 : k === "cif" ? c.cif ?? 0 : c.cv;
 
 type ProdSku = { un_h_linha: number; un_homem_hora: number; lotes: number; un_total: number; do_grupo: boolean } | null | undefined;
 
@@ -115,7 +118,7 @@ function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, p
 }) {
   const [aberto, setAberto] = useState<{ sku: string; col: Coluna } | null>(null);
   const clicar = (sku: string, col: Coluna) => setAberto(aberto && aberto.sku === sku && aberto.col === col ? null : { sku, col });
-  const nCols = 3 + COLUNAS.length;
+  const nCols = 2 + COLUNAS.length;
   return (
     <Cartao>
       <div style={{ overflowX: "auto" }}>
@@ -127,13 +130,11 @@ function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, p
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>{col.cor && <span style={{ width: 8, height: 8, borderRadius: 2, background: col.cor }} />}{col.nome}</span>
               </th>
             ))}
-            <th style={{ ...th, textAlign: "right" }}>vs padrão</th>
             <th style={{ ...th, textAlign: "right" }} title="O custo que os Pedidos Integrados, o DRE e as Promoções usam hoje">No sistema</th>
           </tr></thead>
           <tbody>
             {linhas.map((c) => {
               const ab = aberto?.sku === c.sku ? aberto.col : null;
-              const dif = c.cv - c.cv_padrao;
               return (
                 <Fragment key={c.sku}>
                   <tr style={{ background: ab ? "var(--pm-s2)" : undefined }}>
@@ -160,9 +161,6 @@ function TabelaCustos({ linhas, fotos, cenario, cfgs, prod, matrizPorSku, mcs, p
                         </td>
                       );
                     })}
-                    <td style={{ ...td, textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums", color: Math.abs(dif) < 0.005 ? "var(--pm-t3)" : dif > 0 ? "var(--pm-r)" : "var(--pm-g)", whiteSpace: "nowrap" }}>
-                      {Math.abs(dif) < 0.005 ? "= padrão" : `${dif > 0 ? "+" : ""}${brl(dif)}`}
-                    </td>
                     <td style={{ ...td, textAlign: "right", fontSize: 12.5 }}>
                       <CustoNoSistema c={c} s={sistema[c.sku]} carregando={sistemaCarregando} onLancar={() => onLancar(c)} compacto />
                     </td>
@@ -201,10 +199,10 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
     switch (col) {
       case "materia": return (
         <>
-          <p style={{ margin: "0 0 6px" }}>O que entra no saco e quanto cada parte custa, no cenário "{cenario.nome}".</p>
+          <p style={{ margin: "0 0 6px" }}>Custo do kg × o que vai em cada saco ({num(c.peso_nominal_kg, 3)} kg), sem perdas e sem o consumo medido no big bag — cenário "{cenario.nome}".</p>
           <L r={<><b>{c.farinha_nome ?? "Farinha (não identificada)"}</b> — {num(c.kg_farinha ?? c.kg_un, 3)} kg × {brl(c.preco_kg, 4)}/kg</>}
             v={brl(farinhaRs)}
-            sub={<>consumo <b>{FONTE_KG[c.kg_un_fonte]}</b> (padrão da ficha {num(c.kg_un_padrao, 3)} kg · medido no fechamento do big bag {c.kg_un_medido == null ? "—" : num(c.kg_un_medido, 3)} kg{c.bags_medidos ? `, ${c.bags_medidos} bags` : ""}) · preço <b>{FONTE_PRECO_KG[c.preco_kg_fonte] ?? c.preco_kg_fonte}</b> (última entrada {brl(c.preco_kg_ultima, 4)} · referência {brl(c.preco_kg_referencia, 4)} · média 90 d {brl(c.preco_kg_media_90d, 4)})</>} />
+            sub={<>{c.mistura ? "parte de farinha do saco" : "peso do saco"} · preço <b>{FONTE_PRECO_KG[c.preco_kg_fonte] ?? c.preco_kg_fonte}</b> (última entrada {brl(c.preco_kg_ultima, 4)} · referência {brl(c.preco_kg_referencia, 4)} · média 90 d {brl(c.preco_kg_media_90d, 4)})</>} />
           {c.mistura && <L r={<><b>{c.mistura_nome ?? "Componente da mistura"}</b> — {num(c.un_mistura, 3)} un × {brl(c.preco_mistura_un)}</>} v={brl(misturaRs)} sub="produto comprado; preço = custo do cadastro do Tiny (ou o manual do cenário)" />}
           <L r={<b>Matéria-prima por saco</b>} v={brl(c.materia)} />
           {c.alerta_desperdicio && <div style={{ color: "var(--pm-r)", fontWeight: 600, marginTop: 6 }}>Consumo medido {pct((c.kg_un_medido ?? 0) / c.kg_un_padrao - 1)} acima do padrão: {brl(c.desperdicio_un)} de desperdício por saco, {brl(c.desperdicio_mes, 0)} por mês a {int(cenario.volume_mes_un)} un.</div>}
@@ -228,6 +226,12 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
           {c.mod_un_homem_hora != null && c.mod_rs_hora != null && <L r={<>{brl(c.mod_rs_hora)} ÷ {num(c.mod_un_homem_hora, 1)} sacos</>} v={brl(c.mod_rs_hora / c.mod_un_homem_hora)} />}
         </>
       );
+      case "envase": return (
+        <>
+          <p style={{ margin: "0 0 6px" }}>Valor pago à equipe por saco envasado (bônus de produção), dividido entre quem trabalhou no lote. Vem da ficha do produto — muda em Painel do dia › ficha › "Editar ficha" (Mão de obra por saco). Ordem de produção com bônus próprio paga o valor dela.</p>
+          <L r="Envase por saco" v={brl(c.envase ?? 0)} sub={(c.envase ?? 0) === 0 ? "a ficha não tem valor por saco" : "valor por saco da ficha"} />
+        </>
+      );
       case "premio": return (
         <>
           <p style={{ margin: "0 0 6px" }}>Prêmio pago à equipe por big bag fechado, rateado pelos sacos que o bag rende.</p>
@@ -244,8 +248,8 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
         <>
           <p style={{ margin: "0 0 6px" }}>Soma das colunas. É o custo variável de fabricar um saco — sem mão de obra fixa, sem venda.</p>
           <L r="Matéria-prima" v={brl(c.materia)} /><L r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} /><L r="Mão de obra" v={c.mod == null ? "—" : brl(c.mod)} />
-          <L r="Prêmio por lote" v={brl(c.premio ?? 0)} /><L r="Indireto (CIF)" v={brl(c.cif ?? 0)} />
-          <L r={<b>Custo variável</b>} v={<span style={{ fontSize: 15 }}>{brl(c.cv)}</span>} sub={<>padrão da ficha {brl(c.cv_padrao)} · medido {c.cv_medido == null ? "—" : brl(c.cv_medido)}</>} />
+          <L r="Envase" v={brl(c.envase ?? 0)} /><L r="Prêmio por lote" v={brl(c.premio ?? 0)} /><L r="Indireto (CIF)" v={brl(c.cif ?? 0)} />
+          <L r={<b>Custo variável</b>} v={<span style={{ fontSize: 15 }}>{brl(c.cv)}</span>} />
           <div style={{ marginTop: 10 }}><PrecosMarketplace c={c} precos={precos} mcs={mcs} carregando={precosCarregando} cenario={cenario} /></div>
         </>
       );
@@ -264,7 +268,7 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
       {c.avisos.length > 0 && <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11.5, color: "var(--pm-am)" }}>{c.avisos.map((a) => <li key={a}>{a}</li>)}</ul>}
       {ajustar
         ? <EditorSku key={`tudo-${c.sku}`} c={c} cfg={cfg} cenario={cenario} />
-        : col !== "total" && <div style={{ maxWidth: 900 }}><EditorSku key={`${col}-${c.sku}`} c={c} cfg={cfg} cenario={cenario} so={col} /></div>}
+        : col !== "total" && col !== "envase" && <div style={{ maxWidth: 900 }}><EditorSku key={`${col}-${c.sku}`} c={c} cfg={cfg} cenario={cenario} so={col} /></div>}
     </div>
   );
 }
@@ -272,7 +276,7 @@ function ExplicacaoCusto({ c, col, cenario, cfg, prod, precos, mcs, precosCarreg
 function Legenda() {
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--pm-t2)" }}>
-      {[["materia", "Matéria-prima"], ["embalagem", "Embalagem + etiqueta"], ["mod", "Mão de obra"], ["premio", "Prêmio por lote"], ["cif", "Indireto (CIF)"]].map(([k, n]) => (
+      {[["materia", "Matéria-prima"], ["embalagem", "Embalagem + etiqueta"], ["mod", "Mão de obra"], ["envase", "Envase"], ["premio", "Prêmio por lote"], ["cif", "Indireto (CIF)"]].map(([k, n]) => (
         <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: CORES[k as keyof typeof CORES] }} />{n}
         </span>
@@ -287,7 +291,7 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
   precos?: LinhaMatriz[]; mcs: number[]; precosCarregando: boolean }) {
   const partes = [
     { k: "materia", v: c.materia }, { k: "embalagem", v: c.embalagem + c.etiqueta }, { k: "mod", v: c.mod ?? 0 },
-    { k: "premio", v: c.premio ?? 0 }, { k: "cif", v: c.cif ?? 0 },
+    { k: "envase", v: c.envase ?? 0 }, { k: "premio", v: c.premio ?? 0 }, { k: "cif", v: c.cif ?? 0 },
   ];
   const total = partes.reduce((s, p) => s + p.v, 0) || 1;
   const fonteKg = c.kg_un_fonte;
@@ -317,6 +321,7 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
         <Linha r="Matéria-prima" v={brl(c.materia)} cor={CORES.materia} />
         <Linha r="Embalagem + etiqueta" v={brl(c.embalagem + c.etiqueta)} cor={CORES.embalagem} />
         <MaoDeObraRapida c={c} cenario={cenario} />
+        <Linha r="Envase" v={brl(c.envase ?? 0)} cor={CORES.envase} />
         <Linha r="Prêmio + CIF" v={brl((c.premio ?? 0) + (c.cif ?? 0))} cor={CORES.premio} />
       </div>
 
@@ -324,10 +329,6 @@ function CartaoSku({ c, foto, aberto, onAbrir, cfg, pronto, cenario, prod, preco
 
       <div style={{ fontSize: 12, color: "var(--pm-t2)", display: "flex", gap: 12, flexWrap: "wrap" }}>
         {prod && <span style={{ width: "100%" }}>Produtividade <b>{num(prod.un_h_linha, 1)} sacos/h</b> de linha · <b>{num(prod.un_homem_hora, 1)}</b> por pessoa/hora{prod.do_grupo ? " (média do grupo)" : ` (${prod.lotes} ${prod.lotes === 1 ? "lote" : "lotes"}, ${int(prod.un_total)} sacos)`}</span>}
-        <span>Padrão <b>{brl(c.cv_padrao)}</b></span>
-        <span>Medido <b>{c.cv_medido == null ? "—" : brl(c.cv_medido)}</b></span>
-        <span>Cenário <b>{brl(c.cv)}</b></span>
-        {Math.abs(c.cv - c.cv_padrao) >= 0.005 && <span style={{ color: c.cv > c.cv_padrao ? "var(--pm-r)" : "var(--pm-g)" }}>{c.cv > c.cv_padrao ? "+" : ""}{brl(c.cv - c.cv_padrao)} vs padrão</span>}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }} title="O custo que os Pedidos Integrados, o DRE e as Promoções usam hoje">
           No sistema <CustoNoSistema c={c} s={sistema} carregando={sistemaCarregando} onLancar={onLancar} compacto />
         </span>

@@ -29,13 +29,15 @@ export interface CenarioSku {
 
 export interface CustoSku {
   sku: string; nome: string | null; peso_nominal_kg: number; mistura: boolean; farinha_id: number | null; farinha_nome: string | null;
-  kg_un: number; kg_un_fonte: "padrao" | "medido" | "manual" | "padrao_sem_medida"; kg_un_padrao: number; kg_un_medido: number | null;
+  kg_un: number; kg_un_fonte: "padrao" | "medido" | "manual" | "padrao_sem_medida" | "nominal"; kg_un_padrao: number; kg_un_medido: number | null;
   bags_medidos: number | null; preco_kg: number; preco_kg_fonte: string; preco_kg_referencia: number | null;
   preco_kg_ultima: number | null; preco_kg_media_90d: number | null; kg_farinha: number; mistura_nome: string | null;
   un_mistura: number; preco_mistura_un: number; materia: number; embalagem_nome: string | null; embalagem: number; etiqueta: number;
   mod: number | null; mod_fonte: string; mod_un_homem_hora: number | null; mod_rs_hora: number | null; un_por_lote: number;
   premio: number; cif: number; cv: number; cv_padrao: number; cv_medido: number | null; desperdicio_un: number | null;
   desperdicio_mes: number | null; alerta_desperdicio: boolean; avisos: string[];
+  /** 16/nov: R$ pago à equipe por saco envasado (producao_parametros.pagamento_saco), somado no cv */
+  envase: number | null;
 }
 
 export interface PrecoMc { mc: number; preco: number | null; comissao: number; fixo: number; fora_faixa: boolean }
@@ -190,7 +192,7 @@ export const num = (n: number | null | undefined, casas = 2) =>
   n == null ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
 
 export const FONTE_KG: Record<string, string> = {
-  medido: "medido", padrao: "padrão", manual: "manual", padrao_sem_medida: "padrão (sem medição)",
+  medido: "medido", padrao: "padrão", manual: "manual", padrao_sem_medida: "padrão (sem medição)", nominal: "peso do saco, sem perdas",
 };
 export const FONTE_PRECO_KG: Record<string, string> = {
   ultima_entrada: "última entrada", referencia: "referência", media_90d: "média 90 dias", manual: "manual",
