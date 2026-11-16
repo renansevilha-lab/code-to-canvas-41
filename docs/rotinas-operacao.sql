@@ -102,6 +102,6 @@ where s.code = x.code;
 -- 16/nov/2026 (pedido do dono): Compras (RESP-04) e Recebimento de mercadoria (RESP-02) = Nikolas e Kevin.
 -- Migração manual_secoes_responsaveis_extra: coluna nova para mais de um responsável por seção.
 alter table public.manual_secoes add column if not exists responsaveis_extra text[] not null default '{}';
-update public.manual_secoes set responsavel_id = 'niko', responsaveis_extra = array['kevin'] where code in ('RESP-02','RESP-04');
+-- (desfeito no mesmo dia: o dono quis 'Nikolas e Kevin' SÓ no PDF entregue; o manual voltou a RESP-02 = niko, RESP-04 = vini. A coluna ficou, vazia.)
 -- (antes: RESP-02 = niko, RESP-04 = vini) · rollback: alter table public.manual_secoes drop column responsaveis_extra;
 --   update public.manual_secoes set responsavel_id = 'vini' where code = 'RESP-04';
