@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FlaskConical, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ import { formatBRL } from "@/lib/format";
 import { LOGO, idade, int } from "@/components/dashboard/formato";
 import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
 import { AnunciosAchados } from "@/components/ia/anuncio/AnunciosAchados";
+import { EtiquetaMarcacao, PainelTestesAB, marcacoesDoSku, useMarcacoes } from "@/components/ads/MarcacoesTeste";
 import { chamarVariacoes } from "@/lib/iaAnuncio";
 import {
   CANAIS, CANAIS_COM_HISTORICO, ROTULO_ETAPA, nomeCanal, nomeEmpresa,
@@ -32,7 +33,7 @@ import {
 // são feitos no banco (RPC ia_catalogo) — são ~2,3 mil produtos.
 // ============================================================================
 
-type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number };
+type Busca = { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string };
 
 const SITUACOES = [
   { id: "todos", rotulo: "Todos" },
@@ -86,12 +87,13 @@ export const Route = createFileRoute("/ia/anuncios")({
     giro: ["parado", "sem_giro", "excesso"].includes(String(s.giro)) ? String(s.giro) : undefined,
     ordem: ORDENS.some((x) => x.id === s.ordem) && s.ordem !== ORDEM_PADRAO ? String(s.ordem) : undefined,
     p: Number(s.p) > 1 ? Math.floor(Number(s.p)) : undefined,
+    teste: s.teste === "1" ? "1" : undefined,
   }),
   component: AnunciosPage,
 });
 
 function AnunciosPage() {
-  const { q, marca, sit, tipo, sem, giro, ordem, p } = Route.useSearch();
+  const { q, marca, sit, tipo, sem, giro, ordem, p, teste } = Route.useSearch();
   const nav = useNavigate({ from: "/ia/anuncios" });
   const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true });
   const pagina = p ?? 1;
@@ -179,7 +181,7 @@ function AnunciosPage() {
     <>
       <ProtecaoPacking antigo={antigo()}>
         <ListaNova cat={cat} carregando={catQ.isLoading} erro={catQ.isError ? (catQ.error as Error).message : null} onTentar={() => void catQ.refetch()}
-          buscando={catQ.isFetching} digitado={digitado} setDigitado={setDigitado} filtros={{ q, marca, sit, tipo, sem, giro, ordem }} set={set}
+          buscando={catQ.isFetching} digitado={digitado} setDigitado={setDigitado} filtros={{ q, marca, sit, tipo, sem, giro, ordem, teste }} set={set}
           escolherGiro={escolherGiro} pagina={pagina} paginas={paginas} total={total} composicoes={kitsQ.data} comCapa={comCapa}
           selecionados={selecionados} alternar={alternar} limparSel={() => setSelecionados([])} abrirCores={() => setCoresAberto(true)}
           onVariacoes={setVariacoesDe} onImportar={(t) => setImportarAberto(t)} />
@@ -280,6 +282,7 @@ function AnunciosPage() {
         {catQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </div>
 
+      {teste && <PainelTestesAB />}
       {q && <AnunciosAchados busca={q} onSku={(sku) => setDigitado(sku)} />}
 
       {selecionados.length > 0 && (
@@ -815,15 +818,18 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
   composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, onVariacoes, onImportar }: {
   cat: IaCatalogo | undefined; carregando: boolean; erro: string | null; onTentar: () => void; buscando: boolean;
   digitado: string; setDigitado: (v: string) => void;
-  filtros: { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string };
+  filtros: { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; teste?: string };
   set: (x: Partial<Busca>) => void; escolherGiro: (id: string) => void;
   pagina: number; paginas: number; total: number;
   composicoes: Record<string, Componente[]> | undefined; comCapa: (x: IaCatalogoLinha) => IaCatalogoLinha;
   selecionados: string[]; alternar: (sku: string) => void; limparSel: () => void; abrirCores: () => void;
   onVariacoes: (sku: string) => void; onImportar: (q: string) => void;
 }) {
-  const { q, marca, sit, tipo, sem, giro, ordem } = filtros;
+  const { q, marca, sit, tipo, sem, giro, ordem, teste } = filtros;
   const [mais, setMais] = useState(false);
+  // testes A/B (16/nov): bloco com os anúncios do teste, envio à Shopee e histórico de mudanças
+  const marcQ = useMarcacoes();
+  const testePend = (marcQ.data?.lista ?? []).filter((m) => m.pendente || m.status === "divergente").length;
   const resumoQ = useResumoIa();
   const linhas = cat?.linhas ?? [];
   const pubQ = usePublicadas(linhas.flatMap((x) => [x.sku, ...(x.variacoes ?? []).map((v) => v.sku)]));
@@ -859,6 +865,12 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
             <i style={{ width: 7, height: 7, borderRadius: "50%", background: giroEm.velho ? "var(--pm-am)" : "var(--pm-g)" }} />
             retrato de estoque {fmtDataHora(cat!.giro_em!)} · {giroEm.txt}
           </span>
+        )}
+        {(marcQ.data?.lista.length ?? 0) > 0 && (
+          <button type="button" style={chipA(!!teste)} className={teste ? "pm-hv-a" : "pm-hv"} onClick={() => set({ teste: teste ? undefined : "1" })}
+            title="Anúncios marcados em testes A/B: o que fazer, enviar à Shopee e histórico de mudanças">
+            <FlaskConical className="h-4 w-4" /> Testes A/B{testePend > 0 && <span className={MONO_A} style={{ fontSize: 11, opacity: 0.9 }}>{int(testePend)} pendente{testePend > 1 ? "s" : ""}</span>}
+          </button>
         )}
         <button type="button" style={btnSec} onClick={() => onImportar(digitado.trim())}
           title="Produto cadastrado hoje no Tiny ainda não aparece? Traga agora (ou atualize um que já está aqui).">
@@ -1053,6 +1065,8 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
   const ini = (x.nome ?? "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   const tipoTxt = x.tipo === "K" ? "Kit" : x.tipo === "V" ? (filhas.length ? `Com variações · ${filhas.length}` : "Com variações") : variacao ? "Variação" : x.criado_app ? "Simples · criado no app" : "Simples";
   const linkIa = ia ? { sku: x.sku, canal: ia.r.canal, empresa: ia.r.empresa, r: ia.r.id } : { sku: x.sku, canal: canalPadrao, empresa: "ottz" };
+  const marcQ = useMarcacoes();
+  const marcs = marcacoesDoSku(marcQ.data?.porSku, x.sku);
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: GRADE_A, gap: 12, alignItems: "center", padding: variacao ? "6px 14px" : "10px 14px", borderTop: "1px solid var(--pm-b)", background: selecionado ? "var(--pm-as)" : variacao ? "var(--pm-s2)" : "var(--pm-s)" }}
@@ -1077,6 +1091,7 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
               {Number(x.un30) > 0 && <span>{int(Number(x.un30))} un em 30 d</span>}
               {x.giro && x.giro.length > 0 && <GiroNovo x={x} />}
               {x.sem_capa && <span style={{ fontWeight: 600, color: "var(--pm-am)" }}>fotos da família · falta a capa</span>}
+              {marcs.map((m) => <EtiquetaMarcacao key={m.id} m={m} />)}
             </div>
             {composicao && composicao.length > 0 && (
               <span title={composicao.map((c) => `${Number(c.quantidade)}× ${c.sku_componente} ${c.nome_componente ?? ""}`).join(" + ")}
