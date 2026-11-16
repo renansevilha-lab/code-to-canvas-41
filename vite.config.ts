@@ -10,6 +10,9 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 // arquivos abertos menor na máquina de build). Às vezes o erro aparecia disfarçado de "Rollup failed to
 // resolve import" (rou3, sonner, date-fns). O padrão do Rollup é abrir até 1.000 arquivos ao mesmo tempo;
 // com 32 o build fica praticamente com o mesmo tempo e não esbarra no limite.
+// 16/nov/2026: o build da Cloudflare passou a morrer com "JavaScript heap out of memory" ao montar o pacote do
+// servidor (3.700 módulos; o limite padrão do Node na máquina de build é ~2 GB). O limite maior fica no script
+// "build" do package.json (--max-old-space-size=6144; a máquina de build tem 8 GB).
 export default defineConfig({
   vite: {
     build: {
