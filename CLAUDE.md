@@ -4877,6 +4877,14 @@ deploy `npx wrangler deploy --config .output/server/wrangler.json`. **Push na ma
 21/jul). Endereço definitivo decidido pelo dono: **ottz-pet-app.ottzpet.workers.dev**.
 Pendente: avisar a equipe (login 1× + reescolher impressora) e desligar o Lovable.
 **EMFILE na Cloudflare (05/nov/2026):** todo build falhava com um pacote diferente "não encontrado" (rou3, sonner, date-fns) — era `EMFILE: too many open files` (a máquina de build passou a ter limite menor de arquivos abertos). `vite.config.ts` limita o Rollup a 32 arquivos ao mesmo tempo (`maxParallelFileOps`); o `prebuild` (`scripts/completar-dependencias.mjs`, só no CI) mostra o limite e confere os pacotes. Log do build lido pela API do painel (`/api/v4/accounts/<conta>/builds/builds/<id>/logs`, com a sessão do dono no Chrome).
+**Memória do build (16/nov/2026):** de 14h46 a 16h todos os builds da Cloudflare falharam (11 seguidos, inclusive commits vazios) com
+`FATAL ERROR: Reached heap limit … JavaScript heap out of memory` no "rendering chunks" do pacote do SERVIDOR (2ª metade do `vite build`,
+~3.700 módulos) — o app cresceu além do limite padrão do Node na máquina de build (~2 GB); localmente passa porque o PC tem mais memória.
+Cura: o script `build` do `package.json` roda `node --max-old-space-size=6144 node_modules/vite/bin/vite.js build`. **Falha repetida de
+build não é "intermitente": ler o registro antes de republicar** — painel da Cloudflare logado no Chrome,
+`/api/v4/accounts/<conta>/builds/workers/<id do worker>/builds?per_page=5` (lista, com `build_uuid`) e `/builds/builds/<build_uuid>/logs`;
+o `check-runs` do GitHub só aparece quando o build termina. Se voltar a estourar, o próximo passo é não empacotar as telas no servidor
+(o site só gera o esqueleto do login no servidor).
 **Push não garante publicado (18/out/2026):** o site ficou parado desde 16/10 sem ninguém ver — todos os builds de
 18/10 falharam no `npm ci` da Cloudflare (**npm 10.9.2**, Node 24): "package.json e package-lock.json fora de
 sincronia — Missing: miniflare@4.20260730.0, workerd… (cópias aninhadas do `nitro`)". O npm 11 deste PC aceita o
