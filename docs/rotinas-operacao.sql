@@ -98,3 +98,10 @@ from (values ('RESP-01','Pedidos a Enviar',null), ('RESP-03','Organização do E
 where s.code = x.code;
 -- nomes anteriores: RESP-01 'Envios — Shopee · Mercado Livre · TikTok Shop', RESP-03 'Embalagens & Organização de Estoque',
 --   RESP-05 'Logística Reversa & Devoluções', RESP-06 'Envios Fulfillment'; RESP-09 sem responsável.
+
+-- 16/nov/2026 (pedido do dono): Compras (RESP-04) e Recebimento de mercadoria (RESP-02) = Nikolas e Kevin.
+-- Migração manual_secoes_responsaveis_extra: coluna nova para mais de um responsável por seção.
+alter table public.manual_secoes add column if not exists responsaveis_extra text[] not null default '{}';
+update public.manual_secoes set responsavel_id = 'niko', responsaveis_extra = array['kevin'] where code in ('RESP-02','RESP-04');
+-- (antes: RESP-02 = niko, RESP-04 = vini) · rollback: alter table public.manual_secoes drop column responsaveis_extra;
+--   update public.manual_secoes set responsavel_id = 'vini' where code = 'RESP-04';

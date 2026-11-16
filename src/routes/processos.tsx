@@ -660,7 +660,7 @@ function Responsabilidades(props: {
 
   const processos = secoes.filter((s) => s.tipo === "processo");
   const visiveis = processos.filter((s) => {
-    if (membroFiltro && s.responsavel_id !== membroFiltro) return false;
+    if (membroFiltro && s.responsavel_id !== membroFiltro && !(s.responsaveis_extra ?? []).includes(membroFiltro)) return false;
     if (busca) {
       const q = busca.toLowerCase();
       const nosPassos = itens.some(
@@ -712,6 +712,7 @@ function Responsabilidades(props: {
       ) : (
         visiveis.map((s) => {
           const dono = membros.find((m) => m.id === s.responsavel_id);
+          const outros = membros.filter((m) => m.id !== s.responsavel_id && (s.responsaveis_extra ?? []).includes(m.id));
           const passos = itens.filter((i) => i.secao_code === s.code);
           return (
             <Card key={s.code} className="p-5" style={{ borderLeftWidth: 4, borderLeftColor: dono?.cor ?? "var(--color-border)" }}>
@@ -727,6 +728,9 @@ function Responsabilidades(props: {
                   {dono && (
                     <div className="text-sm font-semibold" style={{ color: dono.cor }}>
                       {dono.nome}
+                      {outros.map((o) => (
+                        <span key={o.id} style={{ color: o.cor }}> e {o.nome}</span>
+                      ))}
                     </div>
                   )}
                   {s.frequencia && <div className="text-xs text-muted-foreground">{s.frequencia}</div>}

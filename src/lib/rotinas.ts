@@ -50,11 +50,14 @@ const FASE_PRODUCAO: Record<string, string> = { antes: "Antes de produzir", dura
 
 export function montarRotinas(p: { secoes: Secao[]; itens: Item[]; membros: Membro[]; producao: ManualSecao[]; dow: number }): Rotina[] {
   const nome = (id: string | null) => (id ? p.membros.find((m) => m.id === id)?.nome ?? id : null);
+  const donos = (s: Secao | undefined) => (s ? [s.responsavel_id, ...(s.responsaveis_extra ?? [])].filter((x, k, a): x is string => !!x && a.indexOf(x) === k) : []);
+  const nomes = (ids: string[]) => { const n = ids.map((x) => nome(x)!); return n.length ? (n.length === 1 ? n[0] : n.slice(0, -1).join(", ") + " e " + n[n.length - 1]) : null; };
   const tagDe = (i: Item, secao: Secao | undefined): TagEtapa => {
     if (temTag(i, "lugar:sistema")) return { texto: "No sistema", tipo: "sistema" };
-    const r = i.responsavel_id ?? secao?.responsavel_id ?? null;
-    if (!r) return { texto: "", tipo: "vazio" };
-    return { texto: nome(r) ?? r, tipo: r === "niko" ? "niko" : "pessoa" };
+    if (i.responsavel_id) return { texto: nome(i.responsavel_id) ?? i.responsavel_id, tipo: i.responsavel_id === "niko" ? "niko" : "pessoa" };
+    const ids = donos(secao);
+    if (!ids.length) return { texto: "", tipo: "vazio" };
+    return { texto: nomes(ids)!, tipo: ids.length === 1 && ids[0] === "niko" ? "niko" : "pessoa" };
   };
   const roda = (i: Item) => !i.dias?.length || i.dias.includes(p.dow);
   const diasTxt = (i: Item) => (i.dias?.length ? `Só ${i.dias.map((d) => NOMES_DIAS[d].toLowerCase()).join(" e ")}` : null);
@@ -121,7 +124,7 @@ export function montarRotinas(p: { secoes: Secao[]; itens: Item[]; membros: Memb
         titulo: s.titulo,
         descricao: s.descricao,
         frequencia: s.frequencia,
-        responsavel: nome(s.responsavel_id),
+        responsavel: nomes(donos(s)),
         regras,
         temporarias: callouts.filter((c) => c.tipo === "temporario" && c.texto).map((c) => ({ titulo: c.titulo ?? null, texto: c.texto!, principal: false })),
         proibidos: todos.filter((i) => i.tipo === "check" && temTag(i, "proibido")).map((i) => ({ titulo: i.texto, tag: tagDe(i, secaoDo(i)?.code === s.code ? s : secaoDo(i)) })),

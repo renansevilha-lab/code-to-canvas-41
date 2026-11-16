@@ -24,6 +24,8 @@ export type Secao = {
   descricao: string | null;
   frequencia: string | null;
   responsavel_id: string | null;
+  /** Outros responsáveis da seção, além do principal (ex.: Nikolas + Kevin). */
+  responsaveis_extra?: string[] | null;
   ordem: number;
   callouts: Callout[] | null;
   tabela_ref: TabelaRef | null;

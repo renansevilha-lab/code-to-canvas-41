@@ -353,6 +353,7 @@ function LinhaSecaoAdmin({
     descricao: secao.descricao ?? "",
     frequencia: secao.frequencia ?? "",
     responsavel_id: secao.responsavel_id ?? "",
+    extra: secao.responsaveis_extra ?? [],
     ordem: secao.ordem,
     callouts: JSON.stringify(secao.callouts ?? [], null, 0),
     tabela_ref: secao.tabela_ref ? JSON.stringify(secao.tabela_ref) : "",
@@ -379,6 +380,7 @@ function LinhaSecaoAdmin({
         descricao: f.descricao || null,
         frequencia: f.frequencia || null,
         responsavel_id: f.responsavel_id === "" ? null : f.responsavel_id,
+        responsaveis_extra: f.extra.filter((x) => x !== f.responsavel_id),
         ordem: f.ordem,
         callouts,
         tabela_ref: tabela,
@@ -439,6 +441,21 @@ function LinhaSecaoAdmin({
           />
         </Campo>
       </div>
+
+      <Campo label="Também responsáveis">
+        <div className="flex flex-wrap gap-3 text-sm">
+          {membros.filter((m) => m.id !== f.responsavel_id).map((m) => (
+            <label key={m.id} className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={f.extra.includes(m.id)}
+                onChange={(e) => setF({ ...f, extra: e.target.checked ? [...f.extra, m.id] : f.extra.filter((x) => x !== m.id) })}
+              />
+              {m.nome}
+            </label>
+          ))}
+        </div>
+      </Campo>
 
       <Campo label="Descrição">
         <Textarea value={f.descricao} onChange={(e) => setF({ ...f, descricao: e.target.value })} rows={2} />
