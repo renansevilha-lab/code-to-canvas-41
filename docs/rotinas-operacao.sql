@@ -88,3 +88,13 @@ grant usage, select on sequence public.rotina_execucao_id_seq to authenticated, 
 --     and t not in ('proibido', 'lugar:sistema'));
 --   update public.manual_secoes set callouts = (select coalesce(jsonb_agg(c), '[]') from jsonb_array_elements(callouts) c
 --     where c->>'tipo' <> 'numerar') where code = 'RESP-02';
+
+-- 16/nov/2026 (pedido do dono): nomes das rotinas = os do anexo de referência; produção = Kevin.
+-- (só dado; vale também no /processos e no Checklist do Dia, que leem o mesmo manual_secoes)
+update public.manual_secoes s set titulo = x.titulo, responsavel_id = coalesce(x.resp, s.responsavel_id)
+from (values ('RESP-01','Pedidos a Enviar',null), ('RESP-03','Organização do Estoque',null),
+             ('RESP-05','Reembolsos e Devoluções',null), ('RESP-06','Fulfillment',null),
+             ('RESP-09','Produção de Areia','kevin')) as x(code, titulo, resp)
+where s.code = x.code;
+-- nomes anteriores: RESP-01 'Envios — Shopee · Mercado Livre · TikTok Shop', RESP-03 'Embalagens & Organização de Estoque',
+--   RESP-05 'Logística Reversa & Devoluções', RESP-06 'Envios Fulfillment'; RESP-09 sem responsável.
