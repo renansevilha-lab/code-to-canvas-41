@@ -9,7 +9,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { Spinner } from "@/components/separacao/ui/kit";
 import {
   type Grupo, type OrdemQuadro, type Passo, atrasoDias, diaMes, faltaFechar, fornecedorDe, grupoDe, num,
-  passosDe, proximoPasso, rotuloOrdem,
+  ehSugestao, passosDe, proximoPasso, rotuloOrdem,
 } from "./defs";
 import { BotaoR, Busca, Progresso, SeloR, Trilha, cartaoR, kicker, mini, tnum } from "./pecas";
 
@@ -226,7 +226,7 @@ function LinhaOrdem({ o, grupo, ehAdm, ultimo, onAbrir, onChegou, onFeitoNoTiny 
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 600, ...tnum }}>{rotuloOrdem(o)}</span>
-          {o.tiny_id < 0 && <SeloR tom="z">entrada por nota</SeloR>}
+          {o.tiny_id < 0 && <SeloR tom="z">{ehSugestao(o) ? "rascunho · só no app" : "entrada por nota"}</SeloR>}
           {o.kanban_status === "divergente" && <SeloR tom="r">divergência</SeloR>}
           {o.divergencia_oc_nf && <SeloR tom="a" title="As quantidades da ordem diferem das da nota; a conferência usa a nota">ordem ≠ nota</SeloR>}
         </div>

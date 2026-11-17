@@ -31,8 +31,9 @@ import { HostDialogosSep, confirmarSep } from "@/components/separacao/ui/dialogo
 import { QuadroNovo } from "@/components/compras/ui/QuadroNovo";
 import { NotasEntrada } from "@/components/compras/ui/NotasEntrada";
 import { OrdemNova, type ItemTela } from "@/components/compras/ui/OrdemNova";
+import { RascunhoCompra, ehRascunhoSugestao } from "@/components/compras/ui/RascunhoCompra";
 import { Pilulas } from "@/components/compras/ui/pecas";
-import { type OrdemQuadro, hojeBRT, rotuloOrdem } from "@/components/compras/ui/defs";
+import { type OrdemQuadro, ehSugestao, hojeBRT, rotuloOrdem } from "@/components/compras/ui/defs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -364,7 +365,9 @@ function ComprasPageNova({ onUsarAntigo }: { onUsarAntigo: () => void }) {
     <div className="pm-ui" style={{ color: "var(--pm-t)", fontSize: 13, padding: "18px 24px 40px", display: "flex", flexDirection: "column", gap: 14, maxWidth: 1400, margin: "0 auto" }}>
       <HostDialogosSep />
       <NovaEntradaNf open={novaNf} onOpenChange={setNovaNf} onCriada={(id) => { void qc.invalidateQueries({ queryKey: ["compras"] }); setConfId(id); }} />
-      {confId !== null ? (
+      {confId !== null && ehRascunhoSugestao(ordens.find((o) => o.tiny_id === confId)) ? (
+        <RascunhoCompra tinyId={confId} onVoltar={() => { setConfId(null); void qc.invalidateQueries({ queryKey: ["compras", "quadro"] }); }} />
+      ) : confId !== null ? (
         <ConferenciaOrdem tinyId={confId} onVoltar={() => { setConfId(null); void qc.invalidateQueries({ queryKey: ["compras", "quadro"] }); }}
           novo ordens={ordens} onUsarAntigo={onUsarAntigo} />
       ) : (
@@ -636,7 +639,7 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
                           <span className="text-[13px] font-extrabold font-mono">OC #{o.numero ?? o.tiny_id}</span>
                           <div className="flex-1" />
                           {sit && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", sit.cls)}>{sit.label}</span>}
-                          {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>NF · app</span>}
+                          {o.tiny_id < 0 && <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", SELO_APP)}>{ehSugestao(o) ? "Sugestão · app" : "NF · app"}</span>}
                           <SelosEC o={o} />
                         </div>
                         {o.divergencia_oc_nf && (
@@ -952,7 +955,7 @@ function ConferenciaOrdem({ tinyId, onVoltar, novo, ordens, onUsarAntigo }: {
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-extrabold font-mono">OC #{ordem.numero ?? tinyId}</h1>
               {sit && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", sit.cls)}>{sit.label} no Tiny</span>}
-              {tinyId < 0 && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", SELO_APP)}>Entrada por NF · só no app</span>}
+              {tinyId < 0 && <span className={cn("text-[10.5px] font-bold px-2 py-0.5 rounded-full", SELO_APP)}>{ehSugestao({ tiny_id: tinyId, numero: ordem.numero }) ? "Sugestão de compra · só no app" : "Entrada por NF · só no app"}</span>}
             </div>
             <span className="text-sm text-muted-foreground">
               {fornecedorDe(ordem)} · pedido {dataBR(ordem.data_pedido)}

@@ -10,7 +10,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { DropdownMenu, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MenuItens, Spinner } from "@/components/separacao/ui/kit";
 import {
-  type OrdemQuadro, conferida, diaMes, diasEntre, etapaAtual, fornecedorDe, num, passosDe, rotuloOrdem,
+  type OrdemQuadro, conferida, diaMes, diasEntre, ehSugestao, etapaAtual, fornecedorDe, num, passosDe, rotuloOrdem,
 } from "./defs";
 import { Apontamentos } from "./Apontamentos";
 import { BotaoR, FotoR, ParKV, Pilulas, Progresso, SeloR, Trilha, cartaoR, kicker, mini, tnum } from "./pecas";
@@ -155,7 +155,7 @@ export function OrdemNova(p: OrdemNovaProps) {
           <div style={{ flex: 1, minWidth: 200 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{rotuloOrdem(ordem)} · {fornecedorDe(ordem)}</span>
-              {ordem.tiny_id < 0 && <SeloR tom="z">entrada por nota</SeloR>}
+              {ordem.tiny_id < 0 && <SeloR tom="z">{ehSugestao(ordem) ? "sugestão de compra" : "entrada por nota"}</SeloR>}
               {ordem.kanban_status === "divergente" && <SeloR tom="r">divergência</SeloR>}
               {ordem.kanban_status === "orcamento" && <SeloR tom="n">orçamento</SeloR>}
             </div>

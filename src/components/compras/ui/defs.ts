@@ -60,9 +60,14 @@ export const num = (x: unknown): number => {
 export const fornecedorDe = (o: { fornecedor_fantasia: string | null; fornecedor_nome: string | null }): string =>
   o.fornecedor_fantasia?.trim() || o.fornecedor_nome?.trim() || "Sem fornecedor";
 
-/** "NF 724" para entrada criada pela nota (tiny_id negativo), "OC 733" para ordem do Tiny. */
+/** Ordem criada no app por uma sugestão de compra aprovada (numero 'SUG-<id>', tiny_id negativo). */
+export const ehSugestao = (o: { tiny_id: number; numero: string | null }): boolean =>
+  o.tiny_id < 0 && (o.numero ?? "").startsWith("SUG-");
+
+/** "NF 724" para entrada criada pela nota (tiny_id negativo), "Sugestão 12" para rascunho de sugestão, "OC 733" para ordem do Tiny. */
 export function rotuloOrdem(o: { tiny_id: number; numero: string | null }): string {
   const n = o.numero ?? String(o.tiny_id);
+  if (ehSugestao(o)) return n.replace(/^SUG-/, "Sugestão ");
   if (o.tiny_id < 0) return n.replace(/^NF-/, "NF ");
   return `OC ${n}`;
 }
