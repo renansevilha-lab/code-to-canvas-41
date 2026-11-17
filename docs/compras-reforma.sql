@@ -1,0 +1,17 @@
+-- Compras e Recebimento no visual novo (16/nov/2026) — migração `compras_reforma_01_datas_apontamentos_notas`.
+-- O SQL aplicado está no histórico de migrações do Supabase com esse nome. Resumo:
+--   compras_ordens: + conferencia_iniciada_em/_por, custo_ok_em/_por ("já fiz no Tiny" do custo)
+--   compras_nf_entrada: + nao_compra_em/_por (nota marcada "não é compra"; fica ignorar = true)
+--   compras_apontamentos (id, ordem_tiny_id, texto, etapa, autor, fotos text[], criado_em) — RLS, só authenticated
+--   view_compras_quadro: 1 linha por ordem com ped/rec, datas de cada etapa (nf_em, custo_em…) e apontamentos
+--   view_compras_notas_entrada: notas de entrada + ordem ligada (inclui a entrada criada pelo app, casada
+--     pela chave ou pelo número "NF-<nº>" + começo do nome do fornecedor)
+--   índices compras_nf_entrada_ordem_idx e compras_nf_entrada_validas_idx
+--
+-- ROLLBACK (a tela antiga não usa nada disto):
+--   drop view if exists public.view_compras_notas_entrada, public.view_compras_quadro;
+--   drop table if exists public.compras_apontamentos;
+--   drop index if exists public.compras_nf_entrada_ordem_idx, public.compras_nf_entrada_validas_idx;
+--   alter table public.compras_nf_entrada drop column if exists nao_compra_em, drop column if exists nao_compra_por;
+--   alter table public.compras_ordens drop column if exists conferencia_iniciada_em, drop column if exists conferencia_iniciada_por,
+--     drop column if exists custo_ok_em, drop column if exists custo_ok_por;

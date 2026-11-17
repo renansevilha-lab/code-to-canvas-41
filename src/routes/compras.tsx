@@ -26,6 +26,13 @@ import { LancarEstoqueTiny } from "@/components/compras/LancarEstoqueTiny";
 import { ContasDaNf } from "@/components/compras/ContasDaNf";
 import { FormacaoCusto } from "@/components/compras/FormacaoCusto";
 import type { NfPronta } from "@/components/compras/EntradaNfXml";
+import { ProtecaoPacking } from "@/components/fulfillment/ui/Packing";
+import { HostDialogosSep, confirmarSep } from "@/components/separacao/ui/dialogos";
+import { QuadroNovo } from "@/components/compras/ui/QuadroNovo";
+import { NotasEntrada } from "@/components/compras/ui/NotasEntrada";
+import { OrdemNova, type ItemTela } from "@/components/compras/ui/OrdemNova";
+import { Pilulas } from "@/components/compras/ui/pecas";
+import { type OrdemQuadro, hojeBRT, rotuloOrdem } from "@/components/compras/ui/defs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -70,6 +77,11 @@ interface Ordem {
   divergencia_oc_nf_nfs: string | null;
   divergencia_oc_nf_em: string | null;
   divergencia_oc_nf_por: string | null;
+  // 16/nov/2026: datas da linha do tempo
+  conferencia_iniciada_em?: string | null;
+  conferencia_iniciada_por?: string | null;
+  custo_ok_em?: string | null;
+  custo_ok_por?: string | null;
 }
 
 interface DivergenciaItem {
@@ -222,10 +234,177 @@ function Foto({ url, className }: { url?: string | null; className?: string }) {
 // Página
 // ============================================================================
 
+const CHAVE_VISUAL = "compras.visual";
+function lerVisualNovo(): boolean {
+  try { return localStorage.getItem(CHAVE_VISUAL) !== "antigo"; } catch { return true; }
+}
+
 function ComprasPage() {
+  const [novo, setNovo] = useState(lerVisualNovo);
+  const trocar = (v: boolean) => {
+    try { localStorage.setItem(CHAVE_VISUAL, v ? "novo" : "antigo"); } catch { /* sem storage */ }
+    setNovo(v);
+  };
+  const antigo = <ComprasPageAntiga onUsarNovo={() => trocar(true)} />;
+  if (!novo) return antigo;
+  return (
+    <ProtecaoPacking antigo={antigo}>
+      <ComprasPageNova onUsarAntigo={() => trocar(false)} />
+    </ProtecaoPacking>
+  );
+}
+
+// Atualiza do Tiny: ordens de compra + notas de entrada (com a conciliação).
+async function sincronizarComTiny(): Promise<string> {
+  const resp = await fetch(
+    `${EXTERNAL_URL}/functions/v1/compras-sync?modulo=sync&dias=90&max=25`,
+    { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+  );
+  const d = (await resp.json().catch(() => ({}))) as { inseridas?: number; atualizadas?: number; erro?: string };
+  if (!resp.ok || d.erro) throw new Error(d.erro ?? `HTTP ${resp.status}`);
+  let nfTxt = "";
+  try {
+    const rn = await fetch(
+      `${EXTERNAL_URL}/functions/v1/compras-sync?modulo=nf&dias=60&max=12`,
+      { method: "POST", headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
+    );
+    const dn = (await rn.json().catch(() => ({}))) as { inseridas?: number; conciliadas?: number; erro?: string };
+    if (rn.ok && !dn.erro) nfTxt = ` · notas: ${dn.inseridas ?? 0} nova(s), ${dn.conciliadas ?? 0} ligada(s)`;
+  } catch { /* as notas também vêm pela rotina automática */ }
+  return `${d.inseridas ?? 0} ordem(ns) nova(s) · ${d.atualizadas ?? 0} atualizada(s)${nfTxt}`;
+}
+
+const NOME_PASSO_TINY: Record<"estoque" | "contas" | "custo", string> = {
+  estoque: "o estoque", contas: "as contas a pagar", custo: "o custo do produto",
+};
+function patchFeitoNoTiny(passo: "estoque" | "contas" | "custo", nome: string | null | undefined): Record<string, string> {
+  const em = new Date().toISOString();
+  const por = `${nome ?? "alguém"} (feito no Tiny)`;
+  if (passo === "estoque") return { estoque_lancado_em: em, estoque_lancado_por: por };
+  if (passo === "contas") return { contas_lancadas_em: em, contas_lancadas_por: por };
+  return { custo_ok_em: em, custo_ok_por: por };
+}
+
+function ComprasPageNova({ onUsarAntigo }: { onUsarAntigo: () => void }) {
+  const qc = useQueryClient();
+  const { perfil } = usePerfil();
+  const ehAdm = !!perfil?.modulos.includes("todos");
+  const [confId, setConfId] = useState<number | null>(null);
+  const [aba, setAba] = useState<"quadro" | "notas">("quadro");
+  const [novaNf, setNovaNf] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
+
+  const quadroQ = useQuery({
+    queryKey: ["compras", "quadro"],
+    queryFn: async (): Promise<OrdemQuadro[]> => {
+      const { data, error } = await supabaseExternal
+        .from("view_compras_quadro").select("*")
+        .is("arquivada_em", null)
+        .order("data_pedido", { ascending: false })
+        .limit(600);
+      if (error) throw error;
+      return (data ?? []) as OrdemQuadro[];
+    },
+  });
+  const ordens = useMemo(() => quadroQ.data ?? [], [quadroQ.data]);
+
+  // Contagem das notas de entrada dos últimos 30 dias (sem frete e retorno do Full).
+  const notasNQ = useQuery({
+    queryKey: ["compras", "notas-n"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<{ total: number; sem: number }> => {
+      const d = new Date(`${hojeBRT()}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 30);
+      const de = d.toISOString().slice(0, 10);
+      const base = () => supabaseExternal.from("view_compras_notas_entrada")
+        .select("tiny_id", { count: "exact", head: true }).eq("ignorar", false).gte("data_emissao", de);
+      const [t, s] = await Promise.all([base(), base().is("ordem_tiny_id", null)]);
+      if (t.error) throw t.error;
+      return { total: t.count ?? 0, sem: s.count ?? 0 };
+    },
+  });
+
+  async function sincronizar() {
+    setSincronizando(true);
+    try {
+      const txt = await sincronizarComTiny();
+      toast.success("Atualizado do Tiny", { description: txt });
+      await qc.invalidateQueries({ queryKey: ["compras"] });
+    } catch (e) {
+      toast.error("Não consegui atualizar do Tiny", { description: (e as Error).message });
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
+  async function chegou(o: OrdemQuadro) {
+    const { error } = await supabaseExternal.from("compras_ordens").update({
+      kanban_status: "conferencia",
+      conferencia_iniciada_em: new Date().toISOString(),
+      conferencia_iniciada_por: perfil?.nome ?? null,
+    }).eq("tiny_id", o.tiny_id);
+    if (error) { toast.error("Não consegui marcar a chegada", { description: error.message }); return; }
+    void qc.invalidateQueries({ queryKey: ["compras"] });
+    setConfId(o.tiny_id);
+  }
+
+  async function feitoNoTiny(o: OrdemQuadro, passo: "estoque" | "contas" | "custo") {
+    const ok = await confirmarSep({
+      kicker: rotuloOrdem(o), titulo: `Marcar ${NOME_PASSO_TINY[passo]} como já feito no Tiny?`,
+      resumo: "O app só registra que este passo foi feito fora dele. Nada é lançado no Tiny.",
+      okTxt: "Marcar como feito",
+    });
+    if (!ok) return;
+    const { error } = await supabaseExternal.from("compras_ordens").update(patchFeitoNoTiny(passo, perfil?.nome)).eq("tiny_id", o.tiny_id);
+    if (error) { toast.error("Não consegui salvar", { description: error.message }); return; }
+    void qc.invalidateQueries({ queryKey: ["compras"] });
+  }
+
+  return (
+    <div className="pm-ui" style={{ color: "var(--pm-t)", fontSize: 13, padding: "18px 24px 40px", display: "flex", flexDirection: "column", gap: 14, maxWidth: 1400, margin: "0 auto" }}>
+      <HostDialogosSep />
+      <NovaEntradaNf open={novaNf} onOpenChange={setNovaNf} onCriada={(id) => { void qc.invalidateQueries({ queryKey: ["compras"] }); setConfId(id); }} />
+      {confId !== null ? (
+        <ConferenciaOrdem tinyId={confId} onVoltar={() => { setConfId(null); void qc.invalidateQueries({ queryKey: ["compras", "quadro"] }); }}
+          novo ordens={ordens} onUsarAntigo={onUsarAntigo} />
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <h1 style={{ fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: "-.01em" }}>Compras e Recebimento</h1>
+              <div style={{ fontSize: 12, color: "var(--pm-t3)" }}>Ordens de compra do Tiny, conferência da carga e fechamento do recebimento</div>
+            </div>
+            <Pilulas<"quadro" | "notas"> valor={aba} onValor={setAba} ops={[
+              { id: "quadro", nome: "Quadro" },
+              { id: "notas", nome: `Notas de entrada${notasNQ.data ? ` · ${notasNQ.data.total}` : ""}` },
+            ]} />
+            <button type="button" onClick={onUsarAntigo}
+              style={{ border: 0, background: "none", color: "var(--pm-t3)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, textDecoration: "underline" }}>
+              visual antigo
+            </button>
+          </div>
+          {aba === "quadro" ? (
+            <QuadroNovo
+              ordens={ordens} carregando={quadroQ.isLoading} erro={quadroQ.error ? (quadroQ.error as Error).message : null}
+              ehAdm={ehAdm} notasSemOrdem={notasNQ.data?.sem ?? null} notasTotal={notasNQ.data?.total ?? null}
+              sincronizando={sincronizando} onSincronizar={() => void sincronizar()}
+              onAbrir={setConfId} onChegou={(o) => void chegou(o)} onFeitoNoTiny={(o, passo) => void feitoNoTiny(o, passo)}
+              onNovaEntrada={() => setNovaNf(true)} onIrNotas={() => setAba("notas")}
+            />
+          ) : (
+            <NotasEntrada ordens={ordens} autor={perfil?.nome ?? null} onAbrirOrdem={setConfId} onDarEntrada={() => setNovaNf(true)} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ComprasPageAntiga({ onUsarNovo }: { onUsarNovo: () => void }) {
   const [confId, setConfId] = useState<number | null>(null);
   return (
     <div className="flex flex-col gap-5 p-6 max-w-[1500px] mx-auto">
+      <button type="button" onClick={onUsarNovo} className="self-end text-xs text-muted-foreground underline">usar o visual novo</button>
       {confId === null ? (
         <QuadroCompras onAbrir={setConfId} />
       ) : (
@@ -508,7 +687,11 @@ function QuadroCompras({ onAbrir }: { onAbrir: (tinyId: number) => void }) {
 // Conferência de uma ordem (estilo packing do Fulfillment)
 // ============================================================================
 
-function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () => void }) {
+function ConferenciaOrdem({ tinyId, onVoltar, novo, ordens, onUsarAntigo }: {
+  tinyId: number; onVoltar: () => void;
+  /** visual novo (OrdemNova); a tela de sempre fica de reserva */
+  novo?: boolean; ordens?: OrdemQuadro[]; onUsarAntigo?: () => void;
+}) {
   const qc = useQueryClient();
   const { perfil } = usePerfil();
   const ehAdm = !!perfil?.modulos.includes("todos");
@@ -537,6 +720,17 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
         .order("descricao");
       if (error) throw error;
       return (data ?? []) as ItemOrdem[];
+    },
+  });
+
+  const linhaQ = useQuery({
+    queryKey: ["compras", "quadro-ordem", tinyId],
+    enabled: !!novo,
+    queryFn: async (): Promise<OrdemQuadro | null> => {
+      const { data, error } = await supabaseExternal
+        .from("view_compras_quadro").select("*").eq("tiny_id", tinyId).maybeSingle();
+      if (error) throw error;
+      return (data ?? null) as OrdemQuadro | null;
     },
   });
 
@@ -586,6 +780,15 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
       void qc.invalidateQueries({ queryKey: ["compras", "itens", tinyId] });
     } else {
       void qc.invalidateQueries({ queryKey: ["compras", "progresso"] });
+      // primeira contagem = início da conferência (data da etapa na linha do tempo)
+      const o = ordemQ.data;
+      if (o && !o.conferencia_iniciada_em && o.kanban_status !== "concluida" && o.kanban_status !== "divergente") {
+        void salvarOrdem({
+          conferencia_iniciada_em: new Date().toISOString(),
+          conferencia_iniciada_por: perfil?.nome ?? null,
+          ...(o.kanban_status === "aguardando" ? { kanban_status: "conferencia" } : {}),
+        });
+      }
     }
   }
 
@@ -710,7 +913,34 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
 
   const sit = SIT_TINY[ordem.situacao_tiny ?? ""] ?? null;
 
-  return (
+  const dialogos = (
+    <>
+      <EntradaNfXml ordem={ordem} itens={itens} open={xmlAberto} nfPronta={nfPronta}
+        onOpenChange={(o) => { setXmlAberto(o); if (!o) setNfPronta(null); }} />
+
+      <AlertDialog open={confirmaExcluir} onOpenChange={setConfirmaExcluir}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir a OC #{ordem.numero ?? tinyId}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A ordem sai do quadro e da conferência e não volta com a sincronização. As NFs casadas com
+              ela ficam livres para vincular a outra ordem. <b>Não exclui no Tiny</b> — se a ordem estiver
+              errada lá, exclua ou cancele também no Tiny.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); void excluirOrdem(); }} disabled={excluindo}
+              className="bg-red-600 hover:bg-red-700 text-white">
+              {excluindo && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+
+  const antigo = (
     <>
       {/* Cabeçalho da conferência */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -792,28 +1022,7 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
       {/* NF do fornecedor × OC (conciliação) */}
       <ConciliacaoNf ordemTinyId={tinyId} onAplicar={(nf) => { setNfPronta(nf); setXmlAberto(true); }} />
 
-      <EntradaNfXml ordem={ordem} itens={itens} open={xmlAberto} nfPronta={nfPronta}
-        onOpenChange={(o) => { setXmlAberto(o); if (!o) setNfPronta(null); }} />
-
-      <AlertDialog open={confirmaExcluir} onOpenChange={setConfirmaExcluir}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir a OC #{ordem.numero ?? tinyId}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A ordem sai do quadro e da conferência e não volta com a sincronização. As NFs casadas com
-              ela ficam livres para vincular a outra ordem. <b>Não exclui no Tiny</b> — se a ordem estiver
-              errada lá, exclua ou cancele também no Tiny.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={excluindo}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={(e) => { e.preventDefault(); void excluirOrdem(); }} disabled={excluindo}
-              className="bg-red-600 hover:bg-red-700 text-white">
-              {excluindo && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Excluir
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {dialogos}
 
       {/* Itens */}
       <div className="flex flex-col gap-3">
@@ -835,6 +1044,78 @@ function ConferenciaOrdem({ tinyId, onVoltar }: { tinyId: number; onVoltar: () =
         )}
       </div>
     </>
+  );
+
+  if (!novo) return antigo;
+
+  // Linha do tempo: a view dá as datas da nota e do custo; os campos vivos da ordem vencem.
+  const v = linhaQ.data;
+  const oq: OrdemQuadro = {
+    tiny_id: tinyId, numero: ordem.numero, data_pedido: ordem.data_pedido, data_prevista: ordem.data_prevista,
+    situacao_tiny: ordem.situacao_tiny, fornecedor_id: ordem.fornecedor_id, fornecedor_nome: ordem.fornecedor_nome,
+    fornecedor_fantasia: ordem.fornecedor_fantasia, categoria: ordem.categoria, total_pedido: ordem.total_pedido,
+    itens_qtd: ordem.itens_qtd, kanban_status: ordem.kanban_status, recebido_em: ordem.recebido_em,
+    recebido_por: ordem.recebido_por, arquivada_em: ordem.arquivada_em, observacao_recebimento: ordem.observacao_recebimento,
+    nf_numero: ordem.nf_numero, criado_em: v?.criado_em ?? null,
+    divergencia_oc_nf: ordem.divergencia_oc_nf, divergencia_oc_nf_detalhe: ordem.divergencia_oc_nf_detalhe,
+    divergencia_oc_nf_nfs: ordem.divergencia_oc_nf_nfs,
+    estoque_lancado_em: ordem.estoque_lancado_em, estoque_lancado_por: ordem.estoque_lancado_por,
+    contas_lancadas_em: ordem.contas_lancadas_em, contas_lancadas_por: ordem.contas_lancadas_por,
+    conferencia_iniciada_em: ordem.conferencia_iniciada_em ?? null, conferencia_iniciada_por: ordem.conferencia_iniciada_por ?? null,
+    custo_em: ordem.custo_ok_em ?? v?.custo_em ?? null, custo_por: ordem.custo_ok_por ?? v?.custo_por ?? null,
+    nf_em: v?.nf_em ?? null, tem_nf: !!ordem.nf_numero || tinyId < 0 || !!v?.tem_nf || pelaNf,
+    ped, rec, n_itens: itens.length, conferidos: itens.filter((i) => i.conferido).length,
+    apont_n: v?.apont_n ?? 0, apont_ultimo: v?.apont_ultimo ?? null, apont_ultimo_em: v?.apont_ultimo_em ?? null,
+  };
+
+  async function feitoNoTiny(passo: "estoque" | "contas" | "custo") {
+    const ok = await confirmarSep({
+      kicker: rotuloOrdem(oq), titulo: `Marcar ${NOME_PASSO_TINY[passo]} como já feito no Tiny?`,
+      resumo: "O app só registra que este passo foi feito fora dele. Nada é lançado no Tiny.",
+      okTxt: "Marcar como feito",
+    });
+    if (!ok) return;
+    await salvarOrdem(patchFeitoNoTiny(passo, perfil?.nome) as Partial<Ordem>);
+    void qc.invalidateQueries({ queryKey: ["compras", "quadro"] });
+  }
+
+  const porId = new Map(itens.map((i) => [i.id, i]));
+  return (
+    <ProtecaoPacking antigo={antigo}>
+      <OrdemNova
+        ordem={oq} itens={itens as ItemTela[]} fotos={fotosQ.data ?? {}} embalagens={embQ.data ?? {}}
+        ordens={ordens ?? []} ehAdm={ehAdm} autor={perfil?.nome ?? null} salvandoFim={salvandoFim}
+        onVoltar={onVoltar}
+        onQtd={(it, q) => { const real = porId.get(it.id); if (real) void setRecebida(real, q); }}
+        onConcluir={() => void concluir()}
+        onArquivar={() => void arquivarOrdem()}
+        onExcluir={() => setConfirmaExcluir(true)}
+        onAplicarXml={() => setXmlAberto(true)}
+        onNfNumero={(nf) => void salvarOrdem({ nf_numero: nf })}
+        onFeitoNoTiny={(passo) => void feitoNoTiny(passo)}
+        onUsarAntigo={() => onUsarAntigo?.()}
+        slotEstoque={<LancarEstoqueTiny ordemTinyId={tinyId} numero={ordem.numero} lancadoEm={ordem.estoque_lancado_em} lancadoPor={ordem.estoque_lancado_por} />}
+        slotContas={<ContasDaNf ordemTinyId={tinyId} fornecedorId={ordem.fornecedor_id} />}
+        slotCusto={<FormacaoCusto ordemTinyId={tinyId} numero={ordem.numero} />}
+        slotDivergencia={<DivergenciaOcNf ordem={ordem} />}
+        slotConciliacao={<ConciliacaoNf ordemTinyId={tinyId} onAplicar={(nf) => { setNfPronta(nf); setXmlAberto(true); }} />}
+        renderDetalhe={(it) => {
+          const real = porId.get(it.id);
+          if (!real) return null;
+          return (
+            <ItemConferencia
+              item={real}
+              foto={real.sku ? fotosQ.data?.[real.sku] : undefined}
+              lembrada={real.sku ? embQ.data?.[real.sku] : undefined}
+              onQtd={(q) => void setRecebida(real, q)}
+              onEmb={(patch) => void salvarEmbalagem(real, patch)}
+              onSalvarPadrao={(padrao) => void salvarPadrao(real, padrao)}
+            />
+          );
+        }}
+      />
+      {dialogos}
+    </ProtecaoPacking>
   );
 }
 
