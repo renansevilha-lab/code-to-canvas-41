@@ -83,7 +83,8 @@ const ORDEM_PADRAO = "recentes";
 const POR_PAGINA = 50;
 const TODAS = "__todas";
 
-const texto = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+// número também vale (ID de anúncio colado direto no endereço chega como número)
+const texto = (v: unknown) => (typeof v === "string" && v ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : undefined);
 
 export const Route = createFileRoute("/ia/anuncios")({
   validateSearch: (s: Record<string, unknown>): Busca => ({

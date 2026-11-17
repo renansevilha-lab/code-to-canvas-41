@@ -406,7 +406,7 @@ function LinhaAnuncio({ x, aberto, onAbrir }: { x: Linha; aberto: boolean; onAbr
       <div style={{ display: "flex", flexDirection: "column" }}>
         <b style={{ fontSize: 13, color: x.f_estoque ? "var(--pm-r)" : "var(--pm-t)" }}>{x.estoque != null ? int(num(x.estoque)) : "—"}</b>
         <span style={{ fontSize: 11, fontWeight: x.f_estoque ? 600 : 400, color: x.f_estoque ? "var(--pm-r)" : "var(--pm-t2)" }}>
-          {x.dias_estoque == null ? "" : num(x.dias_estoque) > 60 ? "sobra" : `dá para ${num(x.dias_estoque) < 10 ? dec1(x.dias_estoque) : int(num(x.dias_estoque))} dia${num(x.dias_estoque) >= 2 ? "s" : ""}`}
+          {x.estoque != null && num(x.estoque) <= 0 ? "zerado" : x.dias_estoque == null ? "" : num(x.dias_estoque) > 60 ? "sobra" : `dá para ${num(x.dias_estoque) < 10 ? dec1(x.dias_estoque) : int(num(x.dias_estoque))} dia${num(x.dias_estoque) >= 2 ? "s" : ""}`}
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
