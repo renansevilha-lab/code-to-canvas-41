@@ -4216,6 +4216,33 @@ https://claude.ai/artifact/97jDGeVyqvZr6xZhfzwmj1 ("pode aplicar, abre em Anúnc
   criar) não tem linha, aparece só no painel de testes. `ads_config_registrar` grava TODAS as diferenças com a origem passada: o
   orçamento 12 → 15 da campanha 110376031 saiu como teste_ab sem ter sido enviado (corrigido para externo). Não conferido com login.
 
+## 5.11.13.5 Aba Anúncios — os quatro marketplaces, período e ações no histórico (16/nov/2026, 2ª parte)
+
+Pedido do dono ("aplicar o restante da tela de anúncios, ícones nos marketplaces e um filtro com todos, marcado de início").
+SQL + rollback em `docs/anuncios-no-ar-marketplaces.sql` (migração `anuncios_no_ar_marketplaces`; substitui as funções de
+`docs/anuncios-no-ar.sql`, com parâmetros novos NO FIM e com padrão).
+- **Um "anúncio" por marketplace** (`anuncio_base()`, cadastro único): Shopee = item por loja; **ML** = MLB da conta Ottz
+  (`ml_anuncios` ativos; a SVL não tem espelho); **Amazon** = SKU da Amazon por conta (`pesquisa_amz_meus_skus`; no ar = estoque no CD
+  ou venda em 30 dias; preço = último vendido); **TikTok** = `product_id` da loja ACZ (variações = `sku_id`).
+- **Números por anúncio e dia** (`anuncio_dia(de, ate)`): Shopee = `ads_metrica_anuncio_dia`; **ML = venda e margem do SKU rateadas**
+  pelos anúncios ativos do SKU na proporção das visitas de 30 dias (o ML não liga venda a MLB — mesma regra da /saude-ml; a linha vem
+  com `rateado` e a tela mostra "≈"), ADS do próprio MLB; Amazon e TikTok = **`mv_anuncio_dia_outros`** (margem do pedido da
+  `view_margem_pedido_v2` rateada pelos itens, 60 dias, ~1 mil linhas, 0,2 s; cron `anuncio-dia-outros-refresh` `26 9 * * *`). Sem ADS
+  em Amazon/TikTok ("ADS não integrado"). Meta de ROAS do ML = a da CAMPANHA do anúncio (`ml_ads_anuncio_diario` → `ads_config_atual` mkt ml).
+- **Mudanças** (`anuncio_mudancas_lista` ganhou a coluna `mkt`): envios do app nos 4 canais (`ia_publicacao`), retrato diário de Shopee e ML,
+  ADS da Shopee e do ML (mudança de campanha do ML aparece nos anúncios dela com gasto em 14 dias) e o teste A/B.
+- **RPCs:** `anuncios_no_ar(..., p_mkt default 'shopee', p_dias default 7)` (a tela manda `todos`; devolve `por_mkt`, `dias`, e por linha
+  `mkt`, `shop` = id da loja em TEXTO — o do TikTok não cabe em número do JavaScript —, `item_id` texto, `link`, `asin`, `rateado`);
+  `anuncios_mudancas(..., p_mkt)`; `anuncio_no_ar_detalhe(p_shop, p_item, p_mkt)` (+ `teste` = contador da regra de parada: cliques e ROAS do
+  ADS desde o dia em que o braço foi aplicado). Período 30 dias escala as regras da faixa (vende ≥ 1 un/dia; caindo ≥ R$ 500 × 30/7; ADS ≥ R$ 20 × 30/7).
+  ~0,7–0,9 s cada (medido como usuário). Busca aceita ID do anúncio, MLB com ou sem "MLB", ASIN, SKU e nome.
+- **Tela** (`Acompanhamento.tsx`): seletor Todos · Shopee · Mercado Livre · Amazon · TikTok com ícone (`public/logos/*-icon.png`) e contagem,
+  `?mk=` (sem valor = Todos, o padrão); ícone do marketplace em cada linha; Período 7/30 dias (`?dias=30`); Mudanças com o mesmo seletor,
+  período 30/7 dias (`?per=7`) e, nas linhas de teste A/B, **Desfazer** (braço) ou **Tentar de novo** (o que falhou) — as mesmas chamadas do
+  bloco "O que fazer", sempre com a leitura ao vivo e a confirmação antes. Editar anúncio abre `/ia/gerar` no canal do marketplace.
+- **Limites:** ML por anúncio é estimativa quando o SKU tem mais de um MLB; Amazon sem preço cheio nem histórico de preço (não há retrato);
+  TikTok sem retrato diário (só os envios do app aparecem em Mudanças); testes A/B só na Shopee. Não conferido com login na tela.
+
 ## 5.11.14 IA · Anúncios — envio ao TikTok Shop da Ottz/ACZ (11/nov/2026)
 
 Pedido do dono (a Bumi ainda não autorizou o app no TikTok, então começou pela loja da Ottz, `shop_id 7496181924415506972`).

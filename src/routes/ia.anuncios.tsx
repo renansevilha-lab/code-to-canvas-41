@@ -39,6 +39,7 @@ import {
 type Busca = {
   q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string;
   ver?: string; loja?: string; at?: string; ord?: string; mud7?: string; f?: string; campo?: string;
+  mk?: string; dias?: string; per?: string;
 };
 const umDe = (v: unknown, ops: string[]) => (ops.includes(String(v)) ? String(v) : undefined);
 
@@ -102,6 +103,9 @@ export const Route = createFileRoute("/ia/anuncios")({
     mud7: s.mud7 === "1" ? "1" : undefined,
     f: umDe(s.f, ["app", "teste", "fora", "piorou", "falhou"]),
     campo: umDe(s.campo, ["preco", "conteudo", "ads", "promocao"]),
+    mk: umDe(s.mk, ["shopee", "ml", "amazon", "tiktok"]),
+    dias: String(s.dias) === "30" ? "30" : undefined,
+    per: String(s.per) === "7" ? "7" : undefined,
   }),
   component: AnunciosPage,
 });
