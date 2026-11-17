@@ -1,6 +1,7 @@
 // Central de Promocoes ML: espelha promocoes do vendedor + cacheia inputs pra MC.
 // PINADO na conta Ottz (user_id 1107117809) desde 31/ago — multi-conta no banco;
 // as tabelas ml_promocoes/ml_promocao_itens nao tem coluna de conta.
+// v27 (16/nov): sair de promoção (troca do robô e botão remover) manda offer_id — SMART recusa sem ele ("Offer id is required").
 // v27 (16/nov): listas do ML lidas com arr() (429 devolve objeto, não lista); erro 500 traz onde.
 // v27 (16/nov): SYNC — (1) paginação pelo search_after do ML: o offset é IGNORADO (devolvia sempre a
 //      1ª página, então o app só conhecia até 50 candidatos por campanha; Black Friday tinha 254);
@@ -204,7 +205,8 @@ async function trocarItem(supabase: any, token: string, a: { mlb: string; de: st
   const alvo = acharPromo(vivo.lista, para, paraTipo);
   if (!alvo || String(alvo.status) !== "candidate") return { ok: false, mensagem: "A promoção nova não está mais disponível para este anúncio — nada foi alterado." };
   const { data: atual } = await supabase.from("ml_promocao_itens").select("promo_price, offer_id").eq("promocao_id", de).eq("mlb", mlb).maybeSingle();
-  const sai = await mlSend(token, "DELETE", `/seller-promotions/items/${mlb}?promotion_id=${de}&promotion_type=${deTipo}&app_version=v2`);
+  const offerDe = acharPromo(vivo.lista, de, deTipo)?.offer_id ?? (atual as any)?.offer_id ?? null;
+  const sai = await mlSend(token, "DELETE", `/seller-promotions/items/${mlb}?promotion_id=${de}&promotion_type=${deTipo}${offerDe ? `&offer_id=${encodeURIComponent(offerDe)}` : ""}&app_version=v2`);
   await supabase.from("ml_promocao_acoes").insert({ mlb, promocao_id: de, tipo: deTipo, acao: `${pre}-sair`, enviado: null, http_status: sai.status, ok: sai.ok, mensagem: sai.ok ? null : motivoML(sai.body), resposta: sai.body, por });
   if (!sai.ok) return { ok: false, mensagem: `Não consegui tirar da promoção atual: ${motivoML(sai.body)} — nada foi alterado.` };
   await supabase.from("ml_promocao_itens").update({ status: "candidate" }).eq("promocao_id", de).eq("mlb", mlb);
@@ -580,7 +582,11 @@ serve(async (req) => {
         await supabase.from("ml_promocao_acoes").insert({ mlb, promocao_id: promocaoId, tipo, acao: modulo, enviado, http_status: r?.status ?? null, ok, mensagem, resposta: r?.body ?? null, por });
       };
       if (modulo === "remover") {
-        const r = await mlSend(token, "DELETE", `/seller-promotions/items/${mlb}?promotion_id=${promocaoId}&promotion_type=${tipo}&app_version=v2`);
+        // SMART exige offer_id para sair: o informado, senão o do espelho, senão o do ML ao vivo
+        let offerR = url.searchParams.get("offer_id");
+        if (!offerR) { const { data: lin } = await supabase.from("ml_promocao_itens").select("offer_id").eq("promocao_id", promocaoId).eq("mlb", mlb).maybeSingle(); offerR = (lin as any)?.offer_id ?? null; }
+        if (!offerR) { const vivoR = await promosDoItem(token, mlb); offerR = acharPromo(vivoR.lista, promocaoId, tipo)?.offer_id ?? null; }
+        const r = await mlSend(token, "DELETE", `/seller-promotions/items/${mlb}?promotion_id=${promocaoId}&promotion_type=${tipo}${offerR ? `&offer_id=${encodeURIComponent(offerR)}` : ""}&app_version=v2`);
         if (r.ok) await supabase.from("ml_promocao_itens").update({ status: "candidate" }).eq("promocao_id", promocaoId).eq("mlb", mlb);
         const msg = r.ok ? null : motivoML(r.body);
         await registrar({ promotion_id: promocaoId, promotion_type: tipo }, r, msg, r.ok);
