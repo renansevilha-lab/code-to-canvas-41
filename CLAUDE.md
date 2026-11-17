@@ -389,6 +389,16 @@ cheio: `amazon-sync-pedidos` v14 soma ItemPrice+ItemTax−Promo; `amazon-sync-
 financas` v13 soma TODOS os charges. Antes disso, TODA margem Amazon parecia
 negativa ("comissão em dobro" era na verdade imposto subtraído da receita).
 
+### Amazon: pedido sem repasse estimado = margem pendente (17/nov/2026)
+Pedido Amazon já enviado entra na `view_margem_pedido_v2` antes de o `amazon-sync-financas` estimar a taxa
+(`recebido_estimado` 0) e contava como prejuízo (0 − CMV − imposto): em 17/nov, 3 pedidos da SVL derrubaram a MC do
+dia de 15,3% para 7,0% nos cartões do Pedidos Integrados. Agora (opção A do dono, migração
+`margem_amazon_sem_repasse_pendente`) a view devolve `recebido_estimado` NULO quando é Amazon e está 0/nulo →
+`margem`, `mc_pct`, `custo_pct`, `roi` nulos até a estimativa chegar; receita e pedidos seguem contando. Totais
+idênticos antes/depois (não havia pedido nesse estado). Definição anterior em `_bkp_view_margem_v2_17nov`.
+Limite: `view_kpi_pedidos_dia.margem_pct` = soma da margem ÷ soma da venda, então a venda do pedido pendente ainda
+entra no denominador (efeito pequeno e passageiro).
+
 ### Pedido válido
 Use a view `pedidos_validos`. É lista **branca** de status por canal, nunca
 filtro por exclusão — cada marketplace usa nomenclatura própria, e filtrar por
