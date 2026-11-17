@@ -167,13 +167,9 @@ export function rotinasPdfHtml(rotinas: Rotina[], versao: string): string {
       <div class="pg-o"><span class="cx"></span> Sim <span class="cx"></span> Não</div>
       ${p.abre && p.abre !== "nunca" ? `<div class="pg-s">Se ${p.abre === "sim" ? "SIM" : "NÃO"}: ${esc(p.campo ?? "descreva")} <span class="ln"></span></div>` : ""}</div>`).join("")}` : "";
     const verifs = [...r.fases.flatMap((f) => f.etapas.map((e) => e.titulo)), ...r.perguntas.map((p) => p.texto)].slice(0, 8);
-    const rodapeBloco = r.producao ? `
-      <div class="bt">Registro da produção</div>
-      <table class="sem prod"><tbody>
-        <tr><th>Nº da ordem</th><td></td><th>Data</th><td></td></tr>
-        <tr><th>Quem produziu</th><td colspan="3"></td></tr>
-        <tr><th>Conferido por</th><td colspan="3"></td></tr>
-      </tbody></table>` : `
+    // Produção: sem quadro de controle da ordem — esse controle é a folha de controle gerada na
+    // própria produção (pedido do dono, 17/nov/2026).
+    const rodapeBloco = r.producao ? "" : `
       <div class="bt">Conferência da semana</div>
       <table class="sem"><thead><tr><th>Verificação</th>${["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => `<th class="d">${d}</th>`).join("")}</tr></thead>
       <tbody>${verifs.map((v) => `<tr><td>${esc(v.length > 72 ? v.slice(0, 70) + "…" : v)}</td>${"<td></td>".repeat(6)}</tr>`).join("")}
