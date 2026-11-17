@@ -58,6 +58,12 @@ type Res = { tipo: "aplicado" | "recusado"; motivo: string };
 const TZ = "America/Sao_Paulo";
 const num = (x: unknown) => { const n = Number(x ?? 0); return Number.isFinite(n) ? n : 0; };
 const chave = (i: { promocao_id: string; mlb: string }) => `${i.promocao_id}|${i.mlb}`;
+/** Promoção em que o vendedor ESCOLHE o desconto (campanha tradicional e Relâmpago): sem oferta fixa do ML e com faixa de preço. */
+const escolheDesconto = (i: { status: string; offer_id: string | null; preco_min: number | null; preco_max: number | null; original_price: number | null }) =>
+  i.status !== "started" && !i.offer_id && i.preco_min != null && i.preco_max != null && num(i.original_price) > 0;
+/** Desconto (%) de um preço sobre o preço cheio. */
+const descDe = (preco: number | null | undefined, cheio: number | null | undefined) => (preco != null && num(cheio) > 0 ? (1 - num(preco) / num(cheio)) * 100 : null);
+const pctTxtDe = (x: number | null) => (x == null ? "" : String(Math.round(x * 10) / 10).replace(".", ","));
 const dia = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit" }) : "—");
 const diaHora = (iso: string) => new Date(iso).toLocaleString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const ymd = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: TZ });
@@ -284,12 +290,24 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
     const sub = [selId === "todas" ? i.promocao_nome ?? t : t, i.logistic_type === "fulfillment" ? "Full" : null,
       i.meli_percentage ? `ML banca ${num(i.meli_percentage).toFixed(0)}%` : null].filter(Boolean).join(" · ");
     const m = contaML(i);
+    let precoExtra: ReactNode = null;
+    if (escolheDesconto(i)) {
+      const dMin = descDe(i.preco_max, i.original_price), dMax = descDe(i.preco_min, i.original_price);
+      const fx = `${pctTxtDe(dMin)}% a ${pctTxtDe(dMax)}%`;
+      const dd = decisoes.get(chave(i));
+      const abrir = dd?.decisao === "trocar" && dd.ativo_promocao_id ? () => setAcao({ item: i, tipo: "trocar", d: dd }) : i.mc_promo != null ? () => setAcao({ item: i, tipo: "aplicar" }) : null;
+      precoExtra = abrir
+        ? <button type="button" onClick={abrir} title={`O Mercado Livre deixa escolher o desconto desta promoção: de ${fx}. Clique para escolher e ver a margem.`} className="hover:underline"
+            style={{ border: 0, background: "transparent", padding: 0, cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: "var(--pm-at)", whiteSpace: "nowrap" }}>escolher desconto · {fx}</button>
+        : <span title="Sem custo cadastrado: a margem não é calculada e o app não aplica. Cadastre o custo do produto." style={{ fontSize: 10.5, color: "var(--pm-t3)", whiteSpace: "nowrap" }}>desconto à escolha · {fx}</span>;
+    }
     return {
       key: chave(i), grupo: i.mlb, nome: i.titulo ?? i.mlb, sub, foto: i.foto, sku: i.sku, code: i.mlb,
       cheio: num(i.original_price), promo: num(i.promo_price), estado, motivo,
       v30: i.sku ? v30De(i) : null, estoque: estoque.get(i.mlb) ?? null,
       conta: () => m, cmv: i.cmv ?? null, semCusto: i.cmv == null,
       mcNota: i.cmv != null && i.comissao_promo == null ? "comissão ainda não calculada (sincronize)" : null,
+      precoExtra,
     };
   });
 
@@ -487,7 +505,7 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
               </div>
             )}
             lote={{ onAlvo: () => undefined, onDesc: () => undefined }}
-            rodape="MC = receita (preço da promoção + co-financiamento do ML) − comissão − frete − imposto − CMV, por unidade, calculada no banco. Passe o mouse na MC para ver a conta. “MC hoje” é a margem no preço cheio e, embaixo, quanto ela muda por unidade ao entrar. O ML define o preço da maioria das promoções; quando há faixa, o preço é escolhido ao aplicar. Nada vai para o Mercado Livre sem a sua confirmação." />
+            rodape="MC = receita (preço da promoção + co-financiamento do ML) − comissão − frete − imposto − CMV, por unidade, calculada no banco. Passe o mouse na MC para ver a conta. “MC hoje” é a margem no preço cheio e, embaixo, quanto ela muda por unidade ao entrar. O ML define o preço da maioria das promoções; nas que deixam escolher (campanhas e Relâmpago), clique em “escolher desconto” embaixo do preço para definir o desconto em % ou em R$ antes de aplicar. Nada vai para o Mercado Livre sem a sua confirmação." />
         </div>
       )}
 
@@ -514,8 +532,11 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
 }) {
   const { item, tipo, d } = acao;
   const aplicar = tipo === "aplicar";
+  const entra = tipo !== "remover"; // aplicar ou trocar: entra numa promoção, então pode escolher o desconto quando o ML deixa
+  const cheio = num(item.original_price);
   const [vivo, setVivo] = useState<Vivo | null | "ausente">(null);
-  const [vivoLoading, setVivoLoading] = useState(aplicar);
+  const [vivoLoading, setVivoLoading] = useState(entra);
+  const [pctTxt, setPctTxt] = useState(pctTxtDe(descDe(item.promo_price, item.original_price)));
   const [preco, setPreco] = useState<number | null>(item.promo_price);
   const [precoTxt, setPrecoTxt] = useState(item.promo_price != null ? String(item.promo_price) : "");
   const [sim, setSim] = useState<{ mc: number | null; mc_pct: number | null } | null>(null);
@@ -524,8 +545,9 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
   const [executando, setExecutando] = useState(false);
   const [fim, setFim] = useState<Res | null>(null);
 
+  const definir = (v: number) => { setPreco(v); setPrecoTxt(String(v)); setPctTxt(pctTxtDe(descDe(v, cheio))); };
   useEffect(() => {
-    if (!aplicar) return;
+    if (!entra) return;
     let cancelado = false;
     chamarML(`modulo=estado&mlb=${item.mlb}&promocao_id=${encodeURIComponent(item.promocao_id)}&tipo=${item.promocao_tipo ?? ""}`)
       .then((r) => {
@@ -536,16 +558,17 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
         // preço dentro da faixa que o ML aceita AGORA (o sugerido pode passar do máximo)
         const b = item.promo_price ?? p.sugerido ?? p.preco ?? null;
         const ajuste = b != null && p.max != null && b > p.max ? p.max : b != null && p.min != null && b < p.min ? p.min : null;
-        if (ajuste != null) { setPreco(ajuste); setPrecoTxt(String(ajuste)); }
-        if (p.estoque_min != null) setEstoque(p.estoque_min);
+        if (ajuste != null) definir(ajuste);
+        if (aplicar && p.estoque_min != null) setEstoque(p.estoque_min);
       })
       .catch(() => { if (!cancelado) setVivo(null); })
       .finally(() => { if (!cancelado) setVivoLoading(false); });
     return () => { cancelado = true; };
-  }, [aplicar, item]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entra, item]);
 
   useEffect(() => {
-    if (!aplicar || preco == null) return;
+    if (!entra || preco == null) return;
     if (preco === item.promo_price) { setSim(null); return; } // usa a MC já calculada
     const t = setTimeout(async () => {
       setSimLoading(true);
@@ -555,14 +578,14 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
       } catch { setSim(null); } finally { setSimLoading(false); }
     }, 450);
     return () => clearTimeout(t);
-  }, [aplicar, preco, item]);
+  }, [entra, preco, item]);
 
   const vv = vivo && vivo !== "ausente" ? vivo : null;
   const fMin = vv?.min ?? item.preco_min, fMax = vv?.max ?? item.preco_max;
-  const ajustavel = aplicar && fMin != null && fMax != null && !item.offer_id;
+  const ajustavel = entra && fMin != null && fMax != null && !item.offer_id && cheio > 0;
   const relampago = ehRelampago(item.promocao_tipo);
-  const indisponivel = aplicar && vivo === "ausente";
-  const foraFaixa = aplicar && preco != null && ((fMin != null && preco < fMin - 0.001) || (fMax != null && preco > fMax + 0.001));
+  const indisponivel = entra && vivo === "ausente";
+  const foraFaixa = ajustavel && preco != null && ((fMin != null && preco < fMin - 0.001) || (fMax != null && preco > fMax + 0.001));
   const usandoSim = ajustavel && sim != null && preco != null && preco !== item.promo_price;
   const mcPara = tipo === "remover" ? item.mc_atual : usandoSim ? sim!.mc : item.mc_promo;
   const mcParaPct = tipo === "remover" ? item.mc_atual_pct : usandoSim ? sim!.mc_pct : item.mc_promo_pct;
@@ -570,8 +593,17 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
   const mcDePct = tipo === "remover" ? item.mc_promo_pct : tipo === "trocar" ? null : item.mc_atual_pct;
   const precoDe = tipo === "remover" ? num(item.promo_price) : tipo === "trocar" ? null : num(item.original_price);
   const precoPara = tipo === "remover" ? num(item.original_price) : num(preco ?? item.promo_price);
+  const semPreco = ajustavel && preco == null;
+  /** Desconto digitado em % → preço; encosta no limite da faixa quando a diferença é só de centavos (3% dá R$ 145,40 e o máximo é R$ 145,39). */
+  const precoDoPct = (x: number) => {
+    let v = Math.round(cheio * (1 - x / 100) * 100) / 100;
+    const folga = Math.max(0.02, cheio * 0.0005);
+    if (fMax != null && v > num(fMax) && v - num(fMax) <= folga) v = num(fMax);
+    if (fMin != null && v < num(fMin) && num(fMin) - v <= folga) v = num(fMin);
+    return v;
+  };
   const neg = tipo !== "remover" && mcPara != null && mcPara < 0;
-  const bloqueado = executando || simLoading || (aplicar && (vivoLoading || indisponivel || foraFaixa || (relampago && !estoque)));
+  const bloqueado = executando || simLoading || (entra && (vivoLoading || indisponivel || foraFaixa || semPreco)) || (aplicar && relampago && !estoque);
 
   async function executar() {
     setExecutando(true);
@@ -579,7 +611,7 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
       let p: URLSearchParams;
       if (tipo === "trocar") {
         p = new URLSearchParams({ modulo: "trocar", mlb: item.mlb, de_promocao_id: d!.ativo_promocao_id!, de_tipo: d!.ativo_tipo ?? "", para_promocao_id: item.promocao_id, para_tipo: item.promocao_tipo ?? "", confirmar: "1" });
-        if (item.offer_id) p.set("offer_id", item.offer_id); else if (item.promo_price != null) p.set("deal_price", String(item.promo_price));
+        if (item.offer_id) p.set("offer_id", item.offer_id); else { const dp = preco ?? item.promo_price; if (dp != null) p.set("deal_price", String(dp)); }
       } else {
         p = new URLSearchParams({ modulo: tipo, mlb: item.mlb, promocao_id: item.promocao_id, tipo: item.promocao_tipo ?? "", confirmar: "1" });
         if (aplicar) {
@@ -612,8 +644,8 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
   );
   const inputSt = { height: 30, width: 110, borderRadius: 8, border: "1px solid var(--pm-b)", background: "var(--pm-s)", color: "var(--pm-t)", fontSize: 12.5, padding: "0 8px", outline: "none", textAlign: "right" as const };
   const chipBtn = (rot: string, v: number | null) => v == null ? null : (
-    <button type="button" onClick={() => { setPreco(v); setPrecoTxt(String(v)); }} className="hover:bg-[var(--pm-s2)]"
-      style={{ height: 28, padding: "0 9px", borderRadius: 7, border: "1px solid var(--pm-b)", background: "var(--pm-s)", color: "var(--pm-t2)", cursor: "pointer", fontSize: 11.5 }}>{rot} {BRL(v)}</button>
+    <button type="button" onClick={() => definir(num(v))} className="hover:bg-[var(--pm-s2)]" title={BRL(num(v))}
+      style={{ height: 28, padding: "0 9px", borderRadius: 7, border: `1px solid ${preco === num(v) ? "var(--pm-a)" : "var(--pm-b)"}`, background: preco === num(v) ? "var(--pm-as)" : "var(--pm-s)", color: preco === num(v) ? "var(--pm-at)" : "var(--pm-t2)", cursor: "pointer", fontSize: 11.5 }}>{rot} {pctTxtDe(descDe(v, cheio))}%</button>
   );
 
   return (
@@ -640,15 +672,35 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
           </div>
         )}
 
-        {aplicar && vivoLoading && <span style={{ fontSize: 12, color: "var(--pm-t3)", display: "flex", alignItems: "center", gap: 6 }}><Loader2 className="animate-spin" style={{ width: 12, height: 12 }} />Conferindo a promoção no Mercado Livre…</span>}
+        {entra && vivoLoading && <span style={{ fontSize: 12, color: "var(--pm-t3)", display: "flex", alignItems: "center", gap: 6 }}><Loader2 className="animate-spin" style={{ width: 12, height: 12 }} />Conferindo a promoção no Mercado Livre…</span>}
         {indisponivel && aviso(<>O Mercado Livre <b>não oferece mais</b> esta promoção para este anúncio — a lista estava desatualizada. Feche e sincronize.</>, "am")}
         {ajustavel && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>Preço da promoção — entre {BRL(num(fMin))} e {BRL(num(fMax))}{vv ? ", conferido agora no ML" : ""}</span>
+            <span style={{ fontSize: 12, color: "var(--pm-t2)", textWrap: "pretty" }}>
+              <b style={{ fontWeight: 600, color: "var(--pm-t)" }}>Você escolhe o desconto</b> — de {pctTxtDe(descDe(fMax, cheio))}% a {pctTxtDe(descDe(fMin, cheio))}% (preço de {BRL(num(fMax))} a {BRL(num(fMin))}){vv ? ", conferido agora no ML" : ""}
+            </span>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <input value={precoTxt} inputMode="decimal" className="pm-mono" style={inputSt}
-                onChange={(e) => { setPrecoTxt(e.target.value); const v = Number(e.target.value.replace(",", ".")); setPreco(Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null); }} />
-              {chipBtn("Sugerido", item.preco_sugerido)}{chipBtn("Mín", fMin)}{chipBtn("Máx", fMax)}
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--pm-t2)" }}>Desconto
+                <input value={pctTxt} inputMode="decimal" className="pm-mono" style={{ ...inputSt, width: 64 }} aria-label="Desconto em %"
+                  onChange={(e) => {
+                    setPctTxt(e.target.value);
+                    const x = Number(e.target.value.replace(",", "."));
+                    if (e.target.value.trim() !== "" && Number.isFinite(x) && x > 0 && x < 100) { const v = precoDoPct(x); setPreco(v); setPrecoTxt(String(v)); } else setPreco(null);
+                  }} />%
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--pm-t2)" }}>= R$
+                <input value={precoTxt} inputMode="decimal" className="pm-mono" style={inputSt} aria-label="Preço da promoção"
+                  onChange={(e) => {
+                    setPrecoTxt(e.target.value);
+                    const v = Number(e.target.value.replace(",", "."));
+                    const ok = Number.isFinite(v) && v > 0;
+                    const r = ok ? Math.round(v * 100) / 100 : null;
+                    setPreco(r); setPctTxt(pctTxtDe(descDe(r, cheio)));
+                  }} />
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {chipBtn("Sugerido pelo ML", item.preco_sugerido ?? vv?.sugerido ?? null)}{chipBtn("Menor desconto", fMax)}
             </div>
           </div>
         )}
@@ -660,10 +712,10 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
             {vv.inicio && <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>Janela: {diaHora(vv.inicio)}{vv.fim ? ` → ${diaHora(vv.fim)}` : ""}</span>}
           </div>
         )}
-        {foraFaixa && aviso(`Preço fora da faixa aceita pelo ML (${BRL(num(fMin))} a ${BRL(num(fMax))}).`, "r")}
+        {foraFaixa && aviso(`Fora da faixa aceita pelo ML: o desconto precisa ficar entre ${pctTxtDe(descDe(fMax, cheio))}% e ${pctTxtDe(descDe(fMin, cheio))}% (${BRL(num(fMax))} a ${BRL(num(fMin))}).`, "r")}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 10, background: "var(--pm-s2)" }}>
-          {linha("Preço público", <>{precoDe != null ? `${BRL(precoDe)} → ` : ""}<b style={{ fontWeight: 600 }}>{BRL(precoPara)}</b></>)}
+          {linha("Preço público", <>{precoDe != null ? `${BRL(precoDe)} → ` : ""}<b style={{ fontWeight: 600 }}>{BRL(precoPara)}</b>{tipo !== "remover" && cheio > 0 && precoPara > 0 && precoPara < cheio ? <span style={{ color: "var(--pm-t3)" }}> (−{pctTxtDe(descDe(precoPara, cheio))}%)</span> : null}</>)}
           {linha("MC por unidade", (
             <>
               {mcDe != null ? <span style={{ color: "var(--pm-t3)" }}>{BRL(num(mcDe))}{mcDePct != null ? ` (${PCT(num(mcDePct))})` : ""} → </span> : null}

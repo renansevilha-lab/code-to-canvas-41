@@ -271,6 +271,8 @@ export interface LinhaPromo {
   cmv?: number | null;
   semCusto: boolean; mcNota?: string | null;
   precoPara?: (alvo: number) => number | null;
+  /** Conteúdo a mais embaixo do preço quando ele não é editável na linha (ex.: "escolher desconto" do Mercado Livre). */
+  precoExtra?: ReactNode;
   /** Conteúdo a mais embaixo do estado (ex.: estoque/limite da relâmpago). */
   estadoExtra?: ReactNode;
   /** Linha esmaecida (ex.: item pausado). */
@@ -465,7 +467,7 @@ export function TabelaPromo({
                             </button>
                           )}
                         </div>
-                      ) : <span className={MONO} style={{ fontSize: 13, fontWeight: 500 }}>{BRL(p)}</span>}
+                      ) : <><span className={MONO} style={{ fontSize: 13, fontWeight: 500 }}>{BRL(p)}</span>{l.precoExtra}</>}
                     </div>
                     <div className={MONO} style={{ textAlign: "right", padding: "0 10px", fontSize: 12.5, color: l.cmv != null ? "var(--pm-t2)" : "var(--pm-t3)" }}>
                       {l.cmv != null ? BRL(l.cmv) : "—"}

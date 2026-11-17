@@ -1623,6 +1623,15 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   (`shopee-flashsale?modulo=sale`, só leitura; relâmpago encerrada zera o status de todos os modelos — vale quem tinha preço menor que o
   original). "Programar amanhã agora" e o robô (flashsale_config.automacao_ativa) iguais à tela antiga (Relampago.tsx fica no repo; o
   diálogo AdicionarProduto é exportado de lá).
+- **Mercado Livre — escolher o desconto (17/nov/2026, relato do dono: "no Meli dá para escolher a porcentagem, no sistema não há opção"):**
+  a opção existia, mas escondida: só dentro do diálogo "Aplicar" (ícone +), em R$, e nada na lista dizia que o desconto era à escolha. As promoções
+  em que o vendedor escolhe são as SEM `offer_id` e com `preco_min`/`preco_max` (DEAL = campanha tradicional, ex. "Black Friday 2026", e LIGHTNING;
+  269 candidatas na data); SMART / "com redução de tarifas" têm oferta fixa do ML (`offer_id`) e não deixam escolher. Agora (`MercadoLivrePromo.tsx`,
+  só front): embaixo do preço da linha aparece **"escolher desconto · 3% a 80%"** (`LinhaPromo.precoExtra` no kit), que abre o diálogo; no diálogo,
+  campo **Desconto %** ligado ao campo R$ (3% encosta no limite quando a diferença é de centavos), atalhos "Sugerido pelo ML" e "Menor desconto", MC
+  recalculada a cada valor (`modulo=simular`) e a escolha vale também no **Trocar** (antes ia sempre o preço sugerido). Sem custo cadastrado a linha só
+  mostra "desconto à escolha" (o app não aplica sem MC). **Não feito:** mudar o desconto de quem JÁ está na campanha (hoje = tirar e aplicar de novo;
+  o ML tem PUT para isso, exige mexer na `ml-promocoes`).
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +
