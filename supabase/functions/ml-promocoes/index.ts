@@ -1,6 +1,13 @@
 // Central de Promocoes ML: espelha promocoes do vendedor + cacheia inputs pra MC.
 // PINADO na conta Ottz (user_id 1107117809) desde 31/ago — multi-conta no banco;
 // as tabelas ml_promocoes/ml_promocao_itens nao tem coluna de conta.
+// v27 (16/nov): listas do ML lidas com arr() (429 devolve objeto, não lista); erro 500 traz onde.
+// v27 (16/nov): SYNC — (1) paginação pelo search_after do ML: o offset é IGNORADO (devolvia sempre a
+//      1ª página, então o app só conhecia até 50 candidatos por campanha; Black Friday tinha 254);
+//      (2) fila: primeiro o que o espelho NÃO tem, depois o mais antigo (antes os ~44 anúncios já em
+//      promoção ocupavam as 40 vagas todo dia e candidato novo nunca entrava); (3) comissão em cache
+//      por preço/categoria/tipo e 6 anúncios em paralelo (mais itens por rodada); (4) também lê as campanhas
+//      que o app já conhece e o ML não põe em /seller-promotions/users (ex.: PROMO PET BF SD NOV-26, "pending").
 // v26 (16/out): robô também TROCA de promoção (só de campanha em andamento, nunca para Relâmpago) e
 //      entra no MENOR preço da faixa do ML que dá MC >= regra quando o sugerido não dá; trocarItem
 //      virou rotina única (botão Trocar + robô). Regra exigir_frete_real desligada no banco.
@@ -41,6 +48,7 @@ const OTTZ_USER_ID = 1107117809;
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" };
 const json = (b: unknown, i?: ResponseInit) => new Response(JSON.stringify(b), { ...i, headers: { ...CORS, "Content-Type": "application/json", ...(i?.headers || {}) } });
 const num = (v: unknown): number | null => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+const arr = (x: unknown): any[] => (Array.isArray(x) ? x : []); // o ML devolve objeto de erro (429 etc.) no lugar da lista
 const shipLog = (b: any) => b?.shipping?.logistic_type ?? null;
 const shipFree = (b: any) => typeof b?.shipping?.free_shipping === "boolean" ? b.shipping.free_shipping : null;
 const ESCRITA = new Set(["aplicar", "remover", "item", "trocar"]);
@@ -65,11 +73,16 @@ async function mlSend(token: string, method: string, path: string, body?: unknow
   const t = await r.text(); let b: any; try { b = JSON.parse(t); } catch { b = t.slice(0, 400); }
   return { status: r.status, ok: r.ok, body: b };
 }
+const feeCache = new Map<string, number | null>();
 async function saleFee(token: string, price: number, categoryId: string, listingType: string): Promise<number | null> {
   if (!price || !categoryId || !listingType) return null;
+  const k = `${price}|${categoryId}|${listingType}`;
+  if (feeCache.has(k)) return feeCache.get(k)!;
   const r = await mlGet(token, `/sites/MLB/listing_prices?price=${price}&category_id=${categoryId}&listing_type_id=${listingType}`);
   const v = r.body?.sale_fee_amount;
-  return v != null ? Number(v) : null;
+  const out = v != null ? Number(v) : null;
+  if (r.ok) feeCache.set(k, out);
+  return out;
 }
 /** Motivo legível a partir da resposta de erro do ML. */
 function motivoML(body: any): string {
@@ -80,12 +93,17 @@ function motivoML(body: any): string {
   return (partes.length ? [...new Set(partes)].join(" · ") : JSON.stringify(body)).slice(0, 300);
 }
 type Item = { mlb: string; promocao_id: string; tipo: string; status: string; promo_price: number | null; original_price: number | null; offer_id: string | null; meli: number | null; seller: number | null; sugerido: number | null; pmin: number | null; pmax: number | null; estMin: number | null; estMax: number | null; ini: string | null; fim: string | null };
-async function coletarItens(token: string, promoId: string, tipo: string, status: string, cap: number): Promise<Item[]> {
-  const out: Item[] = []; let offset = 0;
-  for (let pg = 0; pg < 8 && out.length < cap; pg++) {
-    const r = await mlGet(token, `/seller-promotions/promotions/${promoId}/items?promotion_type=${tipo}&status=${status}&app_version=v2&limit=50&offset=${offset}`);
-    const res = (r.body?.results || []) as any[];
+async function coletarItens(token: string, promoId: string, tipo: string, status: string, cap: number): Promise<Item[] & { completo?: boolean }> {
+  // v27: o ML pagina por search_after (o offset é ignorado e devolve sempre a 1ª página).
+  const out: Item[] & { completo?: boolean } = []; const vistos = new Set<string>(); let after = ""; let completo = false;
+  for (let pg = 0; pg < 12 && out.length < cap; pg++) {
+    const r = await mlGet(token, `/seller-promotions/promotions/${promoId}/items?promotion_type=${tipo}&status=${status}&app_version=v2&limit=50${after ? `&search_after=${encodeURIComponent(after)}` : ""}`);
+    if (!r.ok) break;
+    const res = arr(r.body?.results);
+    let novos = 0;
     for (const x of res) {
+      if (!x?.id || vistos.has(x.id)) continue;
+      vistos.add(x.id); novos++;
       const sugerido = num(x.suggested_discounted_price);
       const price = num(x.price);
       out.push({ mlb: x.id, promocao_id: promoId, tipo, status: x.status ?? status,
@@ -96,10 +114,13 @@ async function coletarItens(token: string, promoId: string, tipo: string, status
         estMin: x.stock?.min != null ? Number(x.stock.min) : null, estMax: x.stock?.max != null ? Number(x.stock.max) : null,
         ini: x.start_date ?? null, fim: x.finish_date ?? null });
     }
-    if (res.length < 50) break;
-    offset += 50;
+    const prox = r.body?.paging?.searchAfter ?? r.body?.paging?.search_after ?? "";
+    if (res.length < 50 || !prox || !novos) { completo = res.length < 50 || !prox; break; }
+    after = String(prox);
   }
-  return out.slice(0, cap);
+  const fim = out.slice(0, cap) as Item[] & { completo?: boolean };
+  fim.completo = completo && out.length <= cap;
+  return fim;
 }
 /** Promoções do item AO VIVO no ML (lista de /seller-promotions/items/{mlb}). */
 async function promosDoItem(token: string, mlb: string) {
@@ -270,7 +291,7 @@ serve(async (req) => {
       const det = new Map<string, { cat: string; lt: string; logistic: string | null; free: boolean | null; sold: number | null; dc: string | null }>();
       for (let k = 0; k < lote.length; k += 20) {
         const r = await mlGet(token, `/items?ids=${lote.slice(k, k + 20).join(",")}&attributes=${DET_ATTR}`);
-        for (const e of (r.body || []) as any[]) { const b = e.body; if (b?.id) det.set(b.id, { cat: b.category_id, lt: b.listing_type_id, logistic: shipLog(b), free: shipFree(b), sold: b.sold_quantity ?? null, dc: b.date_created ?? null }); }
+        for (const e of arr(r.body)) { const b = e.body; if (b?.id) det.set(b.id, { cat: b.category_id, lt: b.listing_type_id, logistic: shipLog(b), free: shipFree(b), sold: b.sold_quantity ?? null, dc: b.date_created ?? null }); }
       }
       const { data: freteRows } = await supabase.from("ml_frete_sku").select("sku, frete_vendedor").in("sku", [...new Set(lote.map((m) => skuDe.get(m)).filter(Boolean))] as string[]);
       const freteMap = new Map<string, number>(((freteRows ?? []) as any[]).map((r) => [r.sku, Number(r.frete_vendedor)]));
@@ -575,17 +596,26 @@ serve(async (req) => {
     }
 
     // ---------- SYNC ----------
-    const MAX_ITENS = Math.min(80, parseInt(url.searchParams.get("max") || "40", 10));
+    const MAX_ITENS = Math.min(200, parseInt(url.searchParams.get("max") || "120", 10));
     const freshHoras = Math.max(0, parseInt(url.searchParams.get("fresh_h") || "12", 10));
     const inicio = Date.now();
     const promosR = await mlGet(token, `/seller-promotions/users/${seller}?app_version=v2`);
-    const promos = (promosR.body?.results || []) as any[];
+    const promos = arr(promosR.body?.results);
     for (const p of promos) {
       await supabase.from("ml_promocoes").upsert({
         promocao_id: p.id, tipo: p.type, nome: p.name ?? null, status: p.status ?? null,
         start_date: p.start_date ?? null, finish_date: p.finish_date ?? null, deadline_date: p.deadline_date ?? null,
         atualizado_em: new Date().toISOString(),
       }, { onConflict: "promocao_id" });
+    }
+    // v27: campanhas que o app conhece (vieram pelo "Elegíveis do item" ou por listas antigas) e o ML
+    // não põe na lista do vendedor — a lista de itens delas responde normalmente. Não regrava a campanha.
+    const listadas = new Set(promos.map((p: any) => p.id));
+    const { data: conhecidas } = await supabase.from("ml_promocoes").select("promocao_id, tipo, nome, status, finish_date")
+      .neq("status", "finished").neq("tipo", "LIGHTNING");
+    for (const c of (conhecidas ?? []) as any[]) {
+      if (listadas.has(c.promocao_id) || (c.finish_date && new Date(c.finish_date).getTime() < Date.now())) continue;
+      promos.push({ id: c.promocao_id, type: c.tipo, name: c.nome, status: c.status, _conhecida: true });
     }
     const { data: freteRows } = await supabase.from("ml_frete_sku").select("sku, frete_vendedor");
     const freteMap = new Map<string, number>((freteRows ?? []).map((r: any) => [r.sku, Number(r.frete_vendedor)]));
@@ -595,15 +625,15 @@ serve(async (req) => {
     const candByPromo: Item[][] = [];
     let limpos = 0;
     for (const p of promos) {
-      const st = await coletarItens(token, p.id, p.type, "started", 120);
+      const st = await coletarItens(token, p.id, p.type, "started", 300);
       // v22: candidatas de Relâmpago vêm do modulo=relampago (só anúncios com venda em 30d)
       const ehRelampago = String(p.type).toUpperCase() === "LIGHTNING";
-      const cd = ehRelampago ? [] : await coletarItens(token, p.id, p.type, "candidate", 120);
+      const cd = ehRelampago ? Object.assign([] as Item[], { completo: false }) : await coletarItens(token, p.id, p.type, "candidate", 400);
       started.push(...st);
       candByPromo.push(cd);
       // v19: listagem COMPLETA (abaixo do teto) → candidata que o ML não lista mais
       // (nem como ativa) saiu da campanha: apaga, senão vira clique com erro na tela.
-      if (!ehRelampago && cd.length < 120 && st.length < 120) {
+      if (!ehRelampago && cd.completo && st.completo) {
         const vivos = new Set([...st, ...cd].map((i) => i.mlb));
         // só linhas paradas há 7+ dias: as que o botão "Elegíveis do item" trouxe (fora do
         // listing curado da campanha) sobrevivem enquanto forem recentes.
@@ -623,10 +653,22 @@ serve(async (req) => {
     const candidates: Item[] = [];
     for (let idx = 0, add = true; add; idx++) { add = false; for (const arr of candByPromo) { if (arr[idx]) { candidates.push(arr[idx]); add = true; } } }
     let ordem = [...started, ...candidates];
-    const cutoff = new Date(Date.now() - freshHoras * 3600e3).toISOString();
-    const { data: fresh } = await supabase.from("ml_promocao_itens").select("promocao_id, mlb").gt("atualizado_em", cutoff);
-    const skip = new Set<string>((fresh ?? []).map((r: any) => `${r.promocao_id}|${r.mlb}`));
-    ordem = ordem.filter((i) => !skip.has(`${i.promocao_id}|${i.mlb}`)).slice(0, MAX_ITENS);
+    // v27: primeiro o que o espelho não tem; depois o mais antigo; quem foi gravado há menos de fresh_h fica de fora
+    const cutoffMs = Date.now() - freshHoras * 3600e3;
+    const ja = new Map<string, number>();
+    const idsPromo = promos.map((p: any) => p.id);
+    for (let de = 0; ; de += 1000) {
+      const { data: ex, error: exErr } = await supabase.from("ml_promocao_itens").select("promocao_id, mlb, atualizado_em").in("promocao_id", idsPromo).range(de, de + 999);
+      if (exErr) throw new Error("leitura do espelho: " + exErr.message);
+      for (const r of (ex ?? []) as any[]) ja.set(`${r.promocao_id}|${r.mlb}`, new Date(r.atualizado_em).getTime());
+      if (!ex || ex.length < 1000) break;
+    }
+    const pos = new Map(ordem.map((i, k) => [i, k]));
+    ordem = ordem
+      .filter((i) => { const t0 = ja.get(`${i.promocao_id}|${i.mlb}`); return t0 == null || t0 < cutoffMs; })
+      .sort((a, b) => (ja.get(`${a.promocao_id}|${a.mlb}`) ?? -1) - (ja.get(`${b.promocao_id}|${b.mlb}`) ?? -1) || pos.get(a)! - pos.get(b)!)
+      .slice(0, MAX_ITENS);
+    const novosNoEspelho = ordem.filter((i) => !ja.has(`${i.promocao_id}|${i.mlb}`)).length;
 
     const mlbs = [...new Set(ordem.map((i) => i.mlb))];
     const skuMap = new Map<string, string>();
@@ -637,11 +679,10 @@ serve(async (req) => {
     const detMap = new Map<string, { cat: string; lt: string; logistic: string | null; free: boolean | null; sold: number | null; dc: string | null }>();
     for (let k = 0; k < mlbs.length; k += 20) {
       const r = await mlGet(token, `/items?ids=${mlbs.slice(k, k + 20).join(",")}&attributes=${DET_ATTR}`);
-      for (const e of (r.body || []) as any[]) { const b = e.body; if (b?.id) detMap.set(b.id, { cat: b.category_id, lt: b.listing_type_id, logistic: shipLog(b), free: shipFree(b), sold: b.sold_quantity ?? null, dc: b.date_created ?? null }); }
+      for (const e of arr(r.body)) { const b = e.body; if (b?.id) detMap.set(b.id, { cat: b.category_id, lt: b.listing_type_id, logistic: shipLog(b), free: shipFree(b), sold: b.sold_quantity ?? null, dc: b.date_created ?? null }); }
     }
     let gravados = 0, semTempo = 0;
-    for (const i of ordem) {
-      if (Date.now() - inicio > 24000) { semTempo++; continue; }
+    const gravar = async (i: Item) => {
       const det = detMap.get(i.mlb); const sku = skuMap.get(i.mlb) ?? null;
       const comissaoPromo = det && i.promo_price ? await saleFee(token, i.promo_price, det.cat, det.lt) : null;
       const comissaoAtual = det && i.original_price ? await saleFee(token, i.original_price, det.cat, det.lt) : null;
@@ -658,13 +699,17 @@ serve(async (req) => {
         atualizado_em: new Date().toISOString(),
       }, { onConflict: "promocao_id,mlb" });
       gravados++;
+    };
+    for (let k = 0; k < ordem.length; k += 6) {
+      if (Date.now() - inicio > 24000) { semTempo += ordem.length - k; break; }
+      await Promise.all(ordem.slice(k, k + 6).map(gravar));
     }
     for (const p of promos) {
       const { count } = await supabase.from("ml_promocao_itens").select("mlb", { count: "exact", head: true }).eq("promocao_id", p.id);
       await supabase.from("ml_promocoes").update({ n_itens: count ?? 0 }).eq("promocao_id", p.id);
     }
-    return json({ modulo: "sync", promos: promos.length, limpos, encerradas: (vencidas ?? []).length, started: started.length, candidatos: candidates.length, processados: ordem.length, gravados, semTempo, ms: Date.now() - inicio });
+    return json({ modulo: "sync", promos: promos.length, so_no_app: promos.filter((p: any) => p._conhecida).length, limpos, encerradas: (vencidas ?? []).length, started: started.length, candidatos: candidates.length, processados: ordem.length, novos_no_espelho: novosNoEspelho, gravados, semTempo, ms: Date.now() - inicio });
   } catch (e) {
-    return json({ erro: (e as Error).message }, { status: 500 });
+    return json({ erro: (e as Error).message, modulo, onde: String((e as Error).stack ?? "").split(/\n/).slice(1, 4).map((s) => s.trim()) }, { status: 500 });
   }
 });
