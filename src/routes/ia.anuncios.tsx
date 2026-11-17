@@ -102,7 +102,7 @@ export const Route = createFileRoute("/ia/anuncios")({
     at: umDe(s.at, ["estoque", "caindo", "prejuizo", "teste", "medicao"]),
     ord: umDe(s.ord, ["queda", "mexido", "margem", "estoque"]),
     mud7: s.mud7 === "1" ? "1" : undefined,
-    f: umDe(s.f, ["app", "teste", "fora", "piorou", "falhou"]),
+    f: umDe(s.f, ["app", "teste", "fora", "medidas", "piorou", "falhou"]),
     campo: umDe(s.campo, ["preco", "conteudo", "ads", "promocao"]),
     mk: umDe(s.mk, ["shopee", "ml", "amazon", "tiktok"]),
     dias: String(s.dias) === "30" ? "30" : undefined,

@@ -288,11 +288,13 @@ begin
   f as (
     select * from e
      where p_filtro is null or (p_filtro = 'app' and origem = 'app') or (p_filtro = 'teste' and origem = 'teste')
-        or (p_filtro = 'fora' and origem = 'fora') or (p_filtro = 'piorou' and piorou) or (p_filtro = 'falhou' and not ok))
+        or (p_filtro = 'fora' and origem = 'fora') or (p_filtro = 'piorou' and piorou) or (p_filtro = 'falhou' and not ok)
+        or (p_filtro = 'medidas' and ok and dias_depois >= 7))
   select jsonb_build_object(
     'total', (select count(*) from f),
     'contagem', (select jsonb_build_object('tudo', count(*), 'app', count(*) filter (where origem = 'app'), 'teste', count(*) filter (where origem = 'teste'),
-                   'fora', count(*) filter (where origem = 'fora'), 'piorou', count(*) filter (where piorou), 'falhou', count(*) filter (where not ok)) from e),
+                   'fora', count(*) filter (where origem = 'fora'), 'piorou', count(*) filter (where piorou), 'falhou', count(*) filter (where not ok),
+                   'medidas', count(*) filter (where ok and dias_depois >= 7)) from e),
     'linhas', coalesce((select jsonb_agg(to_jsonb(z) order by z.quando desc, z.item_id) from (
         select quando, mkt, shop_id, shop, loja, item_id, nome, foto, sku, link, campo, de, para, descricao, origem, quem, ok, log_id, braco, campanha,
                antes, depois, dias_depois, piorou, melhorou, (dia + 7) completo_em

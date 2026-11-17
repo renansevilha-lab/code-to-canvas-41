@@ -4243,6 +4243,10 @@ SQL + rollback em `docs/anuncios-no-ar-marketplaces.sql` (migração `anuncios_n
 - **Limites:** ML por anúncio é estimativa quando o SKU tem mais de um MLB; Amazon sem preço cheio nem histórico de preço (não há retrato);
   TikTok sem retrato diário (só os envios do app aparecem em Mudanças); testes A/B só na Shopee. Não conferido com login na tela.
 
+- **Filtro "Mudanças medidas" (16/nov, pedido do dono):** em Mudanças, `p_filtro = 'medidas'` = mudança que deu certo e já tem os 7 dias
+  fechados depois dela (`ok and dias_depois >= 7`; tira as "medindo · sai em" e as que falharam); `contagem.medidas`; `?f=medidas`. Migração
+  `anuncios_mudancas_filtro_medidas` (mesma assinatura). Com "Últimos 7 dias" o filtro fica vazio por definição (nada completou 7 dias).
+
 ## 5.11.14 IA · Anúncios — envio ao TikTok Shop da Ottz/ACZ (11/nov/2026)
 
 Pedido do dono (a Bumi ainda não autorizou o app no TikTok, então começou pela loja da Ottz, `shop_id 7496181924415506972`).

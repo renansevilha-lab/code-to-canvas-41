@@ -533,9 +533,11 @@ function DetalheAnuncio({ x, nd, marcacoes, onAnalise }: { x: Linha; nd: number;
 }
 
 // ───────────────────────────────────────────── Mudanças
-const FILTROS = [
+const FILTROS: { id: string; nome: string; chave: string; dica?: string }[] = [
   { id: "", nome: "Tudo", chave: "tudo" }, { id: "app", nome: "Feito pelo app", chave: "app" }, { id: "teste", nome: "Teste A/B", chave: "teste" },
-  { id: "fora", nome: "Feito fora do app", chave: "fora" }, { id: "piorou", nome: "Piorou depois da mudança", chave: "piorou" }, { id: "falhou", nome: "Falhou ou não conferiu", chave: "falhou" },
+  { id: "fora", nome: "Feito fora do app", chave: "fora" },
+  { id: "medidas", nome: "Mudanças medidas", chave: "medidas", dica: "Só as mudanças que já têm os 7 dias fechados depois delas — resultado completo, sem as que ainda estão medindo" },
+  { id: "piorou", nome: "Piorou depois da mudança", chave: "piorou" }, { id: "falhou", nome: "Falhou ou não conferiu", chave: "falhou" },
 ];
 const GRADE_M = "104px minmax(240px,1.5fr) minmax(250px,1.7fr) 140px 190px 176px";
 
@@ -634,7 +636,7 @@ export function MudancasAnuncios({ busca, set }: { busca: BuscaVisao; set: (x: P
         {FILTROS.map((x) => {
           const on = (f ?? "") === x.id;
           const n = d?.contagem?.[x.chave];
-          return <button key={x.id} type="button" style={chip(on)} onClick={() => set({ f: x.id || undefined, p: undefined })}>{x.nome}{n != null && <span className={MONO} style={{ fontSize: 11, opacity: 0.9 }}>{int(n)}</span>}</button>;
+          return <button key={x.id} type="button" title={x.dica} style={chip(on)} onClick={() => set({ f: x.id || undefined, p: undefined })}>{x.nome}{n != null && <span className={MONO} style={{ fontSize: 11, opacity: 0.9 }}>{int(n)}</span>}</button>;
         })}
         <div style={{ flex: 1 }} />
         <div style={{ ...campoCx, flex: "0 1 240px", minWidth: 180 }}>
@@ -666,7 +668,7 @@ export function MudancasAnuncios({ busca, set }: { busca: BuscaVisao; set: (x: P
             <span>Quando</span><span>Anúncio</span><span>O que mudou</span><span>Quem</span><span>Resultado em 7 dias</span><span />
           </div>
           {dadosQ.isLoading && <div style={{ padding: 28, textAlign: "center", color: "var(--pm-t2)" }}><Loader2 className="h-4 w-4 animate-spin inline-block" /> Carregando as mudanças…</div>}
-          {d && grupos.length === 0 && <div style={{ padding: 28, textAlign: "center", color: "var(--pm-t2)", fontSize: 13 }}>Nenhuma mudança neste filtro.</div>}
+          {d && grupos.length === 0 && <div style={{ padding: 28, textAlign: "center", color: "var(--pm-t2)", fontSize: 13 }}>{f === "medidas" && diasM <= 7 ? "Nenhuma mudança deste período completou os 7 dias de medição. Troque o período para Últimos 30 dias." : "Nenhuma mudança neste filtro."}</div>}
           {grupos.map((g) => {
             const l = g.itens[0];
             const falhou = g.itens.some((i) => !i.ok);
