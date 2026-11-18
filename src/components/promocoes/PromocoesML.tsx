@@ -42,7 +42,7 @@ interface PromoItem {
   promocao_id: string; mlb: string; sku: string | null; status: string;
   offer_id: string | null; original_price: number | null; promo_price: number | null;
   preco_min: number | null; preco_max: number | null; preco_sugerido: number | null;
-  seller_percentage: number | null; meli_percentage: number | null;
+  seller_percentage: number | null; meli_percentage: number | null; receita_vend_promo?: number | null;
   comissao_promo: number | null; frete: number | null; frete_estimado: boolean;
   logistic_type: string | null; free_shipping: boolean | null; sold_quantity: number | null; date_created: string | null;
   cmv: number | null; imposto_promo: number | null; desconto_pct: number | null;
@@ -65,8 +65,19 @@ const TIPO: Record<string, { nome: string; cor: string }> = {
   SMART: { nome: "Smart", cor: "#2F6FB0" },
   DEAL: { nome: "Oferta", cor: "#7A5CC7" },
   LIGHTNING: { nome: "Relâmpago", cor: "#DB6B1F" },
+  SMART_LIGHTNING: { nome: "Relâmpago · tarifa reduzida", cor: "#DB6B1F" },
   DOD: { nome: "Oferta do dia", cor: "#C9432F" },
 };
+// "Você recebe" do painel do ML: o que entra depois de comissão e frete, com a redução de tarifa que o ML dá
+// nas promoções cofinanciadas (receita_vend_promo = preço cheio − só a parte do desconto que é nossa).
+const usandoSimPreco = (sim: number | null, promo: number | null) => (sim != null && sim !== promo ? sim : null);
+function recebeDe(i: { promo_price: number | null; receita_vend_promo?: number | null; comissao_promo: number | null; frete: number | null }, preco?: number | null) {
+  const p = preco ?? i.promo_price;
+  if (p == null || i.comissao_promo == null) return { recebe: null as number | null, reducao: 0 };
+  const reducao = preco == null || preco === i.promo_price ? Math.max(0, num(i.receita_vend_promo ?? i.promo_price) - num(i.promo_price)) : 0;
+  const comissao = num(i.promo_price) > 0 ? num(i.comissao_promo) * (num(p) / num(i.promo_price)) : num(i.comissao_promo);
+  return { recebe: num(p) + reducao - comissao - num(i.frete), reducao };
+}
 const tipoInfo = (t: string | null) => TIPO[(t ?? "").toUpperCase()] ?? { nome: t ?? "—", cor: "#64748B" };
 
 function iniciais(nome: string | null): string {
@@ -181,7 +192,7 @@ export function PromocoesML() {
     queryKey: ["promocoes-ml", "itens"],
     queryFn: async (): Promise<PromoItem[]> => {
       const { data, error } = await supabaseExternal.from("view_ml_promocoes")
-        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, seller_percentage, meli_percentage, comissao_promo, frete, frete_estimado, logistic_type, free_shipping, sold_quantity, date_created, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
+        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, seller_percentage, meli_percentage, receita_vend_promo, comissao_promo, frete, frete_estimado, logistic_type, free_shipping, sold_quantity, date_created, cmv, imposto_promo, desconto_pct, promocao_nome, promocao_tipo, promocao_status, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
       if (error) throw error;
       return (data ?? []) as PromoItem[];
     },
@@ -532,6 +543,15 @@ export function PromocoesML() {
                     <td className="px-3 py-3 text-right whitespace-nowrap">
                       <div className="text-[11px] text-muted-foreground line-through tabular-nums">{formatBRL(num(i.original_price))}</div>
                       <div className="text-[14px] font-bold tabular-nums">{formatBRL(num(i.promo_price))}</div>
+                      {(() => {
+                        const r = recebeDe(i);
+                        return r.recebe == null ? null : (
+                          <div className="mt-0.5 text-[10.5px] text-muted-foreground tabular-nums" title="Preço da promoção + redução de tarifa do ML − comissão − frete (o 'Você recebe' do painel do Mercado Livre)">
+                            você recebe <b className="text-foreground">{formatBRL(r.recebe)}</b>
+                            {r.reducao > 0.005 && <div className="text-emerald-700 dark:text-emerald-400">ML reduz {formatBRL(r.reducao)} da tarifa</div>}
+                          </div>
+                        );
+                      })()}
                     </td>
                     {/* Desconto */}
                     <td className="px-3 py-3 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: RED }}>−{num(i.desconto_pct).toFixed(0)}%</td>
@@ -623,6 +643,9 @@ export function PromocoesML() {
         const fMin = vv?.min ?? item.preco_min, fMax = vv?.max ?? item.preco_max;
         const ajustavel = ehAplicar && fMin != null && fMax != null && !item.offer_id;
         const relampago = (item.promocao_tipo ?? "").toUpperCase() === "LIGHTNING";
+        // Oferta relâmpago com redução de tarifa (SMART_LIGHTNING): o ML fixa o preço pela oferta; unidades e janela só informam
+        const relampagoSmart = (item.promocao_tipo ?? "").toUpperCase() === "SMART_LIGHTNING";
+        const rec = recebeDe(item, usandoSimPreco(simPreco, item.promo_price));
         const indisponivel = ehAplicar && vivo === "ausente";
         const foraFaixa = ehAplicar && simPreco != null && ((fMin != null && simPreco < fMin - 0.001) || (fMax != null && simPreco > fMax + 0.001));
         const usandoSim = ajustavel && simResult != null && simPreco != null && simPreco !== item.promo_price;
@@ -677,12 +700,26 @@ export function PromocoesML() {
                       {vv.inicio && <span className="text-[11px] text-muted-foreground">Janela: {new Date(vv.inicio).toLocaleString("pt-BR")}{vv.fim ? ` → ${new Date(vv.fim).toLocaleString("pt-BR")}` : ""}</span>}
                     </div>
                   )}
+                  {relampagoSmart && ehAplicar && (
+                    <div className="rounded-lg border border-border p-3 text-xs text-muted-foreground flex flex-col gap-1">
+                      <span><b className="text-foreground">Oferta relâmpago com redução de tarifa.</b> Por aqui ela entra no desconto sugerido pelo Mercado Livre ({descShow != null ? `${descShow.toFixed(0)}%` : "—"}); para escolher outro desconto, use o painel do ML.</span>
+                      {vv?.estoque_min != null && <span>Unidades da oferta: o ML aceita de {vv.estoque_min} a {vv.estoque_max ?? "—"} (por aqui vai o padrão do ML).</span>}
+                      {vv?.inicio && <span>Vigência: {new Date(vv.inicio).toLocaleString("pt-BR")}{vv.fim ? ` → ${new Date(vv.fim).toLocaleString("pt-BR")}` : ""}</span>}
+                    </div>
+                  )}
                   {foraFaixa && <span className="text-xs font-semibold" style={{ color: RED }}>Preço fora da faixa aceita pelo ML ({formatBRL(num(fMin))} a {formatBRL(num(fMax))}).</span>}
                   <div className="bg-muted rounded-xl p-4 flex flex-col gap-3">
                     <div className="flex justify-between items-center gap-2">
                       <span className="text-sm text-muted-foreground">Preço público</span>
                       <span className="text-sm font-semibold font-mono tabular-nums whitespace-nowrap">{formatBRL(num(item.original_price))} → <strong>{formatBRL(num(precoShow))}</strong>{descShow != null && <span style={{ color: RED }}> (−{descShow.toFixed(0)}%)</span>}</span>
                     </div>
+                    {rec.recebe != null && (
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-sm text-muted-foreground">Você recebe<span className="block text-[10.5px]">depois de comissão e frete, antes de imposto e custo</span></span>
+                        <span className="text-sm font-mono tabular-nums text-right whitespace-nowrap"><strong>{formatBRL(rec.recebe)}</strong>
+                          {rec.reducao > 0.005 && <span className="block text-[10.5px] text-emerald-700 dark:text-emerald-400">inclui {formatBRL(rec.reducao)} de redução de tarifa</span>}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center gap-2">
                       <span className="text-sm text-muted-foreground">Margem de contribuição</span>
                       <span className="text-sm font-mono tabular-nums flex items-center gap-1 whitespace-nowrap">{formatBRL(num(item.mc_atual))} → <strong style={{ color: neg ? RED : GREEN }}>{mcShow == null ? "—" : formatBRL(mcShow)}</strong>{mcPctShow != null && <span className="text-muted-foreground">({pct(mcPctShow)})</span>}{simLoading && <Loader2 className="h-3 w-3 animate-spin" />}</span>
