@@ -25,13 +25,15 @@ interface Foto { sku: string; path: string; tipo: string; criado: string }
 // a capa ambientada com o selo é a que o bloco "Fotos das variações" gera por padrão
 const PREFERIDA = ["capa_ambientada_texto", "capa_ambientada_limpa"];
 
-export function FotosOpcoesShopee({ sku, empresa, itemInicial }: { sku: string; empresa: string; itemInicial?: string }) {
+// noEnvio (18/nov/2026, pedido do dono): o mesmo bloco dentro da conferência do envio (atualizar anúncio da Shopee),
+// já aberto no anúncio que está sendo atualizado; some se o anúncio não tem variações.
+export function FotosOpcoesShopee({ sku, empresa, itemInicial, noEnvio }: { sku: string; empresa: string; itemInicial?: string; noEnvio?: boolean }) {
   const qc = useQueryClient();
   const exQ = useExistentesAnuncio(sku);
   const lista = listaDeExistentes(exQ.data, "shopee", empresa) ?? [];
   const [itemId, setItemId] = useState<string>(itemInicial ?? "");
   useEffect(() => { if (!itemId && lista.length) setItemId(itemInicial ?? lista[0].item_id); }, [lista.length, itemInicial]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [aberto, setAberto] = useState(false);
+  const [aberto, setAberto] = useState(!!noEnvio);
   const [escolha, setEscolha] = useState<Record<string, string | null>>({}); // sku → caminho (null = manter)
   const [previa, setPrevia] = useState<{ pendencias: string[]; avisos: string[] } | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -113,16 +115,19 @@ export function FotosOpcoesShopee({ sku, empresa, itemInicial }: { sku: string; 
   }
 
   if (!exQ.isLoading && !lista.length && !itemInicial) return null;
+  if (noEnvio && (vivoQ.isError || (vivo && !vivo.tem_variacao))) return null;
   return (
-    <Card><CardContent className="p-4 space-y-3 text-sm">
+    <Card className={noEnvio ? "shadow-none" : undefined}><CardContent className={noEnvio ? "p-3 space-y-3 text-sm" : "p-4 space-y-3 text-sm"}>
       <div className="flex flex-wrap items-center gap-2">
         <ImageIcon className="h-4 w-4 text-muted-foreground" />
-        <b>Fotos das opções no anúncio da Shopee</b>
-        <span className="text-xs text-muted-foreground">— a foto de cada variação (8kg, 10kg…), que a atualização do envio não troca</span>
+        <b>{noEnvio ? "Foto de capa das variações" : "Fotos das opções no anúncio da Shopee"}</b>
+        <span className="text-xs text-muted-foreground">{noEnvio
+          ? "— a foto de cada opção (8kg, 12kg…) é trocada à parte da galeria; escolha, confira e troque aqui"
+          : "— a foto de cada variação (8kg, 10kg…), que a atualização do envio não troca"}</span>
         {!aberto && <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" disabled={!itemId} onClick={() => setAberto(true)}>Ver as fotos das opções</Button>}
       </div>
       {aberto && (<>
-        {lista.length > 1 && (
+        {!noEnvio && lista.length > 1 && (
           <select className="h-8 rounded-md border bg-background px-2 text-xs" value={itemId} onChange={(e) => { setItemId(e.target.value); setEscolha({}); setPrevia(null); }}>
             {lista.map((e) => <option key={e.item_id} value={e.item_id}>{e.item_id} · {e.nome ?? ""}</option>)}
           </select>

@@ -12,6 +12,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
+import { FotosOpcoesShopee } from "@/components/ia/anuncio/FotosOpcoesShopee";
 import { EnvioAlvoContext, type EnvioAlvo } from "@/components/ia/anuncio/PromocaoNoEnvio";
 import { calcularPreco, chamarIa, chamarPublicar, chamarVariacoesShopee, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
@@ -727,6 +728,9 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
               </div>
             </div>
           </div>
+          {canal === "shopee" && alvoPromo.itemId && (
+            <FotosOpcoesShopee key={`fos-env-${empresa}-${alvoPromo.itemId}`} sku={rascunho.sku} empresa={empresa} itemInicial={alvoPromo.itemId} noEnvio />
+          )}
           <Troca rotulo="Preço" marcado={op.c_preco === true} onMarcar={(v) => trocar({ c_preco: v })}
             antes={p.atual.preco != null ? formatBRL(p.atual.preco) : "—"} depois={p.preco != null ? formatBRL(p.preco) : "—"}
             nota={amz ? "O preço na Amazon ainda não é trocado por aqui." : "Desmarcado por padrão: mexer no preço pode afetar promoção em andamento."} />
