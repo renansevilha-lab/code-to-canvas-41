@@ -1,0 +1,32 @@
+{
+  "_como_usar": "Classificação das NF-e de ENTRADA (emitidas por terceiros) no fechamento da ACZ Pet. Edite à vontade: CNPJ só com dígitos. A ordem de decisão é: cfop_especial > cnpj > 'Uso e consumo — confirmar'.",
+  "acz_cnpj": "37393638000140",
+  "outros_emitentes_no_zip": {
+    "46176256000155": "Jussara Sevilha Marangoni (não é da ACZ)"
+  },
+  "cfop_especial": {
+    "5910": "Bonificação",
+    "6910": "Bonificação",
+    "5949": "Devolução de remessa ML",
+    "6949": "Devolução de remessa ML"
+  },
+  "cnpj": {
+    "10202990000102": { "classe": "Revenda", "nome": "Santa Lucia" },
+    "29136989000147": { "classe": "Revenda", "nome": "Granotec" },
+    "05352393000116": { "classe": "Revenda", "nome": "Alfapet" },
+    "21986429000170": { "classe": "Revenda", "nome": "Vidotto" },
+    "33058492000125": { "classe": "Revenda", "nome": "Pet Factory" },
+    "49119969000175": { "classe": "Revenda", "nome": "Lotus" },
+    "52651610000159": { "classe": "Embalagens", "nome": "" },
+    "60778123000180": { "classe": "Embalagens", "nome": "" },
+    "48126622000197": { "classe": "Embalagens", "nome": "" },
+    "05414466000157": { "classe": "Imobilizado", "nome": "DFJ (seladora)" }
+  },
+  "padrao": "Uso e consumo — confirmar",
+  "imobilizado_valor_minimo": 1200,
+  "despesas_excluir": {
+    "_nota": "Nunca entram no fechamento: aluguel pessoal (RVA) e qualquer lançamento do cartão XP.",
+    "fornecedor_contem": ["RVA", "XP INVEST", "CARTAO XP", "CARTÃO XP"]
+  },
+  "aluguel_pj": { "nome": "Rezziden", "valor_mensal": 5269.75 }
+}
