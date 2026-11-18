@@ -3997,6 +3997,12 @@ o do rascunho, com aviso). Tela (`Publicar.tsx`): na conferência da outra loja 
 título da loja-base e as palavras trocadas, "Outro título" refaz, e editar/salvar ali grava só o título da loja
 (`manual: true`). Ottz × Bumi no Mercado Livre e na Amazon continuam com o mesmo título.
 
+## 5.11.11.17 Família do produto na lista de produtos (17/nov/2026)
+
+Pedido do dono: pesquisar um produto (ex. 16746) e ver tudo que o leva como kit ou variação. Filtro **`?fam=<sku>`** em `/ia/anuncios?ver=produtos`: menu "…" da linha → "Ver a família deste produto", ou o botão "Ver a família de <sku>" que aparece ao lado dos filtros quando a busca acha o SKU. **`ia_catalogo` v2.3 (`versao: 7`, 10 parâmetros — `p_familia` no fim; a de 9 foi removida; migração `ia_catalogo_familia`, fonte em `docs/catalogo-espelho-tiny/ia_catalogo_variacoes.sql`):** bases = `produto_familia_bases(sku)` (simples = ele mesmo; kit = os componentes; produto com variações = os componentes das variações); família = bases + todo kit que leva uma base; a lista mostra as linhas de topo que são da família ou têm variação da família. Resposta ganha `familia {sku, bases, n_kits}` e cada linha/variação `fam_qtd` (unidades da base que ela leva; nulo = fora). Na tela: faixa "Família do produto", variações da família já abertas, selo "produto base" / "leva N× o produto base" e variação de fora esmaecida. Sem o filtro a resposta é a de antes (total 1.320 conferido). 16746 → 6 linhas: ele, o kit avulso 16784 e os pais 16748/16757/16766/16776 (14 variações). Só no visual novo. Não conferido com login.
+
+**Produção (17/nov):** 16799 "Areia Ottz Pet Fina 4kg" entrou em `producao_parametros` copiando a ficha do 16054 com a farinha **BRANCA (JAJU) — fina** (insumo 17), saco transparente 4 kg + etiqueta, prefixo `OTTZF4`.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só

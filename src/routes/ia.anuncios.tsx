@@ -37,7 +37,7 @@ import {
 // ver: visão da aba (16/nov) — sem valor = "Anúncios no ar" (padrão pedido pelo dono), "produtos" = a lista de sempre, "mudancas".
 // loja/at/ord/mud7 = filtros de Anúncios no ar; f/campo = filtros de Mudanças.
 type Busca = {
-  q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string;
+  q?: string; fam?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; p?: number; teste?: string;
   ver?: string; loja?: string; at?: string; ord?: string; mud7?: string; f?: string; campo?: string;
   mk?: string; dias?: string; per?: string;
 };
@@ -89,6 +89,8 @@ const texto = (v: unknown) => (typeof v === "string" && v ? v : typeof v === "nu
 export const Route = createFileRoute("/ia/anuncios")({
   validateSearch: (s: Record<string, unknown>): Busca => ({
     q: texto(s.q),
+    // família do produto (17/nov): SKU cujo conjunto — ele, os kits que o levam e os pais dessas variações — a lista mostra
+    fam: texto(s.fam),
     marca: texto(s.marca),
     sit: SITUACOES.some((x) => x.id === s.sit) && s.sit !== "todos" ? String(s.sit) : undefined,
     tipo: ["S", "K", "V", "APP"].includes(String(s.tipo)) ? String(s.tipo) : undefined,
@@ -113,7 +115,7 @@ export const Route = createFileRoute("/ia/anuncios")({
 
 function AnunciosPage() {
   const busca = Route.useSearch();
-  const { q, marca, sit, tipo, sem, giro, ordem, p, teste } = busca;
+  const { q, marca, sit, tipo, sem, giro, ordem, p, teste, fam } = busca;
   const ver: Visao = busca.ver === "produtos" ? "produtos" : busca.ver === "mudancas" ? "mudancas" : "noar";
   const nav = useNavigate({ from: "/ia/anuncios" });
   const set = (x: Partial<Busca>) => void nav({ search: (s: Busca) => ({ ...s, p: undefined, ...x }), replace: true, resetScroll: false });
@@ -127,7 +129,7 @@ function AnunciosPage() {
   }, [digitado]);
 
   const catQ = useQuery({
-    queryKey: ["ia-anuncio", "catalogo", q ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? ORDEM_PADRAO, pagina],
+    queryKey: ["ia-anuncio", "catalogo", q ?? "", fam ?? "", marca ?? "", sit ?? "todos", tipo ?? "", sem ?? "", giro ?? "", ordem ?? ORDEM_PADRAO, pagina],
     placeholderData: (anterior) => anterior,
     enabled: ver === "produtos",
     queryFn: async (): Promise<IaCatalogo> => {
@@ -136,6 +138,8 @@ function AnunciosPage() {
         p_ordem: ordem ?? ORDEM_PADRAO, p_offset: (pagina - 1) * POR_PAGINA, p_limit: POR_PAGINA, p_tipo: tipo ?? null,
         // só manda quando há filtro de estoque parado (p_giro tem default na função)
         ...(giro ? { p_giro: giro } : {}),
+        // família do produto: só manda quando ligado (p_familia tem default; RPC versao 7)
+        ...(fam ? { p_familia: fam } : {}),
       });
       if (error) throw error;
       return data as IaCatalogo;
@@ -169,6 +173,8 @@ function AnunciosPage() {
   // "Importar do Tiny": produto cadastrado hoje no Tiny entra no sistema na hora (sem esperar a madrugada)
   const [importarAberto, setImportarAberto] = useState<string | null>(null);
   const verSku = (sku: string) => { setDigitado(sku); set({ q: sku, sit: undefined, tipo: undefined, sem: undefined, marca: undefined, giro: undefined }); };
+  // família: o produto, os kits que o levam e os produtos com variações que têm esses kits. Limpa a busca e os outros filtros.
+  const verFamilia = (sku: string) => { setDigitado(""); set({ fam: sku, q: undefined, sit: undefined, tipo: undefined, sem: undefined, marca: undefined, giro: undefined }); };
   // ligar o filtro de estoque parado já ordena pelo dinheiro parado (se a ordem estiver no padrão); desligar volta
   const escolherGiro = (id: string) => {
     const novo = id === "todos" ? undefined : id;
@@ -211,7 +217,7 @@ function AnunciosPage() {
     <>
       <ProtecaoPacking antigo={antigo()}>
         <ListaNova cat={cat} carregando={catQ.isLoading} erro={catQ.isError ? (catQ.error as Error).message : null} onTentar={() => void catQ.refetch()}
-          buscando={catQ.isFetching} digitado={digitado} setDigitado={setDigitado} filtros={{ q, marca, sit, tipo, sem, giro, ordem, teste }} set={set}
+          buscando={catQ.isFetching} digitado={digitado} setDigitado={setDigitado} filtros={{ q, fam, marca, sit, tipo, sem, giro, ordem, teste }} set={set} onFamilia={verFamilia}
           escolherGiro={escolherGiro} pagina={pagina} paginas={paginas} total={total} composicoes={kitsQ.data} comCapa={comCapa}
           selecionados={selecionados} alternar={alternar} limparSel={() => setSelecionados([])} abrirCores={() => setCoresAberto(true)}
           onVariacoes={setVariacoesDe} onImportar={(t) => setImportarAberto(t)} />
@@ -845,17 +851,17 @@ function canaisComAnunciados(x: IaCatalogoLinha, anunciados?: Record<string, Anu
 }
 
 function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDigitado, filtros, set, escolherGiro, pagina, paginas, total,
-  composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, onVariacoes, onImportar }: {
+  composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, onVariacoes, onImportar, onFamilia }: {
   cat: IaCatalogo | undefined; carregando: boolean; erro: string | null; onTentar: () => void; buscando: boolean;
   digitado: string; setDigitado: (v: string) => void;
-  filtros: { q?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; teste?: string };
+  filtros: { q?: string; fam?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; teste?: string };
   set: (x: Partial<Busca>) => void; escolherGiro: (id: string) => void;
   pagina: number; paginas: number; total: number;
   composicoes: Record<string, Componente[]> | undefined; comCapa: (x: IaCatalogoLinha) => IaCatalogoLinha;
   selecionados: string[]; alternar: (sku: string) => void; limparSel: () => void; abrirCores: () => void;
-  onVariacoes: (sku: string) => void; onImportar: (q: string) => void;
+  onVariacoes: (sku: string) => void; onImportar: (q: string) => void; onFamilia: (sku: string) => void;
 }) {
-  const { q, marca, sit, tipo, sem, giro, ordem, teste } = filtros;
+  const { q, fam, marca, sit, tipo, sem, giro, ordem, teste } = filtros;
   const [mais, setMais] = useState(false);
   // testes A/B (16/nov): bloco com os anúncios do teste, envio à Shopee e histórico de mudanças
   const marcQ = useMarcacoes();
@@ -876,6 +882,13 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
   if (sem) chips.push({ nome: `Ainda não vende em ${nomeCanal(sem)}`, tirar: () => set({ sem: undefined }) });
   if (marca) chips.push({ nome: `Marca: ${marca}`, tirar: () => set({ marca: undefined }) });
   if (q) chips.push({ nome: `“${q}”`, tirar: () => { setDigitado(""); set({ q: undefined }); } });
+  if (fam) chips.push({ nome: `Família de ${fam}`, tirar: () => set({ fam: undefined }) });
+  // "pesquisei um produto → ver a família dele": o SKU buscado (linha ou variação) ou a única linha achada
+  const alvoFam = !fam && q && (cat?.versao ?? 1) >= 7
+    ? (linhas.find((x) => x.sku === q || (x.variacoes ?? []).some((v) => v.sku === q)) ? q : linhas.length === 1 ? linhas[0].sku : null)
+    : null;
+  const famInfo = fam ? cat?.familia ?? null : null;
+  const nVarsFam = linhas.reduce((s, x) => s + (x.variacoes ?? []).filter((v) => v.fam_qtd != null).length, 0);
 
   return (
     <div className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 12, padding: "16px 24px 96px", maxWidth: 1440, margin: "0 auto", color: "var(--pm-t)" }}>
@@ -992,15 +1005,42 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
                 {c.nome}{c.n != null && <span className={MONO_A} style={{ fontSize: 11, opacity: 0.9 }}>{int(c.n)}</span>}<X className="h-3.5 w-3.5" />
               </button>
             ))}
-            <button type="button" onClick={() => { setDigitado(""); set({ q: undefined, sit: undefined, tipo: undefined, giro: undefined, sem: undefined, marca: undefined, ordem: undefined }); }}
+            <button type="button" onClick={() => { setDigitado(""); set({ q: undefined, fam: undefined, sit: undefined, tipo: undefined, giro: undefined, sem: undefined, marca: undefined, ordem: undefined }); }}
               style={{ height: 30, padding: "0 10px", borderRadius: 8, border: 0, background: "transparent", color: "var(--pm-at)", cursor: "pointer", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}>
               Limpar tudo
             </button>
+            {alvoFam && (
+              <button type="button" onClick={() => onFamilia(alvoFam)} title="O produto, os kits que levam ele e os produtos com variações que têm esses kits"
+                style={{ ...btnSec, height: 30, fontSize: 12 }}>
+                <Layers className="h-3.5 w-3.5" />Ver a família de {alvoFam}
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {q && <AnunciosAchados busca={q} onSku={(sku) => setDigitado(sku)} />}
+
+      {fam && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 14px", padding: "12px 16px", borderRadius: 14, border: "1px solid var(--pm-a)", background: "var(--pm-as)" }}>
+          <Layers className="h-4 w-4" style={{ color: "var(--pm-at)" }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: "1 1 320px" }}>
+            <b style={{ fontSize: 14 }}>Família do produto <span className={MONO_A}>{fam}</span></b>
+            <span style={{ fontSize: 12.5, color: "var(--pm-t2)" }}>
+              {famInfo
+                ? <>Produto base: {famInfo.bases.map((b) => `${b.sku} ${b.nome ?? ""}`.trim()).join(" · ")}</>
+                : (cat?.versao ?? 1) < 7 ? "O banco ainda não entende o filtro de família." : "Lendo a família…"}
+            </span>
+            {famInfo && (
+              <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>
+                {int(total)} {total === 1 ? "linha" : "linhas"} na lista · {int(famInfo.n_kits)} {famInfo.n_kits === 1 ? "kit leva" : "kits levam"} o produto base
+                {nVarsFam > 0 && <> · {int(nVarsFam)} deles são variações de produtos com variações (abertas abaixo)</>}
+              </span>
+            )}
+          </div>
+          <button type="button" style={btnSec} onClick={() => set({ fam: undefined })}><X className="h-3.5 w-3.5" />Sair da família</button>
+        </div>
+      )}
 
       {/* tabela */}
       <div style={{ background: "var(--pm-s)", border: "1px solid var(--pm-bs)", borderRadius: 14, boxShadow: "var(--pm-sh)", overflow: "hidden" }}>
@@ -1031,8 +1071,8 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
               </div>
             ) : linhas.map((x0) => {
               const x = comCapa(x0);
-              return <LinhaNova key={x.sku} x={x} canalPadrao={canalPadrao} composicao={composicoes?.[x.sku]} publicadas={pubQ.data} anunciados={anunQ.data}
-                selecionado={selecionados.includes(x.sku)} onSelecionar={alternar} onVariacoes={onVariacoes} />;
+              return <LinhaNova key={`${fam ?? ""}-${x.sku}`} x={x} canalPadrao={canalPadrao} composicao={composicoes?.[x.sku]} publicadas={pubQ.data} anunciados={anunQ.data}
+                selecionado={selecionados.includes(x.sku)} onSelecionar={alternar} onVariacoes={onVariacoes} modoFamilia={!!fam} onFamilia={(cat?.versao ?? 1) >= 7 ? onFamilia : undefined} />;
             })}
           </div>
         </div>
@@ -1082,13 +1122,16 @@ function estadoIa(x: IaCatalogoLinha, publicadas: number) {
   return { cores: [texto, fotos, envio], txt: partes.join(" · "), r, outros: x.rascunhos.length - 1 };
 }
 
-function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variacao, selecionado, onSelecionar, onVariacoes }: {
+function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variacao, selecionado, onSelecionar, onVariacoes, modoFamilia, onFamilia }: {
   x: IaCatalogoLinha; canalPadrao: string; composicao?: Componente[]; publicadas?: Record<string, number>; anunciados?: Record<string, Anunciado[]>; variacao?: boolean;
   selecionado?: boolean; onSelecionar?: (sku: string) => void; onVariacoes: (sku: string) => void;
+  /** filtro de família ligado: as variações da família já vêm abertas e cada linha diz quanto leva do produto base */
+  modoFamilia?: boolean; onFamilia?: (sku: string) => void;
 }) {
   const qc = useQueryClient();
-  const [aberto, setAberto] = useState(false);
   const filhas = x.variacoes ?? [];
+  const [aberto, setAberto] = useState(!!modoFamilia && filhas.some((v) => v.fam_qtd != null));
+  const foraDaFamilia = !!modoFamilia && !!variacao && x.fam_qtd == null;
   const canais = canaisComAnunciados(x, anunciados);
   const podeSel = !variacao && x.tipo === "S";
   const ia = estadoIa(x, publicadas?.[x.sku] ?? 0);
@@ -1100,7 +1143,7 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
   const marcs = marcacoesDoSku(marcQ.data?.porSku, x.sku);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: GRADE_A, gap: 12, alignItems: "center", padding: variacao ? "6px 14px" : "10px 14px", borderTop: "1px solid var(--pm-b)", background: selecionado ? "var(--pm-as)" : variacao ? "var(--pm-s2)" : "var(--pm-s)" }}
+      <div style={{ display: "grid", gridTemplateColumns: GRADE_A, gap: 12, alignItems: "center", padding: variacao ? "6px 14px" : "10px 14px", borderTop: "1px solid var(--pm-b)", background: selecionado ? "var(--pm-as)" : variacao ? "var(--pm-s2)" : "var(--pm-s)", opacity: foraDaFamilia ? 0.55 : 1 }}
         className={selecionado ? "" : "pm-linha-hv"}>
         {podeSel ? (
           <button type="button" aria-label="Selecionar" title="Selecionar para criar um produto com variações de cor × quantidade" onClick={() => onSelecionar?.(x.sku)}
@@ -1122,6 +1165,12 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
               {Number(x.un30) > 0 && <span>{int(Number(x.un30))} un em 30 d</span>}
               {x.giro && x.giro.length > 0 && <GiroNovo x={x} />}
               {x.sem_capa && <span style={{ fontWeight: 600, color: "var(--pm-am)" }}>fotos da família · falta a capa</span>}
+              {modoFamilia && x.fam_qtd != null && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "0 7px", borderRadius: 5, background: "var(--pm-a)", color: "var(--pm-oa)" }}>
+                  {x.tipo !== "K" && Number(x.fam_qtd) === 1 ? "produto base" : `leva ${int(Number(x.fam_qtd))}× o produto base`}
+                </span>
+              )}
+              {foraDaFamilia && <span style={{ fontSize: 11, color: "var(--pm-t3)" }}>não leva o produto base</span>}
               {marcs.map((m) => <EtiquetaMarcacao key={m.id} m={m} />)}
             </div>
             {composicao && composicao.length > 0 && (
@@ -1171,6 +1220,12 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
                   <span className="font-semibold">Criar kit ou produto com variações</span>
                   <span className="text-[11px] text-muted-foreground">{x.tipo === "S" ? "usa este como base: kit avulso ou variações" : "só produto simples"}</span>
                 </DropdownMenuItem>
+                {onFamilia && (
+                  <DropdownMenuItem onSelect={() => onFamilia(x.sku)} className="flex flex-col items-start gap-0">
+                    <span className="font-semibold">Ver a família deste produto</span>
+                    <span className="text-[11px] text-muted-foreground">os kits que levam ele e os produtos com essas variações</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onSelect={() => void atualizarDoTiny(x.sku, qc)} className="flex flex-col items-start gap-0">
                   <span className="font-semibold">Atualizar do Tiny</span>
                   <span className="text-[11px] text-muted-foreground">relê custo, foto, kit e variações</span>
@@ -1192,7 +1247,7 @@ function LinhaNova({ x, canalPadrao, composicao, publicadas, anunciados, variaca
           )}
         </div>
       </div>
-      {aberto && filhas.map((v) => <LinhaNova key={v.sku} x={v} canalPadrao={canalPadrao} publicadas={publicadas} anunciados={anunciados} variacao onVariacoes={onVariacoes} />)}
+      {aberto && filhas.map((v) => <LinhaNova key={v.sku} x={v} canalPadrao={canalPadrao} publicadas={publicadas} anunciados={anunciados} variacao onVariacoes={onVariacoes} modoFamilia={modoFamilia} />)}
     </>
   );
 }

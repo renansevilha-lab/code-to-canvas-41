@@ -19,6 +19,25 @@
 --   ganha `giro` (contagem) e `giro_em`; `versao` 6. A de 8 parâmetros é removida na migração (chamada com
 --   argumentos nomeados continua valendo: p_giro tem default).
 -- 22/out/2026: busca sem acento e por palavras (todas, qualquer ordem); SKU por prefixo. Migração ia_catalogo_busca_sem_acento.
+-- v2.3 (17/nov/2026, pedido do dono) — FAMÍLIA do produto: p_familia = um SKU. Bases = ele mesmo (simples), os
+--   componentes (kit) ou os componentes das variações (produto com variações); a família = as bases + todo kit que
+--   leva uma base. A lista mostra as linhas de topo que são da família ou têm variação da família. Resposta ganha
+--   `familia` {sku, bases, n_kits} e cada linha/variação `fam_qtd` (quantas unidades da base ela leva; null = fora);
+--   `versao` 7. 10 parâmetros (p_familia no fim, com default); a de 9 é removida na migração.
+create or replace function public.produto_familia_bases(p_sku text)
+returns text[] language sql stable set search_path to 'public' as $fam$
+  with filhos as (
+    select p.sku from public.produtos p where p.sku_pai = p_sku and p.sku <> p_sku and p.ativo
+  ), x as (
+    select sku from filhos
+    union all select p_sku where not exists (select 1 from filhos)
+  )
+  select coalesce(array_agg(distinct coalesce(k.sku_componente, x.sku)), array[p_sku])
+  from x left join public.produto_kits k on k.sku_kit = x.sku
+$fam$;
+revoke all on function public.produto_familia_bases(text) from public, anon;
+grant execute on function public.produto_familia_bases(text) to authenticated, service_role;
+
 create or replace function public.ia_bate_busca(p_sku text, p_nome text, p_busca text)
 returns boolean language sql immutable set search_path = public as $$
   select coalesce(p_sku, '') ilike btrim(p_busca) || '%'
@@ -32,16 +51,21 @@ grant execute on function public.ia_bate_busca(text, text, text) to authenticate
 create or replace function public.ia_catalogo(
   p_busca text default null, p_marca text default null, p_situacao text default 'todos',
   p_sem_canal text default null, p_ordem text default 'vendas', p_offset integer default 0, p_limit integer default 50,
-  p_tipo text default null, p_giro text default null)
+  p_tipo text default null, p_giro text default null, p_familia text default null)
 returns jsonb language plpgsql stable security definer set search_path to 'public' as $function$
 declare
   v jsonb; v_b text := nullif(btrim(coalesce(p_busca, '')), '');
   v_lim int := least(greatest(coalesce(p_limit, 50), 1), 200); v_off int := greatest(coalesce(p_offset, 0), 0);
   v_sit text := coalesce(nullif(p_situacao, ''), 'todos'); v_tipo text := nullif(upper(btrim(coalesce(p_tipo, ''))), '');
   v_giro text := nullif(lower(btrim(coalesce(p_giro, ''))), '');
+  v_fs text := nullif(btrim(coalesce(p_familia, '')), ''); v_bases text[]; v_fam text[];
 begin
   if v_giro not in ('parado', 'sem_giro', 'excesso') then v_giro := null; end if;
   if not public.tem_modulo('ia') then raise exception 'Sem acesso ao módulo IA.'; end if;
+  if v_fs is not null then
+    v_bases := public.produto_familia_bases(v_fs);
+    v_fam := v_bases || coalesce((select array_agg(distinct k.sku_kit) from public.produto_kits k where k.sku_componente = any (v_bases)), '{}'::text[]);
+  end if;
   with base as (
     select p.sku, p.nome, coalesce(p.marca_manual, p.marca) as marca, p.tipo, p.sku_pai, (p.criado_app_em is not null) as app
     from public.produtos p
@@ -101,6 +125,7 @@ begin
     select i.pai as sku, count(*) as n, sum(i.un30) as un30, sum(i.un120) as un120, max(i.ultimo) as ultimo,
            bool_or(i.situacao = 'pronto') as pronto, bool_or(i.situacao <> 'sem') as tem, bool_or(i.sem_capa) as sem_capa,
            bool_or(v_b is not null and ia_bate_busca(i.sku, i.nome, v_b)) as bate,
+           bool_or(v_fam is not null and i.sku = any (v_fam)) as da_fam,
            bool_or(i.sg) as sg, bool_or(i.ex) as ex
     from it i where i.pai is not null group by 1
   ), fam_giro as (
@@ -131,6 +156,7 @@ begin
     from it i left join fam fm on fm.sku = i.sku left join fam_canais fc on fc.sku = i.sku left join fam_giro fg on fg.sku = i.sku
     where i.pai is null
       and (v_b is null or ia_bate_busca(i.sku, i.nome, v_b) or coalesce(fm.bate, false))
+      and (v_fam is null or i.sku = any (v_fam) or coalesce(fm.da_fam, false))
       and (coalesce(p_marca, '') = '' or i.marca = p_marca)
       and (coalesce(p_sem_canal, '') = '' or not (p_sem_canal = any (i.vende || coalesce(fc.vende, '{}'::text[]))))
   ), f2 as (
@@ -155,7 +181,10 @@ begin
     select * from num where rn > v_off and rn <= v_off + v_lim
   )
   select jsonb_build_object(
-    'versao', 6,
+    'versao', 7,
+    'familia', case when v_fam is null then null else jsonb_build_object('sku', v_fs,
+                 'bases', (select coalesce(jsonb_agg(jsonb_build_object('sku', b.sku, 'nome', b.nome) order by b.sku), '[]'::jsonb) from public.produtos b where b.sku = any (v_bases)),
+                 'n_kits', coalesce(array_length(v_fam, 1), 0) - coalesce(array_length(v_bases, 1), 0)) end,
     'total', (select count(*) from g),
     'contagem', (select jsonb_build_object('todos', count(*), 'sem', count(*) filter (where situacao = 'sem'),
                    'andamento', count(*) filter (where situacao = 'andamento'), 'pronto', count(*) filter (where situacao = 'pronto'),
@@ -172,11 +201,15 @@ begin
                  'un30', pag.un30, 'un120', pag.un120, 'canais', coalesce(pag.canais, '[]'::jsonb),
                  'rascunhos', coalesce(pag.rascunhos, '[]'::jsonb), 'situacao', pag.situacao, 'sem_capa', pag.sem_capa,
                  'n_variacoes', pag.n_variacoes, 'criado_app', pag.app, 'giro', pag.fis, 'giro_valor', pag.giro_valor,
+                 'fam_qtd', case when v_bases is null then null when pag.sku = any (v_bases) then 1
+                   else (select sum(k.quantidade) from public.produto_kits k where k.sku_kit = pag.sku and k.sku_componente = any (v_bases)) end,
                  'variacoes', case when pag.n_variacoes = 0 then '[]'::jsonb else (
                    select coalesce(jsonb_agg(jsonb_build_object(
                             'sku', vr.sku, 'nome', vr.nome, 'tipo', vr.tipo, 'foto', vf.foto, 'custo', vc.cmv_efetivo,
                             'un30', vr.un30, 'un120', vr.un120, 'canais', coalesce(vr.canais, '[]'::jsonb),
-                            'rascunhos', coalesce(vr.rascunhos, '[]'::jsonb), 'situacao', vr.situacao, 'sem_capa', vr.sem_capa, 'giro', vr.fis)
+                            'rascunhos', coalesce(vr.rascunhos, '[]'::jsonb), 'situacao', vr.situacao, 'sem_capa', vr.sem_capa, 'giro', vr.fis,
+                            'fam_qtd', case when v_bases is null then null when vr.sku = any (v_bases) then 1
+                              else (select sum(k.quantidade) from public.produto_kits k where k.sku_kit = vr.sku and k.sku_componente = any (v_bases)) end)
                             order by vr.un30 desc, vr.un120 desc, vr.sku), '[]'::jsonb)
                    from it vr
                    left join public.view_foto_produto vf on vf.sku = vr.sku
@@ -189,3 +222,6 @@ begin
   ) into v;
   return v;
 end $function$;
+
+revoke all on function public.ia_catalogo(text, text, text, text, text, integer, integer, text, text, text) from public, anon;
+grant execute on function public.ia_catalogo(text, text, text, text, text, integer, integer, text, text, text) to authenticated, service_role;

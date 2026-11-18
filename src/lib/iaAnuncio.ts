@@ -83,6 +83,8 @@ export interface IaCatalogoLinha {
   giro?: IaGiroFis[] | null;
   /** soma do valor em estoque desses produtos físicos (custo × estoque total) */
   giro_valor?: number | null;
+  /** filtro de família (RPC versao 7): quantas unidades do produto base esta linha leva (1 = o próprio base; nulo = fora da família) */
+  fam_qtd?: number | null;
 }
 /** Um produto físico parado, na regra do agente de compras (view_cobertura_fornecedor, retrato do dia). */
 export interface IaGiroFis {
@@ -100,6 +102,8 @@ export interface IaCatalogo {
   giro?: Record<string, number>;
   /** quando o retrato de estoque/cobertura foi tirado (ads_cobertura_sku) */
   giro_em?: string | null;
+  /** versao 7, só com o filtro de família: o SKU pedido, os produtos base e quantos kits levam um deles */
+  familia?: { sku: string; bases: { sku: string; nome: string | null }[]; n_kits: number } | null;
 }
 export interface IaHistSku {
   sku: string; canal: string; empresa: string; unidades_30d: number; unidades_120d: number; pedidos_mono: number;
