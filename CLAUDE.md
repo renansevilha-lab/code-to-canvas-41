@@ -1632,6 +1632,13 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   recalculada a cada valor (`modulo=simular`) e a escolha vale também no **Trocar** (antes ia sempre o preço sugerido). Sem custo cadastrado a linha só
   mostra "desconto à escolha" (o app não aplica sem MC). **Não feito:** mudar o desconto de quem JÁ está na campanha (hoje = tirar e aplicar de novo;
   o ML tem PUT para isso, exige mexer na `ml-promocoes`).
+  **18/nov (o dono voltou: "ainda não permite escolher percentual"):** a mudança estava no ar, mas o link era um texto de 10 px e não havia nada
+  para quem JÁ está na campanha (o robô entrou em 63 anúncios da Black Friday, vários com preço ajustado). Agora o link é um botão ("% escolher · 3% a
+  80%") e anúncio já dentro de campanha tradicional (DEAL, sem `offer_id`) ganhou **"% mudar desconto"**: o diálogo (tipo `mudar`) tira da campanha
+  (`modulo=remover`), espera o ML voltar a oferecê-la como candidata (lê `estado` até 6×), entra com o preço novo (`modulo=aplicar`) e, se o ML recusar,
+  recoloca com o preço de antes; se nem isso der, avisa que o anúncio ficou FORA. Só front, usando os módulos de sempre. O ML **não informa a faixa**
+  de quem já entrou (`estado` vem com min/max nulos): a tela usa a faixa do espelho ou a mediana dos candidatos da mesma campanha (≈ 3% a 80%) e o ML
+  confere na hora. **A troca de desconto não foi testada com escrita real** — o 1º uso do dono é o teste.
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +

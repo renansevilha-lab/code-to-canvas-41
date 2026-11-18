@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, CirclePlus, ExternalLink, Loader2, Search, Trash2, X } from "lucide-react";
+import { ArrowLeftRight, CirclePlus, ExternalLink, Loader2, Percent, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
@@ -64,6 +64,12 @@ const escolheDesconto = (i: { status: string; offer_id: string | null; preco_min
 /** Desconto (%) de um preço sobre o preço cheio. */
 const descDe = (preco: number | null | undefined, cheio: number | null | undefined) => (preco != null && num(cheio) > 0 ? (1 - num(preco) / num(cheio)) * 100 : null);
 const pctTxtDe = (x: number | null) => (x == null ? "" : String(Math.round(x * 10) / 10).replace(".", ","));
+/** Já está numa campanha em que o desconto é do vendedor (tradicional, sem oferta fixa): dá para trocar o desconto. */
+const podeMudarDesconto = (i: { status: string; offer_id: string | null; promocao_tipo: string | null; original_price: number | null; promo_price: number | null }) =>
+  i.status === "started" && i.promocao_tipo === "DEAL" && !i.offer_id && num(i.original_price) > 0 && i.promo_price != null;
+type TipoAcao = "aplicar" | "remover" | "trocar" | "mudar";
+const mediana = (v: number[]) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const pilula = { display: "inline-flex", alignItems: "center", gap: 4, height: 20, padding: "0 7px", borderRadius: 6, border: "1px solid var(--pm-a)", background: "var(--pm-as)", color: "var(--pm-at)", cursor: "pointer", fontSize: 10.5, fontWeight: 600, whiteSpace: "nowrap" } as const;
 const dia = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit" }) : "—");
 const diaHora = (iso: string) => new Date(iso).toLocaleString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const ymd = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: TZ });
@@ -119,7 +125,7 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
   const [girando, setGirando] = useState(false);
   const [buscandoEleg, setBuscandoEleg] = useState(false);
   const [rodandoRobo, setRodandoRobo] = useState(false);
-  const [acao, setAcao] = useState<{ item: Item; tipo: "aplicar" | "remover" | "trocar"; d?: LinhaDecisao } | null>(null);
+  const [acao, setAcao] = useState<{ item: Item; tipo: TipoAcao; d?: LinhaDecisao } | null>(null);
   const [res, setRes] = useState<Map<string, Res>>(new Map());
 
   const promosQ = useQuery({
@@ -284,6 +290,18 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
     }
   });
   const porChave = new Map(ordenados.map((i) => [chave(i), i]));
+  // Faixa de desconto de cada campanha, tirada dos candidatos dela (o ML não informa a faixa de quem já entrou).
+  const razoes = new Map<string, { a: number[]; b: number[] }>();
+  for (const i of itens) if (escolheDesconto(i)) {
+    const r = razoes.get(i.promocao_id) ?? { a: [], b: [] };
+    r.a.push(num(i.preco_min) / num(i.original_price)); r.b.push(num(i.preco_max) / num(i.original_price));
+    razoes.set(i.promocao_id, r);
+  }
+  const faixaEstDe = (i: Item) => {
+    const r = razoes.get(i.promocao_id); const c = num(i.original_price);
+    const rMin = (r && mediana(r.a)) ?? 0.2, rMax = (r && mediana(r.b)) ?? 0.97;
+    return { min: Math.round(c * rMin * 100) / 100, max: Math.round(c * rMax * 100) / 100 };
+  };
   const linhas: LinhaPromo[] = ordenados.map((i) => {
     const [estado, motivo] = estadoDe(i);
     const t = tipoDe(i.promocao_tipo)[0];
@@ -297,9 +315,15 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
       const dd = decisoes.get(chave(i));
       const abrir = dd?.decisao === "trocar" && dd.ativo_promocao_id ? () => setAcao({ item: i, tipo: "trocar", d: dd }) : i.mc_promo != null ? () => setAcao({ item: i, tipo: "aplicar" }) : null;
       precoExtra = abrir
-        ? <button type="button" onClick={abrir} title={`O Mercado Livre deixa escolher o desconto desta promoção: de ${fx}. Clique para escolher e ver a margem.`} className="hover:underline"
-            style={{ border: 0, background: "transparent", padding: 0, cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: "var(--pm-at)", whiteSpace: "nowrap" }}>escolher desconto · {fx}</button>
+        ? <button type="button" onClick={abrir} title={`O Mercado Livre deixa escolher o desconto desta promoção: de ${fx}. Clique para escolher o percentual e ver a margem.`} className="hover:brightness-95" style={pilula}>
+            <Percent style={{ width: 11, height: 11 }} />escolher · {fx}</button>
         : <span title="Sem custo cadastrado: a margem não é calculada e o app não aplica. Cadastre o custo do produto." style={{ fontSize: 10.5, color: "var(--pm-t3)", whiteSpace: "nowrap" }}>desconto à escolha · {fx}</span>;
+    } else if (podeMudarDesconto(i)) {
+      precoExtra = (
+        <button type="button" onClick={() => setAcao({ item: i, tipo: "mudar" })} className="hover:brightness-95" style={{ ...pilula, background: "var(--pm-s)" }}
+          title="Este anúncio já está na campanha. Clique para trocar o percentual de desconto: o app tira e recoloca com o desconto novo.">
+          <Percent style={{ width: 11, height: 11 }} />mudar desconto</button>
+      );
     }
     return {
       key: chave(i), grupo: i.mlb, nome: i.titulo ?? i.mlb, sub, foto: i.foto, sku: i.sku, code: i.mlb,
@@ -505,16 +529,17 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
               </div>
             )}
             lote={{ onAlvo: () => undefined, onDesc: () => undefined }}
-            rodape="MC = receita (preço da promoção + co-financiamento do ML) − comissão − frete − imposto − CMV, por unidade, calculada no banco. Passe o mouse na MC para ver a conta. “MC hoje” é a margem no preço cheio e, embaixo, quanto ela muda por unidade ao entrar. O ML define o preço da maioria das promoções; nas que deixam escolher (campanhas e Relâmpago), clique em “escolher desconto” embaixo do preço para definir o desconto em % ou em R$ antes de aplicar. Nada vai para o Mercado Livre sem a sua confirmação." />
+            rodape="MC = receita (preço da promoção + co-financiamento do ML) − comissão − frete − imposto − CMV, por unidade, calculada no banco. Passe o mouse na MC para ver a conta. “MC hoje” é a margem no preço cheio e, embaixo, quanto ela muda por unidade ao entrar. O ML define o preço da maioria das promoções; nas que deixam escolher (campanhas e Relâmpago), o botão “% escolher” embaixo do preço abre a escolha do desconto em % ou em R$; em quem já está numa campanha dessas, “% mudar desconto” troca o percentual. Nada vai para o Mercado Livre sem a sua confirmação." />
         </div>
       )}
 
       {acao && (
         <DialogoAcaoML key={chave(acao.item) + acao.tipo} acao={acao} nomeUsuario={perfil?.nome ?? null}
+          faixaEst={acao.tipo === "mudar" ? faixaEstDe(acao.item) : null}
           onFechar={() => setAcao(null)}
           onResultado={(r) => {
             setRes((m) => new Map(m).set(chave(acao.item), r));
-            if (r.tipo === "aplicado") void qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
+            if (r.tipo === "aplicado" || acao.tipo === "mudar") void qc.invalidateQueries({ queryKey: ["promocoes-ml"] });
           }} />
       )}
     </>
@@ -526,13 +551,15 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
 // (faixa de preço, estoque do Relâmpago, se ainda está disponível) e simula a MC
 // no preço escolhido. Mesma lógica do modal da tela antiga.
 // ============================================================================
-function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
-  acao: { item: Item; tipo: "aplicar" | "remover" | "trocar"; d?: LinhaDecisao };
-  nomeUsuario: string | null; onFechar: () => void; onResultado: (r: Res) => void;
+function DialogoAcaoML({ acao, nomeUsuario, faixaEst, onFechar, onResultado }: {
+  acao: { item: Item; tipo: TipoAcao; d?: LinhaDecisao };
+  nomeUsuario: string | null; faixaEst?: { min: number; max: number } | null; onFechar: () => void; onResultado: (r: Res) => void;
 }) {
   const { item, tipo, d } = acao;
   const aplicar = tipo === "aplicar";
-  const entra = tipo !== "remover"; // aplicar ou trocar: entra numa promoção, então pode escolher o desconto quando o ML deixa
+  const mudar = tipo === "mudar"; // já está na campanha: troca só o desconto (sai e entra de novo)
+  const entra = tipo !== "remover"; // aplicar, trocar ou mudar: define o preço da promoção, então pode escolher o desconto quando o ML deixa
+  const [passo, setPasso] = useState<string | null>(null);
   const cheio = num(item.original_price);
   const [vivo, setVivo] = useState<Vivo | null | "ausente">(null);
   const [vivoLoading, setVivoLoading] = useState(entra);
@@ -581,7 +608,8 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
   }, [entra, preco, item]);
 
   const vv = vivo && vivo !== "ausente" ? vivo : null;
-  const fMin = vv?.min ?? item.preco_min, fMax = vv?.max ?? item.preco_max;
+  const fMin = vv?.min ?? item.preco_min ?? faixaEst?.min ?? null, fMax = vv?.max ?? item.preco_max ?? faixaEst?.max ?? null;
+  const faixaEstimada = mudar && vv?.min == null && item.preco_min == null;
   const ajustavel = entra && fMin != null && fMax != null && !item.offer_id && cheio > 0;
   const relampago = ehRelampago(item.promocao_tipo);
   const indisponivel = entra && vivo === "ausente";
@@ -589,9 +617,10 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
   const usandoSim = ajustavel && sim != null && preco != null && preco !== item.promo_price;
   const mcPara = tipo === "remover" ? item.mc_atual : usandoSim ? sim!.mc : item.mc_promo;
   const mcParaPct = tipo === "remover" ? item.mc_atual_pct : usandoSim ? sim!.mc_pct : item.mc_promo_pct;
-  const mcDe = tipo === "remover" ? item.mc_promo : tipo === "trocar" ? d?.ativo_mc ?? null : item.mc_atual;
-  const mcDePct = tipo === "remover" ? item.mc_promo_pct : tipo === "trocar" ? null : item.mc_atual_pct;
-  const precoDe = tipo === "remover" ? num(item.promo_price) : tipo === "trocar" ? null : num(item.original_price);
+  const mcDe = tipo === "remover" || mudar ? item.mc_promo : tipo === "trocar" ? d?.ativo_mc ?? null : item.mc_atual;
+  const mcDePct = tipo === "remover" || mudar ? item.mc_promo_pct : tipo === "trocar" ? null : item.mc_atual_pct;
+  const precoDe = tipo === "remover" || mudar ? num(item.promo_price) : tipo === "trocar" ? null : num(item.original_price);
+  const semMudanca = mudar && preco != null && preco === num(item.promo_price);
   const precoPara = tipo === "remover" ? num(item.original_price) : num(preco ?? item.promo_price);
   const semPreco = ajustavel && preco == null;
   /** Desconto digitado em % → preço; encosta no limite da faixa quando a diferença é só de centavos (3% dá R$ 145,40 e o máximo é R$ 145,39). */
@@ -603,11 +632,43 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
     return v;
   };
   const neg = tipo !== "remover" && mcPara != null && mcPara < 0;
-  const bloqueado = executando || simLoading || (entra && (vivoLoading || indisponivel || foraFaixa || semPreco)) || (aplicar && relampago && !estoque);
+  const bloqueado = executando || simLoading || (entra && (vivoLoading || indisponivel || foraFaixa || semPreco)) || (aplicar && relampago && !estoque) || semMudanca;
+
+  /** Troca o desconto de quem já está na campanha: tira, espera o ML voltar a oferecer, entra com o preço novo.
+   *  Se o novo for recusado, recoloca com o preço de antes. Cada passo usa os módulos de sempre (remover / aplicar). */
+  async function mudarDesconto(): Promise<Res> {
+    const novo = preco!, antigo = num(item.promo_price);
+    const base: Record<string, string> = { mlb: item.mlb, promocao_id: item.promocao_id, tipo: item.promocao_tipo ?? "", confirmar: "1" };
+    if (nomeUsuario) base.por = nomeUsuario;
+    const qs = (o: Record<string, string>) => new URLSearchParams({ ...base, ...o }).toString();
+    const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const lerVivo = async () => {
+      const r = await chamarML(`modulo=estado&mlb=${item.mlb}&promocao_id=${encodeURIComponent(item.promocao_id)}&tipo=${item.promocao_tipo ?? ""}`).catch(() => null);
+      return (r?.promocao ?? null) as Vivo | null;
+    };
+    const entrar = (p: number) => chamarML(qs({ modulo: "aplicar", deal_price: String(p) }), true).catch((e) => ({ ok: false, mensagem: (e as Error).message }));
+    setPasso("Tirando da campanha…");
+    const sai = await chamarML(qs({ modulo: "remover" }), true);
+    if (!sai.ok) return { tipo: "recusado", motivo: `não consegui tirar da campanha para trocar o desconto (${sai.mensagem ?? sai.erro ?? "sem detalhe"}) — nada mudou` };
+    setPasso("Esperando o Mercado Livre liberar a campanha de novo…");
+    let cand: Vivo | null = null;
+    for (let t = 0; t < 6 && !cand; t++) { await espera(t === 0 ? 1500 : 2500); const e = await lerVivo(); if (e && e.status === "candidate") cand = e; }
+    const fora = cand != null && ((cand.min != null && novo < cand.min - 0.001) || (cand.max != null && novo > cand.max + 0.001));
+    let r: any;
+    if (fora) r = { ok: false, mensagem: `o Mercado Livre só aceita de ${BRL(num(cand!.max))} a ${BRL(num(cand!.min))} nesta campanha` };
+    else { setPasso("Entrando com o desconto novo…"); r = await entrar(novo); }
+    if (r.ok && !r.ja_estava) return { tipo: "aplicado", motivo: `desconto trocado: ${BRL(antigo)} → ${BRL(novo)} (−${pctTxtDe(descDe(novo, cheio))}%)` };
+    if (r.ok && r.ja_estava) return { tipo: "recusado", motivo: "o Mercado Livre ainda mostra o anúncio na campanha com o preço de antes — não consegui confirmar a troca. Clique em Sincronizar e confira o preço deste anúncio." };
+    setPasso("O Mercado Livre recusou; voltando ao desconto de antes…");
+    const v: any = await entrar(antigo);
+    if (v.ok) return { tipo: "recusado", motivo: `${r.mensagem ?? "o Mercado Livre não aceitou o desconto novo"} — o anúncio voltou para a campanha com o desconto de antes (${BRL(antigo)})` };
+    return { tipo: "recusado", motivo: `${r.mensagem ?? "o Mercado Livre não aceitou o desconto novo"}. ATENÇÃO: o anúncio ficou FORA da campanha — não consegui recolocar (${v.mensagem ?? "sem detalhe"}). Clique em Sincronizar e aplique de novo pela lista.` };
+  }
 
   async function executar() {
     setExecutando(true);
     try {
+      if (mudar) { const resultado = await mudarDesconto(); setFim(resultado); onResultado(resultado); return; }
       let p: URLSearchParams;
       if (tipo === "trocar") {
         p = new URLSearchParams({ modulo: "trocar", mlb: item.mlb, de_promocao_id: d!.ativo_promocao_id!, de_tipo: d!.ativo_tipo ?? "", para_promocao_id: item.promocao_id, para_tipo: item.promocao_tipo ?? "", confirmar: "1" });
@@ -630,10 +691,10 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
     } catch (e) {
       const resultado: Res = { tipo: "recusado", motivo: (e as Error).message };
       setFim(resultado); onResultado(resultado);
-    } finally { setExecutando(false); }
+    } finally { setExecutando(false); setPasso(null); }
   }
 
-  const titulo = tipo === "aplicar" ? "Aplicar promoção no Mercado Livre" : tipo === "remover" ? "Tirar da promoção no Mercado Livre" : "Trocar de promoção no Mercado Livre";
+  const titulo = tipo === "aplicar" ? "Aplicar promoção no Mercado Livre" : tipo === "remover" ? "Tirar da promoção no Mercado Livre" : mudar ? "Mudar o desconto no Mercado Livre" : "Trocar de promoção no Mercado Livre";
   const linha = (k: string, v: ReactNode) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, fontSize: 12.5 }}>
       <span style={{ color: "var(--pm-t2)" }}>{k}</span><span className="pm-mono" style={{ whiteSpace: "nowrap" }}>{v}</span>
@@ -677,7 +738,7 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
         {ajustavel && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 12, color: "var(--pm-t2)", textWrap: "pretty" }}>
-              <b style={{ fontWeight: 600, color: "var(--pm-t)" }}>Você escolhe o desconto</b> — de {pctTxtDe(descDe(fMax, cheio))}% a {pctTxtDe(descDe(fMin, cheio))}% (preço de {BRL(num(fMax))} a {BRL(num(fMin))}){vv ? ", conferido agora no ML" : ""}
+              <b style={{ fontWeight: 600, color: "var(--pm-t)" }}>Você escolhe o desconto</b> — de {pctTxtDe(descDe(fMax, cheio))}% a {pctTxtDe(descDe(fMin, cheio))}% (preço de {BRL(num(fMax))} a {BRL(num(fMin))}){faixaEstimada ? " — faixa estimada pelos outros anúncios da campanha; o ML confere na hora" : vv ? ", conferido agora no ML" : ""}
             </span>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--pm-t2)" }}>Desconto
@@ -736,12 +797,15 @@ function DialogoAcaoML({ acao, nomeUsuario, onFechar, onResultado }: {
           </>
         ) : (
           <>
-            <span style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>Muda o preço público do anúncio no Mercado Livre na hora.</span>
+            <span style={{ fontSize: 11.5, color: "var(--pm-t3)", textWrap: "pretty" }}>{mudar
+              ? "O app tira o anúncio da campanha e recoloca com o desconto novo (leva alguns segundos). Se o Mercado Livre recusar o novo, volta ao desconto de antes."
+              : "Muda o preço público do anúncio no Mercado Livre na hora."}</span>
+            {executando && passo && <span style={{ fontSize: 12, color: "var(--pm-t2)", display: "flex", alignItems: "center", gap: 6 }}><Loader2 className="animate-spin" style={{ width: 12, height: 12 }} />{passo}</span>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn onClick={onFechar} disabled={executando}>Cancelar</Btn>
               <Btn primario onClick={() => void executar()} disabled={bloqueado}>
                 {executando && <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} />}
-                {tipo === "aplicar" ? (neg ? "Aplicar mesmo assim" : "Confirmar e aplicar") : tipo === "remover" ? "Confirmar e tirar" : "Confirmar troca"}
+                {tipo === "aplicar" ? (neg ? "Aplicar mesmo assim" : "Confirmar e aplicar") : tipo === "remover" ? "Confirmar e tirar" : mudar ? (neg ? "Mudar mesmo assim" : "Confirmar e mudar o desconto") : "Confirmar troca"}
               </Btn>
             </div>
           </>
