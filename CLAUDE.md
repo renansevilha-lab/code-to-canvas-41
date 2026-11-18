@@ -4367,6 +4367,14 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
   noturna não os pede). A SVL antes de julho continua no banco, só não aparece. Relatório (receita bruta por NF, 2025):
   jul 266.631,87 · ago 302.301,60 · set 335.381,64 · out 420.020,68 · nov 474.804,89 · dez 541.764,41.
 
+## 5.13 Fechamento contábil da ACZ — espelho fiscal das NF-e (18/nov/2026)
+
+Pedido do dono: rotina mensal para a contabilidade (Super Goiás), só a ACZ (CNPJ 37393638000140, Lucro Real desde 01/08/2026). Pasta **`fechamento/`** (README = checklist e regras fixas; `config/classificacao_entradas.json`; `scripts/`; `saidas/` fora do git). Scripts em **Node** (a máquina não tem Python).
+- **Espelho fiscal (opção A do dono):** edge fn **`fiscal-nfe`** v1 (fonte no repositório; leitor de XML comum em `_shared/nfe.ts`, o mesmo do `fechamento/scripts/parse_nfe.mjs` — deploy leva os DOIS arquivos) lê o Tiny (conta ottz) e grava **`fiscal_nfe`** (1 linha por nota: totais do ICMSTot, emitente, UF, `cancelada` pelo EVENTO 110111) + **`fiscal_nfe_item`** (NCM, CFOP, CST e valores por item) + **`fiscal_nfe_dia`** (dias já listados). XML original gzip no bucket privado **`fiscal-xml`** (`nfe/AAAA-MM/<chave>.xml.gz`, `-canc` para o evento). SQL + rollback em `docs/fiscal-nfe.sql`. Cron **179** `fiscal-nfe-noite` (`1-14,16-29,31-44,46-59 1-8 * * *`): relê os 3 últimos dias, as canceladas de 60 dias (1×/dia), lista dias antigos (do mais novo ao mais antigo, piso 2024-11-19) e baixa 30 XMLs por rodada; para quando o Tiny avisa que restam ≤ 15 chamadas no minuto (limite 60/min dividido com a separação).
+- **API do Tiny:** `GET /notas/{id}/xml` → `{xmlNfe, xmlCancelamento}` (serve para nota de fornecedor também); a lista não traz impostos. Tipo E: ~7,5 mil "notas" por mês são frete SEM chave de acesso — só entra o que tem chave de 44 dígitos. CPF de consumidor não é guardado (`dest_doc` só CNPJ).
+- **Os quatro números** (conferidos ao centavo com jul e ago/2026 pelos ZIPs): Faturamento Bruto = soma do vNF das saídas da ACZ autorizadas (cStat 100/150) sem canceladas; Devoluções = notas de entrada emitidas pela ACZ com finalidade 4; Compras = soma do vNF das NF-e de terceiros (em ago o confirmado excluiu a NF 16381 da Santa Lucia, R$ 57.000 — motivo a confirmar). Out/2026 pelo ZIP: bruto 369.542,94 · canceladas 219 / 7.953,39 · Jussara (46176256000155) 17 / 690,43 · compras 216.209,44.
+- **Pendente:** entidade hexadecimal no nome do produto (`&#xC2;`) não é convertida pelo leitor; módulo de exportação (dados do mês + ZIP dos XMLs) e os scripts do Excel fiscal, despesas, estimativa de impostos e checagens; CT-e pela API não testado.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |

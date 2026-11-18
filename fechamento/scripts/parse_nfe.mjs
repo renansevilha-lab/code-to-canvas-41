@@ -1,4 +1,5 @@
-// Fechamento contábil ACZ Pet — leitura dos XMLs fiscais do mês.
+// Fechamento contábil ACZ Pet — leitura de XMLs fiscais a partir de ZIPs/pastas (caminho manual, de reserva).
+// O caminho normal é o espelho automático (edge function `fiscal-nfe`, que lê o Tiny toda noite).
 //
 // Lê ZIPs e/ou pastas (recursivo) com NF-e, eventos de NF-e e CT-e e grava um JSON:
 //   { gerado_em, fontes, notas: [...], eventos: [...], ctes: [...], ignorados: [...] }
@@ -6,102 +7,14 @@
 //
 // Uso:  node fechamento/scripts/parse_nfe.mjs <saida.json> <zip-ou-pasta> [<zip-ou-pasta> ...]
 //
-// Não decide nada de negócio (o que é da ACZ, cancelada, compra…): isso é do `fiscal_base.mjs`.
+// O leitor de XML é o mesmo da edge function (supabase/functions/_shared/nfe.ts).
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { lerXml, notaDe, eventosDe, cteDe } from "../../supabase/functions/_shared/nfe.ts";
 const require = createRequire(import.meta.url);
 const JSZip = require("jszip");
-
-// ---------- XML mínimo: árvore {tag: valor | objeto | lista}; prefixo de namespace e atributos (menos Id) fora ----------
-const ENT = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
-const txt = (s) => s.replace(/&(amp|lt|gt|quot|apos);/g, (m) => ENT[m]).replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
-export function lerXml(xml) {
-  const raiz = {}; const pilha = [{ no: raiz, nome: "" }];
-  const re = /<!\[CDATA\[([\s\S]*?)\]\]>|<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<\/([^\s>]+)\s*>|<([^\s/>]+)([^>]*?)(\/?)>|([^<]+)/g;
-  let m;
-  while ((m = re.exec(xml))) {
-    const topo = pilha[pilha.length - 1];
-    if (m[1] != null) { topo.texto = (topo.texto ?? "") + m[1]; continue; }
-    if (m[2] != null) {
-      const f = pilha.pop(); const pai = pilha[pilha.length - 1];
-      const vazio = Object.keys(f.no).length === 0;
-      const valor = vazio ? txt((f.texto ?? "").trim()) : f.no;
-      if (pai.no[f.nome] === undefined) pai.no[f.nome] = valor;
-      else if (Array.isArray(pai.no[f.nome])) pai.no[f.nome].push(valor);
-      else pai.no[f.nome] = [pai.no[f.nome], valor];
-      continue;
-    }
-    if (m[3] != null) {
-      const nome = m[3].includes(":") ? m[3].split(":").pop() : m[3];
-      const no = {}; const id = /\bId="([^"]*)"/.exec(m[4] ?? ""); if (id) no["@Id"] = id[1];
-      if (m[5] === "/") {
-        const pai = topo; const valor = Object.keys(no).length ? no : "";
-        if (pai.no[nome] === undefined) pai.no[nome] = valor;
-        else if (Array.isArray(pai.no[nome])) pai.no[nome].push(valor);
-        else pai.no[nome] = [pai.no[nome], valor];
-      } else pilha.push({ no, nome });
-      continue;
-    }
-    if (m[6] != null && m[6].trim()) topo.texto = (topo.texto ?? "") + m[6];
-  }
-  return raiz;
-}
-const lista = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
-const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const r2 = (n) => Math.round(n * 100) / 100;
-/** primeiro grupo filho de um nó de imposto (ex.: ICMS → ICMS00 | ICMS40 | ICMSSN102…) */
-const grupo = (no) => { if (!no || typeof no !== "object") return {}; const k = Object.keys(no).find((x) => typeof no[x] === "object"); return k ? no[k] : {}; };
-
-function notaDe(doc, arquivo) {
-  const nfe = doc.nfeProc?.NFe ?? doc.NFe; const inf = nfe?.infNFe;
-  if (!inf) return null;
-  const ide = inf.ide ?? {}, emit = inf.emit ?? {}, dest = inf.dest ?? {}, tot = inf.total?.ICMSTot ?? {};
-  const prot = doc.nfeProc?.protNFe?.infProt ?? {};
-  const cfops = {};
-  const itens = lista(inf.det).map((d, i) => {
-    const p = d.prod ?? {}, imp = d.imposto ?? {};
-    const icms = grupo(imp.ICMS), pis = grupo(imp.PIS), cof = grupo(imp.COFINS), uf = imp.ICMSUFDest ?? {};
-    cfops[p.CFOP] = r2((cfops[p.CFOP] ?? 0) + num(p.vProd));
-    return {
-      n: i + 1, cProd: p.cProd ?? "", xProd: p.xProd ?? "", NCM: p.NCM ?? "", CFOP: p.CFOP ?? "", uCom: p.uCom ?? "", qCom: num(p.qCom),
-      vProd: num(p.vProd), vDesc: num(p.vDesc), vFrete: num(p.vFrete), vOutro: num(p.vOutro),
-      orig: icms.orig ?? "", cstICMS: icms.CST ?? icms.CSOSN ?? "", pICMS: num(icms.pICMS), vBC: num(icms.vBC), vICMS: num(icms.vICMS), vST: num(icms.vICMSST),
-      vICMSUFDest: num(uf.vICMSUFDest), vFCPUFDest: num(uf.vFCPUFDest),
-      cstPIS: pis.CST ?? "", vPIS: num(pis.vPIS), cstCOFINS: cof.CST ?? "", vCOFINS: num(cof.vCOFINS),
-      vIPI: num(grupo(imp.IPI).vIPI),
-    };
-  });
-  return {
-    chave: String(inf["@Id"] ?? "").replace(/^NFe/, "") || prot.chNFe || "", numero: ide.nNF ?? "", serie: ide.serie ?? "",
-    data: ide.dhEmi ?? ide.dEmi ?? "", tpNF: ide.tpNF ?? "", finNFe: ide.finNFe ?? "", natOp: ide.natOp ?? "",
-    emit_cnpj: emit.CNPJ ?? emit.CPF ?? "", emit_nome: emit.xNome ?? "", emit_uf: emit.enderEmit?.UF ?? "",
-    dest_doc: dest.CNPJ ?? dest.CPF ?? dest.idEstrangeiro ?? "", dest_nome: dest.xNome ?? "", dest_uf: dest.enderDest?.UF ?? "", indIEDest: dest.indIEDest ?? "",
-    vProd: num(tot.vProd), vFrete: num(tot.vFrete), vDesc: num(tot.vDesc), vOutro: num(tot.vOutro), vICMS: num(tot.vICMS), vST: num(tot.vST),
-    vIPI: num(tot.vIPI), vPIS: num(tot.vPIS), vCOFINS: num(tot.vCOFINS), vICMSUFDest: num(tot.vICMSUFDest), vFCPUFDest: num(tot.vFCPUFDest),
-    vNF: num(tot.vNF), cStat: prot.cStat ?? "", refNFe: lista(ide.NFref).map((r) => r.refNFe).filter(Boolean),
-    cfops, itens, arquivo,
-  };
-}
-function eventosDe(doc, arquivo) {
-  const evs = [...lista(doc.procEventoNFe), ...lista(doc.envEvento?.evento ? { evento: doc.envEvento.evento } : null)];
-  const out = [];
-  for (const e of evs) for (const ev of lista(e.evento)) {
-    const i = ev.infEvento; if (!i) continue;
-    out.push({ chave: i.chNFe ?? "", tpEvento: i.tpEvento ?? "", desc: i.detEvento?.descEvento ?? "", data: i.dhEvento ?? "", cStat: e.retEvento?.infEvento?.cStat ?? "", arquivo });
-  }
-  return out;
-}
-function cteDe(doc, arquivo) {
-  const cte = doc.cteProc?.CTe ?? doc.CTe; const inf = cte?.infCte; if (!inf) return null;
-  const ide = inf.ide ?? {}, emit = inf.emit ?? {}, icms = grupo(inf.imp?.ICMS);
-  const toma = inf.ide?.toma3?.toma ?? inf.ide?.toma4?.toma ?? "";
-  return {
-    chave: String(inf["@Id"] ?? "").replace(/^CTe/, ""), numero: ide.nCT ?? "", serie: ide.serie ?? "", data: ide.dhEmi ?? "", CFOP: ide.CFOP ?? "", natOp: ide.natOp ?? "",
-    emit_cnpj: emit.CNPJ ?? "", emit_nome: emit.xNome ?? "", toma, rem_doc: inf.rem?.CNPJ ?? inf.rem?.CPF ?? "", dest_doc: inf.dest?.CNPJ ?? inf.dest?.CPF ?? "",
-    vTPrest: num(inf.vPrest?.vTPrest), cstICMS: icms.CST ?? "", pICMS: num(icms.pICMS), vICMS: num(icms.vICMS), cStat: doc.cteProc?.protCTe?.infProt?.cStat ?? "", arquivo,
-  };
-}
 
 async function* arquivosDe(entrada) {
   const st = fs.statSync(entrada);
@@ -137,7 +50,7 @@ export async function parseFontes(fontes) {
   return { gerado_em: new Date().toISOString(), fontes, notas: [...notas.values()], eventos: evs, ctes: [...ctes.values()], ignorados };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [saida, ...fontes] = process.argv.slice(2);
   if (!saida || !fontes.length) { console.error("uso: node parse_nfe.mjs <saida.json> <zip-ou-pasta> [...]"); process.exit(1); }
   const r = await parseFontes(fontes);

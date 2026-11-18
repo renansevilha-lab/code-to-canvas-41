@@ -14,6 +14,11 @@ fechamento/
   saidas/AAAA-MM/                   tudo o que é gerado no mês (fora do git: tem dado fiscal)
 ```
 
+## De onde vêm as notas
+
+Desde 18/nov/2026 as NF-e são lidas **direto do Tiny, toda noite** (edge function `fiscal-nfe`, cron 22h–6h): os dados ficam nas tabelas `fiscal_nfe` e `fiscal_nfe_item` e o XML original, compactado, no bucket privado `fiscal-xml`. A carga das notas antigas anda para trás, do mês mais recente para o mais antigo. Detalhes em `docs/fiscal-nfe.sql`.
+O `parse_nfe.mjs` (ZIP exportado à mão) fica como reserva e para conferência.
+
 Os scripts são em Node (o `node` do projeto, sem instalar nada). Rodar sempre da raiz do repositório.
 
 ## Regras fixas
