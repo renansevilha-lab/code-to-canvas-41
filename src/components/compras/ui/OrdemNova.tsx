@@ -14,6 +14,8 @@ import {
 } from "./defs";
 import { Apontamentos } from "./Apontamentos";
 import { BotaoR, FotoR, ParKV, Pilulas, Progresso, SeloR, Trilha, cartaoR, kicker, mini, tnum } from "./pecas";
+import { imprimirOrdemCompra } from "./ordemCompraPdf";
+import { toast } from "sonner";
 
 export interface ItemTela {
   id: string;
@@ -185,6 +187,8 @@ export function OrdemNova(p: OrdemNovaProps) {
               </button>
             </DropdownMenuTrigger>
             <MenuItens itens={[
+              { t: "Imprimir PDF", sub: "Ordem no modelo Bumi, para o fornecedor",
+                onClick: () => void imprimirOrdemCompra(ordem.tiny_id).catch((e) => toast.error("Não deu para gerar o PDF", { description: (e as Error).message })) },
               { t: "Arquivar", sub: "Tira do quadro; nada muda no Tiny", onClick: p.onArquivar },
               ...(p.ehAdm ? [{ t: "Excluir do app", sub: "Não exclui no Tiny", onClick: p.onExcluir, perigo: true }] : []),
               { t: "Usar o visual antigo", onClick: p.onUsarAntigo },

@@ -12,6 +12,7 @@ import { usePerfil } from "@/hooks/usePerfil";
 import { confirmarSep } from "@/components/separacao/ui/dialogos";
 import { diaMes, fornecedorDe, num, rotuloOrdem } from "./defs";
 import { BotaoR, ParKV, SeloR, cartaoR, kicker, mini, tnum } from "./pecas";
+import { imprimirOrdemCompra } from "./ordemCompraPdf";
 
 export const CATEGORIA_SUGESTAO = "Sugestão de compra (app)";
 /** Ordem criada por sugestão que ainda é rascunho (editável). */
@@ -178,6 +179,8 @@ export function RascunhoCompra({ tinyId, onVoltar }: { tinyId: number; onVoltar:
             <div style={mini}>Total do rascunho</div>
             <b style={{ fontSize: 18, ...tnum }}>{formatBRL(total)}</b>
           </div>
+          <BotaoR tom="contorno" onClick={() => void imprimirOrdemCompra(tinyId).catch((e) => toast.error("Não deu para gerar o PDF", { description: (e as Error).message }))}
+            title="Abre a ordem no modelo Bumi para imprimir ou salvar em PDF">Imprimir PDF</BotaoR>
           <BotaoR tom="contorno" disabled={ocupado} onClick={() => void retirar("tiny")} title="Use depois de digitar esta ordem no Tiny, para ela não aparecer duas vezes">Já lancei no Tiny</BotaoR>
           <BotaoR tom="perigo" disabled={ocupado} onClick={() => void retirar("descartar")}>Descartar</BotaoR>
         </div>
