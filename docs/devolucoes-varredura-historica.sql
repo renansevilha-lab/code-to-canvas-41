@@ -4,7 +4,8 @@
 --
 -- Objetivo: inventário, só LEITURA no Tiny, de pedidos cancelados × NF de venda autorizada × NF de
 -- devolução já existente, por conta e por mês — base para decidir/criar as devoluções que faltam.
--- Quem preenche: `devolucao-auto?modulo=varrer-historico&conta=svl|ottz` (crons 173/174), janela a
+-- Quem preenche: `devolucao-auto?modulo=varrer-historico&conta=svl|ottz` (crons 175/176, desligados em
+-- 19/nov/2026 com a varredura concluída; a emissão histórica da SVL = `processar-historico`, cron 181), janela a
 -- janela (estado em `devolucao_hist_estado`; janela que o Tiny recusa por "consulta levou muito tempo"
 -- é dividida em dias). A listagem `/notas` do Tiny já traz `origem.id` (= pedido), chave e situação:
 -- não precisa consultar pedido a pedido.

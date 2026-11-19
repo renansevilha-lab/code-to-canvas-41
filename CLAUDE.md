@@ -1072,6 +1072,26 @@ Shopee + [SVLL] ML); depois Ottz.
   backlog drena em ~1,6 dia. 1ª real: **001489** autorizada ("autorização fora de prazo" —
   nota antiga, a SEFAZ aceita até ~30 dias). Nota criada à mão pela equipe NÃO é emitida
   pelo robô.
+- **Varredura HISTÓRICA + devoluções das vendas antigas da SVL (12–19/nov/2026, opção A do dono: "tudo que o
+  Tiny dá").** Inventário só de leitura em `devolucao_hist_estado` / `_pedidos` / `_notas` (SQL + rollback em
+  `docs/devolucoes-varredura-historica.sql`), preenchido por `devolucao-auto?modulo=varrer-historico&conta=svl|ottz`
+  (crons **175/176**, DESLIGADOS em 19/nov — varredura concluída: SVL pedidos desde 29/10/2024, notas desde jan/2025;
+  Ottz pedidos desde 20/02/2025, notas desde 30/06/2025 — limite do plano do Tiny, janela que anda 1 dia por dia).
+  `view_devolucao_hist_candidatos` = NF de venda AUTORIZADA (6/7) cujo pedido está cancelado (na conta, na outra conta
+  pela cópia fiscal da Bumi, ou no espelho dos marketplaces) × devolução já existente (`exata` mesmo CPF+valor,
+  `chave`, `parcial_possivel`, `nenhuma`). Contagem em 19/nov (faltam / R$): **SVL 1.086 / R$ 59,2 mil** (Shopee
+  Bumi 928, ML SVL 158; a SVL não tinha NENHUMA devolução antes de 27/03/2026) · **Ottz 4.253 / R$ 228 mil** (jul/25 →
+  nov/26, ~230–470 por mês; 11 parciais possíveis). **Emissão da SVL ligada em 19/nov (OK do dono):**
+  `nf-devolucao` **v3.24** — `criar&conta=svl` aceita `id_nota_venda` + `pedido_svl_id` (venda que vive NO Tiny SVL,
+  sem pedido no principal; guard = pedido cancelado AO VIVO no Tiny SVL e `idNotaFiscal` do pedido = a nota; data da
+  devolução = hoje, então não precisa de clone) e `devolucao-auto` **v8** `?modulo=processar-historico[&max][&dry=1]
+  [&desde=AAAA-MM-DD]` = candidatos `devolucao='nenhuma'` e `canc_conta`, **mais recentes primeiro** (se o contador
+  mandar parar numa data, `desde` corta), gravados em `devolucao_auto` com `caso='historico_cancelado'` (erro não
+  retenta: vira `revisar`); a emissão segue pelo `emitir` de sempre (cron 158, ~12 notas/h). Cron **181**
+  `devolucao-hist-criar-svl` (`8-58/10`, max=6 ≈ 36 criações/h). 1ª real: **002089/12** (260817K4CX1MAG). Casos fora
+  do motor (olhar à mão): `canc_outra_conta`/`canc_marketplace` sem cancelamento na própria conta (16) e
+  `parcial_possivel` (6). **Ottz ainda NÃO** (motor nunca cobriu a Ottz; série 13; precisa de guard próprio — o `criar`
+  da Ottz só confere o pedido quando ele está em `notas_cancelados`).
 
 ## 5.3 DRE — categorização de despesas e camada de override
 

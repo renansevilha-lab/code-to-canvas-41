@@ -1,8 +1,12 @@
 // ============================================================================
-// devolucao-auto v7 (12/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// devolucao-auto v8 (19/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// v8: ?modulo=processar-historico[&max=5][&dry=1][&desde=AAAA-MM-DD] — cria (Pendente) as devolucoes das vendas
+//   HISTORICAS da SVL (view_devolucao_hist_candidatos: NF autorizada no Tiny SVL + pedido cancelado la + sem
+//   devolucao), mais recentes primeiro, pela nf-devolucao?modulo=criar com id_nota_venda+pedido_svl_id (guard ao
+//   vivo). Entram em devolucao_auto com caso 'historico_cancelado' e a emissao segue pelo `emitir` (cron 158).
 // v7: ?modulo=varrer-historico&conta=svl|ottz [&orcamento=22][&tipo=pedidos|notas_s|notas_e]
 //   inventario historico (so leitura no Tiny): pedidos cancelados, NF de saida e NF de devolucao
-//   por janela (devolucao_hist_*), base da view_devolucao_hist_candidatos. Crons 173 (SVL) e 174 (Ottz, madrugada).
+//   por janela (devolucao_hist_*), base da view_devolucao_hist_candidatos. Crons 175 (SVL) e 176 (Ottz, madrugada) — desligados em 19/nov (varredura concluida).
 // v5: bloqueio da API v2 do Tiny (cod 6) vira COOLDOWN GLOBAL de 10 min — a
 //   rodada inteira espera (antes so o pedido esperava e a rodada seguinte batia
 //   na v2 com outro pedido, o que reinicia o bloqueio).
@@ -459,6 +463,101 @@ serve(async (req: Request) => {
       return json({ modulo, conta, ...(await espelhar(supabase, token, dias, maxDet, 25000)) });
     }
 
+    if (modulo === "processar-historico") {
+      const inicio = Date.now();
+      const dry = url.searchParams.get("dry") === "1";
+      const max = Math.min(Math.max(parseInt(url.searchParams.get("max") || "5", 10), 1), 20);
+      const orcamentoMs = Math.min(Math.max(parseInt(url.searchParams.get("orcamento") || "22", 10), 5), 50) * 1000;
+      const desde = url.searchParams.get("desde") || null; // nao cria para venda emitida antes desta data
+
+      if (!dry) {
+        const { data: bloq } = await supabase.from("devolucao_auto").select("order_sn, proxima_em")
+          .eq("conta", conta).eq("estado", "pendente").gt("proxima_em", new Date().toISOString()).limit(1);
+        if ((bloq || []).length) {
+          return json({ modulo, conta, cooldown_v2: true, ate: (bloq as any[])[0].proxima_em,
+            aviso: "API v2 do Tiny bloqueada recentemente (cod 6) — rodada pulada para nao reiniciar o bloqueio" });
+        }
+        const dezMin = new Date(Date.now() - 10 * 60000).toISOString();
+        await supabase.from("devolucao_auto").update({ estado: "revisar", detalhe: "rodada interrompida durante a criacao — conferir no Tiny SVL se a nota foi criada", atualizado_em: new Date().toISOString() })
+          .eq("conta", conta).eq("estado", "criando").lt("atualizado_em", dezMin);
+      }
+
+      // fila: candidatos historicos sem devolucao, cancelados na propria conta, ainda nao tocados pelo motor
+      let q = supabase.from("view_devolucao_hist_candidatos")
+        .select("id_nota, numero, serie, data_emissao, valor, canal, numero_ecommerce, origem_pedido_id, cliente_nome")
+        .eq("conta", conta).eq("devolucao", "nenhuma").eq("canc_conta", true)
+        .not("numero_ecommerce", "is", null).not("origem_pedido_id", "is", null)
+        .order("data_emissao", { ascending: false }).order("id_nota", { ascending: false }).limit(max * 6);
+      if (desde) q = q.gte("data_emissao", desde);
+      const { data: cand, error: eCand } = await q;
+      if (eCand) return json({ erro: `fila historica: ${eCand.message}` }, 500);
+      const sns = ((cand || []) as any[]).map((c) => c.numero_ecommerce);
+      const jaSet = new Set<string>();
+      if (sns.length) {
+        const { data: ja } = await supabase.from("devolucao_auto").select("order_sn").eq("conta", conta).in("order_sn", sns);
+        for (const r of (ja || []) as any[]) jaSet.add(String(r.order_sn));
+      }
+      const fila = ((cand || []) as any[]).filter((c) => !jaSet.has(String(c.numero_ecommerce))).slice(0, max);
+
+      const resultados: any[] = [];
+      for (const f of fila) {
+        if (Date.now() - inicio > orcamentoMs) break;
+        const agora = new Date().toISOString();
+        if (!dry) {
+          const { error: eIns } = await supabase.from("devolucao_auto").upsert({
+            conta, order_sn: f.numero_ecommerce, tiny_pedido_id: f.origem_pedido_id, canal: f.canal, caso: "historico_cancelado",
+            estado: "criando", tentativas: 1, atualizado_em: agora,
+          }, { onConflict: "conta,order_sn" });
+          if (eIns) { resultados.push({ order_sn: f.numero_ecommerce, erro: eIns.message }); continue; }
+        }
+        const qs = new URLSearchParams({ modulo: "criar", conta, id_nota_venda: String(f.id_nota), pedido_svl_id: String(f.origem_pedido_id), serie: SERIE_DEVOLUCAO_SVL });
+        if (!dry) qs.set("confirmar", "1");
+        let r: any = null;
+        try {
+          const resp = await fetch(`${SUPABASE_URL}/functions/v1/nf-devolucao?${qs}`, {
+            headers: { Authorization: `Bearer ${SRK}`, apikey: SRK },
+            signal: AbortSignal.timeout(45000),
+          });
+          const txt = await resp.text();
+          try { r = JSON.parse(txt); } catch { r = { codigo: "erro_http", erro: `${resp.status}: ${txt.substring(0, 200)}` }; }
+        } catch (e) {
+          r = { codigo: "erro_http", erro: (e as Error).message };
+        }
+        const res = {
+          order_sn: f.numero_ecommerce, nota_venda: f.numero, serie_venda: f.serie, data_venda: f.data_emissao, valor: f.valor, canal: f.canal,
+          codigo: r?.codigo ?? null, ok: r?.ok ?? null, dry: r?.dry ?? false, guard: r?.guard ?? null, bridge: r?.bridge ?? null,
+          registro: r?.registro ?? null, existente: r?.existente ?? null, erro: r?.erro ?? null,
+          itens: dry ? (r?.payload?.nota_fiscal?.itens || []).map((x: any) => `${x.item.codigo} x${x.item.quantidade}`) : undefined,
+        };
+        resultados.push(res);
+        if (dry) continue;
+
+        const st = estadoDe(r, 1, "historico_cancelado");
+        const upd: Record<string, unknown> = {
+          estado: st.estado === "erro" ? "revisar" : st.estado, // historico: erro nao retenta sozinho, vai para revisao
+          chave_venda: r?.chave_referenciada ?? null,
+          detalhe: (r?.erro || r?.guard || null)?.toString().slice(0, 500) ?? null,
+          proxima_em: st.reagendarMin ? new Date(Date.now() + st.reagendarMin * 60000).toISOString() : null,
+          atualizado_em: new Date().toISOString(),
+        };
+        if (st.estado === "criada") {
+          upd.id_nota_devolucao = r?.registro?.id ? Number(r.registro.id) : null;
+          upd.numero_nota = r?.registro?.numero ?? null;
+        } else if (st.estado === "ja_existe") {
+          upd.id_nota_devolucao = r?.existente?.id_nota ? Number(r.existente.id_nota) : null;
+          upd.numero_nota = r?.existente?.numero ?? null;
+        }
+        if (st.parar) upd.tentativas = 0; // bloqueio da v2 nao conta tentativa
+        await supabase.from("devolucao_auto").update(upd).eq("conta", conta).eq("order_sn", f.numero_ecommerce);
+        if (st.parar) break;
+        await sleep(1500); // v2 do Tiny: 60 req/min nesta conta
+      }
+      const { count: faltam } = await supabase.from("view_devolucao_hist_candidatos").select("id_nota", { count: "exact", head: true })
+        .eq("conta", conta).eq("devolucao", "nenhuma").eq("canc_conta", true);
+      return json({ modulo, conta, dry, desde, processados: resultados.length, criadas: resultados.filter((x) => x.codigo === "criada" && x.ok).length,
+        candidatos_restantes_na_view: faltam ?? null, resultados, tempo_ms: Date.now() - inicio });
+    }
+
     if (modulo === "processar") {
       const inicio = Date.now();
       const dry = url.searchParams.get("dry") === "1";
@@ -550,7 +649,7 @@ serve(async (req: Request) => {
       return json({ modulo, conta, dry, espelho: esp, processados: resultados.length, resultados, tempo_ms: Date.now() - inicio });
     }
 
-    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar", "emitir", "varrer-historico"] }, 400);
+    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar", "processar-historico", "emitir", "varrer-historico"] }, 400);
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);
   }
