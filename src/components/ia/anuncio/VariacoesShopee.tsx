@@ -62,9 +62,17 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       const { data: vs } = await supabaseExternal.from("produtos").select("sku, nome, preco").eq("sku_pai", sku).eq("ativo", true).order("sku");
       const vars = (vs ?? []) as { sku: string; nome: string | null; preco: number | null }[];
       const skus = vars.map((v) => v.sku);
+      // PREÇO PLANEJADO (19/nov): o rascunho do produto pai nesta loja pode trazer o preço de cada variação
+      // (`memoria_calculo.precos_variacoes` = {sku: preço}, gravado por um plano/teste) e a margem escolhida
+      // (`margem_desejada`). Vale: preço planejado > margem do rascunho > margem padrão da Shopee.
+      const { data: rp } = await supabaseExternal.from("ia_rascunho").select("memoria_calculo").eq("sku", sku).eq("canal", "shopee").eq("empresa", empresa).order("created_at", { ascending: false }).limit(1);
+      const memoria = ((rp ?? [])[0]?.memoria_calculo ?? {}) as { margem_desejada?: number | null; precos_variacoes?: Record<string, number> };
+      const margemRasc = Number(memoria.margem_desejada) > 0 && Number(memoria.margem_desejada) < 1 ? Number(memoria.margem_desejada) : null;
+      const planejados = memoria.precos_variacoes ?? {};
       // PREÇO PADRÃO (13/out, pedido do dono): o da margem padrão da Shopee (30%), SKU a SKU; sem custo, o do Tiny
-      const calc = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: null })));
-      const pelaMargem = new Map(skus.map((s, i) => [s, Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));
+      const calc = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: margemRasc })));
+      const pelaMargem = new Map(skus.map((s, i) => [s, Number(planejados[s]) > 0 ? Number(planejados[s]) : Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));
+      const nPlanejados = skus.filter((s) => Number(planejados[s]) > 0).length;
       const margemPadrao = Number((calc.map((c) => (c.data as { memoria_calculo?: { margem_padrao_pct?: number } } | null)?.memoria_calculo?.margem_padrao_pct).find((x) => x != null)) ?? 0) || null;
       const [k, pub, esp, rasc, med] = await Promise.all([
         skus.length ? supabaseExternal.from("produto_kits").select("sku_kit, sku_componente, quantidade").in("sku_kit", skus) : Promise.resolve({ data: [] }),
@@ -162,7 +170,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
           espelho.push(...((ans ?? []) as Espelho[]).map((a) => ({ ...a, tem_variacao: true })));
         }
       }
-      return { empresa, linhas, grades, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
+      return { empresa, linhas, grades, item: criado ?? (espelho[0] ? String(espelho[0].item_id) : ""), espelho, margemPadrao, margemRasc, nPlanejados, semMargem: skus.filter((s) => !pelaMargem.get(s)) };
     },
   });
 
@@ -460,7 +468,7 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Preço: já vem pela margem de contribuição padrão da Shopee{q.data.margemPadrao ? ` (${(q.data.margemPadrao * 100).toFixed(0)}%)` : ""}, variação a variação{q.data.semMargem.length ? ` — sem custo na gestão, ${q.data.semMargem.join(", ")} ficou com o preço do Tiny` : ""}.
+              Preço: {q.data.nPlanejados > 0 ? `${q.data.nPlanejados} variação(ões) com o preço do plano gravado no rascunho; as demais ` : "já vem "}{q.data.margemRasc ? `pela margem escolhida no rascunho (${(q.data.margemRasc * 100).toFixed(0)}%)` : `pela margem de contribuição padrão da Shopee${q.data.margemPadrao ? ` (${(q.data.margemPadrao * 100).toFixed(0)}%)` : ""}`}, variação a variação{q.data.semMargem.length ? ` — sem custo na gestão, ${q.data.semMargem.join(", ")} ficou com o preço do Tiny` : ""}.
               Peso, medidas e estoque já vêm preenchidos: peso pelo nome da opção; medidas as já conferidas (da variação, do produto pai ou do produto base) ou, sem nenhuma, a embalagem padrão {MEDIDAS_PADRAO.comprimento_cm} × {MEDIDAS_PADRAO.largura_cm} × {MEDIDAS_PADRAO.altura_cm} cm; estoque o que o estoque do produto base cobre de cada kit. Ajuste o que for diferente — fica guardado.
             </p>
             {faltas.length > 0 && <p className="text-xs text-destructive">Antes de enviar: {faltas.join(" · ")}.</p>}
