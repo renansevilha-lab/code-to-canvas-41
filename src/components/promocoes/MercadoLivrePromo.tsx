@@ -37,7 +37,9 @@ async function chamarML(qs: string, escrita = false): Promise<any> {
   return d;
 }
 
-interface Item {
+/** Colunas da view_ml_promocoes que a tela (e o editor por pedido) leem. */
+export const COLS_ITEM_ML = "promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, meli_percentage, comissao_promo, frete, frete_estimado, logistic_type, date_created, cmv, aliquota, receita_vend_promo, imposto_promo, promocao_nome, promocao_tipo, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa";
+export interface Item {
   promocao_id: string; mlb: string; sku: string | null; status: string;
   offer_id: string | null; original_price: number | null; promo_price: number | null;
   preco_min: number | null; preco_max: number | null; preco_sugerido: number | null;
@@ -53,21 +55,21 @@ interface Promo { promocao_id: string; tipo: string; nome: string | null; status
 interface Regra { modo: ModoRobo; mc_min_pct: number; ganho_min_troca: number; max_por_rodada: number }
 interface Acao { acao: string; ok: boolean; criado_em: string }
 interface Vivo { status: string | null; min: number | null; max: number | null; sugerido: number | null; preco: number | null; estoque_min: number | null; estoque_max: number | null; inicio: string | null; fim: string | null }
-type Res = { tipo: "aplicado" | "recusado"; motivo: string };
+export type Res = { tipo: "aplicado" | "recusado"; motivo: string };
 
 const TZ = "America/Sao_Paulo";
 const num = (x: unknown) => { const n = Number(x ?? 0); return Number.isFinite(n) ? n : 0; };
 const chave = (i: { promocao_id: string; mlb: string }) => `${i.promocao_id}|${i.mlb}`;
 /** Promoção em que o vendedor ESCOLHE o desconto (campanha tradicional e Relâmpago): sem oferta fixa do ML e com faixa de preço. */
-const escolheDesconto = (i: { status: string; offer_id: string | null; preco_min: number | null; preco_max: number | null; original_price: number | null }) =>
+export const escolheDesconto = (i: { status: string; offer_id: string | null; preco_min: number | null; preco_max: number | null; original_price: number | null }) =>
   i.status !== "started" && !i.offer_id && i.preco_min != null && i.preco_max != null && num(i.original_price) > 0;
 /** Desconto (%) de um preço sobre o preço cheio. */
-const descDe = (preco: number | null | undefined, cheio: number | null | undefined) => (preco != null && num(cheio) > 0 ? (1 - num(preco) / num(cheio)) * 100 : null);
-const pctTxtDe = (x: number | null) => (x == null ? "" : String(Math.round(x * 10) / 10).replace(".", ","));
+export const descDe = (preco: number | null | undefined, cheio: number | null | undefined) => (preco != null && num(cheio) > 0 ? (1 - num(preco) / num(cheio)) * 100 : null);
+export const pctTxtDe = (x: number | null) => (x == null ? "" : String(Math.round(x * 10) / 10).replace(".", ","));
 /** Já está numa campanha em que o desconto é do vendedor (tradicional, sem oferta fixa): dá para trocar o desconto. */
-const podeMudarDesconto = (i: { status: string; offer_id: string | null; promocao_tipo: string | null; original_price: number | null; promo_price: number | null }) =>
+export const podeMudarDesconto = (i: { status: string; offer_id: string | null; promocao_tipo: string | null; original_price: number | null; promo_price: number | null }) =>
   i.status === "started" && i.promocao_tipo === "DEAL" && !i.offer_id && num(i.original_price) > 0 && i.promo_price != null;
-type TipoAcao = "aplicar" | "remover" | "trocar" | "mudar";
+export type TipoAcao = "aplicar" | "remover" | "trocar" | "mudar";
 const mediana = (v: number[]) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const pilula = { display: "inline-flex", alignItems: "center", gap: 4, height: 20, padding: "0 7px", borderRadius: 6, border: "1px solid var(--pm-a)", background: "var(--pm-as)", color: "var(--pm-at)", cursor: "pointer", fontSize: 10.5, fontWeight: 600, whiteSpace: "nowrap" } as const;
 const dia = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: TZ, day: "2-digit", month: "2-digit" }) : "—");
@@ -79,7 +81,7 @@ const TIPO: Record<string, [string, string]> = {
   SELLER_CAMPAIGN: ["Campanha do vendedor", "#0E8A5F"], PRICE_DISCOUNT: ["Desconto", "#64748B"],
   UNHEALTHY_STOCK: ["Estoque parado no Full", "#B7791F"], VOLUME: ["Desconto por volume", "#64748B"],
 };
-const tipoDe = (t: string | null) => TIPO[(t ?? "").toUpperCase()] ?? [t ?? "—", "#64748B"];
+export const tipoDe = (t: string | null) => TIPO[(t ?? "").toUpperCase()] ?? [t ?? "—", "#64748B"];
 const ehRelampago = (t: string | null) => (t ?? "").toUpperCase() === "LIGHTNING";
 
 type Filtro = "neg" | "baixa" | "aguardando" | "troca" | "auto" | "semcusto" | "acaba";
@@ -142,7 +144,7 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
     queryKey: ["promocoes-ml", "itens-v2"],
     queryFn: async (): Promise<Item[]> => {
       const { data, error } = await supabaseExternal.from("view_ml_promocoes")
-        .select("promocao_id, mlb, sku, status, offer_id, original_price, promo_price, preco_min, preco_max, preco_sugerido, meli_percentage, comissao_promo, frete, frete_estimado, logistic_type, date_created, cmv, aliquota, receita_vend_promo, imposto_promo, promocao_nome, promocao_tipo, finish_date, titulo, foto, permalink, mc_atual, mc_promo, mc_promo_pct, mc_atual_pct, delta_mc, mc_negativa");
+        .select(COLS_ITEM_ML);
       if (error) throw error;
       return (data ?? []) as Item[];
     },
@@ -551,9 +553,12 @@ export function MercadoLivrePromo({ cab }: { cab: CabBase }) {
 // (faixa de preço, estoque do Relâmpago, se ainda está disponível) e simula a MC
 // no preço escolhido. Mesma lógica do modal da tela antiga.
 // ============================================================================
-function DialogoAcaoML({ acao, nomeUsuario, faixaEst, onFechar, onResultado }: {
+export function DialogoAcaoML({ acao, nomeUsuario, faixaEst, embutido, onFechar, onResultado }: {
   acao: { item: Item; tipo: TipoAcao; d?: LinhaDecisao };
-  nomeUsuario: string | null; faixaEst?: { min: number; max: number } | null; onFechar: () => void; onResultado: (r: Res) => void;
+  nomeUsuario: string | null; faixaEst?: { min: number; max: number } | null;
+  /** Sem a moldura de janela: desenha o painel no lugar (usado dentro de outro diálogo — Pedidos Integrados). */
+  embutido?: boolean;
+  onFechar: () => void; onResultado: (r: Res) => void;
 }) {
   const { item, tipo, d } = acao;
   const aplicar = tipo === "aplicar";
@@ -710,9 +715,9 @@ function DialogoAcaoML({ acao, nomeUsuario, faixaEst, onFechar, onResultado }: {
   );
 
   return (
-    <div className="pm-ui" style={{ position: "fixed", inset: 0, zIndex: 50, background: "oklch(0.15 0.01 285 / 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
-      onClick={(e) => { if (e.target === e.currentTarget && !executando) onFechar(); }}>
-      <div style={{ width: "min(480px,100%)", maxHeight: "calc(100vh - 48px)", overflow: "auto", display: "flex", flexDirection: "column", gap: 12, padding: "16px 18px", background: "var(--pm-s)", color: "var(--pm-t)", border: "1px solid var(--pm-b)", borderRadius: 14, boxShadow: "var(--pm-shl)" }}>
+    <div className="pm-ui" style={embutido ? undefined : { position: "fixed", inset: 0, zIndex: 50, background: "oklch(0.15 0.01 285 / 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={embutido ? undefined : (e) => { if (e.target === e.currentTarget && !executando) onFechar(); }}>
+      <div style={{ width: embutido ? "min(560px,100%)" : "min(480px,100%)", maxHeight: embutido ? undefined : "calc(100vh - 48px)", overflow: "auto", display: "flex", flexDirection: "column", gap: 12, padding: "16px 18px", background: "var(--pm-s)", color: "var(--pm-t)", border: "1px solid var(--pm-b)", borderRadius: 14, boxShadow: "var(--pm-shl)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <h3 style={{ margin: 0, flex: 1, fontSize: 16, fontWeight: 600 }}>{titulo}</h3>
           {!executando && <button type="button" onClick={onFechar} className="hover:bg-[var(--pm-s2)]" style={{ width: 28, height: 28, borderRadius: 8, border: 0, background: "transparent", cursor: "pointer", color: "var(--pm-t3)", display: "flex", alignItems: "center", justifyContent: "center" }}><X style={{ width: 16, height: 16 }} /></button>}

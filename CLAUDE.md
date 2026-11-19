@@ -1639,6 +1639,13 @@ página `/promocoes` de 01/ago — foi removida a pedido do dono), **Mercado Liv
   recoloca com o preço de antes; se nem isso der, avisa que o anúncio ficou FORA. Só front, usando os módulos de sempre. O ML **não informa a faixa**
   de quem já entrou (`estado` vem com min/max nulos): a tela usa a faixa do espelho ou a mediana dos candidatos da mesma campanha (≈ 3% a 80%) e o ML
   confere na hora. **A troca de desconto não foi testada com escrita real** — o 1º uso do dono é o teste.
+- **Pedidos Integrados › "Preço e promoção" também para o Mercado Livre (18/nov/2026, pedido do dono):** o botão do pedido (`EditorPrecoPromo`) só editava
+  Shopee; pedido do ML (conta Ottz) agora abre **`src/components/pedidos/PrecoPromoML.tsx`**: os anúncios ATIVOS do SKU (`ml_anuncios` + `view_ml_promocoes`
+  por `sku` — o pedido do ML não diz de qual MLB saiu a venda), a promoção em que cada um está (preço, desconto, MC) com **Mudar desconto** (campanha
+  tradicional) e **Tirar**, e as promoções disponíveis (recolhidas) com **Escolher desconto / Aplicar** — só quando o anúncio está fora de promoção (troca
+  continua na tela de Promoções). As escritas são as do `DialogoAcaoML` da tela de Promoções, agora exportado e com a prop `embutido` (desenha o painel no
+  lugar, sem janela própria — dentro de um Dialog do shadcn uma segunda janela fixa fica presa ao conteúdo e o foco é capturado). Só front; o preço CHEIO do
+  anúncio não muda por ali. ML da SVL, Amazon e TikTok seguem abrindo a tela de Promoções.
 - **TikTok Shop ACZ — etapa 1, LEITURA (07/out/2026):** edge fn **`tiktok-promocoes`** (deploy 2)
   `?modulo=sync` = catálogo ativo (`POST /product/202309/products/search`, status ACTIVATE) →
   **`tiktok_produtos`** (1 linha por `sku_id`; apaga o que sumiu só se a leitura completou) +
