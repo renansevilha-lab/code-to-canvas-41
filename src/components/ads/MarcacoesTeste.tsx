@@ -7,7 +7,8 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, FlaskConical, Loader2, RefreshCw, Ban, Send, Undo2, History } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { CheckCircle2, Circle, FlaskConical, Loader2, RefreshCw, Ban, Send, Undo2, History, PencilLine, ChevronDown } from "lucide-react";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
 import { atualizarCatalogoShopee } from "@/components/promocoes/comum";
@@ -30,7 +31,15 @@ export type Marcacao = {
   status: "pendente" | "em_andamento" | "aplicado" | "nao_mexer" | "divergente" | "revertido"; aplicado_em: string | null; sku_pai: string | null;
   atualizado_em: string; atualizado_por: string | null;
   nome_atual: string | null; foto: string | null; loja: string; n_tarefas: number; n_feitas: number; pendente: boolean;
+  // 19/nov: editor de anúncio (/ia/gerar) — SKU de onde o braço nasce (sku_planejado, senão o do anúncio), empresa da loja e rascunho
+  sku_editor: string | null; empresa_editor: "ottz" | "svl"; rascunho_id: string | null;
 };
+
+/** Busca do /ia/gerar para o braço: rascunho certo; anúncio já criado abre no modo atualizar (item). */
+export function buscaEditor(m: Marcacao) {
+  if (!m.sku_editor) return null;
+  return { sku: m.sku_editor, canal: "shopee", empresa: m.empresa_editor, r: m.rascunho_id ?? undefined, item: m.item_id ?? undefined };
+}
 
 const chave = (shop: number | string | null | undefined, item: number | string | null | undefined) => `${shop}:${item}`;
 
@@ -271,7 +280,14 @@ export function BlocoOQueFazer({ m, compacto }: { m: Marcacao; compacto?: boolea
 
       {!m.item_id && m.status !== "nao_mexer" && (
         <div className="rounded-md bg-amber-50 border border-amber-200 p-2.5 space-y-1.5">
-          <div className="text-xs font-semibold text-amber-900">Anúncio a criar</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-amber-900">Anúncio a criar</div>
+            {buscaEditor(m) && (
+              <Button asChild size="sm" className="h-7 text-xs">
+                <Link to="/ia/gerar" search={buscaEditor(m)!}><PencilLine className="h-3.5 w-3.5 mr-1" />Criar anúncio no editor</Link>
+              </Button>
+            )}
+          </div>
           {m.titulo_planejado && <div className="text-xs">Título: <b>{m.titulo_planejado}</b></div>}
           {m.preco_planejado && (
             <div className="text-xs">Preços: {Object.entries(m.preco_planejado).map(([k, v]) => `${k} ${fmtValor("preco", v)}`).join(" · ")}</div>
@@ -395,21 +411,42 @@ export function PainelTestesAB() {
         <div className="text-xs text-muted-foreground">Nada pendente neste teste.</div>
       ) : (
         <div className="divide-y rounded-md border">
-          {vistos.map((m) => (
-            <div key={m.id}>
-              <button type="button" onClick={() => setAberto(aberto === m.id ? null : m.id)}
-                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/40">
+          {vistos.map((m) => {
+            const busca = buscaEditor(m);
+            const aCriar = !m.item_id && m.status !== "nao_mexer";
+            const conteudo = (
+              <>
                 {m.foto ? <img src={m.foto} alt="" className="h-9 w-9 rounded object-cover shrink-0" loading="lazy" />
                   : <div className="h-9 w-9 rounded bg-muted shrink-0" />}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5"><EtiquetaMarcacao m={m} /><span className="text-[11px] text-muted-foreground">{m.loja}{m.rotulo ? ` · ${m.rotulo}` : ""}</span></div>
-                  <div className="text-xs truncate mt-0.5">{m.nome_atual ?? (m.item_id ? `item ${m.item_id}` : "anúncio ainda não criado")}</div>
+                  <div className="text-xs truncate mt-0.5">{m.nome_atual ?? (m.item_id ? `item ${m.item_id}` : aCriar && busca ? `anúncio ainda não criado — abre o rascunho do ${m.sku_editor} no editor` : "anúncio ainda não criado")}</div>
                 </div>
-                <span className="text-[11px] text-muted-foreground whitespace-nowrap">{m.item_id ?? "sem ID"}</span>
-              </button>
-              {aberto === m.id && <div className="px-3 pb-3"><BlocoOQueFazer m={m} compacto /></div>}
-            </div>
-          ))}
+              </>
+            );
+            return (
+              <div key={m.id}>
+                <div className="flex items-center gap-2 pr-2 hover:bg-muted/40">
+                  {aCriar && busca ? (
+                    // anúncio a criar: a linha abre direto a tela de edição de anúncio, no rascunho do braço
+                    <Link to="/ia/gerar" search={busca} className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 text-left">{conteudo}</Link>
+                  ) : (
+                    <button type="button" onClick={() => setAberto(aberto === m.id ? null : m.id)} className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 text-left">{conteudo}</button>
+                  )}
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">{m.item_id ?? "sem ID"}</span>
+                  {busca && (
+                    <Button asChild size="sm" variant={aCriar ? "default" : "outline"} className="h-7 text-xs">
+                      <Link to="/ia/gerar" search={busca}><PencilLine className="h-3.5 w-3.5 mr-1" />{aCriar ? "Criar anúncio" : "Editar"}</Link>
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Tarefas do braço" onClick={() => setAberto(aberto === m.id ? null : m.id)}>
+                    <ChevronDown className={cn("h-4 w-4 transition-transform", aberto === m.id && "rotate-180")} />
+                  </Button>
+                </div>
+                {aberto === m.id && <div className="px-3 pb-3"><BlocoOQueFazer m={m} compacto /></div>}
+              </div>
+            );
+          })}
         </div>
       )}
     </Card>

@@ -4349,6 +4349,10 @@ Plano aprovado pelo dono (estudo + plano em https://claude.ai/artifact/Ad7sCtARu
   grão · 16836 faixa "preço de atacado" · 16832 texto gigante "20KG" · 16801 escada de tamanhos · 16812 close do grão · 16827 atacado com texto gigante. As capas ainda não foram geradas.
 - **Painel de Testes A/B:** teste "Areia Ottz Pet Fina - lançamento nov/2026" em `anuncio_marcacao` (braços Bumi 1–3 e Ottz 1–3, `item_id` nulo até publicar; tarefas
   `tipo manual` com conferência automática de título, preço por SKU e ROAS; leitura provisória 05/12; parada = 150 cliques com ROAS abaixo do empate, 6,7 Bumi / 5 Ottz).
+- **Braço → editor de anúncio (19/nov):** `anuncio_marcacao.sku_planejado` (Bumi 1 16799 · Bumi 2 16836 · Bumi 3 16832 · Ottz 1 16801 · Ottz 2 16812 · Ottz 3 16827)
+  e a view devolve `sku_editor` (planejado, senão o `sku_pai` do anúncio), `empresa_editor` (759046323 → svl) e `rascunho_id` (ia_rascunho shopee mais recente).
+  No `PainelTestesAB`, a linha de braço sem anúncio abre direto `/ia/gerar` no rascunho (botão "Criar anúncio"); braço já publicado ganha "Editar" (modo
+  atualizar, `item`); a seta abre as tarefas. Braço novo de teste: preencher `sku_planejado`. SQL + rollback: `docs/anuncio-marcacao-sku-planejado.sql`.
 - **Pesquisa na Shopee:** o Chrome tem dois navegadores ligados; o "Browser 1" é o logado como comprador (bumipetcare) e mostra "vendidos por mês" com
   `sortBy=sales`; o "Browser 2" é o do app. A saída do `javascript_tool` corta em ~1.000 caracteres e bloqueia texto com `=`/`?`.
 
