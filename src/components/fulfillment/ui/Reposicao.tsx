@@ -197,7 +197,9 @@ export function ReposicaoNova({ rows, loading, emp, fotos, margens, caixas, plan
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
               <span style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.produto ?? ""}>{r.produto ?? "—"}</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                <span className={MONO} style={{ fontSize: 11, color: "var(--pm-t3)", flex: "none" }}>SKU {r.sku}{r.eh_kit ? " · kit" : ""}</span>
+                <button type="button" className={MONO + " pm-hv"} title="Copiar o SKU" aria-label={`Copiar o SKU ${r.sku}`}
+                  onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(r.sku).then(() => toast.success(`SKU ${r.sku} copiado`), () => toast.error("Não consegui copiar")); }}
+                  style={{ fontSize: 11, color: "var(--pm-t3)", flex: "none", border: 0, background: "none", padding: "1px 4px", margin: "-1px -4px", borderRadius: 6, cursor: "copy", fontFamily: undefined }}>SKU {r.sku}{r.eh_kit ? " · kit" : ""}</button>
                 {asinsL.length > 0 && <SeloAsin a={asinsL[0]} extra={asinsL.length - 1} />}
               </span>
             </div>
