@@ -83,6 +83,25 @@ Deno.serve(async (req: Request) => {
       const r = await tt(c, "POST", `/affiliate_seller/${ver}/marketplace_creators/search`, q, filtros);
       return json({ modulo, ver, filtros, http: r.http, code: r.code, message: r.message, bytes: r.txt.length, cru: r.txt.slice(0, corte) });
     }
+    // v2: tentativa agendada (cron de um dia só). UMA chamada à busca; grava a resposta em
+    // debug_fulfillment (modulo tiktok-afiliados, etapa busca) e avisa no Discord (#atualizacoes)
+    // quando vier com dados — ou, na última tentativa do dia (&ultima=1), que continuou bloqueada.
+    if (modulo === "tentar") {
+      const r = await tt(c, "POST", `/affiliate_seller/${ver === "202406" ? "202508" : ver}/marketplace_creators/search`, { page_size: "20" }, {});
+      const n = (r.txt.match(/"creator_open_id"|"open_id"|"username"/g) || []).length;
+      await db.from("debug_fulfillment").insert({ modulo: "tiktok-afiliados", etapa: "busca", status_http: r.code === 0 ? 200 : r.http, resultado: { code: r.code, message: r.message, bytes: r.txt.length, cru: r.txt.slice(0, 30000) } });
+      const avisar = async (nivel: string, titulo: string, descricao: string) => {
+        try {
+          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/discord-notify`, {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
+            body: JSON.stringify({ canal: "atualizacoes", nivel, titulo, descricao, rodape: "tiktok-afiliados · tentativa agendada" }),
+          });
+        } catch { /* melhor-esforço */ }
+      };
+      if (r.code === 0) await avisar("ok", "TikTok: a busca de afiliados respondeu", `A API devolveu dados na tentativa agendada (${r.txt.length} bytes${n ? `, ~${n} campos de criador` : ""}). Peça ao Claude para levantar os filtros e montar a lista de afiliados de Pets.`);
+      else if (url.searchParams.get("ultima") === "1") await avisar("aviso", "TikTok: busca de afiliados continua bloqueada", `Todas as tentativas de hoje voltaram: ${String(r.message ?? r.http).slice(0, 220)}. Próximo passo: chamado no Partner Center do TikTok perguntando a cota da busca de criadores.`);
+      return json({ modulo, http: r.http, code: r.code, message: r.message, bytes: r.txt.length, gravado: true });
+    }
     if (modulo === "criador") {
       const id = (url.searchParams.get("id") || "").trim();
       if (!/^[A-Za-z0-9_-]{4,80}$/.test(id)) return json({ erro: "informe id (creator_user_id)" }, 400);
