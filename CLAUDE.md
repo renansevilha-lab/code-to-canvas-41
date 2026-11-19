@@ -4319,15 +4319,14 @@ Plano aprovado pelo dono (estudo + plano em https://claude.ai/artifact/Ad7sCtARu
 "é o teste") e 3 na Ottz em kits (MC 20%, ROAS 10), cada um com um título de palavra-chave diferente e um estilo de capa novo. Kit de 12 kg mantém a margem.
 - **Tiny (criados pela tela "Criar kit ou produto com variações", base 16799):** **16801** (4/8/12/16 kg → 16804, 16806, 16807, 16808), **16812** (8/12/16/20 kg →
   16814, 16821, 16825, 16826) e **16827** (8/16/24 kg → 16829, 16830, 16831). Preço no Tiny = o do plano (4 kg 42,90 · 8 kg 74,90 · 12 kg 123,90 · 16 kg 152,90 ·
-  20 kg 181,90 · 24 kg 221,90). **Faltam os dois da Bumi:** produto com variações 8 kg e 20 kg (64,90 / 159,90; nome "… Fina 8kg e 20kg …") e kit avulso de 8 kg
-  (64,90) — a extensão do Chrome caiu no meio e a sugestão de SKUs do diálogo passou a vir vazia (digitar os SKUs livres à mão; a conferência valida no Tiny).
+  20 kg 181,90 · 24 kg 221,90). **Os dois da loja Bumi (criados em 19/nov de manhã, mesma tela):** **16832** "… Fina 8kg e 20kg …" (16833 8 kg 64,90 · 16834 20 kg 159,90) e o kit avulso **16836** "… Fina 8kg …" (2× 16799, 64,90). "Bumi" aqui é só a LOJA: os seis anúncios são kits do mesmo produto, a Areia Ottz Pet Fina 16799. A sugestão de SKUs do diálogo veio vazia na véspera (extensão do Chrome caindo) e voltou ao normal no dia seguinte.
 - **Rascunhos** (`ia_rascunho`, criados por `ia_rascunho_criar` em nome do dono, texto aprovado copiado do rascunho do 16799 com a linha de tamanhos trocada):
-  16799 · shopee · svl (Bumi 1, R$ 36,90) e os pais 16801 / 16812 / 16827 · shopee · ottz. `memoria_calculo.plano`, `margem_desejada` e
+  16799 · shopee · svl (Bumi 1, R$ 36,90), 16836 · shopee · svl (Bumi 2, R$ 64,90), 16832 · shopee · svl (Bumi 3) e os pais 16801 / 16812 / 16827 · shopee · ottz. `memoria_calculo.plano`, `margem_desejada` e
   **`precos_variacoes` = {sku: preço}**.
 - **`VariacoesShopee`:** o preço de cada variação passou a ser preço planejado do rascunho do pai (`precos_variacoes`) > margem do rascunho (`margem_desejada`) >
   margem padrão da Shopee (antes sempre a padrão, 30%).
 - **Capas:** instrução por produto em `ia_contexto` ("Instruções extras do anúncio", `aplica_em = {imagem}`) com o estilo de cada um: 16799 cena com gato e close do
-  grão · 16801 escada de tamanhos · 16812 close do grão · 16827 atacado com texto gigante. As capas ainda não foram geradas.
+  grão · 16836 faixa "preço de atacado" · 16832 texto gigante "20KG" · 16801 escada de tamanhos · 16812 close do grão · 16827 atacado com texto gigante. As capas ainda não foram geradas.
 - **Painel de Testes A/B:** teste "Areia Ottz Pet Fina - lançamento nov/2026" em `anuncio_marcacao` (braços Bumi 1–3 e Ottz 1–3, `item_id` nulo até publicar; tarefas
   `tipo manual` com conferência automática de título, preço por SKU e ROAS; leitura provisória 05/12; parada = 150 cliques com ROAS abaixo do empate, 6,7 Bumi / 5 Ottz).
 - **Pesquisa na Shopee:** o Chrome tem dois navegadores ligados; o "Browser 1" é o logado como comprador (bumipetcare) e mostra "vendidos por mês" com
