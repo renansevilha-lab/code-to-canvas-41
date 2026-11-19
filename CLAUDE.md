@@ -4330,6 +4330,21 @@ Pedido do dono (a Bumi ainda não autorizou o app no TikTok, então começou pel
   (`tiktok-promocoes`, `tiktok-sync-pedidos` extratos/devoluções, `tiktok-rastreio` `modulo=pedido`), a linha em `lojas` e a
   `view_canais_sem_integracao` (auditoria de 11/nov).
 
+## 5.11.15 TikTok — afiliados (criadores) pela API: teste de acesso (18/nov/2026, só leitura)
+
+Pergunta do dono: "conseguimos acessar os Melhores Afiliados do TikTok da parte de Pets?". Sonda **`tiktok-afiliados` v1** (função nova, fonte em
+`supabase/functions/tiktok-afiliados/`; só leitura; aceita a chave publicável): `criadores` (POST `/affiliate_seller/{ver}/marketplace_creators/search`,
+corpo = filtros repassados), `criador&id=` (GET `…/marketplace_creators/{id}`) e `categorias[&q=]` (`/product/202309/categories`).
+- **Permissão existe:** `oauth_tokens_tiktok.granted_scopes` da loja ottzpet tem `seller.creator_marketplace.read`, `seller.affiliate_collaboration.read/write`,
+  `seller.affiliate_messages.write` e `data.bestselling.public.read`.
+- **Versão:** só a **202508** existe para esses dois caminhos (202405/06/09/12, 202501/05 e 202509 = `36009004 Invalid API version`).
+- **Busca de criadores: bloqueada por limite.** 4 tentativas em ~4 min (corpo `{}`) = HTTP 429 `36009002 … exceeded a shared app-group rate limit`, enquanto
+  as outras chamadas do TikTok seguiam respondendo 200. Não é falta de permissão (a mensagem seria outra), mas nenhum dado veio. A página de limites do TikTok
+  diz que a cota é dinâmica e não publica número; o guia de afiliados nem lista essa busca. **Não repetir em laço** — tentar de novo em outro horário, 1 chamada.
+- **Detalhe do criador (202508) responde:** com id inventado = `Invalid open_id. Use the open_id returned by the relevant API` → o id é o `open_id` que a busca devolve.
+- **Categoria de Pets no TikTok = `602118`** ("Produtos para animais de estimação", raiz; 2.055 categorias no total).
+- Não descoberto: os filtros do corpo da busca (categoria, GMV, seguidores) — a documentação oficial é JS e a página da referência não foi achada.
+
 ## 5.12 Histórico de faturamento pelo Tiny — só totais (29/out/2026)
 
 Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedido; mostrar no Dashboard
@@ -4416,6 +4431,7 @@ Pedido do dono: rotina mensal para a contabilidade (Super Goiás), só a ACZ (CN
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `tiktok-afiliados` | v1 | Sonda só de leitura da API de afiliados do TikTok (busca de criadores, detalhe do criador, categorias) — ver §5.11.15 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
 | `amazon-inbound` | v15 (deploy 21; 30/out: confere se a Amazon fixou o transporte — SUCCESS com aviso FBA_INB_0208 deixava o plano "transporte confirmado" sem transporte, §5.9.4) · v14 (deploy 20; 27/out: prévia confere o anúncio de cada item — aprovação exigida pela Amazon bloqueia o plano, FDS avisa; a API de elegibilidade não serve no Brasil, §5.9.4) · v13 (deploy 19; 22/out: etiqueta da transportadora em pé nas etiquetas das caixas, `_shared/etiqueta-amazon.ts` + módulo `endireitar-etiquetas`, §5.9.4) · v12 (deploy 16; 22/out: folha de encaixotamento em PDF + `vincular` envios do Seller Central, também automático no cron 169) · v11 (deploy 14; 22/out: encaixotamento do envio — caixas e preparo — na tela do envio) · v10 (deploy 13; 21/out: DANFE em PDF do XML via `_shared/danfe.ts` + coleta reservada lida da Amazon) · v9 (deploy 12; 21/out: `nf-remessa` importa o XML da NF de remessa, cron 169) · v8.1 (deploy 11; prepDetails com vírgula) · v8 (deploy 10; 20/out: ACZ liberada + `modelos-importar`, §5.9.4) · v6 (deploy 7; 19/out: `envios-app` cria o envio na aba Envios com etiquetas); v5 (deploy 6: `transporte` e `confirmar-transporte` — destino confirmado pela API obriga o transporte pela API) | Envio ao FBA pela API (Fulfillment Inbound v2024-03-20) a partir da Reposição: `lista`, `previa`, `avancar`, `confirmar-destino`, `transporte`, `confirmar-transporte`, `envios-app`, `nf-remessa`, `vincular`, `cancelar`; JWT de usuário + módulo galpao; as duas contas — ver §5.9.4 |
