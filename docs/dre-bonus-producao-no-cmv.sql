@@ -1,0 +1,17 @@
+-- ============================================================================
+-- DRE: bônus de produção não conta duas vezes (23/nov/2026, opção A do dono)
+-- O bônus por saco (producao_parametros.pagamento_saco: R$ 1,80 mandioca, R$ 2,50 misturas) já está no CMV dos
+-- produtos fabricados — custo manual lançado pela Produção em 10/11 (cmv_manual, "custo da produção (cenário Medido
+-- nov/26)"). O pagamento do bônus também é lançado no Tiny e cai em Pessoal (às vezes junto com a diária). As duas
+-- views de despesa do DRE ganharam um bloco que ABATE de Pessoal o bônus pago no mês, pelo registro da aba Bônus
+-- (producao_bonus_pagamento, mês de pago_em). No drill aparece o grupo "Bônus de produção (já no CMV)", valor negativo,
+-- tiny_id nulo.
+-- Medido na aplicação: nov/26 Pessoal 21.918,21 → 13.902,19 (−8.016,02); lucro 15.649 → 23.665 (2,9% → 4,4%).
+-- Os outros meses de view_dre_mensal e do detalhe ficaram idênticos (md5). Baseline: _bkp_dre_mensal_bonus_23nov.
+-- Regra: todo bônus pago precisa ser registrado na aba Bônus (senão fica em dobro); bônus registrado no app e NÃO
+-- lançado no Tiny deixaria Pessoal baixo demais.
+-- Migração no ar: dre_bonus_producao_no_cmv (as definições completas estão lá).
+--
+-- ROLLBACK: recriar as duas views sem o bloco "bonus" (view_dre_despesas) e sem o 3º UNION ALL
+-- (view_dre_despesas_detalhe) — as definições anteriores são as mesmas desta migração menos esses trechos.
+-- ============================================================================
