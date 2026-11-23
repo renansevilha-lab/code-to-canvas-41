@@ -4468,6 +4468,30 @@ Pedido do dono: rotina mensal para a contabilidade (Super Goiás), só a ACZ (CN
 - **Os quatro números** (conferidos ao centavo com jul e ago/2026 pelos ZIPs): Faturamento Bruto = soma do vNF das saídas da ACZ autorizadas (cStat 100/150) sem canceladas; Devoluções = notas de entrada emitidas pela ACZ com finalidade 4; Compras = soma do vNF das NF-e de terceiros (em ago o confirmado excluiu a NF 16381 da Santa Lucia, R$ 57.000 — motivo a confirmar). Out/2026 pelo ZIP: bruto 369.542,94 · canceladas 219 / 7.953,39 · Jussara (46176256000155) 17 / 690,43 · compras 216.209,44.
 - **Pendente:** entidade hexadecimal no nome do produto (`&#xC2;`) não é convertida pelo leitor; módulo de exportação (dados do mês + ZIP dos XMLs) e os scripts do Excel fiscal, despesas, estimativa de impostos e checagens; CT-e pela API não testado.
 
+## 5.14 Relatórios diários gerados pelo banco + agente coordenador (23/nov/2026)
+
+Decisão do dono: agente **coordenador** (opção B) que cruza os relatórios dos outros, entrega uma lista única de decisões e, depois do "aprovo", vira tarefa
+com responsável e prazo. Antes disso, os relatórios precisam sair todo dia: financeiro e compras estavam parados desde 13/11 e ADS desde 27/10, porque só
+gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa agendada neste PC; o `rh` é semanal).
+- **Feito — o banco gera sozinho** (migração `relatorios_automaticos`, SQL + rollback em `docs/relatorios-automaticos.sql`): **`relatorio_auto_gerar(agente)`**
+  grava em `relatorios_agentes` com os números das funções de sempre e a frase de destaque montada por regra fixa (sem IA): financeiro =
+  `financeiro_relatorio_diario() - 'fluxo_30d'`; compras = **`compras_relatorio_diario()`** (o formato que o cartão do app lê — `resumo`, `por_fornecedor`,
+  `atencao`, `excesso_sem_giro`; a skill antiga gravava `relatorio_compras_json()`, que o cartão não entende, então os cartões de compras de 20/out a 13/nov
+  saíam vazios); ads = `ads_relatorio_diario()`. O automático leva `resumo.origem = 'automatico'`; relatório escrito pela IA no mesmo dia substitui o
+  automático, e o automático nunca passa por cima de um escrito pela IA. Crons **182** `relatorio-auto-ads` `50 10`, **183** `-compras` `55 10`, **184**
+  `-financeiro` `20 11`, **185** `relatorio-auto-vigiar` `40 11` (UTC; tenta de novo o que faltou e avisa no Discord, canal erros, se não saiu). ~2–4 s cada.
+- **Plano do coordenador (ainda não feito):** (2) todos os agentes gravam `resumo.decisoes[]` no mesmo formato (o que fazer, produto, R$ em jogo, prazo, dono
+  sugerido) e leem de volta o estado (aprovada/recusada/feita; recusada não volta por 14 dias); (3) coordenador roda ~8h30, cruza (ADS × cobertura de estoque,
+  compra × caixa projetado, oportunidade × estoque parado), até 7 decisões; (4) aprovada vira tarefa + Discord, com cobrança no dia seguinte; (5) financeiro
+  ampliado com conciliações: repasse dos marketplaces (`view_conciliacao_shopee`, carteira), fornecedor (`view_compras_conciliacao`), devoluções
+  (`view_conciliacao_devolucoes`), previsto × realizado, e a bancária.
+- **Extrato para a conciliação bancária — Mercado Pago (testado 23/nov, só leitura, token da Ottz em `oauth_tokens_ml`):** `GET /v1/account/release_report/list`
+  e `/v1/account/settlement_report/list` = 200 `[]` (a API abre com o nosso token; nenhum relatório gerado ainda); `GET /v1/account/release_report/config` = 404
+  `config_not_found_for_user` (nunca configurado — criar a configuração é escrita na conta, pede o OK do dono); saldo
+  (`/users/{id}/mercadopago_account/balance`) = 403. Já temos as movimentações pela `ml-sync-wallet` (`transacoes_carteira`: PAYMENT_MP, OP_MONEY_TRANSFER,
+  REFUND_MP, OP_ACCOUNT_FUND…, ~3,1 mil em 30 dias). No sistema não há extrato de banco, `contas_pagar.conta_bancaria` está vazia em todas e 3.017 das 4.087
+  contas pagas estão sem `data_pagamento`.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
