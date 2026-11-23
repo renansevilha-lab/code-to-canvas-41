@@ -4515,7 +4515,7 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   (`mp_extrato_tick`: só chama a função se há pedido aberto); 36 h sem arquivo = erro + Discord (canal erros). **Medido:** o arquivo sai ~30 min depois do
   pedido (a tarefa fica em `data-ready` nesse meio-tempo e só então ganha `file_name`; a lista `…/list` seguiu vazia). 1º dia gravado, 22/11: 71 linhas, saldo
   R$ 4.732,37 → R$ 6.029,14; os 58 `order_id` casam com `pedidos` e 68 de 70 `source_id` com `transacoes_carteira.transaction_id`. É a 1ª fonte de SALDO do
-  Mercado Pago no sistema (a API de saldo dá 403). Falta: histórico (um `pedir&de=&ate=` de até 60 dias), conta SVL, e a conciliação em si (extrato × carteira ×
+  Mercado Pago no sistema (a API de saldo dá 403). **Mesmo dia, OK do dono:** configuração criada também na conta **SVL** (1299638625, prefixo `extrato-svl`, 201; linha em `mp_extrato_conta`) e histórico de 60 dias pedido para as duas contas (`pedir&de=2026-09-24&ate=2026-11-22` → pedidos 2 e 3, coletados pelo cron quando o arquivo sair). Falta: a conciliação em si (extrato × carteira ×
   contas pagas) no agente financeiro.
 - **Olist Conta Digital pelo Tiny (testado 23/nov, token `conta='ottz'`):** `GET /contas-financeiras` = 200 (a conta é a `811554060` "Olist Conta Digital";
   há também Nubank, Banco Inter, Itaú - Ottz Pet R, Mercado Pago) e `GET /contas-bancarias` = 200 (banco **509**). **`GET /extratos-bancarios` e `GET /caixa` =

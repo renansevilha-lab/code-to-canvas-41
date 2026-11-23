@@ -25,6 +25,8 @@ create table public.mp_extrato_conta (
   criado_em timestamptz not null default now()
 );
 insert into public.mp_extrato_conta (user_id, apelido) values (1107117809, 'Ottz');
+-- SVL entrou no mesmo dia, depois de criada a configuração do relatório na conta dela:
+-- insert into public.mp_extrato_conta (user_id, apelido) values (1299638625, 'SVL');
 
 create table public.mp_extrato_pedido (
   id            bigserial primary key,
