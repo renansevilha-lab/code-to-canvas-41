@@ -1151,7 +1151,7 @@ idêntico ao centavo — validado). O front (`/dre`) grava por lançamento no
 drill-down e recarrega os totais. Receita/CMV expandem por empresa a partir de
 `view_dre_operacional`.
 
-**Bônus de produção não conta duas vezes (23/nov/2026, opção A do dono):** o bônus por saco (R$ 1,80 mandioca / R$ 2,50misturas) já está no CMV dos produtos fabricados (custo manual lançado pela Produção em 10/11) e o pagamento também vai ao Tiny(Pessoal, às vezes junto da diária). `view_dre_despesas` e `view_dre_despesas_detalhe` abatem de Pessoal o bônus pago no mêspelo registro da aba Bônus (`producao_bonus_pagamento`, mês de `pago_em`); no drill = grupo "Bônus de produção (já no CMV)",negativo, sem tiny_id. Nov/26: Pessoal 21,9 → 13,9 mil, lucro 2,9% → 4,4%; outros meses idênticos (md5). **Todo bônus pago tem deser registrado na aba Bônus** (senão fica em dobro). SQL em `docs/dre-bonus-producao-no-cmv.sql`; baseline `_bkp_dre_mensal_bonus_23nov`.
+**Bônus de produção não conta duas vezes (23/nov/2026, opção A do dono):** o bônus por saco (R$ 1,80 mandioca / R$ 2,50 misturas) já está no CMV dos produtos fabricados (custo manual lançado pela Produção em 10/11) e o pagamento também vai ao Tiny (Pessoal, às vezes junto da diária). `view_dre_despesas` e `view_dre_despesas_detalhe` abatem de Pessoal o bônus pago no mês pelo registro da aba Bônus (`producao_bonus_pagamento`, mês de `pago_em`); no drill = grupo "Bônus de produção (já no CMV)", negativo, sem tiny_id. Nov/26: Pessoal 21,9 → 13,9 mil, lucro 2,9% → 4,4%; outros meses idênticos (md5). **Todo bônus pago tem de ser registrado na aba Bônus** (senão fica em dobro). SQL em `docs/dre-bonus-producao-no-cmv.sql`; baseline `_bkp_dre_mensal_bonus_23nov`.
 
 ---
 
