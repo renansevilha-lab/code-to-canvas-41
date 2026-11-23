@@ -1,3 +1,5 @@
+// ml-anuncio-sonda v8 (19/out/2026): ?teste=nf-get&path=/users/{conta}/invoices/... = leitura de nota (só esse caminho).
+// ml-anuncio-sonda v7 (19/out/2026): ?teste=nf-full = notas de remessa ao Full (lote do ML, só leitura).
 // ml-anuncio-sonda v6 (19/out/2026): ?teste=inbound = o que a API de envios ao Full (Inbound FBM) deixa a conta fazer —
 //   leituras + POST com lista VAZIA e com produto INEXISTENTE (recusados, não criam nada). Expira em 21/out.
 // ml-anuncio-sonda v5 (14/out/2026) - DIAGNOSTICO. So o modo ?teste=limite escreve (v4: regrava o mesmo valor; v5: &valor=N troca e volta).
@@ -29,6 +31,70 @@ Deno.serve(async (req) => {
   const { data: tk } = await sb.from("oauth_tokens_ml").select("access_token").eq("user_id", userId).maybeSingle();
   if (!tk) return json({ erro: "sem token" }, 400);
   const token = tk.access_token as string;
+
+  // v8 (19/out): leitura livre só dentro de /users/{conta}/invoices/ (detalhe de nota, XML, DANFE) — expira 21/out
+  if (u.searchParams.get("teste") === "nf-get") {
+    if (Date.now() > Date.parse("2026-10-21T03:00:00Z")) return json({ erro: "teste expirado" }, 410);
+    const caminho = String(u.searchParams.get("path") || "");
+    if (!caminho.startsWith(`/users/${userId}/invoices/`) || caminho.includes("..")) return json({ erro: "caminho não permitido" }, 400);
+    const r = await fetch(`${ML}${caminho}`, { headers: { Authorization: `Bearer ${token}` } });
+    const tipo = r.headers.get("content-type") ?? "";
+    const buf = new Uint8Array(await r.arrayBuffer());
+    const txt = new TextDecoder().decode(buf);
+    return json({ conta, status: r.status, tipo, bytes: buf.length, corpo: tipo.includes("json") ? JSON.parse(txt) : txt.slice(0, 1500) });
+  }
+
+  // v7 (19/out): notas de remessa ao Full emitidas pelo ML (só leitura; zip do lote por período)
+  if (u.searchParams.get("teste") === "nf-full") {
+    if (Date.now() > Date.parse("2026-10-21T03:00:00Z")) return json({ erro: "teste expirado" }, 410);
+    const de = u.searchParams.get("de") || "20261001", ate = u.searchParams.get("ate") || "20261019";
+    // o ML responde "Invalid input." conforme a combinação de filtros: tenta as variações da doc até uma passar
+    const variacoes = [
+      `start=${de}&end=${ate}&sale=all&return=all&full=all&others=all&file_types=xml,pdf&simple_folder=false`,
+      `start=${de}&end=${ate}&full=inbound&file_types=xml,pdf&simple_folder=false`,
+      `start=${de}&end=${ate}&full=inbound,removal`,
+      `start=${de}&end=${ate}`,
+    ];
+    const tentativas: any[] = [];
+    let r: Response | null = null;
+    for (const q of variacoes) {
+      const t = await fetch(`${ML}/users/${userId}/invoices/sites/MLB/batch_request/period/stream?${q}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (t.status === 200) { r = t; tentativas.push({ q, status: 200 }); break; }
+      tentativas.push({ q, status: t.status, corpo: (await t.text()).slice(0, 160) });
+    }
+    if (!r) {
+      const mes = await fetch(`${ML}/users/${userId}/invoices/sites/MLB/batch_request/period/${de.slice(0, 6)}`, { headers: { Authorization: `Bearer ${token}` } });
+      return json({ conta, tentativas, por_mes: { status: mes.status, tipo: mes.headers.get("content-type"), corpo: (await mes.text()).slice(0, 300) } });
+    }
+    const buf = new Uint8Array(await r.arrayBuffer());
+    const txt = new TextDecoder("latin1").decode(buf);
+    // nomes dos arquivos pelo diretório central do zip (assinatura 50 4B 01 02; tamanho do nome no byte 28; nome no 46)
+    const nomes: string[] = [];
+    const limite = Number(u.searchParams.get("limite") || 30);
+    for (let i = 0; i + 46 < buf.length && nomes.length < 4000; i++) {
+      if (buf[i] === 0x50 && buf[i + 1] === 0x4b && buf[i + 2] === 0x01 && buf[i + 3] === 0x02) {
+        const n = buf[i + 28] | (buf[i + 29] << 8);
+        nomes.push(txt.slice(i + 46, i + 46 + n));
+      }
+    }
+    // ?pasta=transfer: só as notas daquela pasta (XML), com o detalhe de cada uma (centro, data, itens)
+    const pasta = u.searchParams.get("pasta");
+    if (pasta) {
+      const ids = [...new Set(nomes.filter((n) => n.toLowerCase().includes(pasta.toLowerCase()) && n.endsWith(".xml")).map((n) => n.split("/").pop()!.split("_")[0]))];
+      const pastas = [...new Set(nomes.map((n) => n.split("/").slice(0, -1).join("/")))];
+      const det: any[] = [];
+      for (const id of ids.slice(0, limite)) {
+        const d = (await ml(token, `/users/${userId}/invoices/${id}`)).body;
+        det.push({ id, data: d?.issued_date ?? d?.date_created ?? null, cfop: d?.items?.[0]?.fiscal_data?.attributes?.cfop ?? null,
+          centro: d?.shipment?.logistic_center?.id ?? null, destino: d?.recipient?.address?.city ?? null,
+          pedido: [...new Set((d?.items ?? []).map((i: any) => i.external_order_id))],
+          itens: (d?.items ?? []).map((i: any) => `${i.attributes?.sku}x${i.quantity}`), total: d?.amount ?? d?.total_amount ?? null,
+          chaves: Object.keys(d ?? {}) });
+      }
+      return json({ conta, pastas, n: ids.length, det });
+    }
+    return json({ conta, tentativas, status: r.status, tipo: r.headers.get("content-type"), bytes: buf.length, arquivos: nomes.slice(0, limite), inicio: buf.length < 3000 ? txt.slice(0, 600) : txt.slice(0, 80) });
+  }
 
   if (u.searchParams.get("teste") === "inbound") {
     if (Date.now() > Date.parse("2026-10-21T03:00:00Z")) return json({ erro: "teste expirado" }, 410);

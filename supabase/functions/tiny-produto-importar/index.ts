@@ -115,9 +115,33 @@ function linhaDoEspelho(det: any, itemLista: any | null) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ erro: "use POST" }, 405);
+  const body = await req.json().catch(() => ({})) as Record<string, any>;
+  // SONDA TEMPORÁRIA (19/out, só leitura; morre em 20/out 03:00 UTC): notas de SAÍDA para os CDs do Full (EBAZAR/Amazon)
+  // — para saber como a remessa ao Full do Mercado Livre é emitida hoje (natureza, CFOP, série).
+  if (body.modulo === "sonda-notas-full" && Date.now() < Date.parse("2026-10-20T03:00:00Z")) {
+    const token = await tokenTiny();
+    const de = String(body.de ?? "2026-10-01"), ate = String(body.ate ?? "2026-10-19");
+    const achadas: any[] = [];
+    for (let off = 0; off < 1500; off += 100) {
+      const r = await tinyGet(token, `/notas?tipo=S&dataInicial=${de}&dataFinal=${ate}&limit=100&offset=${off}`);
+      const its = (r.body?.itens ?? []) as any[];
+      for (const n of its) {
+        const cli = String(n.cliente?.nome ?? "");
+        if (/ebazar|mercado ?livre|amazon/i.test(cli)) achadas.push({ id: n.id, numero: n.numero, serie: n.serie, data: n.dataEmissao, cliente: cli, valor: n.valor, situacao: n.situacao });
+      }
+      if (its.length < 100) break;
+    }
+    const det: any[] = [];
+    for (const n of achadas.slice(0, 3)) {
+      const d = (await tinyGet(token, `/notas/${n.id}`)).body;
+      det.push({ numero: d?.numero, serie: d?.serie, natureza: d?.naturezaOperacao ?? d?.natureza ?? null, finalidade: d?.finalidade ?? null,
+        cfops: [...new Set(((d?.itens ?? []) as any[]).map((i) => i.cfop))], itens: ((d?.itens ?? []) as any[]).slice(0, 4).map((i) => `${i.codigo}x${i.quantidade}`),
+        obs: String(d?.observacoes ?? "").slice(0, 300), ecommerce: d?.ecommerce ?? null, chaves: Object.keys(d ?? {}) });
+    }
+    return json({ ok: true, total: achadas.length, achadas: achadas.slice(0, 40), det });
+  }
   const quem = usuario(req);
   if (!quem) return json({ erro: "faça login no app (sessão de usuário exigida)" }, 401);
-  const body = await req.json().catch(() => ({})) as Record<string, any>;
   const pedidos = [...new Set(
     (Array.isArray(body.skus) ? body.skus : String(body.skus ?? "").split(/[\s,;]+/))
       .map((s: unknown) => String(s ?? "").trim()).filter(Boolean),
