@@ -1090,8 +1090,31 @@ Shopee + [SVLL] ML); depois Ottz.
   retenta: vira `revisar`); a emissão segue pelo `emitir` de sempre (cron 158, ~12 notas/h). Cron **181**
   `devolucao-hist-criar-svl` (`8-58/10`, max=6 ≈ 36 criações/h). 1ª real: **002089/12** (260817K4CX1MAG). Casos fora
   do motor (olhar à mão): `canc_outra_conta`/`canc_marketplace` sem cancelamento na própria conta (16) e
-  `parcial_possivel` (6). **Ottz ainda NÃO** (motor nunca cobriu a Ottz; série 13; precisa de guard próprio — o `criar`
-  da Ottz só confere o pedido quando ele está em `notas_cancelados`).
+  `parcial_possivel` (6).
+- **Ottz — ligada em 22/nov/2026 (opção A do dono: só vendas do Lucro Real) e TRAVADA no regime do Tiny.** A ACZ é
+  Lucro Real (CRT 3) no Tiny desde **10/08/2026**; venda do Simples devolvida hoje sairia com crédito de ICMS/PIS/COFINS
+  indevido (R$ 17,9 mil de PIS/COFINS + R$ 13,6–34,9 mil de ICMS sobre R$ 193,9 mil). Migração
+  `devolucoes_hist_regime_emitente`: `view_devolucao_hist_candidatos` ganhou `emit_cnpj` (da chave) e `regime_venda`
+  (`lucro_real` = CST de 2 dígitos em `fiscal_nfe_item`, `simples` = 3, nulo = sem XML no espelho) e o caso `chave`
+  passou a contar `devolucao_auto.estado = 'emitida'`. Ottz sem devolução em 22/nov: ACZ lucro_real **459 / R$ 28 mil**
+  (10/08–11/11) · ACZ simples 482 / R$ 27,5 mil · ACZ sem XML 3.262 / R$ 169,7 mil (antes de 14/06/26) · Jussara 6 (as
+  notas da Bumi/Jussara, CNPJ 46176256000155, também vivem no Tiny da Ottz — excluídas pelo CNPJ). `nf-devolucao`
+  **v3.25**: o caminho direto `id_nota_venda + pedido_id` (guard = pedido cancelado AO VIVO + nota do pedido) vale nas
+  duas contas; param `natureza` opcional. `devolucao-auto` **v9**: `processar-historico&conta=ottz` (série 13, só
+  `regime_venda='lucro_real'` e `emit_cnpj` ACZ) cria E emite na mesma rodada; recusa retenta 1 h depois (até 3×);
+  656 pausa 1 h. **Achado que travou tudo:** a nota criada pela **API v2** (`nota.fiscal.incluir`) na Ottz nasce com
+  `regimeTributario 1` (Simples), ICMS 0 — a 1ª real **001152/13** foi REJEITADA pela SEFAZ (**481: Código Regime
+  Tributário do emitente diverge do cadastro**); a 2ª (**001153/13**, criada sem emitir, pedindo `serie=5`) veio igual e
+  o Tiny ignorou a série (manteve a 13). Não é a natureza: a devolução manual 093354/5 (19/nov, pela tela do Tiny) usa a
+  MESMA natureza 794940395 e saiu regime 3, ICMS CST 00 igual ao da venda, PIS/COFINS 50. A v2 não tem campo de regime
+  (doc oficial) nem alterar nota; a v3 não cria nota por JSON. **Motor da Ottz SEM cron** (nada roda); as duas notas
+  estão `revisar` em `devolucao_auto` e aparecem em "Pendentes de emissão" da Ottz — corrigir o regime na tela do
+  Tiny e emitir pelo app (1ª nota autorizada confirma o caminho) ou excluir. Caminhos: (A) Tiny/suporte: de onde a API
+  tira o regime (configuração da integração criada no Simples?) · (B) montar o XML da devolução nós mesmos
+  (`POST /notas/xml`, CRT 3 espelhando a venda) — pede o contador · (C) devolução das vendas do Simples: natureza SEM
+  crédito (ICMS 90/41, PIS/COFINS 98/99) pelo param `natureza`, ou não emitir (receita já no DAS) — decisão do contador.
+  SVL (Simples) não é afetada: 1.083 criadas, cron 158 emitindo; 1 rejeitada **002803/12** (ML 2000008772034461, "IE do
+  destinatário não vinculada ao CNPJ", cliente PJ — arrumar à mão).
 
 ## 5.3 DRE — categorização de despesas e camada de override
 

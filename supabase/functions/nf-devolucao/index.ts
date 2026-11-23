@@ -1,5 +1,9 @@
 // ============================================================================
-// Edge Function: nf-devolucao v3.24 (MULTI-CONTA: ottz | svl)
+// Edge Function: nf-devolucao v3.25 (MULTI-CONTA: ottz | svl)
+// v3.25 (22/nov/2026): o caminho direto (id_nota_venda + pedido_id, guard = pedido cancelado AO VIVO e nota
+//   vinculada a ele) vale tambem para a conta OTTZ (historico de vendas do Lucro Real). `pedido_svl_id` continua
+//   aceito como apelido de `pedido_id`. Param opcional `natureza` troca a natureza de operacao da devolucao
+//   (ex.: venda feita no Simples -> natureza sem credito, a criar no Tiny).
 // v3.24 (19/nov/2026): criar&conta=svl aceita id_nota_venda + pedido_svl_id (venda que vive NO Tiny SVL —
 //   historico 2025–jun/2026 da Sevilla Store / ML SVL, sem pedido no principal). Guard = pedido de origem
 //   cancelado AO VIVO no Tiny SVL e nota vinculada a ele. Usado pelo devolucao-auto?modulo=processar-historico.
@@ -790,27 +794,28 @@ serve(async (req: Request) => {
     let guard = "cancelado";
     let devolverItens: { sku: string; qtd: number }[] | null = null;
 
-    if (conta === "svl" && !param("tiny_pedido_id") && param("id_nota_venda")) {
-      // v3.24: venda emitida NO Tiny SVL (sem pedido no principal). Guard: o pedido de origem, no Tiny SVL,
-      // esta cancelado AO VIVO e a nota informada e a nota dele (nunca confiar so no espelho).
+    const pedidoDireto = parseInt(param("pedido_id") || param("pedido_svl_id") || "0", 10);
+    if (!param("tiny_pedido_id") && param("id_nota_venda") && (conta === "svl" || pedidoDireto > 0)) {
+      // v3.24/v3.25: venda emitida NA PROPRIA conta (SVL sem pedido no principal; Ottz historico). Guard: o pedido
+      // de origem esta cancelado AO VIVO nessa conta e a nota informada e a nota dele (nunca confiar so no espelho).
       const idNotaSvl = parseInt(param("id_nota_venda") || "0", 10);
-      const pedSvlId = parseInt(param("pedido_svl_id") || "0", 10);
-      if (!idNotaSvl || !pedSvlId) return json({ erro: "conta svl sem ponte: informe id_nota_venda E pedido_svl_id (pedido de origem no Tiny SVL)" }, { status: 400 });
+      const pedSvlId = pedidoDireto;
+      if (!idNotaSvl || !pedSvlId) return json({ erro: `conta ${conta} sem ponte: informe id_nota_venda E pedido_id (pedido de origem no Tiny da conta)` }, { status: 400 });
       const pedSvl = await tinyFetch(accessToken, `/pedidos/${pedSvlId}`);
-      if (!pedSvl) return json({ modulo: "criar", conta, ok: false, codigo: "sem_pedido_svl", erro: `pedido ${pedSvlId} nao encontrado no Tiny SVL` }, { status: 404 });
+      if (!pedSvl) return json({ modulo: "criar", conta, ok: false, codigo: "sem_pedido_svl", erro: `pedido ${pedSvlId} nao encontrado no Tiny ${conta}` }, { status: 404 });
       if (String(pedSvl.situacao) !== "2") {
         return json({ modulo: "criar", conta, ok: false, codigo: "nao_cancelado", nao_cancelado: true, situacao_pedido: pedSvl.situacao,
-          erro: `O pedido ${pedSvl.numeroPedido} NAO esta cancelado no Tiny SVL (situacao ${pedSvl.situacao}). Nao gero devolucao para pedido ativo.` });
+          erro: `O pedido ${pedSvl.numeroPedido} NAO esta cancelado no Tiny ${conta} (situacao ${pedSvl.situacao}). Nao gero devolucao para pedido ativo.` });
       }
       const notaDoPedido = pedSvl.idNotaFiscal ?? pedSvl.notaFiscal?.id ?? null;
       if (notaDoPedido != null && Number(notaDoPedido) !== idNotaSvl) {
         return json({ modulo: "criar", conta, ok: false, codigo: "nota_nao_do_pedido", situacao_pedido: pedSvl.situacao,
-          erro: `A NF ${idNotaSvl} nao e a nota vinculada ao pedido ${pedSvl.numeroPedido} no Tiny SVL (idNotaFiscal ${notaDoPedido}).` }, { status: 422 });
+          erro: `A NF ${idNotaSvl} nao e a nota vinculada ao pedido ${pedSvl.numeroPedido} no Tiny ${conta} (idNotaFiscal ${notaDoPedido}).` }, { status: 422 });
       }
       venda = await tinyFetch(accessToken, `/notas/${idNotaSvl}`);
-      if (!venda) return json({ codigo: "sem_nf_venda", erro: `nota de venda ${idNotaSvl} nao encontrada no Tiny SVL` }, { status: 404 });
+      if (!venda) return json({ codigo: "sem_nf_venda", erro: `nota de venda ${idNotaSvl} nao encontrada no Tiny ${conta}` }, { status: 404 });
       idNotaVenda = idNotaSvl;
-      guard = "cancelado_svl";
+      guard = `cancelado_${conta}`;
       bridge = { direto: true, pedido_svl: pedSvlId, nota_do_pedido: notaDoPedido };
     } else if (conta === "svl") {
       const tinyPedidoId = parseInt(param("tiny_pedido_id") || "0", 10);
@@ -908,10 +913,12 @@ serve(async (req: Request) => {
     }
     const feito = montarPayloadDevolucao(venda, serie, chave, fonteItens);
     const { payload, nItens, itensSemNcm } = feito;
+    const naturezaParam = (param("natureza") || "").trim();
+    if (naturezaParam) (payload.nota_fiscal as any).natureza_operacao = naturezaParam; // v3.25
     if (nItens === 0) return json({ codigo: "sem_itens", erro: "nota de venda sem itens" }, { status: 400 });
 
     if (!confirmar) {
-      return json({ modulo: "criar", conta, dry: true, serie, guard, itens_parcial: itensParcial, id_nota_venda: idNotaVenda, bridge, nota_venda_id: venda.id, nota_venda_numero: venda.numero, chave_referenciada: chave, origem_itens: origemItens, itens_sem_ncm: itensSemNcm, payload, aviso: "repita com confirmar=1 para incluir no Tiny (nasce Pendente)" });
+      return json({ modulo: "criar", conta, dry: true, serie, guard, natureza: payload.nota_fiscal.natureza_operacao, itens_parcial: itensParcial, id_nota_venda: idNotaVenda, bridge, nota_venda_id: venda.id, nota_venda_numero: venda.numero, chave_referenciada: chave, origem_itens: origemItens, itens_sem_ncm: itensSemNcm, payload, aviso: "repita com confirmar=1 para incluir no Tiny (nasce Pendente)" });
     }
 
     if (itensSemNcm > 0) {
@@ -1117,5 +1124,5 @@ serve(async (req: Request) => {
     return json({ modulo: "varrer-cancelados", conta: "ottz", candidatos_90d: (candidatos || []).length, ja_verificados_12h: jaVerificados.size, processados_agora: pendentes.length, com_nf: comNf, sem_nf: semNf, pulados_nao_cancelado_ao_vivo: puloNaoCancelado, erros, gravadas, limpos_falsos_positivos: limpos, restam: (candidatos || []).length - jaVerificados.size - pendentes.length, tempo_ms: Date.now() - inicio });
   }
 
-  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.24: criar&conta=svl direto por id_nota_venda+pedido_svl_id (historico); v3.23: ponte SVL com janelas progressivas" });
+  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.25: criar direto por id_nota_venda+pedido_id nas duas contas (historico), natureza opcional; v3.23: ponte SVL com janelas progressivas" });
 });

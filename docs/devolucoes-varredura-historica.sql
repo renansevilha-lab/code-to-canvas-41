@@ -120,12 +120,16 @@ select
     when dv.id_nota is not null then 'exata'
     when exists (select 1 from public.devolucoes_svl_base b where b.chave_referenciada = k.chave)
       or exists (select 1 from public.notas_cancelados nc where nc.chave_nfe = k.chave and nc.id_nota_devolucao is not null)
-      or exists (select 1 from public.devolucao_auto a where a.chave_venda = k.chave and a.estado in ('criada','ja_existe'))
+      or exists (select 1 from public.devolucao_auto a where a.chave_venda = k.chave and a.estado in ('criada','ja_existe','emitida'))
       or exists (select 1 from public.devolucao_clonadas cl where cl.refnfe = k.chave) then 'chave'
     when exists (select 1 from public.devolucao_hist_notas e where e.conta = k.conta and e.tipo = 'E' and e.cpf_cnpj = k.cpf_cnpj
                    and e.data_emissao >= k.data_emissao and e.valor < k.valor) then 'parcial_possivel'
     else 'nenhuma'
-  end as devolucao
+  end as devolucao,
+  -- 22/nov/2026 (migração devolucoes_hist_regime_emitente): emitente e regime da venda, lidos do espelho fiscal (colunas no FIM)
+  substr(k.chave, 7, 14) as emit_cnpj,
+  (select case max(length(i.cst_icms)) when 2 then 'lucro_real' when 3 then 'simples' end
+     from public.fiscal_nfe_item i where i.chave = k.chave) as regime_venda
 from k
 left join lateral (
   select e.id_nota, e.numero, e.situacao, e.data_emissao

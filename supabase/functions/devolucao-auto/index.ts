@@ -1,5 +1,11 @@
 // ============================================================================
-// devolucao-auto v8 (19/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// devolucao-auto v9 (22/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// v9: processar-historico aceita &conta=ottz (serie 13, token da Ottz): so vendas com regime_venda = 'lucro_real'
+//   (CST da propria nota no espelho fiscal) e emitente ACZ — venda do Simples devolvida hoje tomaria credito indevido
+//   (a ACZ virou Lucro Real no Tiny em 10/08/2026) e as notas da Bumi/Jussara que vivem no Tiny da Ottz nao sao da ACZ.
+//   Na Ottz a nota criada e EMITIDA na mesma rodada (nao ha espelho de devolucoes da Ottz para o `emitir` da SVL);
+//   autorizada -> estado 'emitida'; recusa -> fica 'criada' com o motivo e e retentada 1 h depois (ate 3x); SEFAZ 656
+//   = para a rodada e pausa 1 h (mesmo registro em debug_fulfillment da emissao da SVL).
 // v8: ?modulo=processar-historico[&max=5][&dry=1][&desde=AAAA-MM-DD] — cria (Pendente) as devolucoes das vendas
 //   HISTORICAS da SVL (view_devolucao_hist_candidatos: NF autorizada no Tiny SVL + pedido cancelado la + sem
 //   devolucao), mais recentes primeiro, pela nf-devolucao?modulo=criar com id_nota_venda+pedido_svl_id (guard ao
@@ -276,6 +282,7 @@ async function emitirPendentes(supabase: SB, max: number, dry: boolean) {
 // origem.id (pedido), chave e situacao — nao consulta pedido a pedido. Janela que o Tiny recusa por
 // "consulta levou muito tempo" e dividida em dias. Resultado em view_devolucao_hist_candidatos.
 const SERIES_DEVOLUCAO: Record<string, string> = { svl: "12", ottz: "13" };
+const CNPJ_ACZ = "37393638000140"; // emitente das notas da Ottz (as da Bumi/Jussara tambem vivem no Tiny da Ottz)
 const ORDEM_TIPO: Record<string, number> = { pedidos: 0, notas_s: 1, notas_e: 2 };
 const digits = (s: unknown) => String(s ?? "").replace(/\D/g, "");
 
@@ -469,32 +476,90 @@ serve(async (req: Request) => {
       const max = Math.min(Math.max(parseInt(url.searchParams.get("max") || "5", 10), 1), 20);
       const orcamentoMs = Math.min(Math.max(parseInt(url.searchParams.get("orcamento") || "22", 10), 5), 50) * 1000;
       const desde = url.searchParams.get("desde") || null; // nao cria para venda emitida antes desta data
+      // v9: conta do historico (svl = padrao; ottz = serie 13, token proprio, so vendas do Lucro Real da ACZ)
+      const contaH = url.searchParams.get("conta") === "ottz" ? "ottz" : "svl";
+      const serieH = SERIES_DEVOLUCAO[contaH];
+      let tokenH = token;
+      if (contaH !== conta) {
+        const { data: tkH } = await supabase.from("oauth_tokens_tiny").select("access_token").eq("conta", contaH).limit(1).single();
+        tokenH = tkH?.access_token as string | undefined;
+        if (!tokenH) return json({ erro: `token Tiny ${contaH} ausente` }, 401);
+      }
+      const emitidasAgora: any[] = [];
+      let pausado656 = false;
+
+      // v9 (ottz): SEFAZ 656 na ultima hora = nao emite nada nesta rodada
+      if (contaH === "ottz" && !dry) {
+        const { data: bloq656 } = await supabase.from("debug_fulfillment").select("criado_em")
+          .eq("modulo", LOG_EMISSAO).eq("status_http", 429).gt("criado_em", new Date(Date.now() - 60 * 60000).toISOString()).limit(1);
+        if ((bloq656 || []).length) pausado656 = true;
+      }
+      const emitirOttz = async (idNota: number, orderSn: string, numero: string | null): Promise<"autorizada" | "recusada" | "656" | "processando"> => {
+        let d: any = null; let http = 0;
+        try {
+          const resp = await fetch(`${SUPABASE_URL}/functions/v1/nf-devolucao`, {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${SRK}`, apikey: SRK },
+            body: JSON.stringify({ modulo: "emitir", conta: "ottz", id_nota: idNota, confirmar: "1" }), signal: AbortSignal.timeout(45000),
+          });
+          http = resp.status; const txt = await resp.text();
+          try { d = JSON.parse(txt); } catch { d = { erro: `${resp.status}: ${txt.slice(0, 200)}` }; }
+        } catch (e) { d = { erro: (e as Error).message }; }
+        const autorizada = d?.autorizada === true || d?.ja_estava === true;
+        const consumo = d?.consumo_indevido === true;
+        const status = autorizada ? 200 : consumo ? 429 : (d?.situacao && String(d.situacao) !== "1") || d?.erro || d?.motivo ? 409 : 202;
+        await supabase.from("debug_fulfillment").insert({ modulo: LOG_EMISSAO, etapa: String(idNota), status_http: status,
+          resultado: { conta: "ottz", order_sn: orderSn, numero, http, resposta: d } });
+        const agora = new Date().toISOString();
+        if (autorizada) {
+          await supabase.from("devolucao_auto").update({ estado: "emitida", detalhe: `autorizada ${d?.chave_devolucao ?? ""}`.trim(), atualizado_em: agora }).eq("conta", "ottz").eq("order_sn", orderSn);
+          emitidasAgora.push({ order_sn: orderSn, numero, chave: d?.chave_devolucao ?? null });
+          return "autorizada";
+        }
+        if (consumo) { pausado656 = true; return "656"; }
+        await supabase.from("devolucao_auto").update({ detalhe: `emissao: ${String(d?.motivo || d?.erro || `situacao ${d?.situacao ?? "?"}`).slice(0, 400)}`, atualizado_em: agora }).eq("conta", "ottz").eq("order_sn", orderSn);
+        return status === 409 ? "recusada" : "processando";
+      };
 
       if (!dry) {
         const { data: bloq } = await supabase.from("devolucao_auto").select("order_sn, proxima_em")
-          .eq("conta", conta).eq("estado", "pendente").gt("proxima_em", new Date().toISOString()).limit(1);
+          .eq("conta", contaH).eq("estado", "pendente").gt("proxima_em", new Date().toISOString()).limit(1);
         if ((bloq || []).length) {
-          return json({ modulo, conta, cooldown_v2: true, ate: (bloq as any[])[0].proxima_em,
+          return json({ modulo, conta: contaH, cooldown_v2: true, ate: (bloq as any[])[0].proxima_em,
             aviso: "API v2 do Tiny bloqueada recentemente (cod 6) — rodada pulada para nao reiniciar o bloqueio" });
         }
         const dezMin = new Date(Date.now() - 10 * 60000).toISOString();
-        await supabase.from("devolucao_auto").update({ estado: "revisar", detalhe: "rodada interrompida durante a criacao — conferir no Tiny SVL se a nota foi criada", atualizado_em: new Date().toISOString() })
-          .eq("conta", conta).eq("estado", "criando").lt("atualizado_em", dezMin);
+        await supabase.from("devolucao_auto").update({ estado: "revisar", detalhe: `rodada interrompida durante a criacao — conferir no Tiny ${contaH} se a nota foi criada`, atualizado_em: new Date().toISOString() })
+          .eq("conta", contaH).eq("estado", "criando").lt("atualizado_em", dezMin);
+
+        // v9 (ottz): retenta a emissao das criadas que ficaram Pendentes (recusa/processando), 1 h depois, ate 3 por rodada
+        if (contaH === "ottz" && !pausado656) {
+          const umaHora = new Date(Date.now() - 60 * 60000).toISOString();
+          const { data: pend } = await supabase.from("devolucao_auto").select("order_sn, id_nota_devolucao, numero_nota, tentativas")
+            .eq("conta", "ottz").eq("caso", "historico_cancelado").eq("estado", "criada").not("id_nota_devolucao", "is", null)
+            .lt("atualizado_em", umaHora).lt("tentativas", 4).order("atualizado_em", { ascending: true }).limit(3);
+          for (const p of (pend || []) as any[]) {
+            if (Date.now() - inicio > orcamentoMs - 8000 || pausado656) break;
+            await supabase.from("devolucao_auto").update({ tentativas: Number(p.tentativas || 0) + 1 }).eq("conta", "ottz").eq("order_sn", p.order_sn);
+            await emitirOttz(Number(p.id_nota_devolucao), String(p.order_sn), p.numero_nota);
+            await sleep(3000);
+          }
+        }
       }
 
       // fila: candidatos historicos sem devolucao, cancelados na propria conta, ainda nao tocados pelo motor
       let q = supabase.from("view_devolucao_hist_candidatos")
-        .select("id_nota, numero, serie, data_emissao, valor, canal, numero_ecommerce, origem_pedido_id, cliente_nome")
-        .eq("conta", conta).eq("devolucao", "nenhuma").eq("canc_conta", true)
+        .select("id_nota, numero, serie, data_emissao, valor, canal, numero_ecommerce, origem_pedido_id, cliente_nome, regime_venda, emit_cnpj")
+        .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true)
         .not("numero_ecommerce", "is", null).not("origem_pedido_id", "is", null)
         .order("data_emissao", { ascending: false }).order("id_nota", { ascending: false }).limit(max * 6);
+      if (contaH === "ottz") q = q.eq("regime_venda", "lucro_real").eq("emit_cnpj", CNPJ_ACZ); // v9: nunca venda do Simples, nunca nota da Bumi
       if (desde) q = q.gte("data_emissao", desde);
       const { data: cand, error: eCand } = await q;
       if (eCand) return json({ erro: `fila historica: ${eCand.message}` }, 500);
       const sns = ((cand || []) as any[]).map((c) => c.numero_ecommerce);
       const jaSet = new Set<string>();
       if (sns.length) {
-        const { data: ja } = await supabase.from("devolucao_auto").select("order_sn").eq("conta", conta).in("order_sn", sns);
+        const { data: ja } = await supabase.from("devolucao_auto").select("order_sn").eq("conta", contaH).in("order_sn", sns);
         for (const r of (ja || []) as any[]) jaSet.add(String(r.order_sn));
       }
       const fila = ((cand || []) as any[]).filter((c) => !jaSet.has(String(c.numero_ecommerce))).slice(0, max);
@@ -505,12 +570,12 @@ serve(async (req: Request) => {
         const agora = new Date().toISOString();
         if (!dry) {
           const { error: eIns } = await supabase.from("devolucao_auto").upsert({
-            conta, order_sn: f.numero_ecommerce, tiny_pedido_id: f.origem_pedido_id, canal: f.canal, caso: "historico_cancelado",
+            conta: contaH, order_sn: f.numero_ecommerce, tiny_pedido_id: f.origem_pedido_id, canal: f.canal, caso: "historico_cancelado",
             estado: "criando", tentativas: 1, atualizado_em: agora,
           }, { onConflict: "conta,order_sn" });
           if (eIns) { resultados.push({ order_sn: f.numero_ecommerce, erro: eIns.message }); continue; }
         }
-        const qs = new URLSearchParams({ modulo: "criar", conta, id_nota_venda: String(f.id_nota), pedido_svl_id: String(f.origem_pedido_id), serie: SERIE_DEVOLUCAO_SVL });
+        const qs = new URLSearchParams({ modulo: "criar", conta: contaH, id_nota_venda: String(f.id_nota), pedido_id: String(f.origem_pedido_id), serie: serieH });
         if (!dry) qs.set("confirmar", "1");
         let r: any = null;
         try {
@@ -523,9 +588,9 @@ serve(async (req: Request) => {
         } catch (e) {
           r = { codigo: "erro_http", erro: (e as Error).message };
         }
-        const res = {
-          order_sn: f.numero_ecommerce, nota_venda: f.numero, serie_venda: f.serie, data_venda: f.data_emissao, valor: f.valor, canal: f.canal,
-          codigo: r?.codigo ?? null, ok: r?.ok ?? null, dry: r?.dry ?? false, guard: r?.guard ?? null, bridge: r?.bridge ?? null,
+        const res: any = {
+          order_sn: f.numero_ecommerce, nota_venda: f.numero, serie_venda: f.serie, data_venda: f.data_emissao, valor: f.valor, canal: f.canal, regime_venda: f.regime_venda,
+          codigo: r?.codigo ?? null, ok: r?.ok ?? null, dry: r?.dry ?? false, guard: r?.guard ?? null, bridge: r?.bridge ?? null, natureza: r?.natureza ?? null,
           registro: r?.registro ?? null, existente: r?.existente ?? null, erro: r?.erro ?? null,
           itens: dry ? (r?.payload?.nota_fiscal?.itens || []).map((x: any) => `${x.item.codigo} x${x.item.quantidade}`) : undefined,
         };
@@ -548,14 +613,26 @@ serve(async (req: Request) => {
           upd.numero_nota = r?.existente?.numero ?? null;
         }
         if (st.parar) upd.tentativas = 0; // bloqueio da v2 nao conta tentativa
-        await supabase.from("devolucao_auto").update(upd).eq("conta", conta).eq("order_sn", f.numero_ecommerce);
+        await supabase.from("devolucao_auto").update(upd).eq("conta", contaH).eq("order_sn", f.numero_ecommerce);
         if (st.parar) break;
+        // v9 (ottz): emite na mesma rodada, logo depois de criar
+        if (contaH === "ottz" && st.estado === "criada" && upd.id_nota_devolucao && !pausado656 && Date.now() - inicio < orcamentoMs - 6000) {
+          await sleep(1500);
+          res.emissao = await emitirOttz(Number(upd.id_nota_devolucao), String(f.numero_ecommerce), (upd.numero_nota as string) ?? null);
+          if (pausado656) break;
+        }
         await sleep(1500); // v2 do Tiny: 60 req/min nesta conta
       }
-      const { count: faltam } = await supabase.from("view_devolucao_hist_candidatos").select("id_nota", { count: "exact", head: true })
-        .eq("conta", conta).eq("devolucao", "nenhuma").eq("canc_conta", true);
-      return json({ modulo, conta, dry, desde, processados: resultados.length, criadas: resultados.filter((x) => x.codigo === "criada" && x.ok).length,
-        candidatos_restantes_na_view: faltam ?? null, resultados, tempo_ms: Date.now() - inicio });
+      if (pausado656 && !dry) {
+        await avisarDiscord({ nivel: "erro", titulo: "SEFAZ bloqueou a emissão das devoluções da Ottz (656 · Consumo Indevido)",
+          descricao: `O robô do histórico pausou por 1 h e volta sozinho. Autorizadas nesta rodada: ${emitidasAgora.length}.` });
+      }
+      let qF = supabase.from("view_devolucao_hist_candidatos").select("id_nota", { count: "exact", head: true })
+        .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true);
+      if (contaH === "ottz") qF = qF.eq("regime_venda", "lucro_real").eq("emit_cnpj", CNPJ_ACZ);
+      const { count: faltam } = await qF;
+      return json({ modulo, conta: contaH, dry, desde, processados: resultados.length, criadas: resultados.filter((x) => x.codigo === "criada" && x.ok).length,
+        emitidas: emitidasAgora.length, pausado_656: pausado656, candidatos_restantes_na_view: faltam ?? null, resultados, tempo_ms: Date.now() - inicio });
     }
 
     if (modulo === "processar") {
