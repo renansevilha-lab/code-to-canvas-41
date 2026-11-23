@@ -4492,6 +4492,21 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   REFUND_MP, OP_ACCOUNT_FUND…, ~3,1 mil em 30 dias). No sistema não há extrato de banco, `contas_pagar.conta_bancaria` está vazia em todas e 3.017 das 4.087
   contas pagas estão sem `data_pagamento`.
 
+- **Mercado Pago — configuração do extrato CRIADA na conta Ottz (23/nov, OK do dono):** `POST /v1/account/release_report/config` = 201 com `file_name_prefix
+  extrato-ottz`, `display_timezone GMT-03`, separador `;`, 21 colunas (DATE, SOURCE_ID, EXTERNAL_REFERENCE, RECORD_TYPE, DESCRIPTION, NET_CREDIT_AMOUNT,
+  NET_DEBIT_AMOUNT, GROSS_AMOUNT, SELLER_AMOUNT, MP_FEE_AMOUNT, FINANCING_FEE_AMOUNT, SHIPPING_FEE_AMOUNT, TAXES_AMOUNT, COUPON_AMOUNT, PAYMENT_METHOD, ORDER_ID,
+  PACK_ID, SHIPPING_ID, BALANCE_AMOUNT, PAYOUT_BANK_ACCOUNT_NUMBER, TRANSACTION_APPROVAL_DATE). **`frequency` com `type daily` e `value` 0 ou 1 = 400 "Invalid
+  frequency"** (a doc não define o diário); com o exemplo oficial (`monthly`, `value 1`) entrou — e a resposta devolveu `daily` com `value ""`. `scheduled`
+  ficou false (geração automática do MP desligada): o caminho é o NOSSO sistema pedir o dia (`POST /v1/account/release_report` com begin/end em UTC → 202 +
+  `id`; acompanhar em `GET …/task/{id}`; baixar `GET …/{file_name}`). O `end_date` é arredondado para o fim do dia, e período que inclui HOJE não fecha.
+  Os dois pedidos de teste (tarefas 893150591 e 893150765) ficaram em `data-ready` sem `file_name` por mais de 10 min — o prazo real do arquivo ainda não
+  foi medido. Conta SVL não configurada. Rotina diária de coleta (pedir → baixar → gravar tabela) ainda NÃO existe.
+- **Olist Conta Digital pelo Tiny (testado 23/nov, token `conta='ottz'`):** `GET /contas-financeiras` = 200 (a conta é a `811554060` "Olist Conta Digital";
+  há também Nubank, Banco Inter, Itaú - Ottz Pet R, Mercado Pago) e `GET /contas-bancarias` = 200 (banco **509**). **`GET /extratos-bancarios` e `GET /caixa` =
+  403**: o aplicativo do Tiny não tem esses escopos (liberar revoga o token ativo — fazer fora do horário e rodar `tiny-refresh-token`). Não se sabe se os
+  lançamentos da conta digital entram sozinhos no extrato do Tiny ou só com importação de OFX. Não há API pública da conta nem envio agendado do extrato
+  (o internet banking exporta OFX/CSV/PDF e manda por e-mail, com clique). Open Finance: Mercado Pago PJ é coberto por agregadores; a conta Olist (Celcoin) é incerta.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
