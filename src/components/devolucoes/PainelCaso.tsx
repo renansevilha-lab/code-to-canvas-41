@@ -40,7 +40,8 @@ const secao = (t: string) => (
 const linha: React.CSSProperties = { display: "flex", gap: 8, fontSize: 12.5, lineHeight: 1.45 };
 const rot: React.CSSProperties = { color: "var(--pm-t3)", minWidth: 118, flex: "none" };
 
-export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila; causas: Causa[]; onFechar: () => void; onMudou: () => void }) {
+// embutido (23/nov/2026): o caso abre na própria linha da fila, sem gaveta nem fundo escuro.
+export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso: CasoFila; causas: Causa[]; onFechar: () => void; onMudou: () => void; embutido?: boolean }) {
   const { perfil } = usePerfil();
   const qc = useQueryClient();
   const quem = perfil?.nome ?? null;
@@ -214,10 +215,12 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
 
   return (
     <>
-      <div onClick={onFechar} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 60 }} />
+      {!embutido && <div onClick={onFechar} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 60 }} />}
       <aside
         className="pm-ui"
-        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(100vw, 560px)", background: "var(--pm-bg)", color: "var(--pm-t)", zIndex: 61, display: "flex", flexDirection: "column", boxShadow: "-8px 0 30px rgba(0,0,0,.25)", fontSize: 13 }}
+        style={embutido
+          ? { background: "var(--pm-bg)", color: "var(--pm-t)", display: "flex", flexDirection: "column", fontSize: 13, border: "1px solid var(--pm-bs)", borderRadius: 12, overflow: "hidden", maxWidth: 920, margin: "0 auto", width: "100%" }
+          : { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(100vw, 560px)", background: "var(--pm-bg)", color: "var(--pm-t)", zIndex: 61, display: "flex", flexDirection: "column", boxShadow: "-8px 0 30px rgba(0,0,0,.25)", fontSize: 13 }}
       >
         {/* cabeçalho */}
         <header style={{ padding: "12px 16px", borderBottom: "1px solid var(--pm-b)", background: "var(--pm-s)", display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -243,7 +246,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou }: { caso: CasoFila
           <button type="button" onClick={onFechar} aria-label="Fechar" style={{ border: 0, background: "transparent", fontSize: 20, cursor: "pointer", color: "var(--pm-t2)", lineHeight: 1 }}>×</button>
         </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 24px" }}>
+        <div style={{ flex: 1, overflowY: embutido ? "visible" : "auto", padding: "4px 16px 24px" }}>
           {detQ.isLoading && <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 16, color: "var(--pm-t3)" }}><Spinner /> lendo o caso…</div>}
           {detQ.error && <div style={{ color: "var(--pm-r)", padding: 12 }}>{(detQ.error as Error).message}</div>}
 

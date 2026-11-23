@@ -171,10 +171,10 @@ function DevolucoesPage() {
   const nPede = (filaQ.data ?? []).filter((c) => c.precisa_acao && (empresaFiltro === "ambas" || c.empresa === empresaFiltro)).length;
 
   const abas: AbaSep[] = [
-    { id: "resposta", nome: "Pede resposta", n: nPede, onClick: () => irAba("resposta") },
+    { id: "resposta", nome: "A responder", n: nPede, onClick: () => irAba("resposta") },
     { id: "resultados", nome: "Resultados", onClick: () => irAba("resultados") },
-    { id: "recebidas", nome: "Recebidas", onClick: () => irAba("recebidas") },
-    { id: "nf", nome: "NF dos cancelados", onClick: () => irAba("nf") },
+    { id: "recebidas", nome: "No galpão", onClick: () => irAba("recebidas") },
+    { id: "nf", nome: "Notas fiscais", onClick: () => irAba("nf") },
     { id: "perdas", nome: "Perdas Shopee", onClick: () => irAba("perdas") },
   ];
 
