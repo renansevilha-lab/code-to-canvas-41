@@ -4482,11 +4482,62 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   saíam vazios); ads = `ads_relatorio_diario()`. O automático leva `resumo.origem = 'automatico'`; relatório escrito pela IA no mesmo dia substitui o
   automático, e o automático nunca passa por cima de um escrito pela IA. Crons **182** `relatorio-auto-ads` `50 10`, **183** `-compras` `55 10`, **184**
   `-financeiro` `20 11`, **185** `relatorio-auto-vigiar` `40 11` (UTC; tenta de novo o que faltou e avisa no Discord, canal erros, se não saiu). ~2–4 s cada.
-- **Plano do coordenador (ainda não feito):** (2) todos os agentes gravam `resumo.decisoes[]` no mesmo formato (o que fazer, produto, R$ em jogo, prazo, dono
-  sugerido) e leem de volta o estado (aprovada/recusada/feita; recusada não volta por 14 dias); (3) coordenador roda ~8h30, cruza (ADS × cobertura de estoque,
-  compra × caixa projetado, oportunidade × estoque parado), até 7 decisões; (4) aprovada vira tarefa + Discord, com cobrança no dia seguinte; (5) financeiro
-  ampliado com conciliações: repasse dos marketplaces (`view_conciliacao_shopee`, carteira), fornecedor (`view_compras_conciliacao`), devoluções
-  (`view_conciliacao_devolucoes`), previsto × realizado, e a bancária.
+- **Agente COORDENADOR — NO AR (23/nov/2026, opção B do dono).** SQL + rollback em `docs/coordenador.sql` e `docs/coordenador-estrategias.sql` (migrações
+  `coordenador_decisoes`, `coordenador_estrategias_a/_b`). **`coordenador_gerar()`** (cron `coordenador-gerar` `45 11 * * *` = 08h45 BRT, depois de todos os
+  relatórios) lê os relatórios do DIA em `relatorios_agentes` e tira o que pede decisão num formato único (`coordenador_candidatas(dia)`): financeiro (contas
+  atrasadas, vencem hoje, caixa projetado negativo em até 7 dias pela `dashboard_posicao_empresa()`, e as `resumo.conciliacao.decisoes`), compras (rupturas e
+  urgentes com venda ≥ 1/dia; R$ em jogo = venda/dia × preço médio × 7), ADS (`metas.itens` com tom ruim e perda ≥ R$ 30; sugestões pausar/reduzir/lance),
+  pesquisa (2) e tendências (6) pelas `resumo.decisoes`. **Cruza:** ADS × estoque (`coord_cobertura_min(sku)` = menor cobertura entre o SKU, os componentes do
+  kit e as variações, pelo `ads_cobertura_sku`; < 7 dias ou ruptura = nota "segurar o ADS até repor") e compra × caixa (caixa negativo = "negociar prazo ou
+  comprar o mínimo"). Guarda tudo em **`agente_decisoes`** (chave estável por assunto, ex. `compras:ruptura:15983`, `ads:meta:ml:<campanha>`; status aberta ·
+  aprovada · recusada · feita · sumiu · estrategia; `dias_vista`, `opcoes` jsonb = caminhos A/B/C, `ref` jsonb = para onde a tela abre) e escolhe o topo: até 7,
+  no máximo 3 por agente, por tom (red > amber > gray) e R$ em jogo. Grava o relatório `coordenador` (categoria "Coordenação", fora da faixa Hoje).
+  **Regras de estado:** recusada some por 14 dias (`silenciar_ate`); feita volta se os relatórios seguirem apontando depois de 2 dias; o que deixa de aparecer
+  vira `sumiu`. **RPCs** (security definer, só `tem_modulo('todos')`): `coordenador_painel()`, `decisao_aprovar(id, responsavel, prazo, obs, opcao)` (responsável
+  ≠ renan = cria `fulfillment_tarefas` tipo outro com o caminho escolhido + Discord canal `fulfilment` marcando a pessoa; renan = fica só no painel),
+  `decisao_recusar`, `decisao_concluir`, `decisao_reabrir`; gatilho `trg_coord_tarefa_concluida` (tarefa `feito` no quadro fecha a decisão); cobrança diária no
+  Discord das aprovadas atrasadas da equipe. Dono sugerido por agente em `agente_dono_padrao` (compras = vini; resto = renan). **Compras enxerga o rascunho:**
+  produto com orçamento/rascunho aberto (`compras_ordens.kanban_status = 'orcamento'`) vira "Fechar o pedido de X (rascunho SUG-n de dd/mm, N unidades)" — o
+  relatório de compras só conta `oc_aguardando`, e o SUG-2 do Mya Cat 15983 fazia a decisão dizer "sem ordem de compra". **Caminhos:** ADS = subir o objetivo
+  de ROAS para a meta mínima · subir o preço ~X% (quanto o preço teria de subir para empatar no ROAS de hoje: margem(P) = (1 − taxas) − custo/P, custo/P =
+  CMV ÷ receita de 30 dias da `ads_margem_anuncio`; estimativa, só entre 1% e 40%) · pausar · manter de propósito. **ESTRATÉGIAS** (`agente_estrategias`: mkt,
+  campanha, sku, objetivo, `roas_piso`, `meta_posicao`, `revisar_em`): "é de propósito" numa decisão de ADS (`decisao_estrategia`) faz o coordenador PARAR de
+  cobrar aquela campanha (e as sugestões do SKU no canal) e passar a acompanhar (`coord_estrategias(dia)`: ROAS/gasto/perda da semana + posição no top 20 da
+  categoria do ML por `coord_posicao_ml(sku)`); só volta a avisar se o ROAS cair do piso (`ads:piso:…`), se a posição buscada for atingida
+  (`estrategia:meta:<id>`) ou no dia de revisar (`estrategia:revisar:<id>`); `estrategia_atualizar` / `estrategia_encerrar`. 1ª estratégia (dono, 23/nov):
+  campanha ML 357393245 "BUMI MANDIOCA 4kg" (15984) = buscar o top 10 de Areias Higiênicas, ROAS baixo de propósito, sem piso, revisar 23/12 (data posta pelo
+  Claude); no dia: fora do top 20, custo R$ 348/semana. ⚠ o cartão do agente de ADS ainda mostra a campanha como ruim (só o coordenador conhece a estratégia).
+  **Tela:** painel "Decisões do dia" no topo de `/relatorios` (`src/components/relatorios/DecisoesCoordenador.tsx`, só administrador): caminhos, botões
+  "Abrir o ADS" (`AnaliseAnuncioAds` da campanha) e "Preço e promoção" (`EditorPrecoPromo` pelo SKU) na própria decisão, links para Compras / Contas a pagar /
+  Fluxo de caixa, Aprovar (caminho + responsável + prazo) · É de propósito · Agora não, estratégias em acompanhamento (Ajustar / encerrar), aprovadas em
+  andamento e decididas nos últimos 10 dias. Nada é executado sozinho. Não conferido com login.
+- **Agente de TENDÊNCIAS E MUDANÇAS — NO AR (23/nov/2026, pedido do dono).** `docs/tendencias-relatorio.sql`: **`tendencias_relatorio(p_ref)`** (~1–5 s, ~105 kB)
+  → por loja (Shopee Ottz/Bumi, ML Ottz/SVL, Amazon ACZ/SVL, TikTok ACZ e Total) curto/médio/longo = 7/30/90 dias contra a janela anterior (receita,
+  pedidos, ticket, margem, ADS, ROAS), série semanal (26), `tendencia` (inclinação de 13 semanas, % contra o pico de 4 semanas), `leitura`
+  (queda_persistente, queda_recente, perdendo_folego, recuperando, alta_…, estavel…), `causas[]` candidatas com impacto em R$ (produtos que pararam de vender,
+  preço, sem estoque no anúncio, ADS, meta de ROAS, ticket, mix), `skus_queda/alta` com `o_que_mudou`; **`mudancas`** = o que NÓS mudamos em 30 dias (meta de
+  ROAS, preço ≥ 3%, promoção, orçamento, envios do sistema, situação — da `anuncio_mudancas_lista`) e como os anúncios ficaram 7 dias depois, **descontado o
+  movimento da loja** (`efeito`; o bruto vem em `efeito_bruto`), com resumo por grupo e destaques; `decisoes[]` com chave estável (`tend:<loja>:queda:medio`,
+  `:parou:medio`, `:preco:<sku>`, `:estoque:<sku>`, `:roas:<item>`) e `qualidade.avisos`. Conferido com `view_kpi_pedidos_dia` (0,00 nas 7 lojas). Gravado todo
+  dia por `relatorio_auto_gerar('tendencias')` (cron `relatorio-auto-tendencias` `5 11 * * *`; a vigia guarda só 45 dias — ~170 kB por dia com o HTML).
+  Categoria nova "Tendências e mudanças" (gatilho, `view_relatorios_categorias`, `CATEGORIAS`); cartão `RelatorioTendencias.tsx`. 1ª leitura (até 22/11):
+  Shopee Bumi −20% em 30 dias (R$ 251 → 202 mil), 46% abaixo do pico de set; motivos candidatos: 22 produtos pararam de vender (R$ 55,9 mil; família Esconde
+  Aí/DiliCat/Tofu 27–30 dias sem estoque no anúncio), SKU 16276 com preço de 78,90 → 112,90 (−R$ 17,7 mil), ticket de R$ 70,61 → 60,15. Mudanças de 30 dias:
+  preço para CIMA em 59 anúncios = receita semanal de R$ 38 mil → 20 mil (seguindo a loja seria 38,9); preço para BAIXO em 98 = R$ 12 → 24 mil; meta de ROAS
+  para cima em 33 = R$ 71,7 → 85 mil com o mesmo ADS. Limites: causa é candidata, não prova; retrato de preço/estoque só desde 05/10 e meta de ROAS desde
+  20/10; 90 dias incompleto para lojas novas; 7 dias de Amazon/ML subestimado (pedido pendente).
+- **CONCILIAÇÃO no agente financeiro — NO AR (23/nov/2026).** `docs/financeiro-conciliacao.sql`: **`financeiro_conciliacao(p_dias default 7)`** (~0,9 s; dias
+  FECHADOS; cada bloco com `exception` próprio) → `mercado_pago` (extrato × carteira por `mp_extrato.source_id = transacoes_carteira.transaction_id` na conta,
+  marketplace `'mercadolivre'`; saldo inicial + créditos − débitos = final; pares ok, sem par, valor diferente; saque/reserva/frete avulso = sem par por
+  natureza), `shopee` (repasse esperado × recebido por pedido, por loja; sem crédito de 30–60 dias), `fornecedor` (notas de 60 dias × ordem × conta a pagar),
+  `devolucoes` (saiu do bolso, produto que não voltou, NF de devolução travada), `fluxo` (previsto × realizado), `contas_pagas`, `resumo` e `decisoes[]`
+  (`fin:conc:…`). Entra no relatório financeiro diário como `resumo.conciliacao` + HTML; cartão `ConciliacaoFinanceiro.tsx` dentro do `RelatorioFinanceiro`.
+  **Achado (16–22/11): a carteira grava como ENTRADA pagamentos FEITOS pela conta do Mercado Pago** (boletos, PIX enviado): 16 lançamentos, R$ 47,6 mil em 7
+  dias → a carteira e o "realizado" do fluxo ficam R$ 95,3 mil acima do extrato (o realizado saiu +93% sobre o previsto). Correção na origem
+  (`ml-sync-wallet`, sinal desses lançamentos) NÃO feita — pede o OK do dono. Outros: 11 notas de fornecedor acima de R$ 500 sem conta a pagar que cite a nota
+  (R$ 163 mil; maior JAJU NF 3310, R$ 44,1 mil — pode ser à vista ou boleto em nome do banco), 7 ordens com notas acima do pedido (R$ 34,6 mil; ordem 717
+  Santa Lucia +R$ 21,2 mil), Shopee Ottz 159 pedidos com repasse R$ 498 abaixo do esperado. Não há extrato de banco no sistema (conta paga × banco não confere).
+- **Extrato do Mercado Pago — histórico de 60 dias gravado (23/nov):** Ottz 24/09–22/11 = 6.232 lançamentos (saldo final R$ 6.029,14) e SVL = 265 (R$ 6.648,29).
 - **Extrato para a conciliação bancária — Mercado Pago (testado 23/nov, só leitura, token da Ottz em `oauth_tokens_ml`):** `GET /v1/account/release_report/list`
   e `/v1/account/settlement_report/list` = 200 `[]` (a API abre com o nosso token; nenhum relatório gerado ainda); `GET /v1/account/release_report/config` = 404
   `config_not_found_for_user` (nunca configurado — criar a configuração é escrita na conta, pede o OK do dono); saldo

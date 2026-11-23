@@ -172,3 +172,15 @@ select cron.schedule('relatorio-auto-ads',        '50 10 * * *', $$select public
 select cron.schedule('relatorio-auto-compras',    '55 10 * * *', $$select public.relatorio_auto_gerar('compras')$$);
 select cron.schedule('relatorio-auto-financeiro', '20 11 * * *', $$select public.relatorio_auto_gerar('financeiro')$$);
 select cron.schedule('relatorio-auto-vigiar',     '40 11 * * *', $$select public.relatorios_auto_vigiar()$$);
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- 23/nov/2026 (tarde): tendências e conciliação ligadas (migrações `relatorio_auto_tendencias` e
+-- `relatorio_auto_financeiro_conciliacao`, por troca de trechos conferida na função no ar).
+--   · relatorio_auto_gerar('tendencias'): j := tendencias_relatorio(); destaque = tendencias_destaque(j);
+--     html = tendencias_html(j) || nota; resumo = j || {origem: 'automatico'}   (docs/tendencias-relatorio.sql)
+--   · relatorio_auto_gerar('financeiro'): k := financeiro_conciliacao(7) (com exception -> {erro}); o HTML ganha
+--     financeiro_conciliacao_html(k) e o resumo ganha 'conciliacao', k         (docs/financeiro-conciliacao.sql)
+--   · relatorios_auto_vigiar(): a lista passou a ['ads', 'compras', 'financeiro', 'tendencias'] e apaga os relatórios
+--     de tendências com mais de 45 dias (cada um tem ~170 kB com o HTML).
+-- BRT: tendências 08h05 · financeiro 08h20 · vigia 08h40 · coordenador 08h45 (docs/coordenador.sql).
+select cron.schedule('relatorio-auto-tendencias', '5 11 * * *', $$select public.relatorio_auto_gerar('tendencias')$$);

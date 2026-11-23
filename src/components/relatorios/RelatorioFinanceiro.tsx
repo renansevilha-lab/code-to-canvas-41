@@ -4,6 +4,7 @@ import {
   arr, brl, brlMil, ddmm, Foto, Kpi, MONO, nomeCurto, Notas, num, numOuNull, obj, Pill, Secao, str,
   type RelatorioLista,
 } from "./comum";
+import { ConciliacaoFinanceiro } from "./ConciliacaoFinanceiro";
 import type { Decisao, MiniKpi } from "./tipos";
 
 // ============================================================================
@@ -129,6 +130,8 @@ export function RelatorioFinanceiro({ rel, mobile }: { rel: RelatorioLista; mobi
         <Proximos30 cp={obj(r.contas_pagar_resumo)} fluxo={fluxo} />
         <PorCategoria itens={arr(r.contas_pagar_por_categoria_30d)} />
       </div>
+
+      <ConciliacaoFinanceiro c={obj(r.conciliacao)} mobile={mobile} />
 
       <div className={`grid ${split} gap-7`}>
         <Dre atual={obj(r.dre_mes_atual)} anterior={obj(r.dre_mes_anterior)} dataRef={rel.data_referencia} />

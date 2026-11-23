@@ -5,6 +5,7 @@ import { decisoesFin, miniFin, RelatorioFinanceiro } from "./RelatorioFinanceiro
 import { decisoesCompras, miniCompras, RelatorioCompras } from "./RelatorioCompras";
 import { adsPendente, adsV0, decisoesAds, miniAds, RelatorioAds } from "./RelatorioAds";
 import { decisoesPesquisa, miniPesquisa, pesquisaPendente, RelatorioPesquisaML } from "./RelatorioPesquisaML";
+import { decisoesTend, miniTend, RelatorioTendencias } from "./RelatorioTendencias";
 import type { Decisao, MiniKpi } from "./tipos";
 
 // Mapa agente → mini-KPIs (card fechado / faixa Hoje), "Pede decisão",
@@ -26,6 +27,8 @@ const AGENTES: Record<string, AgenteDef> = {
   ads: { kind: "ads", mini: miniAds, decisoes: decisoesAds, pendente: adsPendente, v0: adsV0, Detalhe: RelatorioAds },
   // Pesquisa de produtos ML (18/out/2026): mesma categoria do ADS (Marketing e ADS)
   pesquisa_ml: { kind: "ads", mini: miniPesquisa, decisoes: decisoesPesquisa, pendente: pesquisaPendente, Detalhe: RelatorioPesquisaML },
+  // Tendências e mudanças (23/nov/2026): vendas por loja em 7/30/90 dias, motivos prováveis e efeito das nossas mudanças
+  tendencias: { kind: "ads", mini: miniTend, decisoes: decisoesTend, Detalhe: RelatorioTendencias },
 };
 
 export function agenteDef(agente: string): AgenteDef | null {
