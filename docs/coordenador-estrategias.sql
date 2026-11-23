@@ -329,7 +329,8 @@ begin
   loop
     v_mkt := case when (r.s ->> 'marketplace') like 'merc%' then 'ml' else r.s ->> 'marketplace' end;
     d_sku := nullif(r.s ->> 'sku', '');
-    continue when exists (select 1 from agente_estrategias e where e.ativo and e.sku is not null and e.sku = d_sku and coalesce(e.mkt, v_mkt) = v_mkt);
+    continue when exists (select 1 from agente_estrategias e where e.ativo and coalesce(e.mkt, v_mkt) = v_mkt
+                         and ((e.sku is not null and e.sku = d_sku) or e.campanha = r.s ->> 'anuncio_id' or e.nome = r.s ->> 'anuncio'));
     v_emp := case when (r.s ->> 'empresa') ~* 'svl|bumi' then 'svl' else 'ottz' end;
     d_chave := 'ads:sug:' || (r.s ->> 'tipo') || ':' || coalesce(r.s ->> 'anuncio_id', '');
     d_agente := 'ads'; d_tom := 'amber'; d_valor := null; d_prazo := null; d_nota := null; d_opcoes := null;

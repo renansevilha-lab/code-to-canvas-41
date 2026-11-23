@@ -4533,8 +4533,17 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   `devolucoes` (saiu do bolso, produto que não voltou, NF de devolução travada), `fluxo` (previsto × realizado), `contas_pagas`, `resumo` e `decisoes[]`
   (`fin:conc:…`). Entra no relatório financeiro diário como `resumo.conciliacao` + HTML; cartão `ConciliacaoFinanceiro.tsx` dentro do `RelatorioFinanceiro`.
   **Achado (16–22/11): a carteira grava como ENTRADA pagamentos FEITOS pela conta do Mercado Pago** (boletos, PIX enviado): 16 lançamentos, R$ 47,6 mil em 7
-  dias → a carteira e o "realizado" do fluxo ficam R$ 95,3 mil acima do extrato (o realizado saiu +93% sobre o previsto). Correção na origem
-  (`ml-sync-wallet`, sinal desses lançamentos) NÃO feita — pede o OK do dono. Outros: 11 notas de fornecedor acima de R$ 500 sem conta a pagar que cite a nota
+  dias → a carteira e o "realizado" do fluxo ficam R$ 95,3 mil acima do extrato (o realizado saiu +93% sobre o previsto). **CORRIGIDO no mesmo dia (OK do dono): `ml-sync-wallet` v5**
+  (deploy 27, fonte agora em `supabase/functions/ml-sync-wallet/`). `/v1/payments/search` devolve os pagamentos que a conta RECEBEU (`collector_id` = conta,
+  `payer.id` = outro) e os que ela PAGOU (`payer_id` = conta, `collector.id` = outro); até a v4 tudo virava Entrada/`recebimento_pedido`. Agora o pago pela conta
+  = tipo **`pagamento_feito`**, direção Saída, classificação `PAYMENT_OUT_MP` / `OP_<TIPO>_OUT_MP`, valor NEGATIVO quando saiu do saldo (`payment_type_id =
+  account_money`) e **0** quando foi compra no cartão (`…_CARD_MP`; o valor fica em `valor_bruto`), `pedido_id` nulo (a referência vai para a descrição);
+  cancelado = `CANCELLED_OUT_MP`, valor 0. Parâmetros novos `&de=&ate=` (dias de Brasília) e `&conta=`. Histórico relido de 01/03 a 23/11 nas duas contas:
+  **593 pagamentos feitos pelas contas, 525 deles somavam R$ 762,4 mil como ENTRADA**; agora 483 são saída do saldo (R$ 743,4 mil) e 110 compras no cartão valem
+  0. Conciliação depois: nenhum invertido, sem par 42 → 23 (R$ 96,3 mil → R$ 583), previsto × realizado da semana +93% → +30%. As views da carteira/fluxo
+  filtram `direcao = 'Entrada'`/`tipo`, então esses lançamentos saem do "realizado" e do "a receber" sozinhos; margem/DRE/Dashboard não usam a carteira do ML.
+  Cópia de antes em `_bkp_carteira_ml_23nov` (sem acesso pelo app; apagar depois de alguns dias). Ao reler abr–mai, 165 lançamentos antigos também foram
+  atualizados para a situação atual no MP (o sync diário só relê 60 dias). Outros: 11 notas de fornecedor acima de R$ 500 sem conta a pagar que cite a nota
   (R$ 163 mil; maior JAJU NF 3310, R$ 44,1 mil — pode ser à vista ou boleto em nome do banco), 7 ordens com notas acima do pedido (R$ 34,6 mil; ordem 717
   Santa Lucia +R$ 21,2 mil), Shopee Ottz 159 pedidos com repasse R$ 498 abaixo do esperado. Não há extrato de banco no sistema (conta paga × banco não confere).
 - **Extrato do Mercado Pago — histórico de 60 dias gravado (23/nov):** Ottz 24/09–22/11 = 6.232 lançamentos (saldo final R$ 6.029,14) e SVL = 265 (R$ 6.648,29).
@@ -4615,6 +4624,7 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `ml-sync-wallet` | v5 (deploy 27; 23/nov: pagamento FEITO pela conta deixa de entrar como recebimento, `&de=&ate=&conta=` — ver §5.14; fonte em `supabase/functions/ml-sync-wallet/`) | Carteira do Mercado Pago → `transacoes_carteira` (marketplace `mercadolivre`), todas as contas; crons 50 (`dias=7`, 2/2 h) e 85 (`dias=60`, diário) |
 | `mp-extrato` | v1 | Extrato do Mercado Pago (relatório de Liberações) pedido e coletado todo dia: `pedir`, `coletar`, `status`; grava `mp_extrato` — ver §5.14 |
 | `tiktok-afiliados` | v2 | Sonda só de leitura da API de afiliados do TikTok (busca de criadores, detalhe do criador, categorias) — ver §5.11.15 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
