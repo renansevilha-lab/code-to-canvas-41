@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ImageOff, Loader2, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -31,15 +31,9 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
   const qc = useQueryClient();
   const recarregar = () => void qc.invalidateQueries({ queryKey: ["ia-anuncio"] });
 
-  // plano sugerido: o que o briefing recomenda, senão o plano do canal (mesma regra da edge fn)
-  const sugerido = useMemo(() => {
-    const norm = (f: string) => (f.startsWith("imagem_") ? f : `imagem_${f}`);
-    const rec = (briefing?.fotos_recomendadas ?? []).map(norm);
-    const base = (rec.length ? rec : planoCanal.map(norm)).filter((t) => tiposAtivos.includes(t));
-    return [...new Set(ehKit ? base : base.filter((t) => t !== "imagem_kit"))];
-  }, [briefing, planoCanal, tiposAtivos, ehKit]);
+  // Seleção SEMPRE começa vazia (pedido do dono, 23/nov/2026): cada imagem é cobrada, então nada vem
+  // marcado ao abrir — antes vinha marcado o plano sugerido (fotos_recomendadas do briefing / plano do canal).
   const [sel, setSel] = useState<Set<string>>(new Set());
-  useEffect(() => { setSel(new Set(sugerido)); }, [sugerido.join("|")]);
 
   const capas = tiposAtivos.filter((t) => t.startsWith("imagem_capa_"));
   const outros = tiposAtivos.filter((t) => !t.startsWith("imagem_capa_") && (ehKit || t !== "imagem_kit"));
@@ -196,7 +190,7 @@ export function EtapaFotos({ sku, canal, ehKit, ehPai, nomeProduto, rascunho, br
 
       <div className="grid lg:grid-cols-2 gap-x-6 gap-y-4">
         <div>
-          <p className="text-[11px] text-muted-foreground mb-1">Fotos do anúncio (marcadas = plano sugerido)</p>
+          <p className="text-[11px] text-muted-foreground mb-1">Fotos do anúncio (marque as que quer gerar)</p>
           <div className="divide-y">{outros.map(linha)}</div>
         </div>
         <div>
