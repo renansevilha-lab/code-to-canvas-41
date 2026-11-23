@@ -4502,7 +4502,21 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   ficou false (geração automática do MP desligada): o caminho é o NOSSO sistema pedir o dia (`POST /v1/account/release_report` com begin/end em UTC → 202 +
   `id`; acompanhar em `GET …/task/{id}`; baixar `GET …/{file_name}`). O `end_date` é arredondado para o fim do dia, e período que inclui HOJE não fecha.
   Os dois pedidos de teste (tarefas 893150591 e 893150765) ficaram em `data-ready` sem `file_name` por mais de 10 min — o prazo real do arquivo ainda não
-  foi medido. Conta SVL não configurada. Rotina diária de coleta (pedir → baixar → gravar tabela) ainda NÃO existe.
+  foi medido. Conta SVL não configurada.
+- **Rotina diária do extrato do Mercado Pago — NO AR (23/nov, pedido do dono: a conciliação é feita no NOSSO sistema, não pelo Tiny).** Edge fn **`mp-extrato`**
+  v1 (fonte em `supabase/functions/mp-extrato/`; aceita a chave pública do cron e só devolve contagens): `pedir[&dia= | &de=&ate=][&conta=][&forcar=1]` (padrão
+  ontem; período tem de estar FECHADO; até 60 dias por pedido), `coletar` (confere `GET …/task/{id}`; com `file_name`, baixa o CSV e grava) e `status`. Tabelas
+  (`docs/mp-extrato.sql`, migrações `mp_extrato` e `mp_extrato_view_dia_saldo_inicial`; RLS `tem_modulo('financeiro')`, sem anon): **`mp_extrato_conta`** (contas com
+  a configuração criada; hoje só a Ottz), **`mp_extrato_pedido`** (pedido → gravado | erro; `task_id`, `arquivo`, `linhas`, `saldo_final`, `resumo` = linha `total`
+  do arquivo) e **`mp_extrato`** (um lançamento por linha: data, `descricao` = payment/shipping/refund/mediation/reserve_for_*, `source_id`, `order_id`, crédito,
+  débito, bruto, tarifa, frete e **`saldo`** depois do lançamento). `mp_extrato_gravar` apaga o período antes de gravar (reprocessar não duplica).
+  **`view_mp_extrato_dia`** = por dia: saldo inicial, créditos, débitos, tarifas, frete, saldo final (só `record_type = 'release'`; a 1ª linha do arquivo,
+  `initial_available_balance`, é o saldo de abertura). Crons **`mp-extrato-pedir`** `20 3 * * *` (00h20 BRT) e **`mp-extrato-coletar`** `24,54 * * * *`
+  (`mp_extrato_tick`: só chama a função se há pedido aberto); 36 h sem arquivo = erro + Discord (canal erros). **Medido:** o arquivo sai ~30 min depois do
+  pedido (a tarefa fica em `data-ready` nesse meio-tempo e só então ganha `file_name`; a lista `…/list` seguiu vazia). 1º dia gravado, 22/11: 71 linhas, saldo
+  R$ 4.732,37 → R$ 6.029,14; os 58 `order_id` casam com `pedidos` e 68 de 70 `source_id` com `transacoes_carteira.transaction_id`. É a 1ª fonte de SALDO do
+  Mercado Pago no sistema (a API de saldo dá 403). Falta: histórico (um `pedir&de=&ate=` de até 60 dias), conta SVL, e a conciliação em si (extrato × carteira ×
+  contas pagas) no agente financeiro.
 - **Olist Conta Digital pelo Tiny (testado 23/nov, token `conta='ottz'`):** `GET /contas-financeiras` = 200 (a conta é a `811554060` "Olist Conta Digital";
   há também Nubank, Banco Inter, Itaú - Ottz Pet R, Mercado Pago) e `GET /contas-bancarias` = 200 (banco **509**). **`GET /extratos-bancarios` e `GET /caixa` =
   403**: o aplicativo do Tiny não tem esses escopos (liberar revoga o token ativo — fazer fora do horário e rodar `tiny-refresh-token`). Não se sabe se os
@@ -4550,6 +4564,7 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
 | `impressao` | v1 | Impressão própria (fila `print_jobs` + agente Windows) — ver seção 5.9 |
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
+| `mp-extrato` | v1 | Extrato do Mercado Pago (relatório de Liberações) pedido e coletado todo dia: `pedir`, `coletar`, `status`; grava `mp_extrato` — ver §5.14 |
 | `tiktok-afiliados` | v2 | Sonda só de leitura da API de afiliados do TikTok (busca de criadores, detalhe do criador, categorias) — ver §5.11.15 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
 | `amazon-promocoes` | v2 | Diagnóstico de permissões da SP-API (Promotions/Listings/Pricing) por conta. Só leitura — ver §5.9.1 |
