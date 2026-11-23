@@ -21,7 +21,7 @@ import type { InfoDevolucao } from "@/lib/shopeeDevolucao";
 import { AcoesMl } from "./AcoesMl";
 import {
   acaoEsperada, arquivoParaBase64, brl, chamarShopee, contarUsoModelo, dia, diaHora, lerCaso, lerSugestoes, linkMarketplace, lojaDe,
-  marcarCausaNaEntrada, motivoPt, prazoTexto, registrarResposta, salvarModelo, GRUPO_CAUSA_PT, SOLUCAO_PT,
+  marcarCausaNaEntrada, modoEnvioPt, motivoPt, prazoTexto, registrarResposta, salvarModelo, GRUPO_CAUSA_PT, SOLUCAO_PT,
   type AcaoResposta, type CasoFila, type Causa,
 } from "@/lib/devolucoes";
 
@@ -322,6 +322,49 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
               )}
             </div>
           )}
+
+          {/* envio, galpão e valores — o que decide a resposta (23/nov/2026, pedido do dono) */}
+          {det && (() => {
+            const ped = det.pedido as { opcao_envio?: string | null; logistica_tipo?: string | null; subtotal_produtos?: number | null } | null;
+            const modo = modoEnvioPt(caso.marketplace, ped?.opcao_envio, ped?.logistica_tipo);
+            const vPed = ped?.subtotal_produtos != null ? Number(ped.subtotal_produtos) : null;
+            const vRee = caso.valor != null ? Number(caso.valor) : null;
+            const parcial = vPed != null && vRee != null && vPed > 0 && vRee < vPed - 0.005;
+            const maior = vPed != null && vRee != null && vRee > vPed + 0.005;
+            const cx = { background: "var(--pm-s)", border: "1px solid var(--pm-bs)", borderRadius: 10, padding: "9px 12px", display: "flex", flexDirection: "column" as const, gap: 2, minWidth: 0 };
+            const k = { fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" as const, color: "var(--pm-t3)" };
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 12 }}>
+                <div style={cx} title={modo.dica}>
+                  <span style={k}>Forma de envio</span>
+                  <b style={{ fontSize: 14 }}>{modo.nome}</b>
+                  <span style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>
+                    {modo.dica ? "entrega combinada com o comprador, sem rastreio do ML" : <>
+                      {det.tiny?.transportadora ? `${det.tiny.transportadora} · ` : ""}
+                      {det.tiny?.codigo_rastreamento ? <>rastreio <Copiavel valor={det.tiny.codigo_rastreamento} oQue="Rastreio" /></> : "sem rastreio no Tiny"}
+                    </>}
+                  </span>
+                </div>
+                <div style={{ ...cx, borderColor: det.entrada ? "var(--pm-g)" : "var(--pm-am)", background: det.entrada ? "var(--pm-gs)" : "var(--pm-ams)" }}>
+                  <span style={k}>Devolução no galpão</span>
+                  <b style={{ fontSize: 14, color: det.entrada ? "var(--pm-g)" : "var(--pm-am)" }}>{det.entrada ? (det.entrada.conferido_ok === false ? "Lançada, com problema" : "Lançada") : "Ainda não lançada"}</b>
+                  <span style={{ fontSize: 11.5, color: "var(--pm-t2)" }}>
+                    {det.entrada ? <>{diaHora(det.entrada.recebido_em)} · por <b>{det.entrada.recebido_por ?? "sem nome"}</b></> : caso.volta_entregue_em ? `o marketplace diz que chegou em ${diaHora(caso.volta_entregue_em)}: falta dar entrada em No galpão` : "ninguém deu entrada deste pedido"}
+                  </span>
+                </div>
+                <div style={{ ...cx, borderColor: parcial || maior ? "var(--pm-am)" : "var(--pm-bs)" }}>
+                  <span style={k}>Pedido × reembolso</span>
+                  <b style={{ fontSize: 14 }}>{vPed != null ? brl(vPed) : "—"} <span style={{ fontWeight: 400, color: "var(--pm-t3)" }}>→</span> {vRee != null ? brl(vRee) : "—"}</b>
+                  <span style={{ fontSize: 11.5, color: parcial || maior ? "var(--pm-am)" : "var(--pm-t2)", fontWeight: parcial || maior ? 600 : 400 }}>
+                    {vPed == null || vRee == null ? "valor do pedido ou do reembolso não disponível"
+                      : maior ? `reembolso ${brl(vRee - vPed)} ACIMA do valor do pedido`
+                        : parcial ? `reembolso parcial: ${Math.round((vRee / vPed) * 100)}% do pedido (${brl(vPed - vRee)} a menos)`
+                          : "reembolso do valor inteiro do pedido"}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* galpão e Tiny */}
           {secao("Galpão e Tiny")}

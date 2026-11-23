@@ -52,6 +52,31 @@ export interface CasoFila {
   urgencia: "vencido" | "hoje" | "amanha" | "depois" | null;
 }
 
+/** Forma de envio do pedido, como a equipe chama (23/nov/2026). Shopee = opção de envio; ML = tipo de logística.
+ *  ML sem tipo = pedido sem Mercado Envios (tag no_shipping: entrega combinada com o comprador). */
+export function modoEnvioPt(marketplace: string | null | undefined, opcao: string | null | undefined, logistica: string | null | undefined): { nome: string; dica?: string } {
+  if (marketplace === "mercadolivre") {
+    const m: Record<string, string> = { fulfillment: "Full", self_service: "Flex", xd_drop_off: "Agência", drop_off: "Agência", cross_docking: "Coleta" };
+    if (logistica && m[logistica]) return { nome: m[logistica] };
+    if (logistica) return { nome: logistica };
+    return { nome: "Sem Mercado Envios", dica: "O ML registra este pedido sem envio pelo Mercado Envios: entrega combinada direto com o comprador, sem rastreio do ML." };
+  }
+  if (opcao) return { nome: opcao };
+  return { nome: "não informado" };
+}
+export interface EnvioPedido { id: string; marketplace: string; opcao_envio: string | null; logistica_tipo: string | null; subtotal_produtos: number | null }
+/** Forma de envio e valor dos pedidos da fila (só os ids pedidos, em lotes). */
+export async function lerEnviosPedidos(ids: string[]): Promise<Record<string, EnvioPedido>> {
+  const out: Record<string, EnvioPedido> = {};
+  const unicos = [...new Set(ids.filter(Boolean))];
+  for (let i = 0; i < unicos.length; i += 150) {
+    const { data, error } = await supabaseExternal.from("pedidos").select("id, marketplace, opcao_envio, logistica_tipo, subtotal_produtos").in("id", unicos.slice(i, i + 150));
+    if (error) throw error;
+    for (const p of (data ?? []) as EnvioPedido[]) out[p.id] = p;
+  }
+  return out;
+}
+
 export interface Causa { codigo: string; grupo: string; nome: string; ordem: number; ativo: boolean }
 
 export const GRUPO_CAUSA_PT: Record<string, string> = {

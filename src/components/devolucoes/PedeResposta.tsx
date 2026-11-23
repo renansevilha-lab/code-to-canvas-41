@@ -13,8 +13,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Foto, MONO, Spinner } from "@/components/separacao/ui/kit";
 import { PainelCaso } from "./PainelCaso";
 import {
-  acaoEsperada, brl, diaHora, listarCausas, listarFila, lojaDe, motivoPt, prazoTexto, SOLUCAO_PT,
-  type CasoFila, type Empresa,
+  acaoEsperada, brl, diaHora, lerEnviosPedidos, listarCausas, listarFila, lojaDe, modoEnvioPt, motivoPt, prazoTexto, SOLUCAO_PT,
+  type CasoFila, type Empresa, type EnvioPedido,
 } from "@/lib/devolucoes";
 
 type Mkt = "todos" | "shopee" | "mercadolivre";
@@ -54,6 +54,9 @@ export function PedeResposta({ empresa }: { empresa: Empresa | "ambas" }) {
   const [aberto, setAberto] = useState<string | null>(null);
 
   const todos = useMemo(() => (filaQ.data ?? []).filter((c) => empresa === "ambas" || c.empresa === empresa), [filaQ.data, empresa]);
+  // forma de envio de cada pedido da fila (só os ids da fila)
+  const idsFila = useMemo(() => todos.map((c) => c.order_sn ?? "").filter(Boolean).sort(), [todos]);
+  const enviosQ = useQuery({ queryKey: ["devolucoes", "envios", idsFila.join(",")], queryFn: () => lerEnviosPedidos(idsFila), enabled: idsFila.length > 0, staleTime: 10 * 60_000 });
   const pedem = useMemo(() => todos.filter((c) => c.precisa_acao), [todos]);
   const aguardam = useMemo(() => todos.filter((c) => !c.precisa_acao), [todos]);
 
@@ -163,7 +166,7 @@ export function PedeResposta({ empresa }: { empresa: Empresa | "ambas" }) {
             const on = aberto === k;
             return (
               <div key={k}>
-                <Linha c={c} aberto={on} onAbrir={() => setAberto(on ? null : k)} />
+                <Linha c={c} aberto={on} envio={c.order_sn ? enviosQ.data?.[c.order_sn] ?? null : null} enviosLidos={!!enviosQ.data} onAbrir={() => setAberto(on ? null : k)} />
                 {on && (
                   <div style={{ borderTop: "1px solid var(--pm-b)", background: "var(--pm-as)", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", maxWidth: 920, margin: "0 auto", width: "100%" }}>
@@ -184,7 +187,8 @@ export function PedeResposta({ empresa }: { empresa: Empresa | "ambas" }) {
   );
 }
 
-function Linha({ c, aberto, onAbrir }: { c: CasoFila; aberto: boolean; onAbrir: () => void }) {
+function Linha({ c, aberto, onAbrir, envio, enviosLidos }: { c: CasoFila; aberto: boolean; onAbrir: () => void; envio: EnvioPedido | null; enviosLidos: boolean }) {
+  const modo = enviosLidos ? modoEnvioPt(c.marketplace, envio?.opcao_envio, envio?.logistica_tipo) : null;
   const ae = acaoEsperada(c.acao_esperada);
   const pz = prazoTexto(c.prazo);
   const problemas = c.entrada_problemas?.length ?? 0;
@@ -202,6 +206,7 @@ function Linha({ c, aberto, onAbrir }: { c: CasoFila; aberto: boolean; onAbrir: 
           <span style={{ ...sub, display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
             <img src={LOGO[c.marketplace]} alt={NOME_MKT[c.marketplace]} title={NOME_MKT[c.marketplace]} style={{ width: 16, height: 16, borderRadius: 4, objectFit: "contain", flex: "none" }} />
             <span style={{ whiteSpace: "nowrap" }}>{lojaDe(c)}</span>
+            {modo && <span title={modo.dica ?? "Forma de envio do pedido"} style={{ whiteSpace: "nowrap", fontWeight: 600, color: "var(--pm-t)", background: "var(--pm-s2)", borderRadius: 6, padding: "0 6px" }}>{modo.nome}</span>}
             <Copiavel valor={c.order_sn} style={{ fontSize: 11.5 }} />
             {c.sku && <span style={{ whiteSpace: "nowrap" }}>· SKU <Copiavel valor={c.sku} oQue="SKU" style={{ fontSize: 11.5 }} /></span>}
           </span>
