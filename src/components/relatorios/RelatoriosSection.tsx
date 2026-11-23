@@ -10,6 +10,7 @@ import {
 import { agenteDef, decisoesDe, ehV0, kindDe } from "./agentes";
 import { BotaoCompleta, RelatorioCard } from "./RelatorioCard";
 import { RelatorioHtmlModal } from "./RelatorioHtmlModal";
+import { DecisoesCoordenador } from "./DecisoesCoordenador";
 
 // ============================================================================
 // Relatórios dos agentes — design "Faixa Hoje + histórico" (Claude Design,
@@ -159,6 +160,9 @@ export function RelatoriosSection({
           })}
         </div>
       </div>
+
+      {/* Decisões do dia (agente coordenador) — só administrador */}
+      <DecisoesCoordenador mobile={mobile} />
 
       {/* Faixa Hoje */}
       {ultimosQ.isLoading ? (
