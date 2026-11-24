@@ -1,5 +1,10 @@
 // ============================================================================
-// devolucao-auto v9 (22/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// devolucao-auto v10 (24/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// v10: nota criada cujos itens o Tiny trocou (kit desmembrado nos componentes; nf-devolucao v3.26 `itens_divergem`) vai
+//   direto para `revisar` e NAO e emitida (o Tiny recusa: item sem chave da NF-e referenciada). ?modulo=recriar-kit
+//   [&max=1][&dry=1][&order_sn=]: para as linhas `revisar` por kit da SVL cuja nota JA FOI EXCLUIDA no Tiny (GET 404),
+//   apaga o espelho (devolucoes_svl_base) e a linha do motor — a venda volta a view e o cron 181 cria de novo. Nota que
+//   ainda existe no Tiny nao e tocada.
 // v9: processar-historico aceita &conta=ottz (serie 13, token da Ottz): so vendas com regime_venda = 'lucro_real'
 //   (CST da propria nota no espelho fiscal) e emitente ACZ — venda do Simples devolvida hoje tomaria credito indevido
 //   (a ACZ virou Lucro Real no Tiny em 10/08/2026) e as notas da Bumi/Jussara que vivem no Tiny da Ottz nao sao da ACZ.
@@ -608,6 +613,7 @@ serve(async (req: Request) => {
         if (st.estado === "criada") {
           upd.id_nota_devolucao = r?.registro?.id ? Number(r.registro.id) : null;
           upd.numero_nota = r?.registro?.numero ?? null;
+          if (r?.itens_divergem) { upd.estado = "revisar"; upd.detalhe = `Tiny desmembrou o KIT ao incluir: devolucao ficou com ${(r?.itens_criados || []).join(", ")} e a venda tem ${(r?.itens_enviados || []).join(", ")} — a emissao seria recusada (item sem chave da NF-e referenciada). Excluir a nota no Tiny e recriar (modulo recriar-kit).`; res.kit_desmembrado = true; } // v10
         } else if (st.estado === "ja_existe") {
           upd.id_nota_devolucao = r?.existente?.id_nota ? Number(r.existente.id_nota) : null;
           upd.numero_nota = r?.existente?.numero ?? null;
@@ -616,7 +622,7 @@ serve(async (req: Request) => {
         await supabase.from("devolucao_auto").update(upd).eq("conta", contaH).eq("order_sn", f.numero_ecommerce);
         if (st.parar) break;
         // v9 (ottz): emite na mesma rodada, logo depois de criar
-        if (contaH === "ottz" && st.estado === "criada" && upd.id_nota_devolucao && !pausado656 && Date.now() - inicio < orcamentoMs - 6000) {
+        if (contaH === "ottz" && st.estado === "criada" && upd.estado !== "revisar" && upd.id_nota_devolucao && !pausado656 && Date.now() - inicio < orcamentoMs - 6000) {
           await sleep(1500);
           res.emissao = await emitirOttz(Number(upd.id_nota_devolucao), String(f.numero_ecommerce), (upd.numero_nota as string) ?? null);
           if (pausado656) break;
@@ -633,6 +639,41 @@ serve(async (req: Request) => {
       const { count: faltam } = await qF;
       return json({ modulo, conta: contaH, dry, desde, processados: resultados.length, criadas: resultados.filter((x) => x.codigo === "criada" && x.ok).length,
         emitidas: emitidasAgora.length, pausado_656: pausado656, candidatos_restantes_na_view: faltam ?? null, resultados, tempo_ms: Date.now() - inicio });
+    }
+
+    if (modulo === "recriar-kit") {
+      // v10: so SVL. Linha do motor em 'revisar' por kit desmembrado cuja nota JA NAO EXISTE no Tiny (excluida na tela):
+      // apaga o espelho e a linha, para a venda voltar a fila (view_devolucao_hist_candidatos -> cron 181).
+      const inicio = Date.now();
+      const dry = url.searchParams.get("dry") === "1";
+      const max = Math.min(Math.max(parseInt(url.searchParams.get("max") || "1", 10), 1), 50);
+      const soSn = url.searchParams.get("order_sn");
+      let q = supabase.from("devolucao_auto").select("order_sn, id_nota_devolucao, numero_nota, chave_venda, detalhe")
+        .eq("conta", conta).eq("estado", "revisar").not("id_nota_devolucao", "is", null)
+        .or("detalhe.ilike.%kit%,detalhe.ilike.%chave da NF-e referenciada%").order("atualizado_em", { ascending: true }).limit(max);
+      if (soSn) q = q.eq("order_sn", soSn);
+      const { data: linhas, error: eL } = await q;
+      if (eL) return json({ erro: eL.message }, 500);
+      const resultados: any[] = [];
+      for (const l of (linhas || []) as any[]) {
+        if (Date.now() - inicio > 22000) break;
+        const idNota = Number(l.id_nota_devolucao);
+        const det = await tinyFetch(token, `/notas/${idNota}`); // null = 404 = excluida
+        const existe = !!det;
+        const situacao = det?.situacao != null ? String(det.situacao) : null;
+        const r: any = { order_sn: l.order_sn, numero_nota: l.numero_nota, id_nota: idNota, existe_no_tiny: existe, situacao, acao: "nenhuma" };
+        if (!existe) {
+          if (dry) r.acao = "apagaria espelho + linha do motor (dry)";
+          else {
+            await supabase.from("devolucoes_svl_base").delete().eq("id_nota", idNota);
+            await supabase.from("devolucao_auto").delete().eq("conta", conta).eq("order_sn", l.order_sn);
+            r.acao = "espelho e linha apagados: a venda volta a fila do cron 181";
+          }
+        } else r.acao = `nota ainda existe no Tiny (situacao ${situacao}) — excluir na tela antes`;
+        resultados.push(r);
+        await sleep(300);
+      }
+      return json({ modulo, conta, dry, max, processados: resultados.length, resultados, tempo_ms: Date.now() - inicio });
     }
 
     if (modulo === "processar") {
@@ -714,6 +755,7 @@ serve(async (req: Request) => {
         if (st.estado === "criada") {
           upd.id_nota_devolucao = r?.registro?.id ? Number(r.registro.id) : null;
           upd.numero_nota = r?.registro?.numero ?? null;
+          if (r?.itens_divergem) { upd.estado = "revisar"; upd.detalhe = `Tiny desmembrou o KIT ao incluir: devolucao ficou com ${(r?.itens_criados || []).join(", ")} e a venda tem ${(r?.itens_enviados || []).join(", ")} — a emissao seria recusada (item sem chave da NF-e referenciada). Excluir a nota no Tiny e recriar (modulo recriar-kit).`; (res as any).kit_desmembrado = true; } // v10
         } else if (st.estado === "ja_existe") {
           upd.id_nota_devolucao = r?.existente?.id_nota ? Number(r.existente.id_nota) : null;
           upd.numero_nota = r?.existente?.numero ?? null;
@@ -726,7 +768,7 @@ serve(async (req: Request) => {
       return json({ modulo, conta, dry, espelho: esp, processados: resultados.length, resultados, tempo_ms: Date.now() - inicio });
     }
 
-    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar", "processar-historico", "emitir", "varrer-historico"] }, 400);
+    return json({ erro: `modulo ${modulo} desconhecido`, modulos: ["status", "espelhar", "processar", "processar-historico", "emitir", "varrer-historico", "recriar-kit"] }, 400);
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);
   }

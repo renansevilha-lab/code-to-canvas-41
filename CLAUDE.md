@@ -1115,6 +1115,22 @@ Shopee + [SVLL] ML); depois Ottz.
   crédito (ICMS 90/41, PIS/COFINS 98/99) pelo param `natureza`, ou não emitir (receita já no DAS) — decisão do contador.
   SVL (Simples) não é afetada: 1.083 criadas, cron 158 emitindo; 1 rejeitada **002803/12** (ML 2000008772034461, "IE do
   destinatário não vinculada ao CNPJ", cliente PJ — arrumar à mão).
+- **Kit desmembrado pela API v2 — 45 notas da SVL recusadas (23–24/nov/2026, opção B do dono).** Quando a venda tem um
+  KIT cadastrado como kit (tipo K) na conta SVL, o `nota.fiscal.incluir` da v2 DESMEMBRA o kit nos componentes ao criar a
+  devolução e o Tiny recusa a emissão com 400 "o item X está sem a chave de acesso da NF-e referenciada" (o item não casa
+  com a NF de origem); kit NÃO cadastrado na SVL (`idProduto 0`) passa. Em 23/nov: 45 notas pendentes de 19/11
+  (002163–002369, R$ 3.063,46) retentadas a cada 12 h pelo cron 158 sem chance; não há campo na v2 para evitar o
+  desmembramento. Feito: as 45 linhas de `devolucao_auto` em `revisar`; `nf-devolucao` **v3.26** (o `criar` relê a
+  nota criada e devolve `itens_enviados` / `itens_criados` / `itens_divergem`); `devolucao-auto` **v10**
+  (`itens_divergem` → `revisar`, nunca emite — vale nas duas contas; `?modulo=recriar-kit[&max=1][&dry=1][&order_sn=]`
+  = para as linhas `revisar` por kit da SVL cuja nota JÁ FOI EXCLUÍDA no Tiny (GET 404) apaga o espelho
+  `devolucoes_svl_base` e a linha do motor, e a venda volta à fila do cron 181; nota que ainda existe não é tocada —
+  prévia de 24/nov: 45/45 ainda pendentes). **Pendente do dono:** excluir as 45 na tela do Tiny SVL (`select order_sn,
+  numero_nota from devolucao_auto where conta='svl' and estado='revisar' and detalhe ilike '%kit%'`), rodar
+  `recriar-kit&max=1`, esperar o cron 181 e conferir se a nova nota veio sem `itens_divergem` — se o kit seguir
+  cadastrado como kit na SVL, a API desmembra de novo (a trava só impede a emissão errada; aí o caminho é desfazer o
+  kit na SVL ou criar essas notas à mão). Estado SVL em 23/nov: 1.083 criadas (R$ 59.956), 950 autorizadas, 87
+  pendentes sem kit (autorizam a ~12/h), 1 rejeitada (002803/12).
 
 ## 5.3 DRE — categorização de despesas e camada de override
 
@@ -4610,8 +4626,8 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
 | `compras-sync` | v3.3 | Ordens de compra (`sync`), NF de entrada (`nf`, com `?de=&ate=`) e `nf-detalhe` (detalha NF pendentes sem janela) — ver seção 5.7. Sync NÃO toca campos do app (ordem_tiny_id manual, ignorar, conciliado_*) |
 | `tiny-sync-contas-pagar` | v2 | Espelho do contas a pagar + módulo `liquidacao` (data/valor da baixa) — ver seção 5.7. Token fixo `conta='ottz'` |
 | `fulfillment-inbound` | v16 | **v16 (05/nov):** sem PrintNode — `imprimir` só ZPL, sempre pela fila própria; PDF é convertido no navegador (§5.9). **v15:** `imprimir` ZPL pela fila própria quando a impressora é nossa (§5.9). Lê o PDF de preparação do inbound (SKU/qtd/título, posicional via unpdf) — ver seção 9. **v14 (25/set):** SKU/título lidos SÓ na coluna de produto (à esquerda de "UNIDADES"); antes o "12" da coluna de quantidade colava em "SKU:" quando o ML quebrava o SKU de linha → SKU fantasma e TODAS as qtds deslocadas (soma fechava por acaso). `confere` agora exige nº de SKUs = "Produtos do envio: N" = nº de qtds. Regressão com 12 PDFs reais: 9 idênticos, 3 corrigidos |
-| `nf-devolucao` | v3.21 (deploy 36) | Devoluções: `varrer-cancelados` (cron), `pendentes`, `emitir`, `criar` (SVL aceita reembolso aceito, itens parciais com kit aberto, anti-duplicata), `clonar`/`clonar-lote` — ver seções 5.2 e 5.2.3 |
-| `devolucao-auto` | v6 (deploy 9; fonte em `supabase/functions/devolucao-auto/`) | Motor da NF de devolução automática da SVL: `espelhar` (chave da venda nas devoluções), `processar` (cria Pendente via `nf-devolucao?modulo=criar`), **`emitir`** (v6: emite as notas que o motor criou; cron 158), `status` — ver §5.2.3 |
+| `nf-devolucao` | v3.26 (deploy 45, 24/nov: `criar` relê a nota criada e avisa `itens_divergem` quando o Tiny desmembrou o kit; v3.25: caminho direto `id_nota_venda+pedido_id` nas duas contas, `natureza` opcional) | Devoluções: `varrer-cancelados` (cron), `pendentes`, `emitir`, `criar` (SVL aceita reembolso aceito, itens parciais com kit aberto, anti-duplicata), `clonar`/`clonar-lote` — ver seções 5.2 e 5.2.3 |
+| `devolucao-auto` | v10 (deploy 14, 24/nov: kit desmembrado → `revisar` sem emitir + `recriar-kit`; v9: `processar-historico&conta=ottz`; v8: `processar-historico`; fonte em `supabase/functions/devolucao-auto/`) | Motor da NF de devolução automática da SVL (e histórico da Ottz, travado): `espelhar`, `processar`, `processar-historico` (crons 135/181), **`emitir`** (cron 158), `varrer-historico`, `recriar-kit`, `status` — ver §5.2.3 |
 | `shopee-devolucao-probe` | v28 (fonte em `supabase/functions/shopee-devolucao-probe/`) | Returns da Shopee: `sync`, `detalhar` (v26 `prazo_disputa`, v27/v28 `prazo_vendedor` + `volta_entregue_em`), `escrow`, `rastreio-ida`, `volta`, responder — ver §5.10. **Não apagar** (crons 124–126) |
 | `etiquetas-saude` | v5 | **Quadro do dia e alerta de risco de cancelamento vão para o canal `atualizacoes`** (#atualizações-projeto, pedido do dono 16/set); token e pipeline degradado seguem em `erros`. Texto do risco = UMA linha por loja (tudo que já venceu ou cancela hoje somado). `resumo` / `discord` (quadro 2×/dia) / `verificar` (watchdog 20 min) / **`entrega-rapida`** (cron jobid 103, 12h10 BRT): lista pedidos Shopee **Entrega Rápida** ainda não entregues ao motorista com prazo hoje/vencido, via `view_entrega_rapida_pendentes` (status Shopee pré-envio E situação Tiny não enviada, janela 10 dias — o espelho da Shopee tem 1.204 fantasmas em PROCESSED de mai–jul). Silêncio se não há pendente; `&sempre=1` força |
 | `discord-notify` | v2 | **Porta única** de saída para o Discord (webhooks em secret, um por canal) — ver seção 6.1 |

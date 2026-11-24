@@ -140,6 +140,12 @@ left join lateral (
 revoke all on public.view_devolucao_hist_candidatos from anon;
 grant select on public.view_devolucao_hist_candidatos to authenticated, service_role;
 
+-- 24/nov/2026 — kit desmembrado pela API v2 (sem DDL): venda da SVL com KIT cadastrado como kit gera devolução com os
+-- COMPONENTES (nota.fiscal.incluir desmembra) e o Tiny recusa emitir ("item sem chave da NF-e referenciada"). As 45 linhas
+-- de devolucao_auto (notas 002163–002369) foram para estado 'revisar'; nf-devolucao v3.26 devolve itens_divergem e
+-- devolucao-auto v10 marca 'revisar' sem emitir + ?modulo=recriar-kit (apaga espelho e linha quando a nota já foi
+-- excluída no Tiny, a venda volta à view e o cron 181 recria). Nada mudou nesta view.
+
 -- Rollback:
 -- drop view if exists public.view_devolucao_hist_candidatos;
 -- drop function if exists public.devolucao_hist_semear(text,text,date,date,int);

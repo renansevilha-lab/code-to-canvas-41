@@ -1,5 +1,10 @@
 // ============================================================================
-// Edge Function: nf-devolucao v3.25 (MULTI-CONTA: ottz | svl)
+// Edge Function: nf-devolucao v3.26 (MULTI-CONTA: ottz | svl)
+// v3.26 (24/nov/2026): depois de criar, o `criar` RELE a nota no Tiny e compara os itens com o que foi enviado. Quando
+//   a venda tem um KIT cadastrado como kit na conta, a v2 `nota.fiscal.incluir` DESMEMBRA o kit nos componentes e o
+//   Tiny depois recusa emitir ("o item X esta sem a chave de acesso da NF-e referenciada": o item nao casa com a NF de
+//   origem). 45 notas da SVL de 19/11 cairam nisso. A resposta traz `itens_criados` e `itens_divergem` (o motor marca
+//   `revisar` e nao emite). Nao ha campo na v2 para evitar o desmembramento (doc oficial).
 // v3.25 (22/nov/2026): o caminho direto (id_nota_venda + pedido_id, guard = pedido cancelado AO VIVO e nota
 //   vinculada a ele) vale tambem para a conta OTTZ (historico de vendas do Lucro Real). `pedido_svl_id` continua
 //   aceito como apelido de `pedido_id`. Param opcional `natureza` troca a natureza de operacao da devolucao
@@ -937,7 +942,20 @@ serve(async (req: Request) => {
     }
 
     let vinculado = false;
+    // v3.26: o que o Tiny gravou de fato (kit pode ter sido desmembrado)
+    let itensCriados: string[] | null = null;
+    let itensDivergem = false;
+    const normCod = (x: unknown) => String(x ?? "").trim().toUpperCase();
     if (ok && reg?.id) {
+      try {
+        await sleep(800);
+        const criada = await tinyFetch(accessToken, `/notas/${reg.id}`);
+        if (criada?.itens) {
+          itensCriados = (criada.itens as any[]).map((i) => `${normCod(i.codigo)} x${Number(i.quantidade)}`).sort();
+          const enviados = (payload.nota_fiscal.itens as any[]).map((x) => `${normCod(x.item.codigo)} x${Number(x.item.quantidade)}`).sort();
+          itensDivergem = JSON.stringify(itensCriados) !== JSON.stringify(enviados);
+        }
+      } catch { /* so diagnostico */ }
       const { data } = await supabase.from("notas_cancelados").update({ id_nota_devolucao: reg.id }).eq("chave_nfe", chaveParaVinculo).select("tiny_pedido_id");
       vinculado = (data || []).length > 0;
       // v3.20: entra na hora na lista de emissao da SVL (o sync diario so passa as 5h30)
@@ -960,7 +978,11 @@ serve(async (req: Request) => {
       erro: ok ? null : "O Tiny nao confirmou a criacao da devolucao.",
       registro: reg ? { sequencia: reg.sequencia, status: reg.status, id: reg.id, numero: reg.numero, serie: reg.serie } : null,
       chave_referenciada: chave, vinculado_no_app: vinculado, origem_itens: origemItens,
-      aviso: ok ? "Nota criada PENDENTE no Tiny - confira/emita em seguida" : null,
+      itens_enviados: (payload.nota_fiscal.itens as any[]).map((x) => `${x.item.codigo} x${x.item.quantidade}`),
+      itens_criados: itensCriados, itens_divergem: itensDivergem,
+      aviso: !ok ? null : itensDivergem
+        ? "O Tiny DESMEMBROU o kit ao incluir: os itens da devolucao nao casam com a NF de venda e a emissao vai ser recusada (item sem chave da NF-e referenciada). Nao emita: exclua a nota no Tiny."
+        : "Nota criada PENDENTE no Tiny - confira/emita em seguida",
     });
   }
 
@@ -1124,5 +1146,5 @@ serve(async (req: Request) => {
     return json({ modulo: "varrer-cancelados", conta: "ottz", candidatos_90d: (candidatos || []).length, ja_verificados_12h: jaVerificados.size, processados_agora: pendentes.length, com_nf: comNf, sem_nf: semNf, pulados_nao_cancelado_ao_vivo: puloNaoCancelado, erros, gravadas, limpos_falsos_positivos: limpos, restam: (candidatos || []).length - jaVerificados.size - pendentes.length, tempo_ms: Date.now() - inicio });
   }
 
-  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.25: criar direto por id_nota_venda+pedido_id nas duas contas (historico), natureza opcional; v3.23: ponte SVL com janelas progressivas" });
+  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.26: criar rele a nota e avisa itens_divergem (kit desmembrado pelo Tiny); v3.25: criar direto por id_nota_venda+pedido_id nas duas contas, natureza opcional" });
 });
