@@ -219,7 +219,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
       <aside
         className="pm-ui"
         style={embutido
-          ? { background: "var(--pm-bg)", color: "var(--pm-t)", display: "flex", flexDirection: "column", fontSize: 13, border: "1px solid var(--pm-bs)", borderRadius: 12, overflow: "hidden", maxWidth: 920, margin: "0 auto", width: "100%" }
+          ? { background: "var(--pm-bg)", color: "var(--pm-t)", display: "flex", flexDirection: "column", fontSize: 13, border: "1px solid var(--pm-bs)", borderRadius: 12, overflow: "hidden", maxWidth: 1280, margin: "0 auto", width: "100%" }
           : { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(100vw, 560px)", background: "var(--pm-bg)", color: "var(--pm-t)", zIndex: 61, display: "flex", flexDirection: "column", boxShadow: "-8px 0 30px rgba(0,0,0,.25)", fontSize: 13 }}
       >
         {/* cabeçalho */}
@@ -246,10 +246,14 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
           <button type="button" onClick={onFechar} aria-label="Fechar" style={{ border: 0, background: "transparent", fontSize: 20, cursor: "pointer", color: "var(--pm-t2)", lineHeight: 1 }}>×</button>
         </header>
 
-        <div style={{ flex: 1, overflowY: embutido ? "visible" : "auto", padding: "4px 16px 24px" }}>
-          {detQ.isLoading && <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 16, color: "var(--pm-t3)" }}><Spinner /> lendo o caso…</div>}
-          {detQ.error && <div style={{ color: "var(--pm-r)", padding: 12 }}>{(detQ.error as Error).message}</div>}
+        {/* embutido = duas colunas (o caso à esquerda, a resposta à direita); estreito vira uma só */}
+        <div style={embutido
+          ? { padding: "4px 16px 20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", columnGap: 20, alignItems: "start" }
+          : { flex: 1, overflowY: "auto", padding: "4px 16px 24px" }}>
+          {detQ.isLoading && <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center", padding: 16, color: "var(--pm-t3)" }}><Spinner /> lendo o caso…</div>}
+          {detQ.error && <div style={{ gridColumn: "1 / -1", color: "var(--pm-r)", padding: 12 }}>{(detQ.error as Error).message}</div>}
 
+          <div style={{ minWidth: 0 }}>
           {/* o que o cliente diz */}
           {secao("O cliente diz")}
           <div style={{ background: "var(--pm-s)", border: "1px solid var(--pm-bs)", borderRadius: 12, padding: 12 }}>
@@ -415,6 +419,8 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
             </>
           )}
 
+          </div>
+          <div style={{ minWidth: 0 }}>
           {/* resposta */}
           {secao("Responder")}
           <div style={{ background: "var(--pm-s)", border: "1px solid var(--pm-bs)", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -514,6 +520,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
                 registrarManual={{ acaoMl, setAcaoMl, registrarMl }}
               />
             )}
+          </div>
           </div>
         </div>
       </aside>

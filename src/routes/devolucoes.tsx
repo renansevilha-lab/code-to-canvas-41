@@ -172,10 +172,9 @@ function DevolucoesPage() {
 
   const abas: AbaSep[] = [
     { id: "resposta", nome: "A responder", n: nPede, onClick: () => irAba("resposta") },
-    { id: "resultados", nome: "Resultados", onClick: () => irAba("resultados") },
+    { id: "resultados", nome: "Resultados e perdas", onClick: () => irAba("resultados") },
     { id: "recebidas", nome: "No galpão", onClick: () => irAba("recebidas") },
     { id: "nf", nome: "Notas fiscais", onClick: () => irAba("nf") },
-    { id: "perdas", nome: "Perdas Shopee", onClick: () => irAba("perdas") },
   ];
 
   return (
@@ -189,7 +188,16 @@ function DevolucoesPage() {
             ops={[{ id: "ambas", nome: "Ambas" }, { id: "ottz", nome: "Ottz / ACZ" }, { id: "svl", nome: "SVL / Bumi" }]}
           />
         </div>
-        <BarraAbas abas={abas} ativa={aba} />
+        <BarraAbas abas={abas} ativa={aba === "perdas" ? "resultados" : aba} />
+        {/* Perdas Shopee mora dentro de Resultados (23/nov/2026); ?aba=perdas segue valendo para links antigos */}
+        {(aba === "resultados" || aba === "perdas") && (
+          <div style={{ alignSelf: "flex-start" }}>
+            <Segmento<"resultados" | "perdas">
+              valor={aba} onValor={(v) => irAba(v)}
+              ops={[{ id: "resultados", nome: "Resumo e causas" }, { id: "perdas", nome: "Perdas Shopee, pedido a pedido" }]}
+            />
+          </div>
+        )}
         {aba === "resposta" && (
           <ProtecaoPacking antigo={<DevolucoesShopeeAbertas />}>
             <PedeResposta empresa={empresaFiltro} />

@@ -169,7 +169,7 @@ export function PedeResposta({ empresa }: { empresa: Empresa | "ambas" }) {
                 <Linha c={c} aberto={on} envio={c.order_sn ? enviosQ.data?.[c.order_sn] ?? null : null} enviosLidos={!!enviosQ.data} onAbrir={() => setAberto(on ? null : k)} />
                 {on && (
                   <div style={{ borderTop: "1px solid var(--pm-b)", background: "var(--pm-as)", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", maxWidth: 920, margin: "0 auto", width: "100%" }}>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
                       <button type="button" className="pm-hv" style={botao} onClick={proximo} disabled={lista.length < 2}>Próximo caso ›</button>
                     </div>
                     <PainelCaso embutido caso={c} causas={causasQ.data ?? []} onFechar={() => setAberto(null)} onMudou={() => void filaQ.refetch()} />
