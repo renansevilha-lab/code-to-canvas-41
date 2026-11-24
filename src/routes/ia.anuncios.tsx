@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FlaskConical, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FlaskConical, ImageOff, ImagePlus, Layers, Loader2, MoreHorizontal, RefreshCw, Search, Send, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CriarVariacoes } from "@/components/ia/anuncio/CriarVariacoes";
 import { CriarVariacoesCores } from "@/components/ia/anuncio/CriarVariacoesCores";
+import { EnvioLote } from "@/components/ia/anuncio/EnvioLote";
 import { ImportarDoTiny, importarTudo } from "@/components/ia/anuncio/ImportarDoTiny";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -170,6 +171,8 @@ function AnunciosPage() {
   // seleção de produtos SIMPLES (vale entre páginas e buscas) → um produto com variações de cor × quantidade
   const [selecionados, setSelecionados] = useState<string[]>([]);
   const [coresAberto, setCoresAberto] = useState(false);
+  // envio em lote (24/nov/2026): os marcados vão para as lojas escolhidas, com uma conferência única
+  const [loteAberto, setLoteAberto] = useState(false);
   // "Importar do Tiny": produto cadastrado hoje no Tiny entra no sistema na hora (sem esperar a madrugada)
   const [importarAberto, setImportarAberto] = useState<string | null>(null);
   const verSku = (sku: string) => { setDigitado(sku); set({ q: sku, sit: undefined, tipo: undefined, sem: undefined, marca: undefined, giro: undefined }); };
@@ -202,6 +205,7 @@ function AnunciosPage() {
       {variacoesDe && <CriarVariacoes sku={variacoesDe} onFechar={() => setVariacoesDe(null)} />}
       {importarAberto !== null && <ImportarDoTiny inicial={importarAberto} onFechar={() => setImportarAberto(null)} onVer={verSku} />}
       {coresAberto && <CriarVariacoesCores skus={selecionados} onFechar={() => { setCoresAberto(false); setSelecionados([]); }} />}
+      {loteAberto && <EnvioLote skus={selecionados} onFechar={() => setLoteAberto(false)} />}
     </>
   );
   // visões de acompanhamento (16/nov): Anúncios no ar (padrão) e Mudanças; a lista de produtos fica de reserva se quebrarem
@@ -219,7 +223,7 @@ function AnunciosPage() {
         <ListaNova cat={cat} carregando={catQ.isLoading} erro={catQ.isError ? (catQ.error as Error).message : null} onTentar={() => void catQ.refetch()}
           buscando={catQ.isFetching} digitado={digitado} setDigitado={setDigitado} filtros={{ q, fam, marca, sit, tipo, sem, giro, ordem, teste }} set={set} onFamilia={verFamilia}
           escolherGiro={escolherGiro} pagina={pagina} paginas={paginas} total={total} composicoes={kitsQ.data} comCapa={comCapa}
-          selecionados={selecionados} alternar={alternar} limparSel={() => setSelecionados([])} abrirCores={() => setCoresAberto(true)}
+          selecionados={selecionados} alternar={alternar} limparSel={() => setSelecionados([])} abrirCores={() => setCoresAberto(true)} abrirLote={() => setLoteAberto(true)}
           onVariacoes={setVariacoesDe} onImportar={(t) => setImportarAberto(t)} />
       </ProtecaoPacking>
       {dialogos}
@@ -325,6 +329,9 @@ function AnunciosPage() {
         <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-background/95 px-3 py-2 text-sm shadow-sm backdrop-blur">
           <span><b>{selecionados.length}</b> produto(s) selecionado(s): <span className="font-mono text-xs text-muted-foreground">{selecionados.join(", ")}</span></span>
           <div className="flex-1" />
+          <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setLoteAberto(true)}>
+            <Send className="h-4 w-4" />Enviar anúncios ({selecionados.length})
+          </Button>
           <Button size="sm" className="h-8 gap-1.5" disabled={selecionados.length < 2} onClick={() => setCoresAberto(true)}
             title={selecionados.length < 2 ? "Selecione ao menos 2 produtos (um por cor)" : undefined}>
             <Layers className="h-4 w-4" />Criar produto com variações (cor × quantidade)
@@ -851,14 +858,14 @@ function canaisComAnunciados(x: IaCatalogoLinha, anunciados?: Record<string, Anu
 }
 
 function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDigitado, filtros, set, escolherGiro, pagina, paginas, total,
-  composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, onVariacoes, onImportar, onFamilia }: {
+  composicoes, comCapa, selecionados, alternar, limparSel, abrirCores, abrirLote, onVariacoes, onImportar, onFamilia }: {
   cat: IaCatalogo | undefined; carregando: boolean; erro: string | null; onTentar: () => void; buscando: boolean;
   digitado: string; setDigitado: (v: string) => void;
   filtros: { q?: string; fam?: string; marca?: string; sit?: string; tipo?: string; sem?: string; giro?: string; ordem?: string; teste?: string };
   set: (x: Partial<Busca>) => void; escolherGiro: (id: string) => void;
   pagina: number; paginas: number; total: number;
   composicoes: Record<string, Componente[]> | undefined; comCapa: (x: IaCatalogoLinha) => IaCatalogoLinha;
-  selecionados: string[]; alternar: (sku: string) => void; limparSel: () => void; abrirCores: () => void;
+  selecionados: string[]; alternar: (sku: string) => void; limparSel: () => void; abrirCores: () => void; abrirLote: () => void;
   onVariacoes: (sku: string) => void; onImportar: (q: string) => void; onFamilia: (sku: string) => void;
 }) {
   const { q, fam, marca, sit, tipo, sem, giro, ordem, teste } = filtros;
@@ -1093,6 +1100,7 @@ function ListaNova({ cat, carregando, erro, onTentar, buscando, digitado, setDig
           <span className={MONO_A} style={{ fontSize: 12, opacity: 0.8 }}>{selecionados.join(" · ")}</span>
           <div style={{ flex: 1 }} />
           <button type="button" onClick={limparSel} style={{ height: 40, padding: "0 12px", borderRadius: 9, border: "1px solid oklch(1 0 0 / 0.45)", background: "transparent", color: "var(--pm-s)", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>Limpar</button>
+          <button type="button" onClick={abrirLote} style={{ height: 42, padding: "0 16px", borderRadius: 10, border: "1px solid oklch(1 0 0 / 0.6)", background: "transparent", color: "var(--pm-s)", cursor: "pointer", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}><Send className="h-4 w-4" />Enviar anúncios ({selecionados.length})</button>
           {selecionados.length >= 2
             ? <button type="button" onClick={abrirCores} style={{ height: 42, padding: "0 16px", borderRadius: 10, border: 0, background: "var(--pm-a)", color: "var(--pm-oa)", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Criar produto com variações (cor × quantidade)</button>
             : <span style={{ fontSize: 12, opacity: 0.85 }}>marque 2 ou mais para criar variações</span>}

@@ -14,7 +14,7 @@ import { decidirEtapa } from "@/components/ia/anuncio/EtapaTexto";
 import { FotosTiny } from "@/components/ia/anuncio/FotosTiny";
 import { FotosOpcoesShopee } from "@/components/ia/anuncio/FotosOpcoesShopee";
 import { EnvioAlvoContext, type EnvioAlvo } from "@/components/ia/anuncio/PromocaoNoEnvio";
-import { calcularPreco, chamarIa, chamarPublicar, chamarVariacoesShopee, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
+import { calcularPreco, chamarIa, chamarPublicar, chamarVariacoesShopee, lerRegrasLoja, regraDe, nomeCanal, nomeEmpresa, rotuloFoto, urlsAssinadas, type IaPreco, type IaRascunho } from "@/lib/iaAnuncio";
 import { EV_CRIADO, EV_PRONTO, EV_VAI_CRIAR, type AnuncioCriado, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -310,15 +310,21 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
   // PREÇO PADRÃO (13/out, pedido do dono): sem preço aprovado para este destino, a conferência já
   // abre com o preço da margem padrão do canal (Shopee = 30%, em IA › Prompts › Canais), calculado
   // agora — o "sugerido" guardado no rascunho é o da margem antiga.
+  // REGRA DA LOJA (24/nov/2026, dono — ia_loja_preco): Shopee Ottz 30%, Shopee Bumi 40%, TikTok 30%. Loja com
+  // regra = SEMPRE o preço da margem dela, mesmo que haja preço aprovado à mão no bloco Preço.
+  const regrasQ = useQuery({ queryKey: ["ia-anuncio", "regras-loja"], staleTime: 10 * 60_000, queryFn: lerRegrasLoja });
+  const comRegra = regraDe(regrasQ.data, canal, empresa) != null;
   const proprioD = rascunho.canal === canal && rascunho.empresa === empresa;
-  const aprovadoD = proprioD ? rascunho.preco_aprovado : rascunho.memoria_calculo?.destinos?.[`${canal}:${empresa}`]?.preco;
+  const aprovadoBruto = proprioD ? rascunho.preco_aprovado : rascunho.memoria_calculo?.destinos?.[`${canal}:${empresa}`]?.preco;
+  const aprovadoD = comRegra ? null : aprovadoBruto;
+  const usaPadrao = (canal === "shopee" || comRegra) && aprovadoD == null && regrasQ.isFetched;
   const padraoQ = useQuery({
     queryKey: ["ia-anuncio", "produto", rascunho.sku, "preco", canal, empresa, null],
-    enabled: canal === "shopee" && aprovadoD == null,
+    enabled: usaPadrao,
     // produto pai (com variações): vale o preço da variação mais cara na margem padrão
     queryFn: (): Promise<IaPreco> => calcularPreco(rascunho.sku, canal, empresa, null),
   });
-  const precoPadrao = canal === "shopee" && aprovadoD == null ? padraoQ.data?.preco_sugerido ?? null : null;
+  const precoPadrao = usaPadrao ? padraoQ.data?.preco_sugerido ?? null : null;
   const margemPadrao = padraoQ.data?.memoria_calculo?.margem_padrao_pct as number | undefined;
   const padraoPosto = useRef<string | null>(null);
   useEffect(() => {
@@ -760,7 +766,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
             </label>
             )}
             <label className="block">
-              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · padrão: margem de ${(margemPadrao * 100).toFixed(0)}%${padraoQ.data?.da_variacao ? " da variação mais cara" : ""}` : ""}</span>
+              <span className="text-[11px] text-muted-foreground">Preço (R$) · só deste envio{precoPadrao != null && String(op.preco ?? "") === String(precoPadrao) && margemPadrao ? ` · ${comRegra ? "regra da loja" : "padrão"}: margem de ${(margemPadrao * 100).toFixed(0)}%${padraoQ.data?.da_variacao ? " da variação mais cara" : ""}` : ""}</span>
               <Input className="h-8 mt-1 w-[150px] text-sm tabular-nums" inputMode="decimal" placeholder="defina o preço"
                 value={campo("preco", p.preco)} onChange={(e) => setOp({ ...op, preco: e.target.value })} />
             </label>

@@ -118,7 +118,22 @@ export interface IaPreco {
 }
 
 /**
- * Preço pela margem (`ia_calcular_preco`; margem nula = a padrão do canal). O produto PAI, que tem variações,
+ * REGRA DE PREÇO POR LOJA (24/nov/2026, pedido do dono — tabela `ia_loja_preco`): margem do preço cheio, do
+ * promocional e se entra sempre na promoção em andamento. Shopee Ottz 30%/17,5%, Shopee Bumi (svl) 40%/15%,
+ * TikTok 30%. Loja com regra = o envio usa SEMPRE ela (o preço aprovado à mão no bloco Preço não vale no envio);
+ * `ia_calcular_preco` com margem nula já devolve o preço da margem da loja.
+ */
+export interface RegraLoja { canal: string; empresa: string; margem_cheio_pct: number; margem_promo_pct: number | null; promo_sempre: boolean }
+export async function lerRegrasLoja(): Promise<RegraLoja[]> {
+  const { data, error } = await supabaseExternal.from("ia_loja_preco" as never).select("canal, empresa, margem_cheio_pct, margem_promo_pct, promo_sempre");
+  if (error) throw error;
+  return ((data ?? []) as RegraLoja[]).map((r) => ({ ...r, margem_cheio_pct: Number(r.margem_cheio_pct), margem_promo_pct: r.margem_promo_pct == null ? null : Number(r.margem_promo_pct) }));
+}
+export const regraDe = (regras: RegraLoja[] | undefined, canal: string, empresa: string) =>
+  (regras ?? []).find((r) => r.canal === canal && r.empresa === empresa) ?? null;
+
+/**
+ * Preço pela margem (`ia_calcular_preco`; margem nula = a da loja em `ia_loja_preco`, senão a padrão do canal). O produto PAI, que tem variações,
  * não tem custo próprio na gestão: para ele vale o preço da variação MAIS CARA na mesma margem (13/out/2026,
  * pedido do dono) — é o preço padrão do anúncio antes de as variações entrarem com o preço de cada uma.
  */

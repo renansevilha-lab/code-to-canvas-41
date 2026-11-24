@@ -67,8 +67,11 @@ export function VariacoesShopee({ sku, nomePai, empresa }: { sku: string; nomePa
       // (`margem_desejada`). Vale: preço planejado > margem do rascunho > margem padrão da Shopee.
       const { data: rp } = await supabaseExternal.from("ia_rascunho").select("memoria_calculo").eq("sku", sku).eq("canal", "shopee").eq("empresa", empresa).order("created_at", { ascending: false }).limit(1);
       const memoria = ((rp ?? [])[0]?.memoria_calculo ?? {}) as { margem_desejada?: number | null; precos_variacoes?: Record<string, number> };
-      const margemRasc = Number(memoria.margem_desejada) > 0 && Number(memoria.margem_desejada) < 1 ? Number(memoria.margem_desejada) : null;
-      const planejados = memoria.precos_variacoes ?? {};
+      // REGRA DA LOJA (24/nov/2026, dono): as duas lojas Shopee têm margem fixa (ia_loja_preco: Ottz 30%, Bumi 40%)
+      // e ela vale SEMPRE no envio — margem e preços planejados no rascunho não entram mais (ficam guardados).
+      void memoria;
+      const margemRasc: number | null = null;
+      const planejados: Record<string, number> = {};
       // PREÇO PADRÃO (13/out, pedido do dono): o da margem padrão da Shopee (30%), SKU a SKU; sem custo, o do Tiny
       const calc = await Promise.all(skus.map((s) => supabaseExternal.rpc("ia_calcular_preco", { p_sku: s, p_canal: "shopee", p_empresa: empresa, p_margem: margemRasc })));
       const pelaMargem = new Map(skus.map((s, i) => [s, Number(planejados[s]) > 0 ? Number(planejados[s]) : Number((calc[i].data as { preco_sugerido?: number } | null)?.preco_sugerido) || 0]));

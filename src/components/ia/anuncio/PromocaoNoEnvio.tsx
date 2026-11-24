@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { formatBRL } from "@/lib/format";
 import { chamarPromocoes, traduzirErroShopee } from "@/components/promocoes/comum";
-import { chamarVariacoesShopee } from "@/lib/iaAnuncio";
+import { chamarVariacoesShopee, lerRegrasLoja, regraDe } from "@/lib/iaAnuncio";
 import { EV_PRONTO, EV_VAI_CRIAR, type AnuncioPronto, type VaiCriar } from "@/lib/iaEnvioEventos";
 
 // ============================================================================
@@ -36,8 +36,9 @@ export const EnvioAlvoContext = createContext<EnvioAlvo>({ modo: "criar", itemId
 
 const LOJA: Record<string, number> = { ottz: 522186766, svl: 759046323 };
 const NOME_LOJA: Record<string, string> = { ottz: "Ottz", svl: "Bumi" };
-export const FAIXAS_PROMO = [0.1, 0.15, 0.1725, 0.2];
-const FAIXA_PADRAO = 0.1725;
+// 24/nov/2026 (dono): Ottz promove a 17,5% e Bumi a 15% (ia_loja_preco.margem_promo_pct) — 17,25% virou 17,5%
+export const FAIXAS_PROMO = [0.1, 0.15, 0.175, 0.2];
+const FAIXA_PADRAO = 0.175;
 // A Shopee recusa variações quando o preço promocional da mais cara fica muito acima do da mais barata
 // ("difference between the maximum price and the minimum price"). 22/out/2026: 2 un a R$ 58,85 × 10 un a
 // R$ 270,08 (4,6×) — só as de 4 un entraram, nas duas lojas. O limite exato não é publicado: avisa acima de 4×.
@@ -95,14 +96,16 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   const [ocupado, setOcupado] = useState(false);
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [ultimo, setUltimo] = useState<AnuncioPronto | null>(null);
-  // a última escolha (promoção e margem) volta ao abrir — só conveniência de quem usa esta tela
+  // REGRA DA LOJA (24/nov/2026, dono): "sempre promocionado" na promoção EM ANDAMENTO, com a margem
+  // promocional da loja (ia_loja_preco: Ottz 17,5%, Bumi 15%). A memória da última escolha saiu; o que
+  // a pessoa mudar nesta tela continua valendo até sair dela.
+  const faixaMexeu = useRef(false);
+  const regrasQ = useQuery({ queryKey: ["ia-anuncio", "regras-loja"], staleTime: 10 * 60_000, queryFn: lerRegrasLoja });
+  const regra = regraDe(regrasQ.data, "shopee", empresa);
   useEffect(() => {
-    try {
-      const g = JSON.parse(localStorage.getItem(guarda) ?? "null") as { id?: number; faixa?: number } | null;
-      if (g?.id) setDescontoId(Number(g.id));
-      if (g?.faixa && FAIXAS_PROMO.includes(g.faixa)) setFaixa(g.faixa);
-    } catch { /* sem armazenamento: segue sem lembrar */ }
-  }, [guarda]);
+    if (faixaMexeu.current || regra?.margem_promo_pct == null) return;
+    setFaixa(regra.margem_promo_pct);
+  }, [regra?.margem_promo_pct]);
   const lembrar = (id: number | null, f: number) => { try { localStorage.setItem(guarda, JSON.stringify({ id, faixa: f })); } catch { /* idem */ } };
 
   const descQ = useQuery({
@@ -120,6 +123,13 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
   });
   const descontos = descQ.data ?? [];
   const desconto = descontos.find((d) => d.discount_id === descontoId) ?? null;
+  // sempre a promoção em andamento (a lista já vem com as em andamento primeiro); no ATUALIZAR, se o anúncio
+  // já está numa promoção, o efeito de baixo troca para ela
+  useEffect(() => {
+    if (escolheu.current || descontoId != null) return;
+    const andamento = descontos.find((d) => d.status === "ongoing");
+    if (andamento) setDescontoId(andamento.discount_id);
+  }, [descQ.data]);
 
   // ATUALIZAR: as variações do anúncio e em que promoção ele já está, lidos AO VIVO na Shopee.
   // 10/nov/2026: lia as variações do espelho (shopee_anuncios_variacao), que só se atualiza de madrugada. O anúncio
@@ -402,7 +412,7 @@ export function PromocaoNoEnvio({ sku, nome, empresa, comVariacoes }: { sku: str
             <span className="text-muted-foreground mr-1">Margem de contribuição no preço promocional:</span>
             {FAIXAS_PROMO.map((f) => (
               <Button key={f} size="sm" variant={faixa === f ? "default" : "outline"} className="h-7 px-2.5 text-xs"
-                onClick={() => { setFaixa(f); setMao({}); setResultado(null); lembrar(descontoId, f); }}>{rotulo(f)}</Button>
+                onClick={() => { faixaMexeu.current = true; setFaixa(f); setMao({}); setResultado(null); lembrar(descontoId, f); }}>{rotulo(f)}</Button>
             ))}
           </div>
           <div className="space-y-1">
