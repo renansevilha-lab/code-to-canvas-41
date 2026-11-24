@@ -82,3 +82,26 @@ group by 1, 2, 3, 4;
 
 revoke all on public.view_vendas_tiny_mensal from anon;
 grant select on public.view_vendas_tiny_mensal to authenticated;
+
+-- ============================================================================
+-- 23–24/nov/2026 — histórico mais antigo (pedido do dono, opção A)
+-- ----------------------------------------------------------------------------
+-- 1. O Tiny voltou a devolver datas que em 29/out recusava ("fora do período permitido pelo plano").
+--    tiny-vendas-historico v2: início POR CONTA — SVL 2022-06-01 (1º pedido 26/06/2022; 0 de 2019 a 2021),
+--    Ottz 2025-01-01 (0 em 2024 e antes: a conta não existe neste Tiny). As marcas fora_do_plano foram
+--    apagadas (delete from tiny_vendas_dia_estado where fora_do_plano) e os crons 170/171 leram tudo.
+-- 2. Antes de 2025 a Ottz vem direto da SHOPEE (loja 522186766): edge fn shopee-vendas-historico →
+--    shopee_vendas_dia (shop_id, dia, status, pedidos, valor = total_amount, valor_itens = produtos) e
+--    shopee_vendas_dia_estado. Conferido em 12–31/01/2025 contra o Tiny: pedidos e cancelados idênticos
+--    todo dia; valor_itens 0,1–1,5% acima do Tiny; total_amount (com frete) 7–15% acima → a view usa valor_itens.
+--    A loja SVL/Bumi não entra: já está no Tiny da SVL (25/11/2024: 99 na Shopee = 99 no Tiny).
+--    Carga única: cron `shopee-vendas-historico` ('2-28/2,32-58/2 * * * *') chama shopee_vendas_hist_tick(),
+--    que se desagenda quando 2020-01-01..2025-01-31 estiver lido (jan/2025 fica só para conferência).
+-- 3. view_vendas_tiny_mensal = Tiny (duas contas) + Shopee Ottz com dia < 2025-01-01 (canal
+--    'Shopee (Ottz Pet) · direto da Shopee'). view_vendas_hist_estado = andamento das duas leituras.
+-- 4. Mercado Livre: a API só devolve os últimos 12 meses (/orders/search e /archived = 0 antes disso).
+--    Antes de 2025 a Ottz fica SEM Mercado Livre no histórico.
+-- Migrações: shopee_vendas_historico, shopee_vendas_historico_valor_itens, shopee_vendas_historico_view_valor_itens.
+-- Rollback: select cron.unschedule('shopee-vendas-historico'); drop function shopee_vendas_hist_tick();
+--   drop view view_vendas_hist_estado; recriar view_vendas_tiny_mensal como acima (sem o union);
+--   drop table shopee_vendas_dia, shopee_vendas_dia_estado.

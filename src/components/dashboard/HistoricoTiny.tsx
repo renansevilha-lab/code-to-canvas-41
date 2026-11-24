@@ -7,16 +7,19 @@ import { L, int, pct } from "./formato";
 // ============================================================================
 // Dashboard › "Histórico de faturamento (Tiny)" (29/out/2026, pedido do dono).
 // Só os TOTAIS por mês, lidos da listagem do Tiny pela edge fn tiny-vendas-historico
-// (tabela tiny_vendas_dia → view_vendas_tiny_mensal). Começa em JUL/2025 (dono, 29/out:
-// antes disso o relatório fiscal da ACZ não representa a conta Ottz — o Tiny tem os pedidos,
-// mas as notas saíam por outro caminho) e vai até ontem, para comparar mês e ano.
+// (tabela tiny_vendas_dia → view_vendas_tiny_mensal). Desde 23/nov/2026 (dono: "puxar dados mais
+// antigos", opção A) mostra TUDO o que o Tiny tem: a conta SVL desde jun/2022 e a conta Ottz desde
+// jan/2025 (antes disso ela não existe neste Tiny). Os meses da Ottz antes de jul/2025 levam um aviso:
+// são PEDIDOS — nessa época as notas da ACZ saíam por outro caminho, então não batem com o fiscal.
+// Antes de 2025 a Ottz entra pela SHOPEE (edge fn shopee-vendas-historico → shopee_vendas_dia, valor dos
+// produtos do pedido, que é o que casa com o Tiny): só a Shopee — o Mercado Livre só devolve 12 meses.
 // NÃO é a mesma conta do "Desempenho do período": aqui é o valor do pedido no Tiny
 // (com frete, sem taxas nem custo); lá é o integrado dos marketplaces. Cancelados à parte.
 // Bloco recolhível; aberto/fechado fica no navegador.
 // ============================================================================
 
 interface Linha { mes: string; empresa: string; marketplace: string; canal: string; pedidos: number; valor: number; pedidos_cancelados: number; valor_cancelado: number }
-interface Estado { conta: string; concluido_em: string | null; fora_do_plano: boolean; dia: string }
+interface Estado { fonte: string; lido: boolean; fora_do_plano: boolean; dia: string }
 
 const MKTS: Array<{ id: string; nome: string }> = [
   { id: "shopee", nome: "Shopee" }, { id: "mercadolivre", nome: "Mercado Livre" }, { id: "amazon", nome: "Amazon" },
@@ -28,7 +31,13 @@ const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out
 const rotulo = (m: string) => `${MES[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
 const menos1Ano = (m: string) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`;
 const CHAVE = "dashboard.historicoTiny.aberto";
-const INICIO = "2025-07-01";
+/** de quando a quando cada fonte é lida (os mesmos limites das edge fns tiny-vendas-historico e shopee-vendas-historico) */
+const FONTES: Record<string, { de: string; ate?: string }> = { svl: { de: "2022-06-01" }, ottz: { de: "2025-01-01" }, "shopee-ottz": { de: "2020-01-01", ate: "2024-12-31" } };
+const INICIO = "2020-01-01";
+/** antes deste mês a Ottz não está no Tiny: os pedidos vêm direto da Shopee */
+const OTTZ_NO_TINY = "2025-01-01";
+/** antes deste mês os pedidos da conta Ottz não viravam nota da ACZ por este Tiny */
+const OTTZ_COM_NOTA = "2025-07-01";
 
 const th: CSSProperties = { textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--pm-t3)", padding: "6px 8px", whiteSpace: "nowrap", borderBottom: "1px solid var(--pm-b)" };
 const td: CSSProperties = { textAlign: "right", padding: "6px 8px", whiteSpace: "nowrap", borderBottom: "1px solid var(--pm-b)" };
@@ -41,10 +50,17 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
   const dadosQ = useQuery({
     queryKey: ["dashboard", "historico-tiny", tick], enabled: aberto, staleTime: 30 * 60_000,
     queryFn: async () => {
-      const { data, error } = await supabaseExternal.from("view_vendas_tiny_mensal" as never)
-        .select("mes, empresa, marketplace, canal, pedidos, valor, pedidos_cancelados, valor_cancelado").gte("mes", INICIO).order("mes").limit(5000);
-      if (error) throw error;
-      return (data ?? []) as unknown as Linha[];
+      // paginado: mês × empresa × canal passa de 1.000 linhas com o histórico inteiro
+      const todas: Linha[] = [];
+      for (let off = 0; off < 10000; off += 1000) {
+        const { data, error } = await supabaseExternal.from("view_vendas_tiny_mensal" as never)
+          .select("mes, empresa, marketplace, canal, pedidos, valor, pedidos_cancelados, valor_cancelado").gte("mes", INICIO)
+          .order("mes").order("empresa").order("canal").range(off, off + 999);
+        if (error) throw error;
+        todas.push(...((data ?? []) as unknown as Linha[]));
+        if (!data || data.length < 1000) break;
+      }
+      return todas;
     },
   });
   // andamento da busca: quantos dias já foram lidos e quantos ficaram fora do plano
@@ -52,8 +68,8 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
     queryKey: ["dashboard", "historico-tiny-estado", tick], enabled: aberto, staleTime: 10 * 60_000,
     queryFn: async () => {
       const todos: Estado[] = [];
-      for (let off = 0; off < 5000; off += 1000) {
-        const { data, error } = await supabaseExternal.from("tiny_vendas_dia_estado" as never).select("conta, dia, concluido_em, fora_do_plano").gte("dia", INICIO).range(off, off + 999);
+      for (let off = 0; off < 10000; off += 1000) {
+        const { data, error } = await supabaseExternal.from("view_vendas_hist_estado" as never).select("fonte, dia, lido, fora_do_plano").gte("dia", INICIO).order("fonte").order("dia").range(off, off + 999);
         if (error) throw error;
         todos.push(...((data ?? []) as unknown as Estado[]));
         if (!data || data.length < 1000) break;
@@ -63,11 +79,12 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
   });
 
   const meses = useMemo(() => {
-    const m = new Map<string, { mes: string; pedidos: number; valor: number; canc: number; valorCanc: number; mkt: Record<string, number> }>();
+    const m = new Map<string, { mes: string; pedidos: number; valor: number; canc: number; valorCanc: number; acz: number; mkt: Record<string, number> }>();
     for (const l of dadosQ.data ?? []) {
       if (empresa !== "todas" && l.empresa !== empresa) continue;
-      const x = m.get(l.mes) ?? { mes: l.mes, pedidos: 0, valor: 0, canc: 0, valorCanc: 0, mkt: {} };
+      const x = m.get(l.mes) ?? { mes: l.mes, pedidos: 0, valor: 0, canc: 0, valorCanc: 0, acz: 0, mkt: {} };
       x.pedidos += Number(l.pedidos); x.valor += Number(l.valor);
+      if (l.empresa === "ACZ Pet") x.acz += Number(l.valor);
       x.canc += Number(l.pedidos_cancelados); x.valorCanc += Number(l.valor_cancelado);
       const g = grupoMkt(l.marketplace);
       x.mkt[g] = (x.mkt[g] ?? 0) + Number(l.valor);
@@ -79,14 +96,14 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
   const maxValor = Math.max(1, ...meses.map((x) => x.valor));
 
   const est = estadoQ.data ?? [];
-  const lidos = est.filter((e) => e.concluido_em).length;
+  const lidos = est.filter((e) => e.lido).length;
   const fora = est.filter((e) => e.fora_do_plano).length;
-  const ultimoLido = est.filter((e) => e.concluido_em).map((e) => e.dia).sort().at(-1) ?? null;
+  const ultimoLido = est.filter((e) => e.lido).map((e) => e.dia).sort().at(-1) ?? null;
   // mês incompleto = algum dia dele ainda não foi lido em alguma conta (enquanto a busca anda)
   const incompletos = useMemo(() => {
     const lidosPorMes = new Map<string, Set<string>>();
-    for (const e of est) if (e.concluido_em || e.fora_do_plano) {
-      const k = `${e.conta}|${e.dia.slice(0, 7)}`; const s = lidosPorMes.get(k) ?? new Set<string>(); s.add(e.dia); lidosPorMes.set(k, s);
+    for (const e of est) if (e.lido || e.fora_do_plano) {
+      const k = `${e.fonte}|${e.dia.slice(0, 7)}`; const s = lidosPorMes.get(k) ?? new Set<string>(); s.add(e.dia); lidosPorMes.set(k, s);
     }
     const out = new Set<string>();
     const ontem = new Date(Date.now() - 27 * 3600_000).toISOString().slice(0, 10);
@@ -94,7 +111,12 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
       const ano = Number(x.mes.slice(0, 4)), mm = Number(x.mes.slice(5, 7));
       const diasNoMes = new Date(Date.UTC(ano, mm, 0)).getUTCDate();
       const ate = x.mes.slice(0, 7) === ontem.slice(0, 7) ? Number(ontem.slice(8, 10)) : diasNoMes;
-      for (const c of ["ottz", "svl"]) if ((lidosPorMes.get(`${c}|${x.mes.slice(0, 7)}`)?.size ?? 0) < ate) out.add(x.mes);
+      for (const [c, lim] of Object.entries(FONTES)) {
+        const ym = x.mes.slice(0, 7);
+        if (ym < lim.de.slice(0, 7) || (lim.ate && ym > lim.ate.slice(0, 7))) continue;   // a fonte não cobre este mês
+        const desde = ym === lim.de.slice(0, 7) ? Number(lim.de.slice(8, 10)) : 1;
+        if ((lidosPorMes.get(`${c}|${ym}`)?.size ?? 0) < ate - desde + 1) out.add(x.mes);
+      }
     }
     return out;
   }, [est, meses]);
@@ -107,8 +129,8 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
   return (
     <section className="pm-ui" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, borderRadius: 18, background: "var(--pm-s2)", border: "1px solid var(--pm-b)", color: "var(--pm-t)", fontSize: 13 }}>
       <button type="button" onClick={alternar} style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px 12px" }}>
-        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{aberto ? "▾" : "▸"} Histórico de faturamento (Tiny)</h2>
-        <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>mês a mês desde out/2024 · valor do pedido no Tiny, sem taxas nem custo · cancelados à parte</span>
+        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{aberto ? "▾" : "▸"} Histórico de faturamento (Tiny e Shopee)</h2>
+        <span style={{ fontSize: 12, color: "var(--pm-t3)" }}>mês a mês desde {meses.length ? rotulo(meses[0].mes) : "o primeiro pedido no Tiny"} · valor do pedido, sem taxas nem custo · cancelados à parte</span>
       </button>
 
       {aberto && (
@@ -162,9 +184,11 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
                         return <span style={{ color: d >= 0 ? "var(--pm-g)" : "var(--pm-r)" }}>{d >= 0 ? "+" : ""}{pct(d)}</span>;
                       };
                       const inc = incompletos.has(x.mes);
+                      const soShopee = x.mes < OTTZ_NO_TINY && x.acz > 0;
+                      const soPedido = !soShopee && x.mes < OTTZ_COM_NOTA && x.acz > 0;
                       return (
                         <tr key={x.mes} className="pm-linha-hv">
-                          <td style={{ ...td, textAlign: "left", fontWeight: 500 }}>{rotulo(x.mes)}{inc && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--pm-t3)" }}>incompleto</span>}</td>
+                          <td style={{ ...td, textAlign: "left", fontWeight: 500 }}>{rotulo(x.mes)}{inc && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--pm-t3)" }}>incompleto</span>}{soPedido && <span title="Pedidos da conta Ottz no Tiny. Nessa época as notas da ACZ saíam por outro caminho: o valor não bate com o fiscal." style={{ marginLeft: 6, fontSize: 10, color: "var(--pm-am)" }}>pedidos, sem nota ¹</span>}{soShopee && <span title="A Ottz só está no Tiny desde jan/2025. Antes disso o valor vem direto da Shopee (loja Ottz) e não inclui o Mercado Livre." style={{ marginLeft: 6, fontSize: 10, color: "var(--pm-am)" }}>Ottz só Shopee ²</span>}</td>
                           <td style={td}>{int(x.pedidos)}</td>
                           <td style={{ ...td, fontWeight: 600 }}>{L(x.valor)}</td>
                           <td style={td}>{inc ? "—" : delta(ant)}</td>
@@ -178,8 +202,10 @@ export function HistoricoTiny({ tick = 0 }: { tick?: number }) {
                 </table>
               </div>
               <div style={{ fontSize: 11, color: "var(--pm-t3)" }}>
-                Fonte: listagem de pedidos do Tiny (contas Ottz e SVL). Na conta SVL fica de fora o pedido sem canal, que desde jun/2026 é a cópia fiscal dos pedidos da Bumi que já estão na conta Ottz.
+                Fonte: listagem de pedidos do Tiny (conta SVL desde jun/2022, conta Ottz desde jan/2025). Na conta SVL fica de fora o pedido sem canal, que desde jun/2026 é a cópia fiscal dos pedidos da Bumi que já estão na conta Ottz.
                 "Outros" = Temu/Olist, Shein, venda direta e pedidos sem canal.
+                {meses.some((x) => x.mes < OTTZ_COM_NOTA && x.mes >= OTTZ_NO_TINY && x.acz > 0) && " ¹ De jan a jun/2025 os pedidos da conta Ottz não viravam nota da ACZ por este Tiny: são pedidos, não faturamento fiscal."}
+                {meses.some((x) => x.mes < OTTZ_NO_TINY && x.acz > 0) && " ² Antes de 2025 a Ottz não está no Tiny: o valor é o dos produtos dos pedidos lidos direto da Shopee (loja Ottz). Não inclui o Mercado Livre, que só devolve os últimos 12 meses."}
               </div>
             </>
           )}

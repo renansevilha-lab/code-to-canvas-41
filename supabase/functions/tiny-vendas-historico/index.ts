@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: tiny-vendas-historico v1 (29/out/2026)
+// Edge Function: tiny-vendas-historico v2 (23/nov/2026; v1 de 29/out/2026)
 // ----------------------------------------------------------------------------
 // Pedido do dono: povoar os meses antigos com as vendas do Tiny, só os TOTAIS.
 // Lê a LISTAGEM do Tiny (GET /pedidos?dataInicial=D&dataFinal=D, 100 por página —
@@ -16,6 +16,11 @@
 // Um dia só é gravado quando TODAS as páginas vieram (senão fica para a próxima).
 // "fora do período permitido pelo plano" → o dia é marcado e não volta.
 // Só LÊ no Tiny. Token SEMPRE pela conta (nunca "o mais recente").
+//
+// v2 (23/nov/2026, pedido do dono: "puxar dados mais antigos"): o Tiny voltou a devolver datas que em
+// 29/out recusava ("fora do período permitido pelo plano"). Início POR CONTA, medido ao vivo: a SVL tem
+// pedidos desde 26/06/2022 (0 de 2019 a 2021) e a Ottz desde 01/2025 (0 em 2024 e antes). Estado lido
+// paginado (a SVL passa de 1.000 dias).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -30,7 +35,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ORCAMENTO_MS = 22_000;
 const PAUSA_MS = 700;                     // ~1,4 chamada/s, para não disputar com a separação
-const INICIO = "2024-10-01";              // antes disso nenhuma das contas tem pedido
+const INICIO: Record<string, string> = { svl: "2022-06-01", ottz: "2025-01-01" };   // antes disso a conta não tem pedido no Tiny
 const RELER_DIAS = 15;
 const RELER_APOS_H = 20;
 const CONTAS = ["svl", "ottz"] as const;
@@ -111,7 +116,7 @@ async function pendentes(conta: Conta, de?: string, ate?: string): Promise<strin
   }
   const nunca: string[] = [], reler: string[] = [];
   const limiteReler = somaDias(ontem, -RELER_DIAS);
-  for (let d = INICIO; d <= ontem; d = somaDias(d, 1)) {
+  for (let d = INICIO[conta]; d <= ontem; d = somaDias(d, 1)) {
     const e = est.get(d);
     if (e?.fora_do_plano) continue;
     if (!e?.concluido_em) { if ((e?.tentativas ?? 0) < 6) nunca.push(d); continue; }
@@ -128,12 +133,18 @@ Deno.serve(async (req) => {
     if (modulo === "status") {
       const out: Record<string, unknown> = {};
       for (const c of CONTAS) {
-        const { data } = await db.from("tiny_vendas_dia_estado").select("dia, concluido_em, fora_do_plano, erro").eq("conta", c).order("dia").limit(1000);
-        const lidos = (data ?? []).filter((r) => r.concluido_em);
+        const data: any[] = [];
+        for (let off = 0; ; off += 1000) {
+          const r = await db.from("tiny_vendas_dia_estado").select("dia, concluido_em, fora_do_plano, erro").eq("conta", c).order("dia").range(off, off + 999);
+          data.push(...(r.data ?? []));
+          if (!r.data || r.data.length < 1000) break;
+        }
+        const lidos = data.filter((r) => r.concluido_em);
         out[c] = {
           dias_lidos: lidos.length,
-          fora_do_plano: (data ?? []).filter((r) => r.fora_do_plano).length,
-          com_erro: (data ?? []).filter((r) => !r.concluido_em && r.erro && !r.fora_do_plano).map((r) => ({ dia: r.dia, erro: r.erro })).slice(0, 10),
+          inicio: INICIO[c],
+          fora_do_plano: data.filter((r) => r.fora_do_plano).length,
+          com_erro: data.filter((r) => !r.concluido_em && r.erro && !r.fora_do_plano).map((r) => ({ dia: r.dia, erro: r.erro })).slice(0, 10),
           primeiro_lido: lidos[0]?.dia ?? null, ultimo_lido: lidos.at(-1)?.dia ?? null,
           faltam: (await pendentes(c)).length,
         };
