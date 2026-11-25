@@ -1525,6 +1525,26 @@ sem NF = pedido (`ancora_tipo` diz qual). Só a base — tela e ciclo de caixa d
   (:37) · 118 `financas` 10h47/22h47 UTC · 119 `extratos&etapa=lista` 10h53 ·
   120 `extratos&etapa=transacoes` 10h59 · 121 `devolucoes` 11h13.
 
+## 5.8.1 Nuvemshop (loja Bumi Pet Care) — conexão pela API, fase 1 (23/nov/2026)
+
+- Loja **8014425** (www.bumipet.com.br, plano Essencial, CNPJ ACZ). O app **Olist** (Tiny) está instalado
+  nela e os SKUs batem com o Tiny; pedidos da loja vão chegar também por `pedidos_tiny` (nenhuma venda até 23/nov).
+- **App de parceiro "Gestão Ottz Pet (privado)", app_id 53962**, distribuição **privada** ("Para os seus
+  clientes" — instala em loja real sem Loja de Aplicativos). Escopos: `read_orders` + `write_products`.
+  Os "Aplicativos sob medida" da Nuvemshop exigem plano Escala/Next — por isso o app de parceiro.
+- **`nuvemshop-oauth`** v1 (verify_jwt off): callback; troca o `code` (vale 5 min) por token que **não expira**,
+  grava em **`oauth_tokens_nuvemshop`** (service_role only) e cadastra webhooks `order/created`,
+  `order/updated`, `product/updated`, `app/uninstalled`. Sem `?code` mostra o link de instalação
+  (`<admin da loja>/apps/53962/authorize`).
+- **`nuvemshop-webhook`** v1 (verify_jwt off): confere `x-linkedstore-hmac-sha256` (HMAC do corpo cru com o
+  client_secret; sem HMAC válido = 401) e grava em **`nuvemshop_webhook_eventos`** (`processado_em` nulo =
+  pendente). Também recebe os 3 webhooks de LGPD. Responde em <3 s; payload só tem ids, pode vir duplicado e
+  fora de ordem — quem consumir a fila busca o recurso na API e trata idempotência.
+- Secret **`NUVEMSHOP_CLIENT_SECRET`** (nunca no banco). API: `https://api.nuvemshop.com.br/2025-03/{store_id}`,
+  `Authorization: Bearer`, `User-Agent` obrigatório, 2 req/s (balde 40).
+- **Falta:** consumir a fila (pedidos → loja nova em `lojas`, margem com taxas do Nuvem Pago); não duplicar com o
+  pedido que vem pelo Tiny/Olist (casar por `numero_ecommerce`).
+
 ## 5.9 Impressão própria (substituto do PrintNode) — fase 1, 24/set/2026
 
 **Por quê:** o PrintNode só entrega o arquivo na impressora; toda a regra
@@ -1950,6 +1970,17 @@ Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?a
   FORNECEDOR (parcela i/N)"); antes, procura em `contas_pagar` (descrição `NF nº N` + CNPJ) e
   bloqueia parcela já lançada (pelo Tiny ou pelo app). Limite: o espelho `contas_pagar` atualiza
   a cada 15 min — conta lançada no Tiny nesse intervalo ainda não aparece.
+  **Boleto no POST /contas-pagar (25/nov/2026, conciliação da NF 8492 da Vidotto):** o Tiny v3 **não
+  tem campo de código de barras** na conta a pagar — mandar `codigoBarras`/`linhaDigitavel` não dá
+  erro (ele ignora campo desconhecido, por isso teste de schema com campo extra não prova nada) e o
+  GET volta sem eles. A linha digitável vai no **`historico`** (500 caracteres, é o que a equipe lê
+  na tela) e o número da parcela em `numeroDocumento` ("8492-2"); manter o "NF nº N" no histórico
+  porque é por ele que o app detecta duplicata. **`formaPagamento` é INT** (`5` = Boleto): mandar
+  objeto `{id:5}` dá 400 "O tipo de dado 'stdClass' não é válido… do tipo 'int'" (nada é criado).
+  **Não há PUT pelo banco:** o `pg_net` só faz GET/POST, então conta já lançada (ainda mais se
+  estiver PAGA — o PUT pode mexer na baixa) se corrige na tela do Tiny. Anexar o PDF do boleto pelo
+  Claude também não dá: o bucket `contas-pagar-docs` exige `authenticated` e não há service key à
+  mão — o anexo é pela tela `/contas-pagar`.
 
 ## 5.9.2.1 Compras e Recebimento no visual novo (16/nov/2026, proposta aprovada pelo dono)
 
@@ -4471,6 +4502,22 @@ corpo = filtros repassados), `criador&id=` (GET `…/marketplace_creators/{id}`)
   mostra para o mesmo criador (medido 5,50 e 5,52); período não informado. `post_rate` do detalhe = `fulfillment_percentage` da amostra (% das amostras que
   viraram conteúdo; 9345 = 93,45%); `avg_commission_rate` 800 = 8%. O id do criador no pedido de amostra serve no detalhe; o pedido de afiliado só traz o
   `creator_username`. Nada disso é gravado no banco nem tem tela no app; convite/mensagem pela API não foram testados.
+- **Tela `/afiliados-tiktok` — mensagem e convite pelo app (25/nov/2026, pedido do dono).** Menu Mídia & Canais › "Afiliados TikTok" (módulo ads).
+  Abas **Criadores** (lê `tiktok_afiliados_criadores`: os 303 do ranking, filtros contatos novos / amostra sem resposta / já trabalham conosco, busca,
+  marcar vários → "Convidar com comissão", botão "Mensagem") e **Conversas** (ao vivo, 20 por página, "só as que esperam resposta da loja"). Edge fn
+  **`tiktok-afiliados` v5** (deploy 8, fonte no repositório): `conversas`, `mensagem`, `convite` — sem `confirmar` = prévia; com `confirmar: true`
+  exige sessão de usuário com o módulo ads (sem login = 401, conferido), manda UMA vez e grava em `debug_fulfillment` (`modulo tiktok-afiliados-envio`).
+  **Caminhos e campos (descobertos ao vivo com o módulo `validar`, que troca todo id por "0" — nada foi criado):** abrir conversa POST
+  `/affiliate_seller/202508/conversations` {`creator_open_id`, `only_need_conversation_id`: true}; mensagem POST `/202412/conversations/{id}/messages`
+  {`msg_type`: "TEXT", `content`: "{\"content\":\"texto\"}"}; convite POST `/202508/target_collaborations` {`name`, `message`, `end_time` (s),
+  `products`[{`id`, `target_commission_rate` 1500 = 15%}], `creator_user_open_ids`[], `seller_contact_info`{`email`}, `free_sample_rule`{`has_free_sample`,
+  `is_sample_approval_exempt`}}; leitura GET `/202412/conversations` (só ids) e GET `/202412/conversation/{id}/messages` (**singular**). A API **não diz
+  quem é o criador da conversa**: a função deduz pelo cartão de amostra (`apply_id` → pedido de amostra) e por **`tiktok_afiliados_conversas`** (gravada
+  quando o app abre a conversa); na tela, a loja = o remetente que aparece em 3+ conversas (`8181265391310944583`). **O TikTok devolve o texto das
+  mensagens do criador, mas o da loja vem vazio.** Aviso `im_threshold_seller_five_before_respond` = a loja manda no máximo 5 mensagens antes de o
+  criador responder. Em 25/nov havia criadores sem resposta da loja desde maio (ex.: lordflokos, hey_ariel__ com 12 mensagens). Texto padrão da mensagem
+  apresenta a Ottz e a Bumi Pet Care e as comissões especiais de lançamento (editável). Carga do retrato: `?modulo=carregar-criadores&chave=` (vence
+  26/nov 03:00 UTC). **Nenhum envio real feito ainda** — o 1º uso do dono pela tela é o teste. Não conferida com login.
 
 ## 5.12 Histórico de faturamento pelo Tiny — só totais (29/out/2026)
 
@@ -4491,22 +4538,6 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 - **Banco:** `tiny_vendas_dia` (PK conta+dia+canal+situação: pedidos, valor, sem_valor) e `tiny_vendas_dia_estado`
   (conta+dia: total_api, lidos, concluido_em, fora_do_plano, erro, tentativas); só leitura para `authenticated`.
   `view_vendas_tiny_mensal` (security_invoker): mês × empresa × marketplace × canal, pedidos/valor sem cancelados +
-- **Tela `/afiliados-tiktok` — mensagem e convite pelo app (25/nov/2026, pedido do dono).** Menu Mídia & Canais › "Afiliados TikTok" (módulo ads).
-  Abas **Criadores** (lê `tiktok_afiliados_criadores`: os 303 do ranking, filtros contatos novos / amostra sem resposta / já trabalham conosco, busca,
-  marcar vários → "Convidar com comissão", botão "Mensagem") e **Conversas** (ao vivo, 20 por página, "só as que esperam resposta da loja"). Edge fn
-  **`tiktok-afiliados` v5** (deploy 8, fonte no repositório): `conversas`, `mensagem`, `convite` — sem `confirmar` = prévia; com `confirmar: true`
-  exige sessão de usuário com o módulo ads (sem login = 401, conferido), manda UMA vez e grava em `debug_fulfillment` (`modulo tiktok-afiliados-envio`).
-  **Caminhos e campos (descobertos ao vivo com o módulo `validar`, que troca todo id por "0" — nada foi criado):** abrir conversa POST
-  `/affiliate_seller/202508/conversations` {`creator_open_id`, `only_need_conversation_id`: true}; mensagem POST `/202412/conversations/{id}/messages`
-  {`msg_type`: "TEXT", `content`: "{\"content\":\"texto\"}"}; convite POST `/202508/target_collaborations` {`name`, `message`, `end_time` (s),
-  `products`[{`id`, `target_commission_rate` 1500 = 15%}], `creator_user_open_ids`[], `seller_contact_info`{`email`}, `free_sample_rule`{`has_free_sample`,
-  `is_sample_approval_exempt`}}; leitura GET `/202412/conversations` (só ids) e GET `/202412/conversation/{id}/messages` (**singular**). A API **não diz
-  quem é o criador da conversa**: a função deduz pelo cartão de amostra (`apply_id` → pedido de amostra) e por **`tiktok_afiliados_conversas`** (gravada
-  quando o app abre a conversa); na tela, a loja = o remetente que aparece em 3+ conversas (`8181265391310944583`). **O TikTok devolve o texto das
-  mensagens do criador, mas o da loja vem vazio.** Aviso `im_threshold_seller_five_before_respond` = a loja manda no máximo 5 mensagens antes de o
-  criador responder. Em 25/nov havia criadores sem resposta da loja desde maio (ex.: lordflokos, hey_ariel__ com 12 mensagens). Texto padrão da mensagem
-  apresenta a Ottz e a Bumi Pet Care e as comissões especiais de lançamento (editável). Carga do retrato: `?modulo=carregar-criadores&chave=` (vence
-  26/nov 03:00 UTC). **Nenhum envio real feito ainda** — o 1º uso do dono pela tela é o teste. Não conferida com login.
   `pedidos_cancelados`/`valor_cancelado`. Empresa = SVL se conta svl ou canal com bumi/sevilla/svl.
 - **Edge fn `tiny-vendas-historico` v1** (deploy 2): `status`, `rodar[&conta][&de&ate]`. Dias nunca lidos do mais antigo
   para o mais novo, depois relê os últimos 15 dias se a leitura tem > 20 h. Dia só grava com todas as páginas lidas
