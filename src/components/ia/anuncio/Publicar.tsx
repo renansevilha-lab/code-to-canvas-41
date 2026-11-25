@@ -93,7 +93,8 @@ interface TituloLoja {
 
 const txt = (v: number | null | undefined) => (v == null ? "" : String(v).replace(".", ","));
 // no Mercado Livre o título começa desmarcado: o ML recusa a troca em anúncio que já vendeu
-const opInicial = (canal: string): Op => ({ fora_do_ar: canal !== "shopee", c_titulo: canal !== "mercado_livre", c_descricao: true, c_fotos: true, c_preco: false });
+// Todo anúncio criado pelo app nasce NO AR (25/nov/2026, decisão do dono) — Shopee, Mercado Livre, TikTok e Amazon.
+const opInicial = (canal: string): Op => ({ fora_do_ar: false, c_titulo: canal !== "mercado_livre", c_descricao: true, c_fotos: true, c_preco: false });
 const situacao = (st?: string | null) => (!st || st === "NORMAL" || st === "active" ? "" : st === "UNLIST" ? "fora do ar" : st === "paused" ? "pausado" : st);
 
 /** Lojas de cada marketplace: o destino do envio é sempre canal + empresa. */
@@ -853,19 +854,11 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
             </div>
           )}
           {canal === "shopee" && <EnvioAlvoContext.Provider value={alvoPromo}>{noEnvio}</EnvioAlvoContext.Provider>}
-          {/* Shopee: sempre NO AR (13/out, decisão do dono) — a opção de criar sem listar saiu */}
-          {canal === "shopee" ? (
-            <p className="text-xs text-muted-foreground">O anúncio nasce <b>no ar</b> na Shopee{p.fora_do_ar ? "" : ", visível para os compradores"}.</p>
-          ) : amz ? (
+          {/* Todo anúncio nasce NO AR (Shopee desde 13/out; Mercado Livre e TikTok desde 25/nov, decisão do dono) */}
+          {amz ? (
             <p className="text-xs text-muted-foreground">Vendas pelo <b>FBA</b>: o anúncio fica ativo, mas só vende depois que o estoque chegar ao CD da Amazon.</p>
           ) : (
-            <label className="flex items-start gap-2 text-sm cursor-pointer">
-              <Checkbox className="mt-0.5" checked={op.fora_do_ar !== false} onCheckedChange={(v) => setOp({ ...op, fora_do_ar: v === true })} />
-              <span>
-                {ml ? <>Criar e <b>pausar</b> em seguida</> : tk ? <>Criar como <b>rascunho</b> no TikTok (não vai para análise nem aparece aos compradores)</> : <>Criar <b>fora do ar</b> (não listado)</>}
-                <span className="block text-[11px] text-muted-foreground">Recomendado: confira no Tiny se o anúncio foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem) e {ml ? "reative depois no Mercado Livre" : "ative depois"}.</span>
-              </span>
-            </label>
+            <p className="text-xs text-muted-foreground">O anúncio nasce <b>no ar</b>{ml ? " no Mercado Livre" : tk ? " no TikTok (o TikTok ainda analisa antes de mostrar aos compradores)" : " na Shopee"}, visível para os compradores. Confira no Tiny se ele foi ligado ao produto pelo SKU (é o que faz estoque e pedido funcionarem).</p>
           )}
           {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Conferir agora</Button>}
         </div>

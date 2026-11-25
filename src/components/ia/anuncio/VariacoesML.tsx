@@ -33,7 +33,7 @@ const numero = (s: string) => { const n = Number(String(s).replace(/\./g, "").re
 
 export function VariacoesML({ sku, empresa, rascunho }: { sku: string; empresa: string; rascunho: IaRascunho | null }) {
   const [linhas, setLinhas] = useState<Linha[] | null>(null);
-  const [pausado, setPausado] = useState(true);
+  const [pausado, setPausado] = useState(false); // nascem no ar (25/nov/2026, decisão do dono)
   const [conf, setConf] = useState<Record<string, Conferido | { erro: string }>>({});
   const [confDe, setConfDe] = useState<string | null>(null); // o pedido que foi conferido (muda = conferir de novo)
   const [ocupado, setOcupado] = useState<"" | "conferindo" | "enviando">("");
@@ -210,9 +210,6 @@ export function VariacoesML({ sku, empresa, rascunho }: { sku: string; empresa: 
             <p className="text-xs text-destructive flex items-start gap-1"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               {repetidas.map((l) => l.sku).join(", ")}: mesma quantidade e mesma grade de outra variação — o Mercado Livre não teria como diferenciar.</p>
           )}
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-            <Checkbox checked={pausado} disabled={!!ocupado} onCheckedChange={(v) => setPausado(v === true)} />criar pausados (ative no Mercado Livre depois de conferir)
-          </label>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" disabled={!rascunho || !!ocupado || escolhidas.length === 0} onClick={() => void conferir()}>
               {ocupado === "conferindo" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}Conferir no Mercado Livre

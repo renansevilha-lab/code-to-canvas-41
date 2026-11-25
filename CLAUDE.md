@@ -4112,6 +4112,10 @@ Pedido do dono: pesquisar um produto (ex. 16746) e ver tudo que o leva como kit 
 
 **Produção (17/nov):** 16799 "Areia Ottz Pet Fina 4kg" entrou em `producao_parametros` copiando a ficha do 16054 com a farinha **BRANCA (JAJU) — fina** (insumo 17), saco transparente 4 kg + etiqueta, prefixo `OTTZF4`.
 
+## 5.11.11.18 Todo anúncio criado pelo app nasce NO AR (25/nov/2026, decisão do dono)
+
+Shopee já nascia no ar (13/out); agora Mercado Livre e TikTok também. Só tela: `opInicial` em `Publicar.tsx` manda `fora_do_ar: false` para todo canal e a caixa "Criar e pausar" / "rascunho no TikTok" saiu (fica um aviso para conferir no Tiny o vínculo pelo SKU); nas variações do ML (`VariacoesML.tsx`) a caixa "criar pausados" saiu e o padrão é no ar. O envio em lote já mandava no ar. As funções seguem tratando `fora_do_ar` ausente como fora do ar (`!== false`), então o app sempre manda o valor. No TikTok `LISTING` = o TikTok ainda analisa antes de mostrar. Shopee com variações continua nascendo fora do ar por segundos e indo ao ar depois das variações.
+
 ## 5.11.12 Amazon — como seria CRIAR anúncio (ensaios de 13/out/2026, nada criado)
 
 Pergunta do dono: como faríamos o envio de produtos para a Amazon. Hoje a `anuncio-publicar` só
