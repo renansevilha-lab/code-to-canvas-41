@@ -4491,6 +4491,22 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 - **Banco:** `tiny_vendas_dia` (PK conta+dia+canal+situação: pedidos, valor, sem_valor) e `tiny_vendas_dia_estado`
   (conta+dia: total_api, lidos, concluido_em, fora_do_plano, erro, tentativas); só leitura para `authenticated`.
   `view_vendas_tiny_mensal` (security_invoker): mês × empresa × marketplace × canal, pedidos/valor sem cancelados +
+- **Tela `/afiliados-tiktok` — mensagem e convite pelo app (25/nov/2026, pedido do dono).** Menu Mídia & Canais › "Afiliados TikTok" (módulo ads).
+  Abas **Criadores** (lê `tiktok_afiliados_criadores`: os 303 do ranking, filtros contatos novos / amostra sem resposta / já trabalham conosco, busca,
+  marcar vários → "Convidar com comissão", botão "Mensagem") e **Conversas** (ao vivo, 20 por página, "só as que esperam resposta da loja"). Edge fn
+  **`tiktok-afiliados` v5** (deploy 8, fonte no repositório): `conversas`, `mensagem`, `convite` — sem `confirmar` = prévia; com `confirmar: true`
+  exige sessão de usuário com o módulo ads (sem login = 401, conferido), manda UMA vez e grava em `debug_fulfillment` (`modulo tiktok-afiliados-envio`).
+  **Caminhos e campos (descobertos ao vivo com o módulo `validar`, que troca todo id por "0" — nada foi criado):** abrir conversa POST
+  `/affiliate_seller/202508/conversations` {`creator_open_id`, `only_need_conversation_id`: true}; mensagem POST `/202412/conversations/{id}/messages`
+  {`msg_type`: "TEXT", `content`: "{\"content\":\"texto\"}"}; convite POST `/202508/target_collaborations` {`name`, `message`, `end_time` (s),
+  `products`[{`id`, `target_commission_rate` 1500 = 15%}], `creator_user_open_ids`[], `seller_contact_info`{`email`}, `free_sample_rule`{`has_free_sample`,
+  `is_sample_approval_exempt`}}; leitura GET `/202412/conversations` (só ids) e GET `/202412/conversation/{id}/messages` (**singular**). A API **não diz
+  quem é o criador da conversa**: a função deduz pelo cartão de amostra (`apply_id` → pedido de amostra) e por **`tiktok_afiliados_conversas`** (gravada
+  quando o app abre a conversa); na tela, a loja = o remetente que aparece em 3+ conversas (`8181265391310944583`). **O TikTok devolve o texto das
+  mensagens do criador, mas o da loja vem vazio.** Aviso `im_threshold_seller_five_before_respond` = a loja manda no máximo 5 mensagens antes de o
+  criador responder. Em 25/nov havia criadores sem resposta da loja desde maio (ex.: lordflokos, hey_ariel__ com 12 mensagens). Texto padrão da mensagem
+  apresenta a Ottz e a Bumi Pet Care e as comissões especiais de lançamento (editável). Carga do retrato: `?modulo=carregar-criadores&chave=` (vence
+  26/nov 03:00 UTC). **Nenhum envio real feito ainda** — o 1º uso do dono pela tela é o teste. Não conferida com login.
   `pedidos_cancelados`/`valor_cancelado`. Empresa = SVL se conta svl ou canal com bumi/sevilla/svl.
 - **Edge fn `tiny-vendas-historico` v1** (deploy 2): `status`, `rodar[&conta][&de&ate]`. Dias nunca lidos do mais antigo
   para o mais novo, depois relê os últimos 15 dias se a leitura tem > 20 h. Dia só grava com todas as páginas lidas
