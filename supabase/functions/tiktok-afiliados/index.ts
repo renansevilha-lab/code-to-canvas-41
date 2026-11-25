@@ -1,13 +1,17 @@
 // ============================================================================
-// Edge Function: tiktok-afiliados v1 (18/nov/2026) — SONDA, SÓ LEITURA
+// Edge Function: tiktok-afiliados v3 (24/nov/2026; v1 de 18/nov) — SONDA, SÓ LEITURA
 // Pergunta do dono: "conseguimos acessar os Melhores Afiliados do TikTok da
 // parte de Pets?". Testa a API de afiliados do vendedor (Affiliate Seller) com
 // o token da loja Ottz/ACZ. Nenhuma escrita: só as chamadas da lista abaixo.
 //
-//   ?modulo=criadores[&ver=202406][&page_size=12][&page_token=]   body JSON = filtros (repassado como veio)
+//   ?modulo=criadores[&ver=202508][&page_size=12][&page_token=]   body JSON = filtros (repassado como veio)
 //        POST /affiliate_seller/{ver}/marketplace_creators/search
-//   ?modulo=criador&id=<creator_user_id>[&ver=202406]
+//   ?modulo=criador&id=<creator_user_id>[&ver=202508]
 //        GET  /affiliate_seller/{ver}/marketplace_creators/{id}
+//   ?modulo=ler&alvo=pedidos|abertas|direcionadas|amostras|produtos[&page_size=][&page_token=]   (v3, 24/nov)
+//        buscas SÓ DE LEITURA do resto da área de afiliados (body JSON = filtros):
+//        pedidos de afiliado, colaborações abertas e direcionadas, pedidos de amostra,
+//        produtos em colaboração aberta
 //   ?modulo=categorias[&q=pet]
 //        GET  /product/202309/categories  (ids e nomes; filtra pelo nome)
 //
@@ -64,13 +68,23 @@ async function tt(c: { token: string; cipher: string }, metodo: "GET" | "POST", 
   return { http: r.status, code, message, txt };
 }
 
+// v3: buscas de leitura da área de afiliados (todas POST …/search, não alteram nada).
+// Versões conferidas ao vivo em 24/nov/2026 (as outras devolvem "Invalid API version").
+const LEITURAS: Record<string, string> = {
+  pedidos: "/affiliate_seller/202410/orders/search",
+  abertas: "/affiliate_seller/202412/open_collaborations/search",
+  direcionadas: "/affiliate_seller/202508/target_collaborations/search", // corpo exige {"collaboration_status":"ONGOING"}
+  amostras: "/affiliate_seller/202508/sample_applications/search",
+  produtos: "/affiliate_seller/202405/open_collaborations/products/search",
+};
+
 const VERSOES = new Set(["202405", "202406", "202409", "202412", "202501", "202505", "202508", "202509"]);
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const url = new URL(req.url);
   const modulo = url.searchParams.get("modulo") || "criadores";
-  const ver = url.searchParams.get("ver") || "202406";
+  const ver = url.searchParams.get("ver") || "202508"; // criadores: só a 202508 existe
   if (!VERSOES.has(ver)) return json({ erro: "versão não liberada nesta sonda" }, 400);
   const corte = Math.min(Number(url.searchParams.get("corte") || 6000) || 6000, 60000);
   try {
@@ -87,7 +101,7 @@ Deno.serve(async (req: Request) => {
     // debug_fulfillment (modulo tiktok-afiliados, etapa busca) e avisa no Discord (#atualizacoes)
     // quando vier com dados — ou, na última tentativa do dia (&ultima=1), que continuou bloqueada.
     if (modulo === "tentar") {
-      const r = await tt(c, "POST", `/affiliate_seller/${ver === "202406" ? "202508" : ver}/marketplace_creators/search`, { page_size: "20" }, {});
+      const r = await tt(c, "POST", `/affiliate_seller/${ver}/marketplace_creators/search`, { page_size: "20" }, {});
       const n = (r.txt.match(/"creator_open_id"|"open_id"|"username"/g) || []).length;
       await db.from("debug_fulfillment").insert({ modulo: "tiktok-afiliados", etapa: "busca", status_http: r.code === 0 ? 200 : r.http, resultado: { code: r.code, message: r.message, bytes: r.txt.length, cru: r.txt.slice(0, 30000) } });
       const avisar = async (nivel: string, titulo: string, descricao: string) => {
@@ -101,6 +115,19 @@ Deno.serve(async (req: Request) => {
       if (r.code === 0) await avisar("ok", "TikTok: a busca de afiliados respondeu", `A API devolveu dados na tentativa agendada (${r.txt.length} bytes${n ? `, ~${n} campos de criador` : ""}). Peça ao Claude para levantar os filtros e montar a lista de afiliados de Pets.`);
       else if (url.searchParams.get("ultima") === "1") await avisar("aviso", "TikTok: busca de afiliados continua bloqueada", `Todas as tentativas de hoje voltaram: ${String(r.message ?? r.http).slice(0, 220)}. Próximo passo: chamado no Partner Center do TikTok perguntando a cota da busca de criadores.`);
       return json({ modulo, http: r.http, code: r.code, message: r.message, bytes: r.txt.length, gravado: true });
+    }
+    if (modulo === "ler") {
+      const alvo = url.searchParams.get("alvo") || "";
+      // `caminho` = outra busca de leitura da mesma área (sempre …/search), para testar versão/nome
+      const livre = url.searchParams.get("caminho") || "";
+      const path = new RegExp("^/affiliate_seller/20[0-9]{4}/[a-z_/]+/search$").test(livre) ? livre : LEITURAS[alvo];
+      if (!path) return json({ erro: "alvo deve ser " + Object.keys(LEITURAS).join(" | ") }, 400);
+      let filtros: unknown = {};
+      if (req.method === "POST") { try { filtros = await req.json(); } catch { filtros = {}; } }
+      const q: Record<string, string> = { page_size: url.searchParams.get("page_size") || "10" };
+      const pt = url.searchParams.get("page_token"); if (pt) q.page_token = pt;
+      const r = await tt(c, "POST", path, q, filtros);
+      return json({ modulo, alvo, path, http: r.http, code: r.code, message: r.message, bytes: r.txt.length, cru: r.txt.slice(0, corte) });
     }
     if (modulo === "criador") {
       const id = (url.searchParams.get("id") || "").trim();
@@ -125,7 +152,7 @@ Deno.serve(async (req: Request) => {
       const bate = itens.filter((i) => i.nome.toLowerCase().includes(alvo) || i.nome.toLowerCase().includes("animal") || i.nome.toLowerCase().includes("estima"));
       return json({ modulo, http: r.http, code: r.code, message: r.message, total: itens.length, raizes, com_o_termo: bate.slice(0, 60) });
     }
-    return json({ erro: "modulo deve ser criadores | criador | categorias" }, 400);
+    return json({ erro: "modulo deve ser criadores | criador | ler | categorias" }, 400);
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);
   }
