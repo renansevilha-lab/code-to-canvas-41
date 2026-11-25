@@ -486,6 +486,15 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
   }
   const campo = (k: string, padrao: number | null | undefined) => (typeof op[k] === "string" ? String(op[k]) : txt(padrao));
   const mudou = JSON.stringify(op) !== JSON.stringify(aplicado);
+  // 24/nov/2026 (relato do dono, kit 16798 no Mercado Livre): depois de corrigir peso/medidas a tela seguia mostrando o
+  // erro da conferência ANTIGA até alguém clicar em "Atualizar a conferência" — parecia que a correção não tinha adiantado.
+  // Agora a conferência é refeita sozinha 1,2 s depois da última mudança (é só leitura no marketplace).
+  const opTxt = JSON.stringify(op);
+  useEffect(() => {
+    if (!mudou) return;
+    const t = setTimeout(() => setAplicado(JSON.parse(opTxt) as Op), 1200);
+    return () => clearTimeout(t);
+  }, [opTxt, mudou]);
   // trocar de modo ou de anúncio refaz a conferência na hora (são leituras diferentes na Shopee)
   const trocar = (x: Op) => { const n = { ...op, ...x }; setOp(n); setAplicado(n); };
   const criado = (d?.publicacoes ?? []).find((x) => x.estado === "publicado" && x.operacao !== "atualizar" && x.canal === canal && x.empresa === empresa);
@@ -649,6 +658,12 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
         : `este é o produto pai de um produto com variações: ${ART} ${MK} recebe só anúncio simples, e o pai não tem estoque nem composição no Tiny (uma venda não baixaria nada). Crie um anúncio para cada variação${vars.length ? ` (${vars.join(", ")})` : ""}, abrindo cada uma em IA › Anúncios.`]
     : [])];
   const avisos = d?.avisos ?? [];
+  const refazendo = mudou || previaQ.isFetching;
+  // o Mercado Livre recusa embalagem que não comporta o peso (ex.: 16 kg numa caixa de 18 × 11 × 3 cm, medida da unidade no cadastro do kit)
+  const medidasRecusadas = ml && pend.some((x) => /seller.package.dimensions/i.test(x));
+  const explicar = (x: string) => (/seller.package.dimensions/i.test(x)
+    ? `o Mercado Livre não aceitou o peso e as medidas da embalagem juntos (${txt(p.medidas?.peso_kg)} kg numa caixa de ${txt(p.medidas?.comprimento_cm)} × ${txt(p.medidas?.largura_cm)} × ${txt(p.medidas?.altura_cm)} cm): a caixa precisa comportar o peso. Corrija as medidas nos campos acima.`
+    : x);
   return (
     <div className="space-y-3">
       {/* existe ou não + escolha do que fazer */}
@@ -852,7 +867,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
               </span>
             </label>
           )}
-          {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Atualizar a conferência com o que mudei</Button>}
+          {mudou && <Button size="sm" variant="outline" onClick={() => setAplicado(op)}>Conferir agora</Button>}
         </div>
       )}
 
@@ -871,9 +886,19 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
         paths={[...finalOrdem.filter((x) => p.fotos.some((f) => f.path === x)), ...p.fotos.map((f) => f.path).filter((x) => !finalOrdem.includes(x))].slice(0, 9)} />
 
       {pend.length > 0 && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
-          <b className="text-destructive flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" />Falta resolver antes de enviar</b>
-          {pend.map((x) => <div key={x}>• {x}</div>)}
+        <div className={`rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1 ${refazendo ? "opacity-50" : ""}`}>
+          <b className="text-destructive flex items-center gap-1.5">
+            {refazendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+            {refazendo ? "Conferindo de novo com o que você mudou… (o aviso abaixo é da conferência anterior)" : "Falta resolver antes de enviar"}
+          </b>
+          {pend.map((x) => <div key={x}>• {explicar(x)}</div>)}
+          {medidasRecusadas && !refazendo && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {([[40, 30, 15], [50, 40, 30]] as const).map(([c, l, a]) => (
+                <Button key={c} size="sm" variant="outline" onClick={() => setOp({ ...op, comprimento_cm: String(c), largura_cm: String(l), altura_cm: String(a) })}>Usar {c} × {l} × {a} cm</Button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {avisos.length > 0 && (
@@ -896,7 +921,7 @@ function Envio({ rascunho, canal, empresa, jaExiste, abertoInicial, abrirSinal, 
             <Checkbox checked={deNovo} onCheckedChange={(v) => setDeNovo(v === true)} />este rascunho já criou um anúncio; criar outro mesmo assim
           </label>
         )}
-        {mudou && <span className="text-xs text-muted-foreground">{modo === "atualizar" ? "Refazendo a conferência…" : "Atualize a conferência antes de enviar."}</span>}
+        {mudou && <span className="text-xs text-muted-foreground">{"Refazendo a conferência…"}</span>}
       </div>
 
       {(recem || criado) && onIr && (demais ?? []).length > 0 && (
