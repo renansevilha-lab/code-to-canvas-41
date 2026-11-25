@@ -212,6 +212,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
   const pz = prazoTexto(caso.prazo);
   const link = linkMarketplace(caso);
   const fotosCliente = (det?.shopee?.images as string[] | null | undefined) ?? [];
+  const valorPedidoTopo = (() => { const v = (det?.pedido as { subtotal_produtos?: number | null } | null)?.subtotal_produtos; return v != null ? Number(v) : null; })();
 
   return (
     <>
@@ -238,9 +239,11 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
             </div>
           </div>
           <div style={{ textAlign: "right", flex: "none" }}>
+            <div style={{ fontSize: 10.5, color: "var(--pm-t3)", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Reembolso pedido</div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{brl(caso.valor)}</div>
+            {valorPedidoTopo != null && <div style={{ fontSize: 11.5, color: "var(--pm-t3)" }}>de um pedido de {brl(valorPedidoTopo)}</div>}
             <div style={{ fontSize: 12, color: pz.tom === "r" ? "var(--pm-r)" : pz.tom === "a" ? "var(--pm-am)" : "var(--pm-t3)", fontWeight: 600 }}>
-              {caso.prazo ? `prazo ${pz.txt} · ${diaHora(caso.prazo)}` : "sem prazo"}
+              {caso.prazo ? `você responde até ${diaHora(caso.prazo)} (faltam ${pz.txt})` : "sem prazo para você"}
             </div>
           </div>
           <button type="button" onClick={onFechar} aria-label="Fechar" style={{ border: 0, background: "transparent", fontSize: 20, cursor: "pointer", color: "var(--pm-t2)", lineHeight: 1 }}>×</button>
@@ -497,7 +500,7 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
                             </Campo>
                             <Campo rotulo="E-mail de contato"><Entrada value={dispEmail} onChange={(e) => setDispEmail(e.target.value)} placeholder="voce@empresa.com" /></Campo>
                             <Campo rotulo={evidenciaObrigatoria ? "Fotos (OBRIGATÓRIO para este motivo)" : "Fotos (opcional)"}>
-                              <input type="file" accept="image/*" multiple onChange={(e) => setDispFotos(Array.from(e.target.files ?? []))} />
+                              <FotosDisputa fotos={dispFotos} setFotos={setDispFotos} />
                             </Campo>
                             <div style={{ display: "flex", gap: 8 }}>
                               <Botao tom="perigo" onClick={disputar} disabled={agindo !== null}>{agindo === "disputar" ? <Spinner /> : null} Abrir disputa</Botao>
@@ -525,5 +528,80 @@ export function PainelCaso({ caso, causas, onFechar, onMudou, embutido }: { caso
         </div>
       </aside>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Fotos da disputa (25/nov/2026, relato do dono: "não consigo subir anexos" — o campo
+// de arquivo do navegador aparecia como texto solto, sem cara de botão nem prévia).
+// Botão visível, arrastar e soltar, colar (Ctrl+V), miniaturas com X; foto grande de
+// celular é reduzida a 1.600 px antes de ir à Shopee.
+// ---------------------------------------------------------------------------
+async function reduzirFoto(f: File): Promise<File> {
+  if (f.size <= 1_500_000 || !f.type.startsWith("image/")) return f;
+  try {
+    const bmp = await createImageBitmap(f);
+    const esc = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * esc); c.height = Math.round(bmp.height * esc);
+    const ctx = c.getContext("2d")!; ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const b = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/jpeg", 0.85));
+    return b ? new File([b], f.name.replace(/.w+$/, "") + ".jpg", { type: "image/jpeg" }) : f;
+  } catch { return f; }
+}
+
+function FotosDisputa({ fotos, setFotos }: { fotos: File[]; setFotos: (f: File[]) => void }) {
+  const [arrastando, setArrastando] = useState(false);
+  const [lendo, setLendo] = useState(false);
+  const urls = useMemo(() => fotos.map((f) => URL.createObjectURL(f)), [fotos]);
+  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
+  const juntar = async (lista: File[]) => {
+    const imgs = lista.filter((f) => f.type.startsWith("image/"));
+    if (imgs.length < lista.length) toast.warning("Só imagens (JPG, PNG, WEBP) entram na disputa.");
+    if (!imgs.length) return;
+    setLendo(true);
+    try { const prontas = await Promise.all(imgs.map(reduzirFoto)); setFotos([...fotos, ...prontas].slice(0, 9)); }
+    finally { setLendo(false); }
+  };
+  useEffect(() => {
+    const colar = (e: ClipboardEvent) => {
+      const fs = Array.from(e.clipboardData?.files ?? []);
+      if (fs.length) { e.preventDefault(); void juntar(fs); }
+    };
+    window.addEventListener("paste", colar);
+    return () => window.removeEventListener("paste", colar);
+  });
+  return (
+    <div>
+      <label
+        onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
+        onDragLeave={() => setArrastando(false)}
+        onDrop={(e) => { e.preventDefault(); setArrastando(false); void juntar(Array.from(e.dataTransfer.files ?? [])); }}
+        style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+          border: `1.5px dashed ${arrastando ? "var(--pm-a)" : "var(--pm-bc)"}`, background: arrastando ? "var(--pm-as)" : "var(--pm-s2)",
+        }}
+      >
+        <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--pm-a)", color: "#fff", fontWeight: 600, fontSize: 12.5, flex: "none" }}>
+          {lendo ? "Lendo…" : "Escolher fotos"}
+        </span>
+        <span style={{ fontSize: 12, color: "var(--pm-t2)" }}>ou arraste aqui, ou cole com Ctrl+V · até 9 fotos</span>
+        <input type="file" accept="image/*" multiple style={{ display: "none" }}
+          onChange={(e) => { void juntar(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+      </label>
+      {fotos.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          {fotos.map((f, i) => (
+            <div key={i} style={{ position: "relative" }}>
+              <img src={urls[i]} alt={f.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid var(--pm-b)" }} />
+              <button type="button" aria-label="Tirar foto" onClick={() => setFotos(fotos.filter((_, j) => j !== i))}
+                style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 10, border: 0, background: "var(--pm-r)", color: "#fff", fontSize: 13, lineHeight: "20px", cursor: "pointer", padding: 0 }}>×</button>
+            </div>
+          ))}
+          <div style={{ alignSelf: "center", fontSize: 12, color: "var(--pm-t2)" }}>{fotos.length} foto(s) pronta(s) para enviar</div>
+        </div>
+      )}
+    </div>
   );
 }
