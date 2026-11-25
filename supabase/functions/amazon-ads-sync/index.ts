@@ -1,5 +1,7 @@
 // ============================================================================
-// Edge Function: amazon-ads-sync v3 (24/nov/2026)
+// Edge Function: amazon-ads-sync v4 (25/nov/2026) — + termos de busca (produto SP_TERMO
+//   no pedir/coletar -> amazon_ads_termo_diario) e plano-25nov (temporário, mudanças aprovadas)
+// v3 (24/nov/2026)
 // ----------------------------------------------------------------------------
 // Anúncios da Amazon (Amazon Ads API, região NA — o Brasil fica nela).
 // Token: oauth_tokens_amazon_ads (gravado pela amazon-ads-oauth), renovado aqui.
@@ -142,7 +144,10 @@ async function listarSD(c: Conta) {
 const LISTAR: Record<string, (c: Conta) => Promise<any[]>> = { SP: listarSP, SB: listarSB, SD: listarSD };
 
 // --------------------------------------------------------------------------- relatórios v3
-const REL: Record<string, { tipo: string; adProduct: string; colunas: string[] }> = {
+const REL: Record<string, { tipo: string; adProduct: string; colunas: string[]; groupBy?: string[] }> = {
+  // termos de busca (25/nov/2026): qual busca do comprador gerou clique/venda em cada palavra/alvo
+  SP_TERMO: { tipo: "spSearchTerm", adProduct: "SPONSORED_PRODUCTS", groupBy: ["searchTerm"],
+    colunas: ["date", "campaignId", "campaignName", "adGroupId", "adGroupName", "keywordId", "keyword", "matchType", "targeting", "searchTerm", "impressions", "clicks", "cost", "purchases7d", "sales7d", "unitsSoldClicks7d"] },
   SP: { tipo: "spCampaigns", adProduct: "SPONSORED_PRODUCTS",
     colunas: ["date", "campaignId", "campaignName", "campaignStatus", "campaignBudgetAmount", "impressions", "clicks", "cost", "purchases7d", "sales7d", "unitsSoldClicks7d"] },
   SB: { tipo: "sbCampaigns", adProduct: "SPONSORED_BRANDS",
@@ -158,7 +163,7 @@ async function pedir(c: Conta, prod: string, de: string, ate: string) {
   const r = await api(c, "/reporting/reports", {
     method: "POST", ct: "application/vnd.createasyncreportrequest.v3+json",
     body: { name: `${prod} campanhas ${de}..${ate}`, startDate: de, endDate: ate,
-      configuration: { adProduct: cfg.adProduct, groupBy: ["campaign"], columns: cfg.colunas, reportTypeId: cfg.tipo, timeUnit: "DAILY", format: "GZIP_JSON" } },
+      configuration: { adProduct: cfg.adProduct, groupBy: cfg.groupBy ?? ["campaign"], columns: cfg.colunas, reportTypeId: cfg.tipo, timeUnit: "DAILY", format: "GZIP_JSON" } },
   });
   // 425 = já existe relatório igual em andamento: a Amazon devolve o id no detalhe
   let reportId = r.body?.reportId as string | undefined;
@@ -198,6 +203,7 @@ async function coletar(c: Conta, rel: any) {
   }
   const linhas = await baixarGzipJson(r.body.url);
   const shop = SHOP_ID[c.conta] ?? null;
+  if (rel.ad_product === "SP_TERMO") return await gravarTermos(c, rel, linhas, shop);
   const reg = linhas.map((x) => ({
     data: x.date, conta: c.conta, shop_id: shop, profile_id: rel.profile_id, ad_product: rel.ad_product,
     campaign_id: String(x.campaignId), nome: x.campaignName ?? null, status: x.campaignStatus ?? null,
@@ -213,6 +219,35 @@ async function coletar(c: Conta, rel: any) {
   for (let i = 0; i < reg.length; i += 500) {
     const ins = await sb.from("amazon_ads_campanha_diario").insert(reg.slice(i, i + 500));
     if (ins.error) throw new Error("gravar: " + ins.error.message);
+  }
+  await sb.from("amazon_ads_relatorio").update({ status: "gravado", linhas: reg.length, concluido_em: new Date().toISOString(), verificado_em: new Date().toISOString(), erro: null }).eq("id", rel.id);
+  return { id: rel.id, status: "gravado", linhas: reg.length };
+}
+
+// termos de busca: soma por (dia, campanha, grupo, palavra/alvo, termo) e regrava o período
+async function gravarTermos(c: Conta, rel: any, linhas: any[], shop: number | null) {
+  const mapa = new Map<string, any>();
+  for (const x of linhas) {
+    if (!x.date || !x.campaignId || x.searchTerm == null) continue;
+    const alvo = x.keyword ?? x.targeting ?? null;
+    const chave = [x.date, c.conta, x.campaignId, x.adGroupId ?? "", x.keywordId ?? alvo ?? "", String(x.searchTerm)].join("|");
+    const a = mapa.get(chave) ?? {
+      chave, data: x.date, conta: c.conta, shop_id: shop, campaign_id: String(x.campaignId), campanha: x.campaignName ?? null,
+      ad_group_id: x.adGroupId != null ? String(x.adGroupId) : null, grupo: x.adGroupName ?? null,
+      keyword_id: x.keywordId != null ? String(x.keywordId) : null, alvo, match_type: x.matchType ?? null,
+      termo: String(x.searchTerm), impressoes: 0, cliques: 0, gasto: 0, vendas: 0, pedidos: 0, unidades: 0,
+      atualizado_em: new Date().toISOString(),
+    };
+    a.impressoes += num(x.impressions); a.cliques += num(x.clicks); a.gasto += num(x.cost);
+    a.vendas += num(x.sales7d); a.pedidos += num(x.purchases7d); a.unidades += num(x.unitsSoldClicks7d);
+    mapa.set(chave, a);
+  }
+  const reg = [...mapa.values()].map((a) => ({ ...a, gasto: Math.round(a.gasto * 100) / 100, vendas: Math.round(a.vendas * 100) / 100 }));
+  const del = await sb.from("amazon_ads_termo_diario").delete().eq("conta", c.conta).gte("data", rel.de).lte("data", rel.ate);
+  if (del.error) throw new Error("apagar período (termos): " + del.error.message);
+  for (let i = 0; i < reg.length; i += 500) {
+    const ins = await sb.from("amazon_ads_termo_diario").insert(reg.slice(i, i + 500));
+    if (ins.error) throw new Error("gravar termos: " + ins.error.message);
   }
   await sb.from("amazon_ads_relatorio").update({ status: "gravado", linhas: reg.length, concluido_em: new Date().toISOString(), verificado_em: new Date().toISOString(), erro: null }).eq("id", rel.id);
   return { id: rel.id, status: "gravado", linhas: reg.length };
@@ -243,8 +278,8 @@ async function exigirUsuarioAds(req: Request): Promise<Quem | Response> {
   const doUsuario = createClient(SUPABASE_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
   const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "ads" });
   if (error || data !== true) return json({ ok: false, erro: "sem acesso ao módulo ADS" }, 403);
-  const { data: perfil } = await sb.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
-  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null };
+  const { data: perfilU } = await sb.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
+  return { id: String(pl.sub ?? ""), nome: (perfilU?.nome as string) ?? (pl.email as string) ?? null };
 }
 async function logGestao(etapa: string, status: number, resultado: unknown) {
   await sb.from("debug_fulfillment").insert({ modulo: "amazon-ads-gestao", etapa, status_http: status, resultado });
@@ -425,6 +460,33 @@ async function logEscrita(etapa: string, status: number, resultado: unknown) {
   await sb.from("debug_fulfillment").insert({ modulo: "amazon-ads-escrita", etapa, status_http: status, resultado });
 }
 
+// --------------------------------------------------------------------------- plano aprovado em 25/nov/2026 (temporário)
+const PLANO_CHAVE = "plano-25nov-k8r2w";
+const PLANO_EXPIRA = Date.parse("2026-11-27T03:00:00Z");
+// prejuízo nos últimos 30 dias (retorno abaixo do empate pela margem do produto)
+const PLANO_PAUSAR = [
+  "250819784255212", // TOFU AUTOMÁTICA — retorno 2,3 (semana 1,5), empate ~9
+  "214276531478525", // BUMI BANHO A SECO - MANUAL — 2,3, empate 5,3
+  "250344582322099", // SP | Exata | Banho Seco Bumi 500ml — 1,8
+  "25354521130747",  // SP | ASIN | Banho Seco Bumi 500ml | Conquista — 2,0
+  "322239002822671", // Bumi Adestradores — 3,1, empate 5,6
+];
+// Bumi Mandioca 4 kg (15984_FBA, margem 17,7%) + 8 kg (16330_FBA, 15,7%); termos do Brand Analytics (semana 15/11)
+const PLANO_NOVAS = [
+  { nome: "SP | Exata | Bumi Mandioca", segmentacao: "MANUAL", orcamento: 15, lance_padrao: 0.7, estado: "ENABLED",
+    skus: ["15984_FBA", "16330_FBA"],
+    palavras: ["areia para gato mandioca", "areia de mandioca para gato", "areia gato mandioca", "areia mandioca", "areia de mandioca",
+      "areia biodegradável para gato", "areia para gato biodegradavel", "areia biodegradável"].map((texto) => ({ texto, match: "EXACT", lance: 0.75 })) },
+  { nome: "SP | Frase | Bumi Mandioca", segmentacao: "MANUAL", orcamento: 10, lance_padrao: 0.5, estado: "ENABLED",
+    skus: ["15984_FBA", "16330_FBA"],
+    palavras: [
+      { texto: "areia mandioca", match: "PHRASE", lance: 0.55 }, { texto: "areia de mandioca", match: "PHRASE", lance: 0.55 },
+      { texto: "mandioca para gato", match: "PHRASE", lance: 0.5 }, { texto: "areia biodegradavel", match: "PHRASE", lance: 0.45 },
+      { texto: "areia para gato", match: "PHRASE", lance: 0.4 }, { texto: "areia de gato", match: "PHRASE", lance: 0.4 },
+      { texto: "areia gato", match: "PHRASE", lance: 0.4 },
+    ] },
+];
+
 // --------------------------------------------------------------------------- serve
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -543,6 +605,27 @@ serve(async (req) => {
           : { erro: `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 250)}` };
       }
       return json({ ok: true, conta: cs[0].conta, campanha: camp, estrutura: out });
+    }
+
+    if (modulo === "plano-25nov") {
+      // TEMPORÁRIO: mudanças aprovadas pelo dono no chat em 25/nov/2026 (opção C).
+      // Lista fechada no código; sem &confirmar=1 = só prévia. Campanha cujo nome já
+      // existe não é recriada (rodar de novo não duplica).
+      if (u.searchParams.get("chave") !== PLANO_CHAVE || Date.now() > PLANO_EXPIRA) return json({ ok: false, erro: "plano fora do ar" }, 403);
+      const c = cs.find((x) => x.conta === "ottz") ?? cs[0];
+      const confirmar = u.searchParams.get("confirmar") === "1";
+      const quem: Quem = { id: null, nome: "Renan (aprovado no chat em 25/nov/2026)" };
+      const ed = await gestaoEditar(c, { mudancas: PLANO_PAUSAR.map((id) => ({ tipo: "campanha", id, campo: "estado", para: "PAUSED" })), confirmar }, quem);
+      const editar = await ed.json();
+      const criar: any[] = [];
+      for (const n of PLANO_NOVAS) {
+        const { data: ja } = await sb.from("amazon_ads_campanha").select("campaign_id,status").eq("conta", c.conta).eq("ad_product", "SP").eq("nome", n.nome).limit(1);
+        if (ja?.length) { criar.push({ nome: n.nome, pulada: `já existe (#${ja[0].campaign_id}, ${ja[0].status})` }); continue; }
+        const r = await gestaoCriar(c, { ...n, confirmar }, quem);
+        criar.push({ nome: n.nome, ...(await r.json()) });
+        if (restante() < 8000) break;
+      }
+      return json({ ok: true, confirmar, editar, criar });
     }
 
     if (modulo === "escrita-sonda") {
