@@ -4602,6 +4602,43 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   lançamentos da conta digital entram sozinhos no extrato do Tiny ou só com importação de OFX. Não há API pública da conta nem envio agendado do extrato
   (o internet banking exporta OFX/CSV/PDF e manda por e-mail, com clique). Open Finance: Mercado Pago PJ é coberto por agregadores; a conta Olist (Celcoin) é incerta.
 
+## 5.15 ADS da Amazon pela Amazon Ads API — conectado e no DRE/Dashboard (24/nov/2026)
+
+- **Conexão (pedido do dono):** o acesso à Amazon Ads API foi aprovado em 19/11 (e-mail ao contato@ottzpet.com.br), mas o "link de integração" do e-mail
+  (`advertising-api.amazon.com/apim/logIn?state=AKDVB4QOPSP1V`) nunca tinha sido aberto — por isso o consentimento dava **"An unknown scope was requested"**.
+  Aberto pelo Chrome do dono (logado como contato@ottzpet.com.br) → "Assign scopes" → `advertising::campaign_management` no aplicativo LWA **"Ottz Commerce"**
+  (client …ce11f; ligação PERMANENTE, um app só) → consentimento → `amazon-ads-oauth` gravou `oauth_tokens_amazon_ads` (conta ottz). Perfis: **BR
+  2246151949369840** e US 1806976116348906, os dois "Easy Pet-Shop Online" (BRL, America/Sao_Paulo). A `amazon-ads-oauth` mostra a página como TEXTO (o
+  Supabase não serve HTML das edge functions) — o link de autorização fica dentro do texto. NÃO republicar a `amazon-ads-oauth` pelo MCP (religa verify_jwt e
+  quebra o retorno da Amazon). SVL: não conectada.
+- **Edge fn `amazon-ads-sync` v1** (deploy 3; fonte em `supabase/functions/amazon-ads-sync/`): `sonda`, `campanhas` (SP v3 `/sp/campaigns/list`, SB v4, SD),
+  `pedir[&de&ate][&produtos=]` (relatório v3 `/reporting/reports`, `spCampaigns` DAILY por campanha, GZIP_JSON, ≤ 31 dias por relatório; SP com atribuição
+  7 dias = `sales7d`/`purchases7d`), `coletar` (baixa o pronto, apaga e regrava o período). Só LÊ na Amazon. A conta só usa **Produtos Patrocinados** (46
+  campanhas, 24 ativas; SB/SD = 0). A Amazon guarda 95 dias: histórico gravado desde 22/08/2026.
+- **Tabelas:** `amazon_ads_campanha` (config), `amazon_ads_campanha_diario` (data × campanha: impressões, cliques, gasto, vendas, pedidos, unidades;
+  `shop_id` 900001/900002), `amazon_ads_relatorio` (pedidos à Amazon), view `amazon_ads_diario`. RLS leitura `authenticated`, sem anon.
+- **Crons (Bearer publicável, por `amazon_ads_tick`):** `amazon-ads-campanhas` `21 8`, `amazon-ads-pedir` `23 8` (últimos 8 dias, SP — a Amazon reatribui
+  vendas), `amazon-ads-coletar` `7,17,27,37,47,57` (só chama a função se há relatório pendente; o relatório fica pronto em poucos minutos).
+- **Onde entrou (baseline antes/depois, ao centavo):** `view_dre_ads_marketplace` (linha "Amazon (ACZ Pet)"), `view_dre_mensal.ads`, `dashboard_visao_geral.ads`,
+  `mv_canais_diario.ads` (cartão Amazon · Ottz; dia com ADS e sem venda fica de fora do cartão, como já era nos outros canais — 1 dia, R$ 9) e
+  `view_metas_realizado` (ACOS amazon e todos). Efeito no lucro do DRE: ago −R$ 260, set −1.570, out −3.197 (4,0% → 3,5%), nov até 23 −2.408. Shopee/ML
+  idênticos. Cópias de antes: `_bkp_dre_mensal_amzads_24nov`, `_bkp_dre_ads_mkt_amzads_24nov`, `_bkp_dash_amzads_24nov`, `_bkp_mv_canais_amzads_24nov`,
+  `_bkp_metas_amzads_24nov`. Desfazer = recriar as 5 definições sem o `UNION`/join de `amazon_ads_campanha_diario` (migrações `dre_ads_amazon`,
+  `dashboard_ads_amazon`, `canais_diario_ads_amazon`, `metas_realizado_ads_amazon`).
+- **ESCRITA FUNCIONA (testado ao vivo 24/nov/2026, pedido do dono "verificar o que dá para alterar e criar"):** diferente do Mercado Ads
+  (que nega escrita mesmo com o escopo), a Amazon aceitou tudo — `amazon-ads-sync` **v2** ganhou `estrutura` (só leitura: a conta tem 46
+  grupos, 99 anúncios de produto, 306 palavras-chave, 126 alvos, 52 negativas, tudo legível) e a sonda temporária `escrita-sonda` (chave +
+  expira 26/nov 03:00 UTC; registro em `debug_fulfillment` modulo `amazon-ads-escrita`): **alterar** = PUT `/sp/campaigns` regravando o
+  MESMO orçamento da campanha pausada 121005903550829 → 207 success; **criar** = POST `/sp/campaigns` (pausada, R$ 4/dia) → criou
+  100029447663649; **apagar** = POST `/sp/campaigns/delete` → a campanha vira **ARCHIVED** (não some da listagem — exclusão no SP v3 é
+  arquivamento; a de teste ficou arquivada, nunca ativa, gasto 0). Orçamento mínimo do marketplace BR: **R$ 1 é recusado**
+  (`BUDGET_OUT_OF_MARKET_PLACE_RANGE`); R$ 4 passa (o mínimo exato fica entre 1 e 4 — provável R$ 2). Formato das escritas SP v3:
+  POST/PUT `/sp/{campaigns|adGroups|productAds|keywords|targets|negativeKeywords}` com CT `application/vnd.sp<Tipo>.v3+json`, corpo
+  `{<plural>: [...]}`, resposta 207 com `success`/`error` por item — dá para criar campanha, grupo, pôr anúncio por SKU/ASIN, palavras com
+  lance e match type, alvos, negativas, e alterar estado/orçamento/lance de tudo. SB exige assets de marca; SD disponível. A conta só usa SP.
+- **Fora (pendente):** tela de ADS da Amazon, módulo de escrita de verdade (com prévia/confirmação, nos moldes da `shopee-ads-gestao`),
+  Agente de ADS (`ads_metrica_*`), fluxo de caixa (`view_fluxo_caixa_eventos_live`), conta SVL.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |
@@ -4644,6 +4681,7 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `ml-sync-wallet` | v5 (deploy 27; 23/nov: pagamento FEITO pela conta deixa de entrar como recebimento, `&de=&ate=&conta=` — ver §5.14; fonte em `supabase/functions/ml-sync-wallet/`) | Carteira do Mercado Pago → `transacoes_carteira` (marketplace `mercadolivre`), todas as contas; crons 50 (`dias=7`, 2/2 h) e 85 (`dias=60`, diário) |
+| `amazon-ads-sync` | v1 (deploy 3) | ADS da Amazon (Amazon Ads API): campanhas e gasto diário por campanha → `amazon_ads_campanha_diario`; crons `amazon-ads-*` — ver §5.15 |
 | `mp-extrato` | v1 | Extrato do Mercado Pago (relatório de Liberações) pedido e coletado todo dia: `pedir`, `coletar`, `status`; grava `mp_extrato` — ver §5.14 |
 | `tiktok-afiliados` | v2 | Sonda só de leitura da API de afiliados do TikTok (busca de criadores, detalhe do criador, categorias) — ver §5.11.15 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
