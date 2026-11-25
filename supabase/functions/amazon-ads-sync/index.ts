@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: amazon-ads-sync v2 (24/nov/2026)
+// Edge Function: amazon-ads-sync v3 (24/nov/2026)
 // ----------------------------------------------------------------------------
 // Anúncios da Amazon (Amazon Ads API, região NA — o Brasil fica nela).
 // Token: oauth_tokens_amazon_ads (gravado pela amazon-ads-oauth), renovado aqui.
@@ -23,6 +23,12 @@
 //                         (prova a permissão de escrita sem mudar nada);
 //                         criar = cria campanha SP PAUSADA de R$ 4 (ou &orc=) e a
 //                         apaga em seguida. Tudo em debug_fulfillment (amazon-ads-escrita)
+//   gestao (POST JSON {modulo:"gestao", acao, ...}) — escrita de verdade, com prévia:
+//     acao "editar"  {mudancas:[{tipo campanha|palavra|alvo, id, campo orcamento|estado|lance, para}]}
+//     acao "criar"   {nome, segmentacao AUTO|MANUAL, orcamento, lance_padrao, estado?,
+//                     skus:[sku da Amazon], palavras:[{texto, match, lance}], continuar?}
+//     sem confirmar = prévia (só leitura); confirmar: true exige sessão de usuário com
+//     o módulo ads. Registro em debug_fulfillment (amazon-ads-gestao). Ver §5.15.
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -212,6 +218,203 @@ async function coletar(c: Conta, rel: any) {
   return { id: rel.id, status: "gravado", linhas: reg.length };
 }
 
+// --------------------------------------------------------------------------- gestão (escrita de verdade, 24/nov/2026)
+// Prévia sem `confirmar` (só leitura); com `confirmar: true` exige sessão de USUÁRIO
+// com o módulo `ads` (a chave publicável e o Bearer dos crons são recusados).
+// Cada escrita vai UMA vez, para no 1º recusado, relê depois e fica em
+// debug_fulfillment (modulo 'amazon-ads-gestao'). Campanha nova nasce PAUSADA
+// por padrão. Só Sponsored Products (a conta não usa SB/SD).
+const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const CT = {
+  campanha: "application/vnd.spCampaign.v3+json",
+  grupo: "application/vnd.spAdGroup.v3+json",
+  anuncio: "application/vnd.spProductAd.v3+json",
+  palavra: "application/vnd.spKeyword.v3+json",
+  alvo: "application/vnd.spTargetingClause.v3+json",
+};
+type Quem = { id: string | null; nome: string | null };
+async function exigirUsuarioAds(req: Request): Promise<Quem | Response> {
+  const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (bearer && bearer === SRK) return { id: null, nome: "sistema" };
+  let pl: Record<string, unknown> = {};
+  try { pl = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { /* sem jwt */ }
+  if (pl.role === "service_role") return { id: null, nome: "sistema" };
+  if (pl.role !== "authenticated") return json({ ok: false, erro: "faça login no app (sessão de usuário exigida para escrever na Amazon)" }, 401);
+  const doUsuario = createClient(SUPABASE_URL, ANON || SRK, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
+  const { data, error } = await doUsuario.rpc("tem_modulo", { p_modulo: "ads" });
+  if (error || data !== true) return json({ ok: false, erro: "sem acesso ao módulo ADS" }, 403);
+  const { data: perfil } = await sb.from("perfis_usuario").select("nome").eq("user_id", String(pl.sub ?? "")).maybeSingle();
+  return { id: String(pl.sub ?? ""), nome: (perfil?.nome as string) ?? (pl.email as string) ?? null };
+}
+async function logGestao(etapa: string, status: number, resultado: unknown) {
+  await sb.from("debug_fulfillment").insert({ modulo: "amazon-ads-gestao", etapa, status_http: status, resultado });
+}
+const porItem = (body: any, plural: string) => ({ ok: (body?.[plural]?.success ?? []) as any[], erro: (body?.[plural]?.error ?? []) as any[] });
+
+type Mudanca = { tipo: "campanha" | "palavra" | "alvo"; id: string; campo: "orcamento" | "estado" | "lance"; para: unknown };
+const ESTADOS = new Set(["ENABLED", "PAUSED", "ARCHIVED"]);
+
+/** Lê ao vivo os itens citados nas mudanças (para a prévia e para o "hoje"). */
+async function lerAtuais(c: Conta, mudancas: Mudanca[]) {
+  const ids = (t: Mudanca["tipo"]) => [...new Set(mudancas.filter((m) => m.tipo === t).map((m) => String(m.id)))];
+  const atuais: Record<string, any> = {};
+  const camp = ids("campanha");
+  if (camp.length) {
+    const r = await api(c, "/sp/campaigns/list", { method: "POST", ct: CT.campanha, accept: CT.campanha, body: { campaignIdFilter: { include: camp } } });
+    if (!r.ok) throw new Error(`ler campanhas: HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+    for (const x of r.body?.campaigns ?? []) atuais[`campanha:${x.campaignId}`] = { nome: x.name, estado: x.state, orcamento: x.budget?.budget ?? null };
+  }
+  const pal = ids("palavra");
+  if (pal.length) {
+    const r = await api(c, "/sp/keywords/list", { method: "POST", ct: CT.palavra, accept: CT.palavra, body: { keywordIdFilter: { include: pal } } });
+    if (!r.ok) throw new Error(`ler palavras: HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+    for (const x of r.body?.keywords ?? []) atuais[`palavra:${x.keywordId}`] = { nome: x.keywordText, match: x.matchType, estado: x.state, lance: x.bid ?? null, campaign_id: String(x.campaignId) };
+  }
+  const alv = ids("alvo");
+  if (alv.length) {
+    const r = await api(c, "/sp/targets/list", { method: "POST", ct: CT.alvo, accept: CT.alvo, body: { targetIdFilter: { include: alv } } });
+    if (!r.ok) throw new Error(`ler alvos: HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+    for (const x of r.body?.targetingClauses ?? []) atuais[`alvo:${x.targetId}`] = { nome: (x.resolvedExpression ?? x.expression ?? []).map((e: any) => e.value).join(" "), estado: x.state, lance: x.bid ?? null, campaign_id: String(x.campaignId) };
+  }
+  return atuais;
+}
+
+async function gestaoEditar(c: Conta, b: any, quem: Quem | null) {
+  const mudancas = (Array.isArray(b.mudancas) ? b.mudancas : []) as Mudanca[];
+  if (!mudancas.length) return json({ ok: false, erro: "mande mudancas: [{tipo, id, campo, para}]" }, 400);
+  if (mudancas.length > 50) return json({ ok: false, erro: "no máximo 50 mudanças por vez" }, 400);
+  for (const m of mudancas) {
+    if (!["campanha", "palavra", "alvo"].includes(m.tipo) || !m.id) return json({ ok: false, erro: `mudança inválida: ${JSON.stringify(m)}` }, 400);
+    if (m.campo === "estado" && !ESTADOS.has(String(m.para))) return json({ ok: false, erro: `estado inválido (${m.para}): use ENABLED, PAUSED ou ARCHIVED` }, 400);
+    if ((m.campo === "orcamento" || m.campo === "lance") && !(Number(m.para) > 0)) return json({ ok: false, erro: `${m.campo} precisa ser um número maior que zero` }, 400);
+    if (m.campo === "orcamento" && m.tipo !== "campanha") return json({ ok: false, erro: "orçamento só existe em campanha" }, 400);
+    if (m.campo === "lance" && m.tipo === "campanha") return json({ ok: false, erro: "lance é de palavra/alvo, não de campanha" }, 400);
+  }
+  const atuais = await lerAtuais(c, mudancas);
+  const previa = mudancas.map((m) => {
+    const a = atuais[`${m.tipo}:${m.id}`];
+    const hoje = a ? (m.campo === "orcamento" ? a.orcamento : m.campo === "lance" ? a.lance : a.estado) : null;
+    const avisos: string[] = [];
+    if (!a) avisos.push("não encontrado na Amazon");
+    if (m.campo === "orcamento" && Number(m.para) < 4) avisos.push("abaixo de R$ 4 a Amazon pode recusar (mínimo do marketplace)");
+    if (a && String(hoje) === String(m.para)) avisos.push("já está com esse valor");
+    return { ...m, nome: a?.nome ?? null, hoje, avisos };
+  });
+  if (!b.confirmar) return json({ ok: true, previa, confirmar: false });
+  if (previa.some((p) => p.avisos.includes("não encontrado na Amazon"))) return json({ ok: false, erro: "há item que não existe na Amazon — refaça a prévia", previa }, 400);
+
+  // monta UM request por tipo; a resposta 207 diz item a item o que passou
+  const corpo: Record<string, Record<string, any>> = { campanha: {}, palavra: {}, alvo: {} };
+  for (const m of mudancas) {
+    const alvo = (corpo[m.tipo][m.id] ??= m.tipo === "campanha" ? { campaignId: m.id } : m.tipo === "palavra" ? { keywordId: m.id } : { targetId: m.id });
+    if (m.campo === "orcamento") alvo.budget = { budget: Number(m.para), budgetType: "DAILY" };
+    if (m.campo === "lance") alvo.bid = Number(m.para);
+    if (m.campo === "estado") alvo.state = String(m.para);
+  }
+  const resultados: any[] = [];
+  const envios: [Mudanca["tipo"], string, string, string][] = [
+    ["campanha", "/sp/campaigns", CT.campanha, "campaigns"],
+    ["palavra", "/sp/keywords", CT.palavra, "keywords"],
+    ["alvo", "/sp/targets", CT.alvo, "targetingClauses"],
+  ];
+  for (const [tipo, path, ct, plural] of envios) {
+    const itens = Object.values(corpo[tipo]);
+    if (!itens.length) continue;
+    const r = await api(c, path, { method: "PUT", ct, accept: ct, body: { [plural]: itens } });
+    const { ok, erro } = porItem(r.body, plural);
+    await logGestao(`editar:${tipo}`, r.status, { por: quem?.nome ?? null, enviado: itens, resposta: r.body });
+    resultados.push({ tipo, status: r.status, sucesso: ok.length, recusados: erro });
+    if (!r.ok || erro.length) break; // para no 1º recusado (os tipos seguintes não vão)
+  }
+  // espelho: orçamento/estado das campanhas alteradas
+  const depois = await lerAtuais(c, mudancas.filter((m) => m.tipo === "campanha"));
+  for (const [chave, a] of Object.entries(depois)) {
+    const id = chave.split(":")[1];
+    await sb.from("amazon_ads_campanha").update({ orcamento: a.orcamento, status: a.estado, atualizado_em: new Date().toISOString() })
+      .eq("conta", c.conta).eq("ad_product", "SP").eq("campaign_id", id);
+  }
+  const tudoOk = resultados.every((x) => x.recusados.length === 0 && (x.status < 300 || x.status === 207));
+  return json({ ok: tudoOk, resultados, depois });
+}
+
+async function gestaoCriar(c: Conta, b: any, quem: Quem | null) {
+  const nome = String(b.nome ?? "").trim();
+  const seg = b.segmentacao === "AUTO" ? "AUTO" : "MANUAL";
+  const orcamento = Number(b.orcamento);
+  const lancePadrao = Number(b.lance_padrao ?? 0.5);
+  const estado = b.estado === "ENABLED" ? "ENABLED" : "PAUSED";
+  const skus = [...new Set(((Array.isArray(b.skus) ? b.skus : []) as unknown[]).map((s) => String(s).trim()).filter(Boolean))];
+  const palavras = (Array.isArray(b.palavras) ? b.palavras : []).map((p: any) => ({
+    texto: String(p.texto ?? "").trim(), match: ["EXACT", "PHRASE", "BROAD"].includes(p.match) ? p.match : "EXACT", lance: Number(p.lance ?? lancePadrao),
+  })).filter((p: any) => p.texto);
+
+  const avisos: string[] = [];
+  const pendencias: string[] = [];
+  if (!nome) pendencias.push("dê um nome à campanha");
+  if (!(orcamento > 0)) pendencias.push("informe o orçamento diário");
+  else if (orcamento < 4) avisos.push("orçamento abaixo de R$ 4: a Amazon pode recusar (mínimo do marketplace)");
+  if (!(lancePadrao > 0)) pendencias.push("informe o lance padrão do grupo");
+  if (!skus.length) pendencias.push("escolha ao menos um SKU da Amazon");
+  if (seg === "MANUAL" && !palavras.length) pendencias.push("campanha manual precisa de ao menos uma palavra-chave");
+  // nome repetido = confusão na conta
+  const { data: jaExiste } = await sb.from("amazon_ads_campanha").select("campaign_id,status").eq("conta", c.conta).eq("ad_product", "SP").eq("nome", nome).limit(1);
+  if (nome && jaExiste?.length) avisos.push(`já existe campanha com este nome (#${jaExiste[0].campaign_id}, ${jaExiste[0].status})`);
+  // SKU precisa existir na conta (anúncio da Amazon)
+  const { data: meus } = await sb.from("pesquisa_amz_meus_skus").select("sku_amazon, asin, sku, nome").eq("conta", c.conta).in("sku_amazon", skus);
+  const achados = new Map((meus ?? []).map((m: any) => [m.sku_amazon, m]));
+  const skusInfo = skus.map((s) => ({ sku_amazon: s, asin: achados.get(s)?.asin ?? null, nosso_sku: achados.get(s)?.sku ?? null, nome: achados.get(s)?.nome ?? null, conhecido: achados.has(s) }));
+  for (const s of skusInfo) if (!s.conhecido) avisos.push(`SKU ${s.sku_amazon} não está na lista de anúncios da conta (pesquisa_amz_meus_skus) — confira a grafia; se for anúncio novo, a Amazon confere na hora`);
+
+  const plano = { nome, segmentacao: seg, orcamento, lance_padrao: lancePadrao, estado, skus: skusInfo, palavras, avisos, pendencias };
+  if (!b.confirmar) return json({ ok: pendencias.length === 0, previa: plano, confirmar: false });
+  if (pendencias.length) return json({ ok: false, erro: "há pendências — refaça a prévia", previa: plano }, 400);
+
+  // retomada: se a tela mandar os ids já criados, pula as etapas prontas
+  let campaignId: string | null = b.continuar?.campaignId ? String(b.continuar.campaignId) : null;
+  let adGroupId: string | null = b.continuar?.adGroupId ? String(b.continuar.adGroupId) : null;
+  const passos: any[] = [];
+  const falha = (etapa: string, r: { status: number; body: unknown }) =>
+    json({ ok: false, erro: `a Amazon recusou em "${etapa}"`, parou_em: etapa, campaignId, adGroupId, passos, resposta: r.body }, 502);
+
+  if (!campaignId) {
+    const r = await api(c, "/sp/campaigns", { method: "POST", ct: CT.campanha, accept: CT.campanha, body: { campaigns: [{ name: nome, targetingType: seg, state: estado, budget: { budget: orcamento, budgetType: "DAILY" }, startDate: hojeBRT(), dynamicBidding: { strategy: "LEGACY_FOR_SALES" } }] } });
+    const { ok, erro } = porItem(r.body, "campaigns");
+    await logGestao(`criar:campanha:${nome}`, r.status, { por: quem?.nome ?? null, resposta: r.body });
+    if (!ok.length) return falha("criar a campanha", r);
+    campaignId = String(ok[0].campaignId);
+    passos.push({ etapa: "campanha", id: campaignId, recusados: erro });
+  }
+  if (!adGroupId) {
+    const r = await api(c, "/sp/adGroups", { method: "POST", ct: CT.grupo, accept: CT.grupo, body: { adGroups: [{ campaignId, name: nome, defaultBid: lancePadrao, state: "ENABLED" }] } });
+    const { ok } = porItem(r.body, "adGroups");
+    await logGestao(`criar:grupo:${campaignId}`, r.status, { por: quem?.nome ?? null, resposta: r.body });
+    if (!ok.length) return falha("criar o grupo de anúncios", r);
+    adGroupId = String(ok[0].adGroupId);
+    passos.push({ etapa: "grupo", id: adGroupId });
+  }
+  {
+    const r = await api(c, "/sp/productAds", { method: "POST", ct: CT.anuncio, accept: CT.anuncio, body: { productAds: skus.map((s) => ({ campaignId, adGroupId, sku: s, state: "ENABLED" })) } });
+    const { ok, erro } = porItem(r.body, "productAds");
+    await logGestao(`criar:anuncios:${campaignId}`, r.status, { por: quem?.nome ?? null, skus, resposta: r.body });
+    passos.push({ etapa: "anuncios", criados: ok.length, recusados: erro.map((e: any) => ({ sku: skus[e.index], erros: e.errors })) });
+    if (!ok.length) return falha("pôr os produtos na campanha", r);
+  }
+  if (seg === "MANUAL" && palavras.length) {
+    const r = await api(c, "/sp/keywords", { method: "POST", ct: CT.palavra, accept: CT.palavra, body: { keywords: palavras.map((p: any) => ({ campaignId, adGroupId, keywordText: p.texto, matchType: p.match, bid: p.lance, state: "ENABLED" })) } });
+    const { ok, erro } = porItem(r.body, "keywords");
+    await logGestao(`criar:palavras:${campaignId}`, r.status, { por: quem?.nome ?? null, resposta: r.body });
+    passos.push({ etapa: "palavras", criadas: ok.length, recusadas: erro.map((e: any) => ({ palavra: palavras[e.index]?.texto, erros: e.errors })) });
+    if (!ok.length) return falha("criar as palavras-chave", r);
+  }
+  // espelho na hora
+  await sb.from("amazon_ads_campanha").upsert({
+    conta: c.conta, shop_id: SHOP_ID[c.conta] ?? null, profile_id: perfil(c), ad_product: "SP", campaign_id: campaignId,
+    nome, status: estado, orcamento, tipo_orcamento: "DAILY", segmentacao: seg, estrategia: "LEGACY_FOR_SALES",
+    inicio: hojeBRT(), bruto: { criado_pelo_app: true, por: quem?.nome ?? null }, atualizado_em: new Date().toISOString(),
+  }, { onConflict: "conta,ad_product,campaign_id" });
+  return json({ ok: true, campaignId, adGroupId, estado, passos });
+}
+
 // --------------------------------------------------------------------------- sonda de escrita (temporária, 24/nov/2026)
 // O escopo advertising::campaign_management inclui escrita no papel, mas o ML já
 // negou escrita mesmo com escopo concedido — só um write real prova a permissão.
@@ -227,12 +430,30 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   T0 = Date.now();
   const u = new URL(req.url);
-  const modulo = u.searchParams.get("modulo") || "status";
-  const filtro = u.searchParams.get("conta");
+  let corpo: any = null;
+  if (req.method === "POST" && (req.headers.get("content-type") || "").includes("json")) {
+    try { corpo = await req.json(); } catch { corpo = null; }
+  }
+  const modulo = corpo?.modulo || u.searchParams.get("modulo") || "status";
+  const filtro = corpo?.conta || u.searchParams.get("conta");
   try {
     if (!CLIENT_ID || !CLIENT_SECRET) return json({ ok: false, erro: "faltam AMAZON_ADS_CLIENT_ID/SECRET" }, 500);
     const cs = await contas(filtro);
     if (!cs.length) return json({ ok: false, erro: "nenhuma conta conectada em oauth_tokens_amazon_ads" }, 400);
+
+    if (modulo === "gestao") {
+      // prévia é só leitura (qualquer sessão que passou do verify_jwt); escrever exige usuário com módulo ads
+      let quem: Quem | null = null;
+      if (corpo?.confirmar) {
+        const q = await exigirUsuarioAds(req);
+        if (q instanceof Response) return q;
+        quem = q;
+      }
+      const c = cs[0];
+      if (corpo?.acao === "editar") return await gestaoEditar(c, corpo, quem);
+      if (corpo?.acao === "criar") return await gestaoCriar(c, corpo, quem);
+      return json({ ok: false, erro: 'acao ? ("editar" | "criar")' }, 400);
+    }
 
     if (modulo === "sonda") {
       const out: any[] = [];

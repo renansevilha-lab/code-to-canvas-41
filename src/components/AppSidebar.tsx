@@ -129,6 +129,7 @@ export const NAV_GROUPS: NavGroup[] = [
         abas: [
           { nome: "Shopee", url: "/ads-shopee" },
           { nome: "Mercado Livre", url: "/ads-ml" },
+          { nome: "Amazon", url: "/ads-amazon" },
           { nome: "Saúde dos anúncios ML", url: "/saude-ml" },
         ],
       },

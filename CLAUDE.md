@@ -4636,8 +4636,21 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   POST/PUT `/sp/{campaigns|adGroups|productAds|keywords|targets|negativeKeywords}` com CT `application/vnd.sp<Tipo>.v3+json`, corpo
   `{<plural>: [...]}`, resposta 207 com `success`/`error` por item — dá para criar campanha, grupo, pôr anúncio por SKU/ASIN, palavras com
   lance e match type, alvos, negativas, e alterar estado/orçamento/lance de tudo. SB exige assets de marca; SD disponível. A conta só usa SP.
-- **Fora (pendente):** tela de ADS da Amazon, módulo de escrita de verdade (com prévia/confirmação, nos moldes da `shopee-ads-gestao`),
-  Agente de ADS (`ads_metrica_*`), fluxo de caixa (`view_fluxo_caixa_eventos_live`), conta SVL.
+- **Gestão pela tela (24/nov/2026, noite — "siga com a opção A"):** `amazon-ads-sync` **v3** ganhou o módulo **`gestao`** (POST JSON
+  `{modulo:"gestao", acao, ...}`; a chamada do app vai pelo `functions.invoke`, que leva a sessão): `acao "editar"` =
+  `mudancas:[{tipo campanha|palavra|alvo, id, campo orcamento|estado|lance, para}]` (um PUT por tipo, resposta 207 item a item, para no
+  1º recusado, relê depois e atualiza o espelho `amazon_ads_campanha`); `acao "criar"` = campanha SP completa (`nome`, `segmentacao
+  AUTO|MANUAL`, `orcamento`, `lance_padrao`, `skus` = SKU do anúncio na Amazon conferido em `pesquisa_amz_meus_skus`, `palavras`
+  [{texto, match EXACT|PHRASE|BROAD, lance}]; nasce **PAUSADA** por padrão; estratégia de lance LEGACY_FOR_SALES "só desce"; sequência
+  campanha → grupo → anúncios → palavras, cada etapa UMA vez; falhou no meio = devolve `parou_em` + ids e a tela tem "Continuar de onde
+  parou" via `continuar:{campaignId, adGroupId}`). Sem `confirmar` = prévia (só leitura, qualquer sessão); `confirmar: true` exige
+  **sessão de usuário com o módulo `ads`** (`tem_modulo`; chave publicável = 401, conferido). Registro em `debug_fulfillment`
+  (`modulo amazon-ads-gestao`, com quem fez). Tela `/ads-amazon` (menu Mídia & Canais › ADS › Amazon): "Nova campanha" no quadro de
+  campanhas (`src/components/ads/AmazonAdsGestao.tsx`: busca de SKU em `pesquisa_amz_meus_skus`, palavras com match/lance, prévia →
+  confirmação) e "Editar orçamento e estado" na linha expandida (prévia hoje → vai ficar). ⚠ campanha PAUSADA sem gasto na janela não
+  aparece na lista (o painel só traz campanhas com gasto + ativas sem gasto) — para reativar uma pausada antiga, abrir a janela de 90 dias.
+  **Nenhuma escrita real pelo módulo `gestao` ainda** (o 1º uso do dono pela tela é o teste; a permissão em si já foi provada pela sonda).
+- **Fora (pendente):** Agente de ADS (`ads_metrica_*`), fluxo de caixa (`view_fluxo_caixa_eventos_live`), conta SVL.
 
 ## 6. Edge Functions
 
@@ -4681,7 +4694,7 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
 | `tiktok-sync-pedidos` | v4 | Espelho TikTok (ACZ) em `tiktok_pedidos`/`tiktok_pedido_itens`/`tiktok_extratos`/`tiktok_extrato_transacoes`/`tiktok_devolucoes`/`tiktok_cancelamentos` — ver seção 5.8. Crons 117–121 |
 | `tiktok-rastreio` | v1 | Rastreio J&T (999881…) dos pedidos TikTok → `tiktok_rastreios` (a bipagem de Devoluções casa por ele). Cron jobid 123 — ver §5.2.2 |
 | `ml-sync-wallet` | v5 (deploy 27; 23/nov: pagamento FEITO pela conta deixa de entrar como recebimento, `&de=&ate=&conta=` — ver §5.14; fonte em `supabase/functions/ml-sync-wallet/`) | Carteira do Mercado Pago → `transacoes_carteira` (marketplace `mercadolivre`), todas as contas; crons 50 (`dias=7`, 2/2 h) e 85 (`dias=60`, diário) |
-| `amazon-ads-sync` | v1 (deploy 3) | ADS da Amazon (Amazon Ads API): campanhas e gasto diário por campanha → `amazon_ads_campanha_diario`; crons `amazon-ads-*` — ver §5.15 |
+| `amazon-ads-sync` | v3 (deploy 6; fonte em `supabase/functions/amazon-ads-sync/`) | ADS da Amazon (Amazon Ads API): campanhas e gasto diário por campanha → `amazon_ads_campanha_diario` (crons `amazon-ads-*`) + `estrutura` (só leitura) + **`gestao`** (POST JSON, prévia → `confirmar` com sessão de usuário + módulo ads: editar orçamento/estado/lance e criar campanha SP por SKU) — ver §5.15 |
 | `mp-extrato` | v1 | Extrato do Mercado Pago (relatório de Liberações) pedido e coletado todo dia: `pedir`, `coletar`, `status`; grava `mp_extrato` — ver §5.14 |
 | `tiktok-afiliados` | v2 | Sonda só de leitura da API de afiliados do TikTok (busca de criadores, detalhe do criador, categorias) — ver §5.11.15 |
 | `tiktok-promocoes` | v2 (deploy 3) | Promoções TikTok ACZ: `sync` (catálogo + promoções → espelho, cron 151), `sonda` e escrita com prévia/`confirmar=1` + JWT de usuário (`criar`, `editar`, `produtos`, `remover`, `encerrar`) — ver §5.9.1 |
