@@ -4441,6 +4441,36 @@ corpo = filtros repassados), `criador&id=` (GET `…/marketplace_creators/{id}`)
   `tiktok_afiliados_tentar()`, que para quando já houver resposta com dados e se desagenda depois da última. Conferir: `select criado_em, status_http,
   resultado->>'message' from debug_fulfillment where modulo = 'tiktok-afiliados' order by 1 desc`.
 - Não descoberto: os filtros do corpo da busca (categoria, GMV, seguidores) — a documentação oficial é JS e a página da referência não foi achada.
+- **ABRIU — área de afiliados inteira legível (24/nov/2026, pedido do dono "dê uma olhada se conseguimos acessar").** A tentativa agendada de 19/11 07h10
+  devolveu 20 criadores (o bloqueio 429 era passageiro) e em 24/nov todas as leituras responderam. Sonda **`tiktok-afiliados` v3** (deploy 4): módulo
+  `ler&alvo=pedidos|abertas|direcionadas|amostras|produtos` (ou `&caminho=/affiliate_seller/<ver>/…/search`), sempre POST …/search. **Versão certa de cada
+  uma** (as outras dão "Invalid API version"): criadores e detalhe **202508** · pedidos de afiliado **202410** (`orders/search`: criador, vídeo/live,
+  comissão %, comissão estimada/paga, SKU nosso, colaboração) · colaborações abertas **202412** (`open_collaborations/search`: produto, comissão vigente,
+  criadores com conteúdo / na vitrine) · direcionadas **202508** (corpo exige `{"collaboration_status":"ONGOING"}`; 0 hoje) · pedidos de amostra **202508**
+  (`sample_applications/search`: criador com seguidores, GMV em BRL e % de entrega de conteúdo, produto, situação) · produtos elegíveis **202405**
+  (`open_collaborations/products/search` — vem com produtos de teste de outras lojas, pouco útil). Busca de criadores sem filtro já traz criadores de Pets
+  (categoria 602118 primeiro; `gmv` em **USD**, faixa em R$; `next_page_token`); detalhe = comissão média, GMV por vídeo/live, GPM, unidades vendidas,
+  idade/gênero/UF dos seguidores, marcas com que colaborou. **Achados:** 96 pedidos de amostra no histórico, de 76 criadores — **42 venceram sem resposta**
+  (`OVERDUE_CANCELLED`), 32 concluídos, 3 recusados, 0 aguardando na hora (59 dos 96 são dos kits de 2 e 3 Esmectita com Carvão, comissão 15%); entre quem
+  pediu: amarimello_ (GMV R$ 309 mil), grazieosgatos (R$ 174 mil, é quem mais vende para nós), irmaozinhosmiau, nashopcreator, patriciacaaroline. 50 pedidos de
+  afiliado mais recentes (02/09–24/11): R$ 2.163 de venda, R$ 265 de comissão; grazieosgatos 19, amigofalante 7. Colaborações abertas: comissão de 8% a 15%
+  (maioria 8,5% e 10%). `approve_expiration_time` de amostra já encerrada vem com a hora da consulta (não é prazo). **Nada é gravado no banco ainda** e
+  nenhuma escrita foi testada (aprovar amostra `sample_applications/{id}/review`, criar colaboração direcionada, mensagem ao criador — o token tem os
+  escopos `affiliate_collaboration.write` e `affiliate_messages.write`). Filtros do corpo da busca de criadores seguem sem levantamento.
+- **Ranking de afiliados de Pets (24/nov/2026, opção B do dono).** Página: https://claude.ai/artifact/LB2yCDomLeVztnwbPEiVFy (privada do dono; fonte, dados e
+  scripts só neste PC, FORA do repositório, em `C:/dev/tiktok-afiliados-ranking/` — a lista tem nome e público de terceiros: `coletor.mjs` páginas da busca, `nossos.mjs` quem vendeu/pediu amostra, `detalhes2.mjs` detalhe por criador,
+  `juntar.mjs` → `ranking.json`, `pagina.html`). 303 criadores = 229 da busca (13 páginas) + os 76 que já pediram amostra; todos com detalhe. Ordem =
+  **vendas em Pets** = vendas totais × parte da categoria 602118 (`category_gmv_distribution` do detalhe). 47 vendem ≥ R$ 50 mil em Pets e 19 ≥ R$ 100 mil;
+  227 são contatos novos; 34 pediram amostra nossa e venceu sem resposta (maior: lo.basquii, 734 mil seguidores, R$ 74 mil em Pets); dos 21 que já vendem
+  para nós só 5 estão na lista (grazieosgatos é a 5ª do ranking, R$ 162 mil em Pets, e nos vendeu R$ 549). Nos 50 primeiros: comissão média mediana 7,7%
+  (1% a 10%; as nossas abertas pagam 8% a 15%), mediana de 6,9 mil seguidores, 29 vendem só por vídeo e 13 principalmente por live. **O que se aprendeu da
+  API:** corpo da busca aceita `gmv_ranges` (`GMV_RANGE_0_100`, `_100_1000`, `_1000_10000`, `_10000_AND_ABOVE`; faixas em R$) e ignora campo desconhecido;
+  sem filtro já devolve só criadores com Pets como 1ª categoria, mais ou menos do maior para o menor; `page_token` é só `offset=N` em base64 (páginas de 20,
+  com alguma repetição); **limite: 3 chamadas seguidas e depois ~5 min de 429 — sustentado, 1 chamada a cada ~2 min**; o detalhe do criador e as outras
+  leituras não têm esse aperto (303 detalhes a 3 s, sem recusa). `gmv` da busca/detalhe vem em **dólar**: × 5,5 = o valor em reais que o pedido de amostra
+  mostra para o mesmo criador (medido 5,50 e 5,52); período não informado. `post_rate` do detalhe = `fulfillment_percentage` da amostra (% das amostras que
+  viraram conteúdo; 9345 = 93,45%); `avg_commission_rate` 800 = 8%. O id do criador no pedido de amostra serve no detalhe; o pedido de afiliado só traz o
+  `creator_username`. Nada disso é gravado no banco nem tem tela no app; convite/mensagem pela API não foram testados.
 
 ## 5.12 Histórico de faturamento pelo Tiny — só totais (29/out/2026)
 
@@ -4461,22 +4491,6 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
 - **Banco:** `tiny_vendas_dia` (PK conta+dia+canal+situação: pedidos, valor, sem_valor) e `tiny_vendas_dia_estado`
   (conta+dia: total_api, lidos, concluido_em, fora_do_plano, erro, tentativas); só leitura para `authenticated`.
   `view_vendas_tiny_mensal` (security_invoker): mês × empresa × marketplace × canal, pedidos/valor sem cancelados +
-- **ABRIU — área de afiliados inteira legível (24/nov/2026, pedido do dono "dê uma olhada se conseguimos acessar").** A tentativa agendada de 19/11 07h10
-  devolveu 20 criadores (o bloqueio 429 era passageiro) e em 24/nov todas as leituras responderam. Sonda **`tiktok-afiliados` v3** (deploy 4): módulo
-  `ler&alvo=pedidos|abertas|direcionadas|amostras|produtos` (ou `&caminho=/affiliate_seller/<ver>/…/search`), sempre POST …/search. **Versão certa de cada
-  uma** (as outras dão "Invalid API version"): criadores e detalhe **202508** · pedidos de afiliado **202410** (`orders/search`: criador, vídeo/live,
-  comissão %, comissão estimada/paga, SKU nosso, colaboração) · colaborações abertas **202412** (`open_collaborations/search`: produto, comissão vigente,
-  criadores com conteúdo / na vitrine) · direcionadas **202508** (corpo exige `{"collaboration_status":"ONGOING"}`; 0 hoje) · pedidos de amostra **202508**
-  (`sample_applications/search`: criador com seguidores, GMV em BRL e % de entrega de conteúdo, produto, situação) · produtos elegíveis **202405**
-  (`open_collaborations/products/search` — vem com produtos de teste de outras lojas, pouco útil). Busca de criadores sem filtro já traz criadores de Pets
-  (categoria 602118 primeiro; `gmv` em **USD**, faixa em R$; `next_page_token`); detalhe = comissão média, GMV por vídeo/live, GPM, unidades vendidas,
-  idade/gênero/UF dos seguidores, marcas com que colaborou. **Achados:** 96 pedidos de amostra no histórico, de 76 criadores — **42 venceram sem resposta**
-  (`OVERDUE_CANCELLED`), 32 concluídos, 3 recusados, 0 aguardando na hora (59 dos 96 são dos kits de 2 e 3 Esmectita com Carvão, comissão 15%); entre quem
-  pediu: amarimello_ (GMV R$ 309 mil), grazieosgatos (R$ 174 mil, é quem mais vende para nós), irmaozinhosmiau, nashopcreator, patriciacaaroline. 50 pedidos de
-  afiliado mais recentes (02/09–24/11): R$ 2.163 de venda, R$ 265 de comissão; grazieosgatos 19, amigofalante 7. Colaborações abertas: comissão de 8% a 15%
-  (maioria 8,5% e 10%). `approve_expiration_time` de amostra já encerrada vem com a hora da consulta (não é prazo). **Nada é gravado no banco ainda** e
-  nenhuma escrita foi testada (aprovar amostra `sample_applications/{id}/review`, criar colaboração direcionada, mensagem ao criador — o token tem os
-  escopos `affiliate_collaboration.write` e `affiliate_messages.write`). Filtros do corpo da busca de criadores seguem sem levantamento.
   `pedidos_cancelados`/`valor_cancelado`. Empresa = SVL se conta svl ou canal com bumi/sevilla/svl.
 - **Edge fn `tiny-vendas-historico` v1** (deploy 2): `status`, `rodar[&conta][&de&ate]`. Dias nunca lidos do mais antigo
   para o mais novo, depois relê os últimos 15 dias se a leitura tem > 20 h. Dia só grava com todas as páginas lidas
@@ -4494,6 +4508,8 @@ Pedido do dono: povoar os meses antigos com as vendas do Tiny, sem pedido a pedi
   filtra `mes >= 2025-07-01`; os dias da Ottz de out/2024 a jun/2025 ficaram `fora_do_plano` no estado (a leitura
   noturna não os pede). A SVL antes de julho continua no banco, só não aparece. Relatório (receita bruta por NF, 2025):
   jul 266.631,87 · ago 302.301,60 · set 335.381,64 · out 420.020,68 · nov 474.804,89 · dez 541.764,41.
+
+- **Histórico mais antigo (23–24/nov/2026, pedido do dono, opção A):** o Tiny voltou a devolver datas que em 29/out recusava. `tiny-vendas-historico` **v2** (deploy 4): início por conta — **SVL 2022-06-01** (1º pedido 26/06/2022) e **Ottz 2025-01-01** (0 em 2024 e antes: a conta não existe neste Tiny); marcas `fora_do_plano` apagadas; carga completa (Ottz 692 dias, SVL 1.637). **Antes de 2025 a Ottz vem direto da Shopee:** edge fn **`shopee-vendas-historico`** v2 (deploy 3; `rodar`, `status`, `sonda`; só leitura) → `shopee_vendas_dia` (`valor` = total_amount, `valor_itens` = produtos) + `shopee_vendas_dia_estado`; a API da Shopee devolve pedidos antigos (loja Ottz desde 2021) por `get_order_list` (janela de 15 dias) + `get_order_detail`. Conferido em 12–31/01/2025: pedidos e cancelados **idênticos** ao Tiny todo dia; `valor_itens` 0,1–1,5% acima; `total_amount` 7–15% acima (frete) → a view usa `valor_itens`. A loja SVL/Bumi não entra (já está no Tiny da SVL: 25/11/2024 = 99 × 99). Carga única pelo cron `shopee-vendas-historico` (`2-28/2,32-58/2`) → `shopee_vendas_hist_tick()`, que se desagenda ao terminar 2020-01-01..2025-01-31. `view_vendas_tiny_mensal` junta Tiny + Shopee Ottz (< 2025); `view_vendas_hist_estado` = andamento. **Mercado Livre: a API só devolve 12 meses** (`/orders/search` e `/archived` = 0 antes) — a Ottz antes de 2025 fica sem ML. Tela: mostra desde o 1º mês, com os selos "pedidos, sem nota ¹" (Ottz jan–jun/2025) e "Ottz só Shopee ²" (antes de 2025). SQL em `docs/tiny-vendas-historico.sql`. Não conferida com login.
 
 ## 5.13 Fechamento contábil da ACZ — espelho fiscal das NF-e (18/nov/2026)
 
@@ -4515,8 +4531,6 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   saíam vazios); ads = `ads_relatorio_diario()`. O automático leva `resumo.origem = 'automatico'`; relatório escrito pela IA no mesmo dia substitui o
   automático, e o automático nunca passa por cima de um escrito pela IA. Crons **182** `relatorio-auto-ads` `50 10`, **183** `-compras` `55 10`, **184**
   `-financeiro` `20 11`, **185** `relatorio-auto-vigiar` `40 11` (UTC; tenta de novo o que faltou e avisa no Discord, canal erros, se não saiu). ~2–4 s cada.
-- **Histórico mais antigo (23–24/nov/2026, pedido do dono, opção A):** o Tiny voltou a devolver datas que em 29/out recusava. `tiny-vendas-historico` **v2** (deploy 4): início por conta — **SVL 2022-06-01** (1º pedido 26/06/2022) e **Ottz 2025-01-01** (0 em 2024 e antes: a conta não existe neste Tiny); marcas `fora_do_plano` apagadas; carga completa (Ottz 692 dias, SVL 1.637). **Antes de 2025 a Ottz vem direto da Shopee:** edge fn **`shopee-vendas-historico`** v2 (deploy 3; `rodar`, `status`, `sonda`; só leitura) → `shopee_vendas_dia` (`valor` = total_amount, `valor_itens` = produtos) + `shopee_vendas_dia_estado`; a API da Shopee devolve pedidos antigos (loja Ottz desde 2021) por `get_order_list` (janela de 15 dias) + `get_order_detail`. Conferido em 12–31/01/2025: pedidos e cancelados **idênticos** ao Tiny todo dia; `valor_itens` 0,1–1,5% acima; `total_amount` 7–15% acima (frete) → a view usa `valor_itens`. A loja SVL/Bumi não entra (já está no Tiny da SVL: 25/11/2024 = 99 × 99). Carga única pelo cron `shopee-vendas-historico` (`2-28/2,32-58/2`) → `shopee_vendas_hist_tick()`, que se desagenda ao terminar 2020-01-01..2025-01-31. `view_vendas_tiny_mensal` junta Tiny + Shopee Ottz (< 2025); `view_vendas_hist_estado` = andamento. **Mercado Livre: a API só devolve 12 meses** (`/orders/search` e `/archived` = 0 antes) — a Ottz antes de 2025 fica sem ML. Tela: mostra desde o 1º mês, com os selos "pedidos, sem nota ¹" (Ottz jan–jun/2025) e "Ottz só Shopee ²" (antes de 2025). SQL em `docs/tiny-vendas-historico.sql`. Não conferida com login.
-
 - **Agente COORDENADOR — NO AR (23/nov/2026, opção B do dono).** SQL + rollback em `docs/coordenador.sql` e `docs/coordenador-estrategias.sql` (migrações
   `coordenador_decisoes`, `coordenador_estrategias_a/_b`). **`coordenador_gerar()`** (cron `coordenador-gerar` `45 11 * * *` = 08h45 BRT, depois de todos os
   relatórios) lê os relatórios do DIA em `relatorios_agentes` e tira o que pede decisão num formato único (`coordenador_candidatas(dia)`): financeiro (contas
