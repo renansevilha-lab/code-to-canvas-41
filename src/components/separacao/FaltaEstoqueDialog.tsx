@@ -204,12 +204,15 @@ export function FaltaEstoqueDialog({ alvo, onClose, onFeito, por }: {
     if (!alvo || !preview) return;
     setEnviando(true);
     try {
-      let qs = `${alvo.filtro}&por=${encodeURIComponent(por ?? "")}`;
+      const p = new URLSearchParams(alvo.filtro);
+      p.set("por", por ?? "");
       if (zerarEfetivo) {
-        qs += "&zerar=1";
-        // kit: componente escolhido; simples: o próprio SKU (o servidor resolve)
-        if (ehKit && escolhido) qs += `&sku_zerar=${encodeURIComponent(escolhido)}`;
+        p.set("zerar", "1");
+        // kit: componente escolhido; simples: o próprio SKU (o servidor resolve).
+        // Multi SKU já manda sku_zerar = o item do pedido; no kit, troca pelo componente.
+        if (ehKit && escolhido) p.set("sku_zerar", escolhido);
       }
+      const qs = p.toString();
       const { resp, d } = await chamarFalta(qs);
       if (!resp.ok || !d.ok) throw new Error(d.erro ?? d.falhas?.[0] ?? `HTTP ${resp.status}`);
       const parcial = (d.aplicados ?? 0) < (d.pedidos_no_lote ?? 0);

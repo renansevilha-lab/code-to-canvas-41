@@ -32,6 +32,7 @@ import {
   type ItemMenu,
 } from "@/components/separacao/ui/kit";
 import { VisualNovoSep, confirmarSep, BotaoPm } from "@/components/separacao/ui/dialogos";
+import { FaltaEstoqueDialog, type AlvoFalta } from "@/components/separacao/FaltaEstoqueDialog";
 
 // ============================================================================
 // Separação de pedidos MULTI SKU (aba própria em /separacao, 16/set/2026).
@@ -250,6 +251,7 @@ export function MultiSkuPanel() {
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const [pedidosAbertos, setPedidosAbertos] = useState<Set<number>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set()); // chaves de combinação selecionadas
+  const [alvoFalta, setAlvoFalta] = useState<AlvoFalta | null>(null);
 
   // progresso (mesma barra da fila): enviando → impressora → concluído
   const [prog, setProg] = useState<{ etapa: string; etiquetas: number; fase: "enviando" | "impressora" | "concluido"; impressas?: number; pendentes?: number } | null>(null);
@@ -576,6 +578,19 @@ export function MultiSkuPanel() {
         { t: impressa(p) ? "Reimprimir (forçar)…" : "Imprimir só este", sub: impressa(p) ? "gera etiqueta em dobro" : undefined, perigo: impressa(p), disabled: ocupado, onClick: () => void imprimirUmPedido(p) },
         { t: "Marcar este embalado", sub: impressa(p) ? undefined : "imprima antes", disabled: ocupado || !impressa(p), onClick: () => void marcarEmbalado([p]) },
         { t: obs ? "Editar observação…" : "Observação…", onClick: () => { const chave = String(p.separacao_id); void editarObsSeparacao("pedido", chave, obs?.texto, perfil?.nome ?? null).then(recarregarObs); } },
+        ...p.itens.map((it) => ({
+          t: `Falta de estoque · ${it.sku}`,
+          sub: (it.nome ?? "").slice(0, 40) || undefined,
+          perigo: true,
+          disabled: ocupado,
+          onClick: () => setAlvoFalta({
+            filtro: `separacao_id=${p.separacao_id}&sku_zerar=${encodeURIComponent(it.sku)}`,
+            rotulo: `pedido ${p.numero_ecommerce ?? p.venda_numero ?? p.separacao_id} · ${it.sku}`,
+            sku: it.sku,
+            via: "menu_pedido",
+            log: { tag: p.tag_lote, order_sn: p.numero_ecommerce, separacao_id: p.separacao_id },
+          }),
+        })),
       ];
       return (
         <div key={p.separacao_id} style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center", padding: "6px 4px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
@@ -847,6 +862,8 @@ export function MultiSkuPanel() {
           )}
 
         {painel}
+        <FaltaEstoqueDialog alvo={alvoFalta} onClose={() => setAlvoFalta(null)} por={perfil?.nome ?? null}
+          onFeito={() => { void qc.invalidateQueries({ queryKey: ["separacao"] }); }} />
         {!painel && modo === "pedido" && sel.size > 0 && (
           <BarraSelecao
             rotulo="combinações"
