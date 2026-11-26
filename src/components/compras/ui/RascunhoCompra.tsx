@@ -1,6 +1,8 @@
 // Rascunho de ordem de compra criado por uma sugestão aprovada (Claude → compra_sugestao_aprovar).
 // Vive só no app (tiny_id negativo, numero 'SUG-<id>', kanban 'orcamento') e é editável aqui:
 // quantidade, preço, itens, previsão e observações. Ainda não vai ao Tiny (fase seguinte: "Enviar ao Tiny").
+// 26/nov/2026 (pedido do dono): "Pedido feito" / "Chegou no galpão" tiram o rascunho de orçamento (kanban aguardando /
+// conferencia) e ele passa a abrir na tela da ordem de sempre — vincular a NF, conferir, lançar estoque, contas e custo.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Plus, Trash2 } from "lucide-react";
@@ -139,6 +141,29 @@ export function RascunhoCompra({ tinyId, onVoltar }: { tinyId: number; onVoltar:
     if (error) toast.error("Falha ao salvar", { description: error.message });
   }
 
+  // Deixa de ser orçamento: o pedido foi feito ao fornecedor (sem passar pelo Tiny) ou a carga já chegou.
+  async function virarPedido(destino: "aguardando" | "conferencia") {
+    if (!ordem) return;
+    const ok = await confirmarSep(destino === "conferencia"
+      ? { kicker: rotuloOrdem(ordem), titulo: "A carga desta compra chegou no galpão?", resumo: "O rascunho vira ordem em conferência: abre na tela da ordem, onde dá para vincular a nota fiscal, contar a carga, lançar o estoque, as contas e o custo. Continua só no app (não cria ordem no Tiny).", okTxt: "Chegou, conferir" }
+      : { kicker: rotuloOrdem(ordem), titulo: "O pedido já foi feito ao fornecedor?", resumo: "O rascunho vira ordem aguardando a entrega: sai de Orçamentos, conta como compra a caminho e a nota fiscal pode ser vinculada quando chegar. Continua só no app (não cria ordem no Tiny).", okTxt: "Pedido feito" });
+    if (!ok) return;
+    setOcupado(true);
+    const agora = new Date().toISOString();
+    const nota = destino === "conferencia" ? "Rascunho virou ordem: carga chegou" : "Rascunho virou ordem: pedido feito ao fornecedor";
+    const { error } = await supabaseExternal.from("compras_ordens").update({
+      kanban_status: destino,
+      ...(destino === "conferencia" ? { conferencia_iniciada_em: agora, conferencia_iniciada_por: perfil?.nome ?? null } : {}),
+      observacao_recebimento: [ordem.observacao_recebimento?.trim(), `${nota}${perfil?.nome ? ` por ${perfil.nome}` : ""}`].filter(Boolean).join(" · "),
+      atualizado_em: agora,
+    }).eq("tiny_id", tinyId);
+    setOcupado(false);
+    if (error) { toast.error("Não consegui mudar a ordem", { description: error.message }); return; }
+    toast.success(destino === "conferencia" ? "Virou ordem em conferência" : "Virou ordem aguardando a entrega");
+    // o quadro relê e a mesma ordem passa a abrir na tela da ordem (deixou de ser rascunho)
+    void qc.invalidateQueries({ queryKey: ["compras"] });
+  }
+
   // Sai do quadro (exclusão lógica, como as outras ordens). "tiny" = a ordem foi digitada no Tiny e virá pelo sync.
   async function retirar(motivo: "descartar" | "tiny") {
     if (!ordem) return;
@@ -181,11 +206,14 @@ export function RascunhoCompra({ tinyId, onVoltar }: { tinyId: number; onVoltar:
           </div>
           <BotaoR tom="contorno" onClick={() => void imprimirOrdemCompra(tinyId).catch((e) => toast.error("Não deu para gerar o PDF", { description: (e as Error).message }))}
             title="Abre a ordem no modelo Bumi para imprimir ou salvar em PDF">Imprimir PDF</BotaoR>
+          <BotaoR tom="primario" disabled={ocupado} onClick={() => void virarPedido("conferencia")} title="A carga chegou: abre a conferência e libera vincular a nota fiscal">Chegou no galpão</BotaoR>
+          <BotaoR tom="contorno" disabled={ocupado} onClick={() => void virarPedido("aguardando")} title="O pedido foi feito ao fornecedor (sem lançar no Tiny): sai de Orçamentos e aguarda a entrega">Pedido feito</BotaoR>
           <BotaoR tom="contorno" disabled={ocupado} onClick={() => void retirar("tiny")} title="Use depois de digitar esta ordem no Tiny, para ela não aparecer duas vezes">Já lancei no Tiny</BotaoR>
           <BotaoR tom="perigo" disabled={ocupado} onClick={() => void retirar("descartar")}>Descartar</BotaoR>
         </div>
         <div style={{ ...mini, marginTop: 10 }}>
-          Este rascunho ainda <b>não está no Tiny</b>. Ajuste quantidades, preços e itens à vontade; o envio ao Tiny por aqui entra na próxima etapa.
+          Este rascunho ainda <b>não está no Tiny</b>. Ajuste quantidades, preços e itens à vontade. Pedido feito direto com o fornecedor: <b>Pedido feito</b>;
+          a carga chegou: <b>Chegou no galpão</b> (abre a conferência e libera vincular a nota). Digitou a ordem no Tiny: <b>Já lancei no Tiny</b>.
         </div>
       </section>
 

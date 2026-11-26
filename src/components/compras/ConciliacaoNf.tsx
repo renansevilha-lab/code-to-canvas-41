@@ -38,7 +38,11 @@ interface ItemConc {
   qtd_oc: number | null; qtd_nf: number | null; preco_oc: number | null; preco_nf: number | null;
   qtd_recebida: number | null; dif_qtd: number | null; dif_preco: number | null; situacao: string;
 }
-interface NfLivre { tiny_id: number; numero: string | null; data_emissao: string | null; valor: number | null; fornecedor_nome: string | null }
+interface NfLivre {
+  tiny_id: number; numero: string | null; data_emissao: string | null; valor: number | null; fornecedor_nome: string | null;
+  /** NF que o sistema casou SOZINHO com outra ordem (pode ser engano: ex. ordem antiga do mesmo fornecedor). */
+  outra_ordem?: { tiny_id: number; numero: string | null; aplicada: boolean } | null;
+}
 
 const NF_LIVRE_DIAS = 15;
 
@@ -100,8 +104,9 @@ export function ConciliacaoNf({ ordemTinyId, onAplicar }: { ordemTinyId: number;
       return (data ?? []) as ItemConc[];
     },
   });
-  // NF do mesmo fornecedor ainda sem OC (para vincular na mão) — só as dos
-  // últimos 15 dias: as antigas são de compras passadas e só poluíam a lista.
+  // NF do mesmo fornecedor para vincular na mão — só as dos últimos 15 dias: as antigas são de compras passadas.
+  // Entram as sem ordem E as que o sistema casou SOZINHO com outra ordem (26/nov/2026: a NF 017036 da Santa Lucia
+  // foi casada com a OC 749, antiga e concluída, enquanto a compra era o rascunho SUG-2). Casada à mão não entra.
   const livresQ = useQuery({
     queryKey: ["compras", "nf-livres", ordemTinyId],
     queryFn: async (): Promise<NfLivre[]> => {
@@ -109,12 +114,26 @@ export function ConciliacaoNf({ ordemTinyId, onAplicar }: { ordemTinyId: number;
       const fid = (oc as { fornecedor_id: number | null } | null)?.fornecedor_id;
       if (!fid) return [];
       const { data, error } = await supabaseExternal
-        .from("compras_nf_entrada").select("tiny_id, numero, data_emissao, valor, fornecedor_nome")
-        .eq("fornecedor_id", fid).is("ordem_tiny_id", null).eq("ignorar", false)
+        .from("compras_nf_entrada").select("tiny_id, numero, data_emissao, valor, fornecedor_nome, ordem_tiny_id, match_metodo")
+        .eq("fornecedor_id", fid).eq("ignorar", false)
+        .or(`ordem_tiny_id.is.null,and(match_metodo.like.auto*,ordem_tiny_id.neq.${ordemTinyId})`)
         .gte("data_emissao", toSPDateKey(new Date(Date.now() - NF_LIVRE_DIAS * 86_400_000)))
         .order("data_emissao", { ascending: false }).limit(10);
       if (error) throw error;
-      return (data ?? []) as NfLivre[];
+      const linhas = (data ?? []) as (NfLivre & { ordem_tiny_id: number | null; match_metodo: string | null })[];
+      const outras = [...new Set(linhas.map((l) => l.ordem_tiny_id).filter((x): x is number => x != null))];
+      if (!outras.length) return linhas.map((l) => ({ ...l, outra_ordem: null }));
+      const [ords, apl] = await Promise.all([
+        supabaseExternal.from("compras_ordens").select("tiny_id, numero").in("tiny_id", outras),
+        supabaseExternal.from("compra_ordem_nf_qtd").select("ordem_tiny_id, nf_numero").in("ordem_tiny_id", outras),
+      ]);
+      const numero = new Map(((ords.data ?? []) as { tiny_id: number; numero: string | null }[]).map((o) => [o.tiny_id, o.numero]));
+      const aplicadasOutra = new Set(((apl.data ?? []) as { ordem_tiny_id: number; nf_numero: string }[]).map((a) => `${a.ordem_tiny_id}|${normNf(a.nf_numero)}`));
+      return linhas.map((l) => ({
+        ...l,
+        outra_ordem: l.ordem_tiny_id == null ? null
+          : { tiny_id: l.ordem_tiny_id, numero: numero.get(l.ordem_tiny_id) ?? null, aplicada: aplicadasOutra.has(`${l.ordem_tiny_id}|${normNf(l.numero)}`) },
+      }));
     },
   });
 
@@ -256,13 +275,18 @@ export function ConciliacaoNf({ ordemTinyId, onAplicar }: { ordemTinyId: number;
 
       {livres.length > 0 && (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px] text-muted-foreground">NFs deste fornecedor sem ordem vinculada (últimos {NF_LIVRE_DIAS} dias):</span>
+          <span className="text-[11px] text-muted-foreground">NFs deste fornecedor para vincular (últimos {NF_LIVRE_DIAS} dias):</span>
           {livres.map((nf) => (
             <div key={nf.tiny_id} className="flex items-center justify-between gap-2 text-xs rounded border border-dashed px-2 py-1">
               <span>
                 NF <span className="font-semibold">{nf.numero}</span> · {nf.data_emissao ? nf.data_emissao.split("-").reverse().join("/") : "—"} · {formatBRL(Number(nf.valor ?? 0))}
+                {nf.outra_ordem && (
+                  <span className="text-amber-700 dark:text-amber-400"> · casada pelo sistema com a ordem {nf.outra_ordem.numero ?? nf.outra_ordem.tiny_id}{nf.outra_ordem.aplicada ? " (já aplicada lá)" : ""}</span>
+                )}
               </span>
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={vinculando === nf.tiny_id} onClick={() => void vincular(nf.tiny_id)}>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={vinculando === nf.tiny_id || !!nf.outra_ordem?.aplicada}
+                title={nf.outra_ordem?.aplicada ? "As quantidades desta NF já valem na conferência da outra ordem: abra a outra ordem e desvincule lá primeiro" : nf.outra_ordem ? "Tira a NF da outra ordem e vincula a esta" : undefined}
+                onClick={() => void vincular(nf.tiny_id)}>
                 {vinculando === nf.tiny_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />} vincular
               </Button>
             </div>
