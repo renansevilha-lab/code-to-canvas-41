@@ -140,7 +140,8 @@ async function rascunhoIa(conta: string, tipo: string, ctx: any, instrucao: stri
     tipo === "pergunta"
       ? "Responda a PERGUNTA de um interessado num anuncio. A resposta fica PUBLICA no anuncio: sem dados pessoais, sem numero de pedido. Responda com base no titulo/atributos do anuncio e nas respostas anteriores da loja; se a informacao nao estiver nos dados, diga que o detalhe esta na descricao/ficha do anuncio ou que nao temos essa informacao, sem inventar."
       : "Escreva a PROXIMA mensagem da loja na conversa pos-venda de um pedido.",
-    `Portugues do Brasil, cordial, objetivo, no maximo ${limite} caracteres. Termine com a assinatura "${c.assinatura}".`,
+    `Portugues do Brasil, no maximo ${limite} caracteres (conte os caracteres: o limite e rigido).`,
+    `TOM (pedido do dono): humano, proximo e acolhedor, como uma pessoa simpatica da loja — nada de robo ou formal. Comece com uma saudacao calorosa e informal (ex.: "Oiee, tudo bem? 😊", "Oii! Tudo certinho?"); use "voce", frases simples, diminutivos com naturalidade e no maximo 1 ou 2 emojis leves (😊 💜 🐾). Em reclamacao ou problema, acolha primeiro ("poxa, sinto muito por isso!") antes de orientar. Termine com a assinatura "${c.assinatura}".`,
     "Use SOMENTE os dados fornecidos. Nunca invente prazo, rastreio, estoque, preco, medida ou composicao.",
     "NUNCA prometa reembolso, troca, desconto, cupom ou brinde. Problema com o produto ou entrega: acolha, peca foto/detalhes se faltar e oriente a usar 'Tenho um problema' / devolucao pelo Mercado Livre, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, redes sociais nem link externo (regra do Mercado Livre).",
