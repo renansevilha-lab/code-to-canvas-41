@@ -1,0 +1,14 @@
+-- Produtos fora do valor de estoque e dos relatórios de estoque/compras (26/nov/2026, pedido do dono):
+-- saldo lançado no Tiny só para o pedido conseguir sair; não é estoque de verdade.
+-- Tabela public.estoque_ignorar (sku, motivo, por, em). Para tirar outro produto:
+--   insert into estoque_ignorar (sku, motivo, por) values ('<sku>', '<motivo>', '<quem>');
+--   refresh materialized view mv_estoque_valor; refresh materialized view ads_cobertura_sku;
+-- Para voltar: delete from estoque_ignorar where sku = '<sku>'; e os dois refresh.
+-- Onde o filtro foi posto (migração estoque_ignorar, por troca do fim da definição):
+--   view_cobertura_fornecedor: "FROM base b WHERE NOT (b.sku IN (SELECT sku FROM estoque_ignorar))"
+--     -> relatório de compras, sugestão de compra, ads_cobertura_sku, filtro de estoque parado, coordenador
+--   mv_estoque_valor: "... AND NOT (t.sku IN (SELECT sku FROM estoque_ignorar))"
+--     -> Dashboard (posição da empresa), Painel financeiro e Balanço
+-- Rollback: as definições de antes estão em _bkp_defs_estoque_ignorar_26nov (nome, def);
+--   recriar as duas com elas (a MV com o índice único mv_estoque_valor_sku e grant select a
+--   authenticated/service_role) e drop table estoque_ignorar.
