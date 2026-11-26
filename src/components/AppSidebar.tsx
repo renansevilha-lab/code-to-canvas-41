@@ -7,7 +7,6 @@ import {
   Megaphone,
   Wallet,
   TrendingUp,
-  Package,
   LayoutDashboard,
   Receipt,
   ClipboardCheck,
@@ -107,20 +106,6 @@ export const NAV_GROUPS: NavGroup[] = [
           { nome: "Manual de Operação", url: "/processos" },
           { nome: "Rotinas da Operação", url: "/rotinas" },
           { nome: "Registro de horas", url: "/registro-horas" },
-        ],
-      },
-    ],
-  },
-  {
-    label: "Produtos",
-    cor: "#FB923C",
-    items: [
-      {
-        title: "Produtos", url: "/produtos", icon: Package, modulo: "produtos",
-        abas: [
-          { nome: "Catálogo", url: "/produtos" },
-          { nome: "Margem", url: "/produtos-margem" },
-          { nome: "Mapeamento SKUs", url: "/mapeamento-skus" },
         ],
       },
     ],

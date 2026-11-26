@@ -566,7 +566,7 @@ function Dashboard() {
   if (anomCmvMaior.count > 0)
     anomalias.push({ cor: "destructive", to: "/anomalias", titulo: `${anomCmvMaior.count} pedidos com custo maior que a venda`, detalhe: "Margem negativa — revisar cadastro ou preço" });
   if (alertaPrejuizo > 0)
-    anomalias.push({ cor: "destructive", to: "/produtos-margem", titulo: `${alertaPrejuizo} produtos ficam negativos com o ADS`, detalhe: "O gasto de anúncio come toda a margem" });
+    anomalias.push({ cor: "destructive", to: "/ads-shopee", titulo: `${alertaPrejuizo} produtos ficam negativos com o ADS`, detalhe: "O gasto de anúncio come toda a margem" });
   if (anomSemRecebido.count > 0)
     anomalias.push({ cor: "warning", to: "/anomalias", titulo: `${anomSemRecebido.count} pedidos sem repasse informado`, detalhe: "Aguardando conciliação do marketplace" });
   if (alertaAcos > 0)

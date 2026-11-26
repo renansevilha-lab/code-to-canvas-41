@@ -60,9 +60,9 @@ const TIPO_ACAO: Record<
   string,
   { label: string; to: string } | null
 > = {
-  sku_sem_custo: { label: "Cadastrar custo", to: "/produtos" },
+  sku_sem_custo: { label: "Ver produtos", to: "/ia/anuncios" },
   sku_sem_cadastro: { label: "Mapear SKU", to: "/mapeamento-skus" },
-  preco_abaixo_custo: { label: "Ver produto", to: "/produtos-margem" },
+  preco_abaixo_custo: { label: "Ver produtos", to: "/ia/anuncios" },
   sem_cmv: { label: "Ver pedido", to: "/pedidos-integrados" },
   cmv_maior_que_receita: { label: "Ver pedido", to: "/pedidos-integrados" },
   prejuizo_extremo: { label: "Ver pedido", to: "/pedidos-integrados" },

@@ -189,7 +189,7 @@ function GerarAnuncioPage() {
   if (!sku) {
     return (
       <div className="p-6 md:p-10 max-w-3xl mx-auto">
-        <p className="text-muted-foreground">Escolha um produto no <Link to="/produtos" className="underline">Catálogo</Link> ou em <Link to="/ia/anuncios" search={{ ver: "produtos" }} className="underline">Anúncios</Link>.</p>
+        <p className="text-muted-foreground">Escolha um produto em <Link to="/ia/anuncios" search={{ ver: "produtos" }} className="underline">Anúncios</Link>.</p>
       </div>
     );
   }

@@ -151,7 +151,7 @@ export function primeiraRotaPermitida(modulos: string[]): string {
     ["galpao", "/processos"],
     ["separacao", "/pedidos-integrados"],
     ["financeiro", "/dre"],
-    ["produtos", "/produtos-margem"],
+    ["produtos", "/amazon"],
     ["ads", "/ads-shopee"],
     ["devolucoes", "/devolucoes"],
     ["ia", "/ia/anuncios"],
