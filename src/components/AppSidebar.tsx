@@ -98,7 +98,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Compras & Recebimento", url: "/compras", icon: PackagePlus, modulo: "galpao" },
       { title: "Produção", url: "/producao", icon: Factory, modulo: "galpao" },
       { title: "Devoluções", url: "/devolucoes", icon: RotateCcw, modulo: "devolucoes" },
-      { title: "Atendimento Shopee", url: "/atendimento-shopee", icon: MessageCircle, modulo: "devolucoes" },
+      { title: "Central de Atendimento", url: "/atendimento", icon: MessageCircle, modulo: "devolucoes" },
       {
         title: "Equipe", url: "/processos", icon: ClipboardCheck, modulo: "galpao",
         abas: [

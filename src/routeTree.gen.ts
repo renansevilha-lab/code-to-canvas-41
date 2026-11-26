@@ -17,6 +17,7 @@ import { Route as AdsShopeeRouteImport } from './routes/ads-shopee'
 import { Route as AfiliadosTiktokRouteImport } from './routes/afiliados-tiktok'
 import { Route as AmazonRouteImport } from './routes/amazon'
 import { Route as AnomaliasRouteImport } from './routes/anomalias'
+import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AtendimentoShopeeRouteImport } from './routes/atendimento-shopee'
 import { Route as CarteiraRouteImport } from './routes/carteira'
 import { Route as CarteiraSaldosRouteImport } from './routes/carteira-saldos'
@@ -96,6 +97,11 @@ const AmazonRoute = AmazonRouteImport.update({
 const AnomaliasRoute = AnomaliasRouteImport.update({
   id: '/anomalias',
   path: '/anomalias',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtendimentoRoute = AtendimentoRouteImport.update({
+  id: '/atendimento',
+  path: '/atendimento',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AtendimentoShopeeRoute = AtendimentoShopeeRouteImport.update({
@@ -308,6 +314,7 @@ export interface FileRoutesByFullPath {
   '/afiliados-tiktok': typeof AfiliadosTiktokRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
+  '/atendimento': typeof AtendimentoRoute
   '/atendimento-shopee': typeof AtendimentoShopeeRoute
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
@@ -358,6 +365,7 @@ export interface FileRoutesByTo {
   '/afiliados-tiktok': typeof AfiliadosTiktokRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
+  '/atendimento': typeof AtendimentoRoute
   '/atendimento-shopee': typeof AtendimentoShopeeRoute
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
@@ -409,6 +417,7 @@ export interface FileRoutesById {
   '/afiliados-tiktok': typeof AfiliadosTiktokRoute
   '/amazon': typeof AmazonRoute
   '/anomalias': typeof AnomaliasRoute
+  '/atendimento': typeof AtendimentoRoute
   '/atendimento-shopee': typeof AtendimentoShopeeRoute
   '/carteira': typeof CarteiraRoute
   '/carteira-saldos': typeof CarteiraSaldosRoute
@@ -461,6 +470,7 @@ export interface FileRouteTypes {
     | '/afiliados-tiktok'
     | '/amazon'
     | '/anomalias'
+    | '/atendimento'
     | '/atendimento-shopee'
     | '/carteira'
     | '/carteira-saldos'
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/afiliados-tiktok'
     | '/amazon'
     | '/anomalias'
+    | '/atendimento'
     | '/atendimento-shopee'
     | '/carteira'
     | '/carteira-saldos'
@@ -561,6 +572,7 @@ export interface FileRouteTypes {
     | '/afiliados-tiktok'
     | '/amazon'
     | '/anomalias'
+    | '/atendimento'
     | '/atendimento-shopee'
     | '/carteira'
     | '/carteira-saldos'
@@ -612,6 +624,7 @@ export interface RootRouteChildren {
   AfiliadosTiktokRoute: typeof AfiliadosTiktokRoute
   AmazonRoute: typeof AmazonRoute
   AnomaliasRoute: typeof AnomaliasRoute
+  AtendimentoRoute: typeof AtendimentoRoute
   AtendimentoShopeeRoute: typeof AtendimentoShopeeRoute
   CarteiraRoute: typeof CarteiraRoute
   CarteiraSaldosRoute: typeof CarteiraSaldosRoute
@@ -710,6 +723,13 @@ declare module '@tanstack/react-router' {
       path: '/anomalias'
       fullPath: '/anomalias'
       preLoaderRoute: typeof AnomaliasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atendimento': {
+      id: '/atendimento'
+      path: '/atendimento'
+      fullPath: '/atendimento'
+      preLoaderRoute: typeof AtendimentoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/atendimento-shopee': {
@@ -1004,6 +1024,7 @@ const rootRouteChildren: RootRouteChildren = {
   AfiliadosTiktokRoute: AfiliadosTiktokRoute,
   AmazonRoute: AmazonRoute,
   AnomaliasRoute: AnomaliasRoute,
+  AtendimentoRoute: AtendimentoRoute,
   AtendimentoShopeeRoute: AtendimentoShopeeRoute,
   CarteiraRoute: CarteiraRoute,
   CarteiraSaldosRoute: CarteiraSaldosRoute,
