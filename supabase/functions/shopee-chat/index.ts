@@ -1,5 +1,9 @@
 // ============================================================================
-// Edge Function: shopee-chat v4 — chat com compradores Shopee
+// Edge Function: shopee-chat v5 — chat com compradores Shopee
+// v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
+//   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
+//   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
+//   logado; grava shopee_chat_respostas com a sugestao e se foi editada).
 // ----------------------------------------------------------------------------
 // v4 (26/nov): LEITURA do chat para a futura caixa de atendimento (respostas
 //   pela IA). So leitura, nada e enviado:
@@ -116,6 +120,103 @@ function papelDoJwt(req: Request): string {
     const p = tk.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     return String(JSON.parse(atob(p + "===".slice((p.length + 3) % 4))).role || "");
   } catch { return ""; }
+}
+
+function emailDoJwt(req: Request): string | null {
+  const tk = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  try {
+    const p = tk.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const j = JSON.parse(atob(p + "===".slice((p.length + 3) % 4)));
+    return j.email || j.sub || null;
+  } catch { return null; }
+}
+
+const ASSINATURA: Record<string, string> = { ottz: "Equipe Ottz", svl: "Equipe Bumi" };
+const MARCA: Record<string, string> = { ottz: "Ottz Pet", svl: "Bumi Pet" };
+
+// Tudo o que a IA precisa saber para responder: ultimas mensagens, pedidos
+// citados na conversa (status/prazo/rastreio ao vivo) e o produto de origem.
+async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: string) {
+  const r = await shopeeGetIdsTexto(a, "/api/v2/sellerchat/get_message", { conversation_id: conversa, page_size: "30" });
+  if (r.body?.error) return { erro: `${r.body.error} ${r.body.message || ""}`.trim() } as any;
+  const msgs = (r.body?.response?.messages || []).slice().reverse(); // mais antigo -> mais novo
+  let compradorId: string | null = null;
+  const orderSns = new Set<string>(); const itemIds = new Set<string>();
+  const historico: { de: string; texto: string; em: string }[] = [];
+  for (const m of msgs) {
+    const deNos = m.from_shop_id != null && String(m.from_shop_id) === String(shopId);
+    if (!deNos && m.from_id != null) compradorId = String(m.from_id);
+    if (deNos && m.to_id != null && !compradorId) compradorId = String(m.to_id);
+    const sn = m.source_content?.order_sn || (m.message_type === "order" ? m.content?.order_sn : null);
+    if (sn) orderSns.add(String(sn));
+    const it = m.source_content?.item_id || ((m.message_type === "item" || m.message_type === "product") ? m.content?.item_id : null);
+    if (it) itemIds.add(String(it));
+    const txt = resumoConteudo(m.message_type, m.content);
+    // texto livre do cliente com numero de pedido Shopee (ex. 2611269XC0AD13)
+    for (const x of (txt.match(/\b\d{6}[0-9A-Z]{8}\b/g) || [])) orderSns.add(x);
+    if (txt) historico.push({ de: deNos ? (m.source === "openapi" ? "loja (sistema)" : m.source === "server" ? "Shopee (automatico)" : "loja") : "cliente",
+      texto: txt.slice(0, 600), em: m.created_timestamp ? new Date(Number(m.created_timestamp) * 1000).toISOString() : "" });
+  }
+  const pedidos: any[] = [];
+  const sns = [...orderSns].slice(-5);
+  if (sns.length) {
+    const d = await shopeeGet(a, "/api/v2/order/get_order_detail", {
+      order_sn_list: sns.join(","), response_optional_fields: "item_list,shipping_carrier,ship_by_date,days_to_ship,pay_time",
+    });
+    for (const o of (d.body?.response?.order_list || [])) {
+      const { data: pt } = await sb.from("pedidos_tiny").select("situacao, codigo_rastreamento").eq("numero_ecommerce", o.order_sn).limit(1).maybeSingle();
+      const { data: dv } = await sb.from("shopee_devolucoes").select("status, reason, solucao, ida_status").eq("order_sn", o.order_sn).limit(1).maybeSingle();
+      pedidos.push({
+        pedido: o.order_sn, status_shopee: o.order_status, transportadora: o.shipping_carrier ?? null,
+        criado: o.create_time ? new Date(o.create_time * 1000).toISOString().slice(0, 10) : null,
+        enviar_ate: o.ship_by_date ? new Date(o.ship_by_date * 1000).toISOString().slice(0, 10) : null,
+        itens: (o.item_list || []).map((i: any) => `${i.model_quantity_purchased ?? 1}x ${i.item_name}${i.model_name ? ` (${i.model_name})` : ""}`),
+        situacao_no_galpao: pt?.situacao ?? null, rastreio: pt?.codigo_rastreamento ?? null,
+        devolucao: dv ? { status: dv.status, motivo: dv.reason, solucao: dv.solucao === 1 ? "so reembolso" : dv.solucao === 0 ? "devolver o produto" : null, entrega_ida: dv.ida_status } : null,
+      });
+    }
+  }
+  const produtos: any[] = [];
+  const its = [...itemIds].slice(-3);
+  if (its.length) {
+    const { data } = await sb.from("shopee_anuncios").select("item_id, nome, preco_min, preco_max, estoque_total, status").in("item_id", its.map(Number));
+    for (const x of (data || [])) produtos.push({ anuncio: String(x.item_id), nome: x.nome, preco: x.preco_min === x.preco_max ? x.preco_min : `${x.preco_min} a ${x.preco_max}`, estoque: x.estoque_total, situacao: x.status });
+  }
+  return { comprador_id: compradorId, historico: historico.slice(-20), pedidos, produtos };
+}
+
+async function rascunhoIa(loja: string, ctx: any, instrucao: string) {
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  if (!key) return { erro: "OPENAI_API_KEY nao cadastrada" };
+  const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
+  const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const sistema = [
+    `Voce atende clientes da loja ${MARCA[loja]} no chat da Shopee Brasil (pet shop: areia para gatos, higiene e acessorios pet). Hoje e ${hoje}.`,
+    `Escreva a PROXIMA resposta da loja, em portugues do Brasil, cordial, curta (ate 4 frases) e objetiva. Termine sempre com a assinatura "${ASSINATURA[loja]}".`,
+    "Use SOMENTE os dados fornecidos (pedidos, rastreio, produto). Nunca invente prazo, status, rastreio, preco ou estoque.",
+    "NUNCA prometa reembolso, troca, desconto, brinde, cupom nem devolucao de dinheiro. Para problema com o produto ou entrega, peca foto/detalhes se faltar e oriente o cliente a abrir 'Devolucao/Reembolso' pelo app da Shopee, dizendo que a equipe analisa com prioridade.",
+    "Nunca passe telefone, WhatsApp, e-mail, link externo nem peca para comprar fora da Shopee (regra da Shopee).",
+    "Se faltar o numero do pedido e ele for necessario, peca. Se o pedido ainda nao foi enviado e esta no prazo, diga que esta sendo preparado e informe a data limite de envio.",
+    "Se a pergunta exigir decisao humana (reclamacao grave, ameaca, pedido de reembolso, produto errado/quebrado, assunto que os dados nao respondem), marque precisa_humano=true e ainda assim escreva uma resposta segura de acolhimento.",
+    'Responda APENAS um JSON: {"resposta": "...", "precisa_humano": true|false, "motivo": "frase curta para a equipe"}.',
+  ].join("\n");
+  const usuario = JSON.stringify({ conversa: ctx.historico, pedidos: ctx.pedidos, produtos: ctx.produtos, instrucao_da_equipe: instrucao || null });
+  let r: Response;
+  try {
+    r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelo, messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }],
+        response_format: { type: "json_object" }, max_completion_tokens: 4000, reasoning_effort: "low" }),
+    });
+  } catch (e) { return { erro: `OpenAI: ${(e as Error).message}` }; }
+  const t = await r.text();
+  if (!r.ok) return { erro: `OpenAI ${r.status}: ${t.slice(0, 200)}` };
+  try {
+    const j = JSON.parse(t);
+    const out = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+    return { sugestao: String(out.resposta || "").trim(), precisa_humano: !!out.precisa_humano, motivo: out.motivo || null, modelo };
+  } catch { return { erro: "resposta da IA fora do formato" }; }
 }
 
 // Texto legivel de qualquer tipo de mensagem (texto, pedido, produto, imagem...).
@@ -249,6 +350,49 @@ serve(async (req) => {
       mais: !!resp.page_result?.next_offset,
       proximo_offset: resp.page_result?.next_offset ?? null,
     });
+  }
+
+  // ---- v5: rascunho pela IA e resposta numa conversa ----
+  if (modulo === "sugerir" || modulo === "responder") {
+    const papel = papelDoJwt(req);
+    // ensaio do rascunho sem login (so `sugerir`: le e escreve rascunho, nunca envia); expira 27/nov 03:00 UTC
+    const ensaio = modulo === "sugerir" && p("chave") === "chat-ensaio-26nov-q8" && Date.now() < Date.parse("2026-11-27T03:00:00Z");
+    if (!ensaio && !["authenticated", "service_role"].includes(papel)) return json({ erro: "exige login" }, 401);
+    const nome = (p("loja") || "ottz").toLowerCase();
+    const l = LOJAS[nome];
+    if (!l) return json({ erro: "loja deve ser ottz ou svl" }, 400);
+    const conversa = (p("conversa") || "").trim();
+    if (!/^\d+$/.test(conversa)) return json({ erro: "informe conversa (conversation_id)" }, 400);
+    let a: Auth;
+    try { a = await authDaLoja(sb, l.shop_id); } catch (e) { return json({ erro: (e as Error).message }, 500); }
+
+    if (modulo === "sugerir") {
+      const ctx = await contextoDaConversa(sb, a, l.shop_id, conversa);
+      if (ctx.erro) return json({ modulo, erro: ctx.erro }, 502);
+      const instrucao = (p("instrucao") || "").trim().slice(0, 500);
+      const r = await rascunhoIa(nome, ctx, instrucao);
+      return json({ modulo, loja: nome, conversa, ...r, contexto: { pedidos: ctx.pedidos, produtos: ctx.produtos, comprador_id: ctx.comprador_id } });
+    }
+
+    // responder
+    const texto = (p("texto") || "").trim();
+    const compradorId = (p("comprador_id") || "").trim();
+    if (!texto) return json({ erro: "informe o texto" }, 400);
+    if (texto.length > 1000) return json({ erro: "texto passa de 1000 caracteres" }, 400);
+    if (!/^\d+$/.test(compradorId)) return json({ erro: "informe comprador_id" }, 400);
+    if (papel !== "authenticated") return json({ erro: "envio so por usuario logado" }, 401);
+    if (p("confirmar") !== "1") return json({ modulo, dry: true, loja: nome, conversa, comprador_id: compradorId, texto, aviso: "repita com confirmar=1 para ENVIAR" });
+    const r = await shopeePost(a, "/api/v2/sellerchat/send_message", { to_id: Number(compradorId), message_type: "text", content: { text: texto } });
+    const ok = !r.body?.error;
+    const sugestao = p("sugestao_ia");
+    await sb.from("shopee_chat_respostas").insert({
+      loja: nome, shop_id: l.shop_id, conversation_id: conversa, comprador_id: compradorId, texto,
+      sugestao_ia: sugestao, editado: sugestao == null ? null : sugestao.trim() !== texto,
+      ok, message_id: r.body?.response?.message_id != null ? String(r.body.response.message_id) : null,
+      resposta: r.body ?? null, por: p("por") || emailDoJwt(req),
+    });
+    if (!ok) return json({ modulo, ok: false, erro: r.body?.error, msg: r.body?.message || null }, 502);
+    return json({ modulo, ok: true, loja: nome, conversa });
   }
 
   // ---- alvo: por TAG (lote) ou por lista de pedidos (grupo da fila) ----
