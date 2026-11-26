@@ -362,7 +362,7 @@ export function PainelFinanceiro() {
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {(c.receber_por ?? []).map((x) => <Linha key={x.carteira} nome={x.carteira} nota={`${x.pedidos ?? 0} pedidos · ${x.estimado ? "estimativa" : "data real de liberação"}`} valor={L(n(x.valor))} />)}
           <Linha forte nome="A receber" nota={ci.receber_dias != null ? `≈ ${ci.receber_dias} dias de repasse` : undefined} valor={L(c.receber)} />
-          <Link to="/carteira" style={{ fontSize: 12, fontWeight: 500, color: "var(--pm-at)", textDecoration: "none", padding: "6px 8px" }}>Abrir a Carteira ›</Link>
+          <Link to="/fluxo-caixa" style={{ fontSize: 12, fontWeight: 500, color: "var(--pm-at)", textDecoration: "none", padding: "6px 8px" }}>Abrir o Fluxo de Caixa ›</Link>
         </div>
       );
       case "estoque": return <EstoqueDetalhe />;

@@ -201,7 +201,7 @@ export function PosicaoEmpresa({ tick = 0 }: { tick?: number }) {
                     cobre {pct((caixa.ok.valor / pagar.ok.d30.valor) * 100)} das contas dos próximos 30 dias
                   </span>
                 )}
-                <IrPara to="/carteira">Carteira</IrPara>
+                <IrPara to="/fluxo-caixa">Fluxo de caixa</IrPara>
               </>
             )}
         </div>

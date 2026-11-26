@@ -10,7 +10,6 @@ import {
   Package,
   LayoutDashboard,
   Receipt,
-  ClipboardList,
   ClipboardCheck,
   Boxes,
   PackageCheck,
@@ -32,6 +31,10 @@ import {
   Sparkles,
   Wand2,
   Star,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
   type LucideIcon,
 } from "lucide-react";
 import { usePerfil } from "@/hooks/usePerfil";
@@ -77,7 +80,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Pedidos & Operação",
     cor: "#FBBF24",
     items: [
-      { title: "Pedidos", url: "/pedidos", icon: ClipboardList, modulo: "separacao" },
       { title: "Pedidos Integrados", url: "/pedidos-integrados", icon: Boxes, modulo: "separacao" },
       {
         title: "Separação", url: "/separacao", icon: PackageCheck, modulo: "galpao",
@@ -151,13 +153,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
       { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },
       { title: "Reprocessar CMV", url: "/reprocessar-cmv", icon: Calculator, modulo: "financeiro" },
-      {
-        title: "Carteira", url: "/carteira", icon: Wallet, modulo: "financeiro",
-        abas: [
-          { nome: "Carteira", url: "/carteira" },
-          { nome: "Saldos MKT", url: "/carteira-saldos" },
-        ],
-      },
     ],
   },
   {
@@ -186,6 +181,40 @@ export const NAV_GROUPS: NavGroup[] = [
 const CHAVE_GRUPOS = "menu.gruposAbertos";
 const CHAVE_FAVORITOS = "menu.favoritos";
 const COR_FAVORITOS = "#FACC15";
+const CHAVE_ORDEM = "menu.ordem";
+
+// Ordem do menu escolhida pela pessoa (26/nov/2026, pedido do dono): grupos e itens
+// arrastáveis, item pode ir para outro grupo. Fica neste navegador, como os favoritos.
+type OrdemMenu = { grupos: string[]; itens: Record<string, string[]> };
+
+function aplicarOrdem(ordem: OrdemMenu | null): NavGroup[] {
+  if (!ordem) return NAV_GROUPS;
+  const porUrl = new Map<string, NavItem>();
+  NAV_GROUPS.forEach((g) => g.items.forEach((it) => porUrl.set(it.url, it)));
+  const usados = new Set<string>();
+  const labels = [
+    ...ordem.grupos.filter((l) => NAV_GROUPS.some((g) => g.label === l)),
+    ...NAV_GROUPS.map((g) => g.label).filter((l) => !ordem.grupos.includes(l)),
+  ];
+  const grupos = labels.map((l) => {
+    const base = NAV_GROUPS.find((g) => g.label === l)!;
+    const items: NavItem[] = [];
+    for (const u of ordem.itens[l] ?? []) {
+      const it = porUrl.get(u);
+      if (it && !usados.has(u)) { items.push(it); usados.add(u); }
+    }
+    return { ...base, items };
+  });
+  // item novo (ou que não estava na ordem salva) fica no grupo de origem, no fim
+  NAV_GROUPS.forEach((g) => g.items.forEach((it) => {
+    if (!usados.has(it.url)) grupos.find((x) => x.label === g.label)!.items.push(it);
+  }));
+  return grupos;
+}
+const ordemDe = (gs: NavGroup[]): OrdemMenu => ({
+  grupos: gs.map((g) => g.label),
+  itens: Object.fromEntries(gs.map((g) => [g.label, g.items.map((it) => it.url)])),
+});
 
 type Local = { grupo: NavGroup; item: NavItem; aba: NavAba | null };
 
@@ -269,11 +298,17 @@ export function AppSidebar() {
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
   const [favoritos, setFavoritos] = useState<string[]>([]);
   const [carregado, setCarregado] = useState(false);
+  const [ordem, setOrdem] = useState<OrdemMenu | null>(null);
+  const [organizando, setOrganizando] = useState(false);
+  const [arrastando, setArrastando] = useState<{ tipo: "grupo" | "item"; id: string } | null>(null);
+  const [sobre, setSobre] = useState<string | null>(null);
   useEffect(() => {
     const g = lerLocal<Record<string, boolean>>(CHAVE_GRUPOS, {});
     const f = lerLocal<string[]>(CHAVE_FAVORITOS, []);
     setAbertos(g && typeof g === "object" ? g : {});
     setFavoritos(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
+    const o = lerLocal<OrdemMenu | null>(CHAVE_ORDEM, null);
+    setOrdem(o && Array.isArray(o.grupos) && o.itens && typeof o.itens === "object" ? o : null);
     setCarregado(true);
   }, []);
   const local = localizarRota(currentPath);
@@ -288,6 +323,58 @@ export function AppSidebar() {
   useEffect(() => {
     if (carregado) gravarLocal(CHAVE_FAVORITOS, favoritos);
   }, [favoritos, carregado]);
+  const grupos = aplicarOrdem(ordem);
+  const salvarOrdem = (gs: NavGroup[]) => {
+    const o = ordemDe(gs);
+    setOrdem(o);
+    gravarLocal(CHAVE_ORDEM, o);
+  };
+  const restaurarOrdem = () => {
+    setOrdem(null);
+    try { localStorage.removeItem(CHAVE_ORDEM); } catch { /* sem armazenamento */ }
+  };
+  const moverGrupo = (label: string, destino: number) => {
+    const gs = [...grupos];
+    const i = gs.findIndex((g) => g.label === label);
+    if (i < 0 || destino < 0 || destino >= gs.length || i === destino) return;
+    const [g] = gs.splice(i, 1);
+    gs.splice(destino, 0, g);
+    salvarOrdem(gs);
+  };
+  /** Leva o item ao grupo `paraGrupo`, antes do item `antesDe` (null = no fim). */
+  const moverItem = (url: string, paraGrupo: string, antesDe: string | null) => {
+    if (url === antesDe) return;
+    const gs = grupos.map((g) => ({ ...g, items: [...g.items] }));
+    let item: NavItem | undefined;
+    for (const g of gs) {
+      const i = g.items.findIndex((it) => it.url === url);
+      if (i >= 0) [item] = g.items.splice(i, 1);
+    }
+    const alvo = gs.find((g) => g.label === paraGrupo);
+    if (!item || !alvo) return;
+    const j = antesDe ? alvo.items.findIndex((it) => it.url === antesDe) : -1;
+    if (j >= 0) alvo.items.splice(j, 0, item); else alvo.items.push(item);
+    salvarOrdem(gs);
+  };
+  const subirDescerItem = (url: string, delta: number) => {
+    const gs = grupos.map((x) => ({ ...x, items: [...x.items] }));
+    const g = gs.find((x) => x.items.some((it) => it.url === url));
+    if (!g) return;
+    const i = g.items.findIndex((it) => it.url === url);
+    const j = i + delta;
+    if (j < 0 || j >= g.items.length) return;
+    [g.items[i], g.items[j]] = [g.items[j], g.items[i]];
+    salvarOrdem(gs);
+  };
+  const soltar = (alvoGrupo: string, antesDe: string | null) => {
+    const a = arrastando;
+    setArrastando(null);
+    setSobre(null);
+    if (!a) return;
+    if (a.tipo === "item") moverItem(a.id, alvoGrupo, antesDe);
+    else moverGrupo(a.id, grupos.findIndex((g) => g.label === alvoGrupo));
+  };
+
   const alternarFavorito = (url: string) =>
     setFavoritos((f) => (f.includes(url) ? f.filter((x) => x !== url) : [...f, url]));
 
@@ -317,10 +404,37 @@ export function AppSidebar() {
   const iniciais = (email.split("@")[0] || "?").slice(0, 2).toUpperCase();
 
   // favoritos na ordem em que foram marcados, só os que a pessoa pode abrir
-  const todos = NAV_GROUPS.flatMap((g) => g.items.map((it) => ({ it, cor: g.cor })));
+  const todos = grupos.flatMap((g) => g.items.map((it) => ({ it, cor: g.cor })));
   const favs = favoritos
     .map((u) => todos.find((x) => x.it.url === u))
     .filter((x): x is { it: NavItem; cor: string } => !!x && temAcesso(x.it.modulo));
+
+  const botaoSeta = "p-0.5 rounded hover:bg-[var(--sb-hv)] disabled:opacity-25 text-[color:var(--sb-txt2)]";
+  const linhaOrganizar = (it: NavItem, g: NavGroup, idx: number, total: number) => (
+    <div
+      key={"o:" + it.url}
+      draggable
+      onDragStart={(e) => { e.stopPropagation(); setArrastando({ tipo: "item", id: it.url }); e.dataTransfer.effectAllowed = "move"; }}
+      onDragEnd={() => { setArrastando(null); setSobre(null); }}
+      onDragOver={(e) => { if (arrastando?.tipo === "item") { e.preventDefault(); e.stopPropagation(); setSobre("i:" + it.url); } }}
+      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); soltar(g.label, it.url); }}
+      className={cn(
+        "flex items-center gap-2 px-2 py-1.5 rounded-[9px] text-[13px] text-[color:var(--sb-txt)] cursor-grab active:cursor-grabbing border-t-2 border-transparent",
+        sobre === "i:" + it.url && arrastando?.id !== it.url && "border-[color:var(--sb-txt)]",
+        arrastando?.id === it.url && "opacity-40",
+      )}
+    >
+      <GripVertical className="h-3.5 w-3.5 shrink-0 text-[color:var(--sb-txt2)]" />
+      <it.icon className="h-4 w-4 shrink-0" style={{ color: g.cor }} />
+      <span className="flex-1 truncate">{it.title}</span>
+      <button type="button" disabled={idx === 0} onClick={() => subirDescerItem(it.url, -1)} className={botaoSeta} aria-label="Subir" title="Subir">
+        <ArrowUp className="h-3 w-3" />
+      </button>
+      <button type="button" disabled={idx === total - 1} onClick={() => subirDescerItem(it.url, 1)} className={botaoSeta} aria-label="Descer" title="Descer">
+        <ArrowDown className="h-3 w-3" />
+      </button>
+    </div>
+  );
 
   const linha = (it: NavItem, cor: string, emFavoritos: boolean) => {
     const ativo = local?.item === it;
@@ -382,7 +496,7 @@ export function AppSidebar() {
       {/* Navegação */}
       <nav className="flex-1 overflow-y-auto px-3 py-3.5 flex flex-col gap-3">
         {/* Favoritos: sempre abertos */}
-        <div className="flex flex-col gap-0.5">
+        <div className={cn("flex flex-col gap-0.5", organizando && "hidden")}>
           <div
             className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.09em]"
             style={{ color: COR_FAVORITOS }}
@@ -399,9 +513,51 @@ export function AppSidebar() {
           )}
         </div>
 
-        {NAV_GROUPS.map((g) => {
+        {organizando && (
+          <div className="flex flex-col gap-1.5 rounded-[9px] border border-dashed border-[var(--sb-borda)] px-3 py-2 text-[11.5px] leading-snug text-[color:var(--sb-txt2)]">
+            <span>Arraste os grupos e os itens (ou use as setas). Solte um item sobre o título de outro grupo para mudá-lo de grupo.</span>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setOrganizando(false)} className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-semibold text-white">Pronto</button>
+              <button type="button" onClick={() => { if (window.confirm("Voltar o menu para a ordem padrão?")) restaurarOrdem(); }} className="rounded-md px-2.5 py-1 text-[12px] text-[color:var(--sb-txt)] hover:bg-[var(--sb-hv)]">Ordem padrão</button>
+            </div>
+          </div>
+        )}
+        {grupos.map((g, gi) => {
           const itens = g.items.filter((it) => temAcesso(it.modulo));
-          if (itens.length === 0) return null;
+          if (itens.length === 0 && !organizando) return null;
+          if (organizando) {
+            return (
+              <div
+                key={g.label}
+                className={cn("flex flex-col gap-0.5 rounded-md border-t-2 border-transparent", sobre === "g:" + g.label && "border-[color:var(--sb-txt)]", arrastando?.id === g.label && "opacity-40")}
+                onDragOver={(e) => { if (arrastando) { e.preventDefault(); setSobre("g:" + g.label); } }}
+                onDrop={(e) => { e.preventDefault(); soltar(g.label, null); }}
+              >
+                <div
+                  draggable
+                  onDragStart={(e) => { setArrastando({ tipo: "grupo", id: g.label }); e.dataTransfer.effectAllowed = "move"; }}
+                  onDragEnd={() => { setArrastando(null); setSobre(null); }}
+                  className="flex items-center gap-2 w-full px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.09em] cursor-grab active:cursor-grabbing"
+                  style={{ color: "var(--sb-grupo)" }}
+                >
+                  <GripVertical className="h-3.5 w-3.5 shrink-0 text-[color:var(--sb-txt2)]" />
+                  <span className="h-3 w-[3px] rounded-full shrink-0" style={{ background: g.cor }} />
+                  <span className="flex-1 text-left truncate">{g.label}</span>
+                  <button type="button" disabled={gi === 0} onClick={() => moverGrupo(g.label, gi - 1)} className={botaoSeta} aria-label="Subir grupo" title="Subir grupo">
+                    <ArrowUp className="h-3 w-3" />
+                  </button>
+                  <button type="button" disabled={gi === grupos.length - 1} onClick={() => moverGrupo(g.label, gi + 1)} className={botaoSeta} aria-label="Descer grupo" title="Descer grupo">
+                    <ArrowDown className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-px pl-2">
+                  {itens.length ? itens.map((it, i) => linhaOrganizar(it, g, i, itens.length)) : (
+                    <span className="px-2 py-1 text-[11.5px] text-[color:var(--sb-txt2)]">vazio — solte um item aqui</span>
+                  )}
+                </div>
+              </div>
+            );
+          }
           const aberto = abertos[g.label];
           return (
             <div key={g.label} className="flex flex-col gap-0.5">
@@ -429,6 +585,15 @@ export function AppSidebar() {
           <span className="text-[color:var(--sb-txt)] text-[12.5px] font-medium truncate">{email ? email.split("@")[0] : "Usuário"}</span>
           <span className="text-[color:var(--sb-txt2)] text-[11px] truncate">{email || "—"}</span>
         </div>
+        <button
+          type="button"
+          onClick={() => { setOrganizando((v) => !v); setArrastando(null); setSobre(null); }}
+          title={organizando ? "Terminar de organizar" : "Organizar o menu (mudar a ordem)"}
+          aria-label="Organizar o menu"
+          className={cn("rounded-md p-1.5 transition hover:bg-[var(--sb-hv)]", organizando ? "text-white bg-primary" : "text-[color:var(--sb-txt2)]")}
+        >
+          <ArrowUpDown className="h-4 w-4" />
+        </button>
       </div>
     </aside>
   );
