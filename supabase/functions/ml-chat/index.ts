@@ -103,20 +103,38 @@ async function lerConversa(sb: any, tk: string, seller: number, pack: string) {
   const pedidos = await emLotes(orderIds.slice(0, 4), 4, async (oid) => {
     const o = await mlGet(tk, `/orders/${oid}`);
     if (o.status !== 200) return null;
+    const pg = (o.body.payments || []).find((x: any) => x.status === "approved") || (o.body.payments || [])[0];
     const ped: any = {
       pedido: String(o.body.id), status: o.body.status, criado: String(o.body.date_created || "").slice(0, 10),
-      total: o.body.total_amount,
-      itens: (o.body.order_items || []).map((i: any) => ({ mlb: i.item?.id, titulo: i.item?.title, qtd: i.quantity, variacao: (i.item?.variation_attributes || []).map((v: any) => v.value_name).join(" / ") || null })),
+      criado_em: o.body.date_created ?? null, pago_em: pg?.date_approved ?? null,
+      pagamento: pg?.payment_type ?? null, parcelas: pg?.installments ?? null,
+      total: o.body.total_amount, total_pago: o.body.paid_amount ?? null,
+      itens: (o.body.order_items || []).map((i: any) => ({ mlb: i.item?.id, titulo: i.item?.title, qtd: i.quantity, preco: i.unit_price ?? null, variacao: (i.item?.variation_attributes || []).map((v: any) => v.value_name).join(" / ") || null })),
       envio: null as any,
+      reclamacao: null as any,
     };
     const sid = o.body.shipping?.id;
     if (sid) {
       const s = await mlGet(tk, `/shipments/${sid}`);
       if (s.status === 200) ped.envio = {
         status: s.body.status, substatus: s.body.substatus, rastreio: s.body.tracking_number ?? null,
-        modo: s.body.logistic_type ?? null,
+        modo: s.body.logistic_type ?? null, transportadora: s.body.tracking_method ?? null,
         previsao: s.body.shipping_option?.estimated_delivery_time?.date?.slice(0, 10) ?? null,
         despachar_ate: s.body.shipping_option?.estimated_handling_limit?.date?.slice(0, 10) ?? null,
+        coletado_em: s.body.status_history?.date_shipped ?? null,
+        entregue_em: s.body.status_history?.date_delivered ?? null,
+      };
+    }
+    // v2: reclamacao/devolucao do pedido (espelho ml_claims, sem cancel_purchase)
+    const { data: cl } = await sb.from("ml_claims")
+      .select("claim_id, tipo, stage, status, reason_id, resolucao, prazo_acao, criado_em, acoes_disponiveis, return_id")
+      .eq("order_id", String(o.body.id)).neq("tipo", "cancel_purchase").order("criado_em", { ascending: false }).limit(1).maybeSingle();
+    if (cl) {
+      const { data: mo } = cl.reason_id ? await sb.from("ml_claim_motivos").select("nome, detalhe").eq("reason_id", cl.reason_id).maybeSingle() : { data: null };
+      ped.reclamacao = {
+        id: String(cl.claim_id), tipo: cl.tipo, etapa: cl.stage, status: cl.status, motivo: mo?.detalhe || mo?.nome || cl.reason_id,
+        resolucao: cl.resolucao ?? null, prazo: cl.prazo_acao ?? null, aberta_em: cl.criado_em ?? null,
+        devolucao: !!cl.return_id, acoes: cl.acoes_disponiveis ?? null,
       };
     }
     return ped;
@@ -130,7 +148,24 @@ async function lerConversa(sb: any, tk: string, seller: number, pack: string) {
 
 const TOM_PADRAO = 'TOM: simpatico, humano e natural, sem formalidade de robo e sem exagero. Comece com "Oi, tudo bem?". Use "voce", frases diretas, no maximo 1 emoji.';
 
+// v2 (26/nov): cliente que so agradece/encerra ("obrigada", "ok, valeu") recebe a resposta curta
+// padrao do dono, sem cumprimento nem repetir o pedido — e sem gastar chamada da IA.
+const RESPOSTA_AGRADECIMENTO = "Imagina, estamos à disposição.\n\nQualquer dúvida é só nos chamar! :)";
+const RE_AGRADECIMENTO = /^(?:(?:muit[oa]s?|mt|mto|desde ja|ja|entao|ah|ahh|ta bom|tá bom|ta|tá|beleza|blz|ok|okay|certo|perfeito|otimo|ótimo|show|maravilha|entendi|combinado|tudo bem|tudo certo|aguardo|vou aguardar|fico no aguardo)[\s,.!]*)*(?:obrigad[oa]s?|obg|brigad[oa]|grat[oa]|gratidao|gratidão|agradeco|agradeço|valeu|vlw|thanks|ok|okay|blz|beleza|show|perfeito|certo|entendi|combinado|aguardo|fico no aguardo)?(?:[\s,.!]*(?:pela atencao|pela atenção|pelo retorno|pela ajuda|pela informacao|pela informação|mesmo|demais|viu|ta|tá|ate mais|até mais|bom dia|boa tarde|boa noite|abs|abraços?|[:;]-?\)|❤️|🙏|😊|🙂|👍|😀|😉|🥰|☺️))*[\s,.!]*$/i;
+function soAgradecimento(conversa: { de: string; texto: string }[] | undefined): boolean {
+  const c = (conversa || []).filter((m) => m.texto && m.texto.trim());
+  const ult = c[c.length - 1];
+  if (!ult || ult.de !== "cliente") return false;
+  const t = ult.texto.trim().normalize("NFC");
+  if (t.length > 60 || t.includes("?")) return false;
+  // só agradecimento de verdade passa direto; "ok", "certo", "aguardo" sozinhos ficam com a IA
+  return /(obrigad|obg|brigad|grat[oa]|gratid|agrade|valeu|vlw|thanks)/i.test(t) && RE_AGRADECIMENTO.test(t);
+}
+
 async function rascunhoIa(sb: any, conta: string, tipo: string, ctx: any, instrucao: string) {
+  if (tipo !== "pergunta" && !instrucao && soAgradecimento(ctx?.conversa)) {
+    return { sugestao: RESPOSTA_AGRADECIMENTO, precisa_humano: false, motivo: null, modelo: "regra: agradecimento", limite: 340 };
+  }
   // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
   const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
   const tom = cfg?.valor || TOM_PADRAO;
@@ -148,6 +183,7 @@ async function rascunhoIa(sb: any, conta: string, tipo: string, ctx: any, instru
     `Portugues do Brasil, no maximo ${limite} caracteres (conte os caracteres: o limite e rigido).`,
     tom,
     `Termine com a assinatura "${c.assinatura}".`,
+    ...(tipo === "pergunta" ? [] : [`EXCECAO: se a ultima mensagem do cliente for so agradecimento ou despedida, sem pergunta nova (ex.: "obrigada", "ok, valeu", "recebi, obrigado"), responda EXATAMENTE "${RESPOSTA_AGRADECIMENTO.replace(/\n/g, "\\n")}" — sem cumprimento, sem repetir pedido/prazo e sem assinatura.`]),
     "Use SOMENTE os dados fornecidos. Nunca invente prazo, rastreio, estoque, preco, medida ou composicao.",
     "NUNCA prometa reembolso, troca, desconto, cupom ou brinde. Problema com o produto ou entrega: acolha, peca foto/detalhes se faltar e oriente a usar 'Tenho um problema' / devolucao pelo Mercado Livre, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, redes sociais nem link externo (regra do Mercado Livre).",

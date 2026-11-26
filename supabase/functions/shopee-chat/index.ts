@@ -161,18 +161,38 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
   const sns = [...orderSns].slice(-5);
   if (sns.length) {
     const d = await shopeeGet(a, "/api/v2/order/get_order_detail", {
-      order_sn_list: sns.join(","), response_optional_fields: "item_list,shipping_carrier,ship_by_date,days_to_ship,pay_time",
+      order_sn_list: sns.join(","),
+      response_optional_fields: "item_list,shipping_carrier,ship_by_date,days_to_ship,pay_time,total_amount,payment_method,pickup_done_time",
     });
+    const iso = (s: any) => (s ? new Date(Number(s) * 1000).toISOString() : null);
     for (const o of (d.body?.response?.order_list || [])) {
       const { data: pt } = await sb.from("pedidos_tiny").select("situacao, codigo_rastreamento").eq("numero_ecommerce", o.order_sn).limit(1).maybeSingle();
-      const { data: dv } = await sb.from("shopee_devolucoes").select("status, reason, solucao, ida_status").eq("order_sn", o.order_sn).limit(1).maybeSingle();
+      // v6: reembolso com tudo o que o espelho tem (a mais recente do pedido)
+      const { data: dv } = await sb.from("shopee_devolucoes")
+        .select("return_sn, status, reason, text_reason, solucao, refund_amount, create_time, prazo_disputa, prazo_vendedor, due_date, logistica_reversa, tracking_number, compensacao_status, ida_status, ida_entregue_em, volta_entregue_em")
+        .eq("order_sn", o.order_sn).order("create_time", { ascending: false }).limit(1).maybeSingle();
       pedidos.push({
         pedido: o.order_sn, status_shopee: o.order_status, transportadora: o.shipping_carrier ?? null,
         criado: o.create_time ? new Date(o.create_time * 1000).toISOString().slice(0, 10) : null,
+        criado_em: iso(o.create_time), pago_em: iso(o.pay_time), coletado_em: iso(o.pickup_done_time),
+        entregue_em: dv?.ida_entregue_em ?? null,
         enviar_ate: o.ship_by_date ? new Date(o.ship_by_date * 1000).toISOString().slice(0, 10) : null,
+        total: o.total_amount ?? null, pagamento: o.payment_method ?? null,
         itens: (o.item_list || []).map((i: any) => `${i.model_quantity_purchased ?? 1}x ${i.item_name}${i.model_name ? ` (${i.model_name})` : ""}`),
+        itens_det: (o.item_list || []).map((i: any) => ({
+          nome: i.item_name, variacao: i.model_name || null, qtd: i.model_quantity_purchased ?? 1,
+          preco: i.model_discounted_price ?? i.model_original_price ?? null, foto: i.image_info?.image_url ?? null,
+        })),
         situacao_no_galpao: pt?.situacao ?? null, rastreio: pt?.codigo_rastreamento ?? null,
-        devolucao: dv ? { status: dv.status, motivo: dv.reason, solucao: dv.solucao === 1 ? "so reembolso" : dv.solucao === 0 ? "devolver o produto" : null, entrega_ida: dv.ida_status } : null,
+        devolucao: dv ? {
+          status: dv.status, motivo: dv.reason, texto: dv.text_reason ?? null,
+          solucao: dv.solucao === 1 ? "so reembolso" : dv.solucao === 0 ? "devolver o produto" : null,
+          valor: dv.refund_amount ?? null, aberta_em: dv.create_time ?? null,
+          prazo: dv.prazo_disputa ?? dv.prazo_vendedor ?? dv.due_date ?? null,
+          logistica_reversa: dv.logistica_reversa ?? null, rastreio_volta: dv.tracking_number ?? null,
+          volta_entregue_em: dv.volta_entregue_em ?? null, compensacao: dv.compensacao_status ?? null,
+          entrega_ida: dv.ida_status,
+        } : null,
       });
     }
   }
@@ -187,7 +207,24 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
 
 const TOM_PADRAO = 'TOM: simpatico, humano e natural, sem formalidade de robo e sem exagero. Comece com "Oi, tudo bem?". Use "voce", frases diretas, no maximo 1 emoji.';
 
+// v6 (26/nov): cliente que so agradece/encerra ("obrigada", "ok, valeu") recebe a resposta curta
+// padrao do dono, sem cumprimento nem repetir o pedido — e sem gastar chamada da IA.
+const RESPOSTA_AGRADECIMENTO = "Imagina, estamos à disposição.\n\nQualquer dúvida é só nos chamar! :)";
+const RE_AGRADECIMENTO = /^(?:(?:muit[oa]s?|mt|mto|desde ja|ja|entao|ah|ahh|ta bom|tá bom|ta|tá|beleza|blz|ok|okay|certo|perfeito|otimo|ótimo|show|maravilha|entendi|combinado|tudo bem|tudo certo|aguardo|vou aguardar|fico no aguardo)[\s,.!]*)*(?:obrigad[oa]s?|obg|brigad[oa]|grat[oa]|gratidao|gratidão|agradeco|agradeço|valeu|vlw|thanks|ok|okay|blz|beleza|show|perfeito|certo|entendi|combinado|aguardo|fico no aguardo)?(?:[\s,.!]*(?:pela atencao|pela atenção|pelo retorno|pela ajuda|pela informacao|pela informação|mesmo|demais|viu|ta|tá|ate mais|até mais|bom dia|boa tarde|boa noite|abs|abraços?|[:;]-?\)|❤️|🙏|😊|🙂|👍|😀|😉|🥰|☺️))*[\s,.!]*$/i;
+function soAgradecimento(conversa: { de: string; texto: string }[] | undefined): boolean {
+  const c = (conversa || []).filter((m) => m.texto && !/^\[.*\]$/.test(m.texto.trim()));
+  const ult = c[c.length - 1];
+  if (!ult || ult.de !== "cliente") return false;
+  const t = ult.texto.trim().normalize("NFC");
+  if (t.length > 60 || t.includes("?")) return false;
+  // só agradecimento de verdade passa direto; "ok", "certo", "aguardo" sozinhos ficam com a IA
+  return /(obrigad|obg|brigad|grat[oa]|gratid|agrade|valeu|vlw|thanks)/i.test(t) && RE_AGRADECIMENTO.test(t);
+}
+
 async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
+  if (!instrucao && soAgradecimento(ctx?.historico)) {
+    return { sugestao: RESPOSTA_AGRADECIMENTO, precisa_humano: false, motivo: null, modelo: "regra: agradecimento" };
+  }
   // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
   const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
   const tom = cfg?.valor || TOM_PADRAO;
@@ -200,6 +237,7 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
     `Escreva a PROXIMA resposta da loja, em portugues do Brasil, curta (ate 4 frases).`,
     tom,
     `Termine sempre com a assinatura "${ASSINATURA[loja]}".`,
+    `EXCECAO: se a ultima mensagem do cliente for so agradecimento ou despedida, sem pergunta nova (ex.: "obrigada", "ok, valeu", "recebi, obrigado"), responda EXATAMENTE "${RESPOSTA_AGRADECIMENTO.replace(/\n/g, "\\n")}" — sem cumprimento, sem repetir pedido/prazo e sem assinatura.`,
     "Use SOMENTE os dados fornecidos (pedidos, rastreio, produto). Nunca invente prazo, status, rastreio, preco ou estoque.",
     "NUNCA prometa reembolso, troca, desconto, brinde, cupom nem devolucao de dinheiro. Para problema com o produto ou entrega, peca foto/detalhes se faltar e oriente o cliente a abrir 'Devolucao/Reembolso' pelo app da Shopee, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, link externo nem peca para comprar fora da Shopee (regra da Shopee).",
