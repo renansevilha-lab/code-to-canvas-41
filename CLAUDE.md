@@ -389,6 +389,19 @@ cheio: `amazon-sync-pedidos` v14 soma ItemPrice+ItemTax−Promo; `amazon-sync-
 financas` v13 soma TODOS os charges. Antes disso, TODA margem Amazon parecia
 negativa ("comissão em dobro" era na verdade imposto subtraído da receita).
 
+### Flex do ML: crédito de frete e transportadora na margem (26/nov/2026)
+No Flex (ML `self_service`) o ML paga ao vendedor um crédito de frete e nós pagamos a transportadora (SOS Envios Express, fatura
+quinzenal: P 10,99 · G1 21,98 · G2 32,97). Nenhum dos dois estava no `recebido_estimado`. Opção A do dono: a `view_margem_pedido_v2`
+soma o crédito e desconta o custo só nesses pedidos (`recebido_estimado`, margem, mc_pct, roi e `custo_total` mudam juntos; colunas
+novas `frete_flex_credito`, `frete_flex_custo`, `frete_flex_origem`), por `flex_frete_pedido(id, pack_id)` — carrinho divide igual.
+Crédito real = o que o extrato do Mercado Pago liberou (`payment` + `shipping`) − recebido. **Armadilha:** quando o comprador paga o
+frete, os 10,99 vêm DENTRO do `payment` (e o `shipping` soma mais 4,00); só olhar o `shipping` subestima. Sem extrato (antes de
+24/09 ou ainda não liberado) = estimativa `flex_frete_regra` (10,99; 14,99 se venda ≥ 79 ou frete pago pelo comprador). Custo real =
+`flex_frete_fatura` (importada à mão: `select flex_frete_importar('<linhas>')`, ligada ao pedido pelo `shipping_id` do extrato);
+sem fatura = tabela por peso (≤ 8,05 kg P, ≤ 20 kg G1). Flex set/out/nov: 2.698 → 2.432 · 3.401 → 3.239 · 3.119 → 3.191; o resto
+idêntico (md5). Cancelado antes da coleta é cobrado pela SOS mas não entra (pedido fora da view). A SOS não está no contas a pagar.
+SQL + rollback em `docs/margem-flex-transportadora.sql`; definição anterior em `_bkp_view_margem_v2_flex`.
+
 ### Amazon: pedido sem repasse estimado = margem pendente (17/nov/2026)
 Pedido Amazon já enviado entra na `view_margem_pedido_v2` antes de o `amazon-sync-financas` estimar a taxa
 (`recebido_estimado` 0) e contava como prejuízo (0 − CMV − imposto): em 17/nov, 3 pedidos da SVL derrubaram a MC do
