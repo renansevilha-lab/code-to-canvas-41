@@ -36,6 +36,7 @@ interface Painel {
   pagar: { por_categoria: Array<{ categoria: string; valor: number; contas: number; ate_30d: number }>; por_faixa: Record<string, { valor: number; contas: number }> };
   decisoes: Decisao[];
 }
+export type ContaAberta = Conta;
 interface Conta { tiny_id: number; fornecedor_nome: string | null; descricao: string | null; categoria: string | null; saldo_aberto: number; data_vencimento: string | null; dias_para_vencer: number | null; faixa: string }
 interface EstoqueDet {
   valor_total: number; valor_geral: number; valor_full: number; cobertura_media_dias: number | null;
@@ -92,7 +93,7 @@ function Barra({ nome, valor, max, cor, direita }: { nome: ReactNode; valor: num
 }
 
 // ---------------------------------------------------------------- contas a pagar (detalhe por fornecedor)
-function ContasAgrupadas({ filtro }: { filtro: (c: Conta) => boolean }) {
+export function ContasAgrupadas({ filtro }: { filtro: (c: Conta) => boolean }) {
   const q = useQuery({
     queryKey: ["financeiro", "contas-abertas"],
     queryFn: async () => {
@@ -147,7 +148,7 @@ function ContasAgrupadas({ filtro }: { filtro: (c: Conta) => boolean }) {
 }
 
 // ---------------------------------------------------------------- estoque (detalhe)
-function EstoqueDetalhe() {
+export function EstoqueDetalhe() {
   const q = useQuery({ queryKey: ["financeiro", "estoque-valor"], queryFn: () => rpc<EstoqueDet>("dashboard_estoque_valor") });
   if (q.isLoading) return <div style={sub}>Carregando o estoque…</div>;
   if (q.error || !q.data) return <div style={{ ...sub, color: "var(--pm-r)" }}>Não consegui ler o estoque.</div>;
