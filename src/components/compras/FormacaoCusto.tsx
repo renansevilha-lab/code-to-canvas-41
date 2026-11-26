@@ -35,6 +35,8 @@ interface Linha {
   rateio_total: number; rateio_unit: number; ajuste_unit: number; ajuste_motivo: string | null; custo_final: number; custo_atual: number | null; variacao_pct: number | null;
   origem_preco?: "nf" | "oc" | "misto"; nfs?: string[]; desconto_item?: number; desconto_item_unit?: number;
   custo_calculado?: number; manual?: boolean; manual_motivo?: string | null;
+  // v9 (26/nov): preço unitário digitado no lugar do da NF/OC (antes do rateio)
+  preco_manual?: boolean; preco_manual_motivo?: string | null; preco_nf_original?: number | null;
 }
 interface CabecalhoNf {
   nf_numero: string; origem: "xml" | "tiny"; frete: number; ipi: number; st: number; outras: number;
@@ -45,6 +47,7 @@ interface Preview {
   extras: Extras; ajustes: Record<string, { valor_un: number; motivo: string | null }>; frete_nf: number; linhas: Linha[]; avisos: Array<{ sku: string | null; motivo: string }>;
   extras_total: number; total_nf: number; total_com_extras: number; aplicados: Record<string, Aplicado>;
   manuais?: Record<string, { custo: number; motivo: string | null }>;
+  precos?: Record<string, { preco: number; motivo: string | null }>;
   cabecalho_nf?: CabecalhoNf[]; extras_da_nf?: Omit<Extras, "rateio">; nf_nao_aplicadas?: string[];
 }
 
@@ -69,12 +72,14 @@ async function chamar(qs: string): Promise<any> {
 }
 
 type AjTxt = Record<string, { v: string; m: string }>;
-const qsExtras = (e: Extras, aj: AjTxt, man: AjTxt) => {
+const qsExtras = (e: Extras, aj: AjTxt, man: AjTxt, pr: AjTxt = {}) => {
   // despesa manual por unidade por SKU (ex.: etiqueta) — o servidor soma depois do rateio
   const ajustes = Object.fromEntries(Object.entries(aj).filter(([, a]) => num(a.v) > 0).map(([sku, a]) => [sku, { valor_un: num(a.v), motivo: a.m.trim() || null }]));
   // custo digitado à mão — substitui o calculado
   const manuais = Object.fromEntries(Object.entries(man).filter(([, a]) => num(a.v) > 0).map(([sku, a]) => [sku, { custo: num(a.v), motivo: a.m.trim() || null }]));
-  return CAMPOS.map(({ k }) => `${k}=${e[k] || 0}`).join("&") + `&rateio=${e.rateio}&ajustes=${encodeURIComponent(JSON.stringify(ajustes))}&manuais=${encodeURIComponent(JSON.stringify(manuais))}`;
+  // preço unitário digitado — substitui o da NF/OC ANTES do rateio (v9)
+  const precos = Object.fromEntries(Object.entries(pr).filter(([, a]) => num(a.v) > 0).map(([sku, a]) => [sku, { preco: num(a.v), motivo: a.m.trim() || null }]));
+  return CAMPOS.map(({ k }) => `${k}=${e[k] || 0}`).join("&") + `&rateio=${e.rateio}&ajustes=${encodeURIComponent(JSON.stringify(ajustes))}&manuais=${encodeURIComponent(JSON.stringify(manuais))}&precos=${encodeURIComponent(JSON.stringify(precos))}`;
 };
 const txtNum = (v: number) => (v ? String(v).replace(".", ",") : "");
 const num = (s: string) => { const v = Number(s.replace(/\./g, "").replace(",", ".")); return Number.isFinite(v) && v >= 0 ? v : 0; };
@@ -94,20 +99,22 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
   const [txt, setTxt] = useState<Record<string, string>>({});
   const [aj, setAj] = useState<AjTxt>({});
   const [man, setMan] = useState<AjTxt>({});
+  const [pr, setPr] = useState<AjTxt>({});
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [carregando, setCarregando] = useState(false);
   const [gravando, setGravando] = useState(false);
 
-  async function carregar(e: Extras | null, a: AjTxt = aj, mn: AjTxt = man) {
+  async function carregar(e: Extras | null, a: AjTxt = aj, mn: AjTxt = man, pc: AjTxt = pr) {
     setCarregando(true);
     try {
-      const p: Preview = await chamar(`modulo=custo-preview&ordem_tiny_id=${ordemTinyId}${e ? `&${qsExtras(e, a, mn)}` : ""}`);
+      const p: Preview = await chamar(`modulo=custo-preview&ordem_tiny_id=${ordemTinyId}${e ? `&${qsExtras(e, a, mn, pc)}` : ""}`);
       setPrev(p);
       if (!e) {
         setEx(p.extras);
         setTxt(Object.fromEntries(CAMPOS.map(({ k }) => [k, txtNum(p.extras[k])])));
         setAj(Object.fromEntries(Object.entries(p.ajustes ?? {}).map(([sku, a]) => [sku, { v: String(a.valor_un).replace(".", ","), m: a.motivo ?? "" }])));
         setMan(Object.fromEntries(Object.entries(p.manuais ?? {}).map(([sku, a]) => [sku, { v: String(a.custo).replace(".", ","), m: a.motivo ?? "" }])));
+        setPr(Object.fromEntries(Object.entries(p.precos ?? {}).map(([sku, a]) => [sku, { v: String(a.preco).replace(".", ","), m: a.motivo ?? "" }])));
         // pré-seleciona o que ainda não foi gravado com este custo
         setSel(new Set(p.linhas.filter((l) => !(p.aplicados[l.sku]?.tiny_ok && Math.abs(p.aplicados[l.sku].custo_final - l.custo_final) < 0.005)).map((l) => l.sku)));
       }
@@ -118,12 +125,12 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
   // recalcula (no servidor) 400 ms depois da última digitação
   useEffect(() => {
     if (!aberto || !ex) return;
-    const t = setTimeout(() => { void carregar(ex, aj, man); }, 400);
+    const t = setTimeout(() => { void carregar(ex, aj, man, pr); }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ex, aj, man]);
+  }, [ex, aj, man, pr]);
 
-  function abrir() { setAberto(true); setPrev(null); setEx(null); setAj({}); setMan({}); void carregar(null, {}, {}); }
+  function abrir() { setAberto(true); setPrev(null); setEx(null); setAj({}); setMan({}); setPr({}); void carregar(null, {}, {}, {}); }
 
   // Volta frete/IPI/ST/outras/desconto para os valores do cabeçalho da NF.
   function usarValoresDaNf() {
@@ -139,7 +146,7 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
     if (!ex || escolhidas.length === 0) return;
     if (!window.confirm(
       `Gravar o preço de custo no cadastro do Tiny (e no app)?\n\n` +
-      escolhidas.map((l) => `${l.sku}: ${l.custo_atual != null ? formatBRL(l.custo_atual) : "—"} → ${formatBRL(l.custo_final)}${l.manual ? ` (MANUAL${l.manual_motivo ? `: ${l.manual_motivo}` : ""}; calculado ${formatBRL(l.custo_calculado ?? 0)})` : l.ajuste_unit ?` (inclui +${formatBRL(l.ajuste_unit)}/un${l.ajuste_motivo ? ` ${l.ajuste_motivo}` : ""})` : ""}`).join("\n") +
+      escolhidas.map((l) => `${l.sku}: ${l.custo_atual != null ? formatBRL(l.custo_atual) : "—"} → ${formatBRL(l.custo_final)}${l.preco_manual ? ` [preço un. digitado ${formatBRL(l.preco_nf_unit)}${l.preco_nf_original != null ? `, NF ${formatBRL(l.preco_nf_original)}` : ""}${l.preco_manual_motivo ? `: ${l.preco_manual_motivo}` : ""}]` : ""}${l.manual ? ` (MANUAL${l.manual_motivo ? `: ${l.manual_motivo}` : ""}; calculado ${formatBRL(l.custo_calculado ?? 0)})` : l.ajuste_unit ?` (inclui +${formatBRL(l.ajuste_unit)}/un${l.ajuste_motivo ? ` ${l.ajuste_motivo}` : ""})` : ""}`).join("\n") +
       `\n\nSó o custo muda; o app confere o cadastro depois de gravar.`,
     )) return;
     setGravando(true);
@@ -148,7 +155,7 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
       const falhas: string[] = []; let ok = 0;
       // a função grava ~10 por chamada (limite de 30 s); repete até acabar
       for (let volta = 0; volta < 10 && restantes.length; volta++) {
-        const r = await chamar(`modulo=custo-aplicar&ordem_tiny_id=${ordemTinyId}&confirmar=1&${qsExtras(ex, aj, man)}&skus=${encodeURIComponent(restantes.join(","))}&aplicado_por=${encodeURIComponent(perfil?.nome ?? "app")}`);
+        const r = await chamar(`modulo=custo-aplicar&ordem_tiny_id=${ordemTinyId}&confirmar=1&${qsExtras(ex, aj, man, pr)}&skus=${encodeURIComponent(restantes.join(","))}&aplicado_por=${encodeURIComponent(perfil?.nome ?? "app")}`);
         for (const x of (r.resultados ?? []) as Array<{ sku: string; ok: boolean; erro: string | null }>) { if (x.ok) ok++; else falhas.push(`${x.sku}: ${x.erro}`); }
         restantes = (r.pendentes ?? []) as string[];
       }
@@ -253,7 +260,7 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
                       <th className="px-2 py-2 w-8"><Checkbox checked={todas} onCheckedChange={(v) => setSel(new Set(v === true ? prev.linhas.map((l) => l.sku) : []))} /></th>
                       <th className="px-2 py-2 text-left font-medium">Produto</th>
                       <th className="px-2 py-2 text-right font-medium">Unidades</th>
-                      <th className="px-2 py-2 text-right font-medium">Preço NF un.</th>
+                      <th className="px-2 py-2 text-left font-medium" title="Digite para corrigir o preço unitário da nota (entra antes do rateio de IPI/frete)">Preço NF un.</th>
                       <th className="px-2 py-2 text-right font-medium">+ Extras un.</th>
                       <th className="px-2 py-2 text-left font-medium" title="Despesa manual por unidade (etiqueta, embalagem, mão de obra…)">+ Despesa un.</th>
                       <th className="px-2 py-2 text-left font-medium" title="Digite para usar este custo no lugar do calculado">Custo manual</th>
@@ -282,9 +289,23 @@ export function FormacaoCusto({ ordemTinyId, numero }: { ordemTinyId: number; nu
                             </div>
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums">{formatNumber(l.unidades)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">
-                            <div className="font-mono">{formatBRL(l.preco_nf_unit)}</div>
-                            {l.origem_preco === "oc" ? (
+                          <td className="px-2 py-2 tabular-nums">
+                            <div className="flex flex-col gap-1 w-[130px]">
+                              <Input value={pr[l.sku]?.v ?? ""} inputMode="decimal"
+                                placeholder={(l.preco_manual ? (l.preco_nf_original ?? l.preco_nf_unit) : l.preco_nf_unit).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                                title="Vazio = preço da nota. Digite para corrigir o preço unitário (o IPI/frete é rateado de novo)."
+                                className={cn("h-7 font-mono text-xs text-right", (pr[l.sku]?.v ?? "") !== "" && "border-primary")}
+                                onChange={(e) => { const v = e.target.value; setPr((a) => ({ ...a, [l.sku]: { v, m: a[l.sku]?.m ?? "" } })); }} />
+                              {(pr[l.sku]?.v ?? "") !== "" && (
+                                <Input value={pr[l.sku]?.m ?? ""} placeholder="motivo (ex.: NF errada)" className="h-6 text-[10.5px]"
+                                  onChange={(e) => { const m = e.target.value; setPr((a) => ({ ...a, [l.sku]: { v: a[l.sku]?.v ?? "", m } })); }} />
+                              )}
+                            </div>
+                            {l.preco_manual ? (
+                              <div className="text-[10px] text-primary font-semibold" title={l.preco_manual_motivo ?? undefined}>
+                                digitado{l.preco_nf_original != null ? ` · NF ${formatBRL(l.preco_nf_original)}` : ""}
+                              </div>
+                            ) : l.origem_preco === "oc" ? (
                               <div className="text-[10px] text-amber-700 dark:text-amber-400 font-semibold" title="Sem NF aplicada para este item: preço da ordem de compra">preço da OC</div>
                             ) : (
                               <div className="text-[10px] text-muted-foreground" title={l.origem_preco === "misto" ? "Parte das unidades com preço da NF, parte com o da OC" : "Valor da NF aplicada, já sem o desconto do item"}>

@@ -1977,6 +1977,16 @@ Antes: rota **`/promocoes-shopee`** (menu "Promoções Shopee", módulo ads; `?a
   `compras_custo_formacao.manuais` e `compras_custo_itens.custo_calculado/manual/manual_motivo/
   origem_preco`. Desconto do Tiny rateado por valor pode cair no item errado (ex.: desconto que era
   só da sílica) — aí o operador corrige com o custo manual.
+  **v9 (26/nov/2026, pedido do dono) — PREÇO NF UNITÁRIO EDITÁVEL.** Caso NF 10821 (Panther Gold):
+  15284 N1 Rosa veio a R$ 28,87 e o N1 Preto, igual, a R$ 18,02. A coluna "Preço NF un." da
+  formação virou campo (vazio = preço da nota; digitado = borda azul + motivo; abaixo "digitado · NF
+  R$ x"). `&precos={"sku":{"preco":18.02,"motivo":".."}}` substitui o preço ANTES do rateio (valor =
+  preço × unidades) — IPI/frete/outras rateados por valor se redistribuem. Retorno ganha
+  `preco_manual`, `preco_manual_motivo`, `preco_nf_original`; grava `compras_custo_formacao.precos`
+  (migração `compras_custo_preco_editavel`, `docs/compras-custo-preco-editavel.sql`) e
+  `compras_custo_itens.origem_preco = 'manual'`. Diferente do "Custo manual" (que substitui o custo
+  FINAL e não mexe no rateio). Fonte da edge fn agora no repo: `supabase/functions/compras-estoque/`.
+  Não conferido com login.
 
 - **Contas a pagar da NF** (botão "Contas da NF" na OC, `ContasDaNf.tsx`): parcelas da NF do Tiny
   (`tiny-contas-pagar` **v7** `?modulo=nf-parcelas&nf_tiny_id=` → GET /notas/{id}.`parcelas`
