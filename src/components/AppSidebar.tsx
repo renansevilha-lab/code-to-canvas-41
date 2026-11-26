@@ -144,6 +144,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Financeiro",
     cor: "#34D399",
     items: [
+      { title: "Painel financeiro", url: "/financeiro", icon: FileBarChart, modulo: "financeiro" },
       { title: "DRE", url: "/dre", icon: FileBarChart, modulo: "financeiro" },
       { title: "Fluxo de Caixa", url: "/fluxo-caixa", icon: Wallet, modulo: "financeiro" },
       { title: "Contas a Pagar", url: "/contas-pagar", icon: Receipt, modulo: "financeiro" },

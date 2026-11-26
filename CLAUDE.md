@@ -4733,6 +4733,13 @@ gravavam quando alguém rodava a skill no Claude (só o `pesquisa_ml` tem tarefa
   **Nenhuma escrita real pelo módulo `gestao` ainda** (o 1º uso do dono pela tela é o teste; a permissão em si já foi provada pela sonda).
 - **Fora (pendente):** Agente de ADS (`ads_metrica_*`), fluxo de caixa (`view_fluxo_caixa_eventos_live`), conta SVL.
 
+## 5.16 Painel financeiro — `/financeiro` (26/nov/2026, opção A do dono: painel primeiro, balanço depois)
+
+Desenho aprovado em https://claude.ai/artifact/L5QjFtFBfWJDaAmDx7uUQy, com o pedido de ser INTERATIVO (clicar em qualquer indicador abre o detalhe).
+- **Banco:** `financeiro_painel()` (jsonb; security definer + `tem_modulo('financeiro')`; SQL + rollback em `docs/financeiro-painel.sql`). Só deriva do que já existe: `view_dre_mensal` (13 meses; **ponto de equilíbrio = total_despesas ÷ MC%**), `dashboard_posicao_empresa()`, `dashboard_estoque_valor()`, `view_fin_contas_pagar`, `view_kpi_pedidos_dia` (30 dias fechados), `compras_nf_entrada` (90 dias, sem `ignorar`) e `view_mp_extrato_dia` (saldo do Mercado Pago). Devolve `meses`, `mes_atual` (receita projetada = receita ÷ dias fechados × dias do mês), `capital` (caixa = carteiras Shopee + Mercado Pago; **sem bancos**), `ciclo` (estoque ÷ CMV/dia + a receber ÷ repasse/dia − fornecedores de mercadoria ÷ compras/dia), `liquidez` (caixa + a receber ÷ o que vence em 30 dias — o total a pagar inclui salários lançados meses à frente, por isso não é o denominador), `pagar` e `decisoes` (regras fixas). 25/nov: lucro 2,3% parcial, equilíbrio R$ 505 mil, giro R$ 72 mil, liquidez 0,72, ciclo 5 dias (33 + 9 − 37).
+- **Tela:** `src/routes/financeiro.tsx` + `src/components/financeiro/PainelFinanceiro.tsx` (menu Financeiro › Painel financeiro, módulo `financeiro`). Pede decisão → 6 indicadores → receita × equilíbrio (clique no mês abre a cascata do DRE) → cada R$ 100 vendidos → capital de giro (cada linha abre: caixa por conta, a receber por carteira, estoque com parado e os que mais prendem dinheiro, fornecedores e demais contas agrupados por fornecedor com as parcelas) → ciclo de caixa (com a conta de cada prazo) → mês a mês. Detalhes de contas leem `view_fin_contas_pagar` e o de estoque chama `dashboard_estoque_valor()` só quando abertos. Não conferida com login.
+- **Próximo (balanço patrimonial):** tela de saldos do mês (bancos, empréstimos/cartão, imobilizado, impostos a pagar, retiradas) + balanço gerencial; falta o dono dizer se é das duas empresas juntas ou separado.
+
 ## 6. Edge Functions
 
 | Função | Versão | Papel |

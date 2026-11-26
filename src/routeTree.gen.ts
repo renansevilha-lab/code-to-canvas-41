@@ -23,6 +23,7 @@ import { Route as ComprasRouteImport } from './routes/compras'
 import { Route as ContasPagarRouteImport } from './routes/contas-pagar'
 import { Route as DevolucoesRouteImport } from './routes/devolucoes'
 import { Route as DreRouteImport } from './routes/dre'
+import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as FlashSaleRouteImport } from './routes/flash-sale'
 import { Route as FluxoCaixaRouteImport } from './routes/fluxo-caixa'
 import { Route as FulfillmentRouteImport } from './routes/fulfillment'
@@ -124,6 +125,11 @@ const DevolucoesRoute = DevolucoesRouteImport.update({
 const DreRoute = DreRouteImport.update({
   id: '/dre',
   path: '/dre',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FinanceiroRoute = FinanceiroRouteImport.update({
+  id: '/financeiro',
+  path: '/financeiro',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FlashSaleRoute = FlashSaleRouteImport.update({
@@ -302,6 +308,7 @@ export interface FileRoutesByFullPath {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/financeiro': typeof FinanceiroRoute
   '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
@@ -350,6 +357,7 @@ export interface FileRoutesByTo {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/financeiro': typeof FinanceiroRoute
   '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
@@ -399,6 +407,7 @@ export interface FileRoutesById {
   '/contas-pagar': typeof ContasPagarRoute
   '/devolucoes': typeof DevolucoesRoute
   '/dre': typeof DreRoute
+  '/financeiro': typeof FinanceiroRoute
   '/flash-sale': typeof FlashSaleRoute
   '/fluxo-caixa': typeof FluxoCaixaRoute
   '/fulfillment': typeof FulfillmentRoute
@@ -449,6 +458,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/financeiro'
     | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
@@ -497,6 +507,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/financeiro'
     | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
@@ -545,6 +556,7 @@ export interface FileRouteTypes {
     | '/contas-pagar'
     | '/devolucoes'
     | '/dre'
+    | '/financeiro'
     | '/flash-sale'
     | '/fluxo-caixa'
     | '/fulfillment'
@@ -594,6 +606,7 @@ export interface RootRouteChildren {
   ContasPagarRoute: typeof ContasPagarRoute
   DevolucoesRoute: typeof DevolucoesRoute
   DreRoute: typeof DreRoute
+  FinanceiroRoute: typeof FinanceiroRoute
   FlashSaleRoute: typeof FlashSaleRoute
   FluxoCaixaRoute: typeof FluxoCaixaRoute
   FulfillmentRoute: typeof FulfillmentRoute
@@ -726,6 +739,13 @@ declare module '@tanstack/react-router' {
       path: '/dre'
       fullPath: '/dre'
       preLoaderRoute: typeof DreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/financeiro': {
+      id: '/financeiro'
+      path: '/financeiro'
+      fullPath: '/financeiro'
+      preLoaderRoute: typeof FinanceiroRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/flash-sale': {
@@ -970,6 +990,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContasPagarRoute: ContasPagarRoute,
   DevolucoesRoute: DevolucoesRoute,
   DreRoute: DreRoute,
+  FinanceiroRoute: FinanceiroRoute,
   FlashSaleRoute: FlashSaleRoute,
   FluxoCaixaRoute: FluxoCaixaRoute,
   FulfillmentRoute: FulfillmentRoute,
