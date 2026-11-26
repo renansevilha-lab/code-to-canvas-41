@@ -1,5 +1,10 @@
 // ============================================================================
-// devolucao-auto v10 (24/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// devolucao-auto v11 (26/nov/2026) — motor de NF de DEVOLUCAO automatica.
+// v11 (pedido do dono): Ottz de volta, so Lucro Real. `processar-historico&conta=ottz` passou a ler a fila VIVA
+//   view_devolucao_auto_candidatos_ottz (cancelados com NF da ACZ autorizada desde 10/08 — notas_cancelados — e
+//   reembolsos ACEITOS da loja Shopee Ottz desde 10/08), sem a natureza no motor: a nf-devolucao v3.27 usa
+//   "Devolução de Venda de Mercadoria - Lucro Real" por padrao na Ottz e recusa venda do Simples (`venda_simples`)
+//   ou que nao e da ACZ (`nao_acz`) — esses viram estado final `fora_lucro_real`. Retenta emissao de qualquer caso.
 // v10: nota criada cujos itens o Tiny trocou (kit desmembrado nos componentes; nf-devolucao v3.26 `itens_divergem`) vai
 //   direto para `revisar` e NAO e emitida (o Tiny recusa: item sem chave da NF-e referenciada). ?modulo=recriar-kit
 //   [&max=1][&dry=1][&order_sn=]: para as linhas `revisar` por kit da SVL cuja nota JA FOI EXCLUIDA no Tiny (GET 404),
@@ -410,6 +415,8 @@ function estadoDe(r: any, tentativas: number, caso: string): { estado: string; r
   if (c === "sem_nf_venda") return { estado: "sem_nf_venda" };
   if (c === "venda_nao_autorizada") return { estado: "venda_nao_autorizada" };
   if (c === "nao_cancelado") return { estado: "nao_cancelado" };
+  if (c === "venda_simples" || c === "nao_acz") return { estado: "fora_lucro_real" }; // v11
+  if (c === "nota_nao_do_pedido") return { estado: "revisar" };
   if (c === "revisar_itens" || c === "itens_sem_ncm" || c === "sem_chave" || c === "sem_itens" || c === "sem_ordem") return { estado: "revisar" };
   if (c === "v2_bloqueada") return { estado: "pendente", reagendarMin: 10, parar: true };
   if (c === "sem_pedido_svl") {
@@ -540,7 +547,7 @@ serve(async (req: Request) => {
         if (contaH === "ottz" && !pausado656) {
           const umaHora = new Date(Date.now() - 60 * 60000).toISOString();
           const { data: pend } = await supabase.from("devolucao_auto").select("order_sn, id_nota_devolucao, numero_nota, tentativas")
-            .eq("conta", "ottz").eq("caso", "historico_cancelado").eq("estado", "criada").not("id_nota_devolucao", "is", null)
+            .eq("conta", "ottz").eq("estado", "criada").not("id_nota_devolucao", "is", null)
             .lt("atualizado_em", umaHora).lt("tentativas", 4).order("atualizado_em", { ascending: true }).limit(3);
           for (const p of (pend || []) as any[]) {
             if (Date.now() - inicio > orcamentoMs - 8000 || pausado656) break;
@@ -552,14 +559,25 @@ serve(async (req: Request) => {
       }
 
       // fila: candidatos historicos sem devolucao, cancelados na propria conta, ainda nao tocados pelo motor
-      let q = supabase.from("view_devolucao_hist_candidatos")
-        .select("id_nota, numero, serie, data_emissao, valor, canal, numero_ecommerce, origem_pedido_id, cliente_nome, regime_venda, emit_cnpj")
-        .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true)
-        .not("numero_ecommerce", "is", null).not("origem_pedido_id", "is", null)
-        .order("data_emissao", { ascending: false }).order("id_nota", { ascending: false }).limit(max * 6);
-      if (contaH === "ottz") q = q.eq("regime_venda", "lucro_real").eq("emit_cnpj", CNPJ_ACZ); // v9: nunca venda do Simples, nunca nota da Bumi
-      if (desde) q = q.gte("data_emissao", desde);
-      const { data: cand, error: eCand } = await q;
+      let cand: any[] | null = null; let eCand: any = null;
+      if (contaH === "ottz") {
+        // v11: fila VIVA da Ottz (cancelados + reembolsos aceitos, Lucro Real); a trava do regime fica na nf-devolucao
+        let qo = supabase.from("view_devolucao_auto_candidatos_ottz")
+          .select("order_sn, tiny_pedido_id, canal, caso, data_ref, id_nota_venda, tentativas")
+          .not("tiny_pedido_id", "is", null).order("data_ref", { ascending: false }).limit(max * 6);
+        if (desde) qo = qo.gte("data_ref", desde);
+        const r = await qo; eCand = r.error;
+        cand = ((r.data || []) as any[]).map((c) => ({ id_nota: c.id_nota_venda, numero: null, serie: null, data_emissao: c.data_ref, valor: null,
+          canal: c.canal, numero_ecommerce: c.order_sn, origem_pedido_id: c.tiny_pedido_id, regime_venda: null, caso: c.caso, tentativas: c.tentativas }));
+      } else {
+        let q = supabase.from("view_devolucao_hist_candidatos")
+          .select("id_nota, numero, serie, data_emissao, valor, canal, numero_ecommerce, origem_pedido_id, cliente_nome, regime_venda, emit_cnpj")
+          .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true)
+          .not("numero_ecommerce", "is", null).not("origem_pedido_id", "is", null)
+          .order("data_emissao", { ascending: false }).order("id_nota", { ascending: false }).limit(max * 6);
+        if (desde) q = q.gte("data_emissao", desde);
+        const r = await q; cand = r.data as any[]; eCand = r.error;
+      }
       if (eCand) return json({ erro: `fila historica: ${eCand.message}` }, 500);
       const sns = ((cand || []) as any[]).map((c) => c.numero_ecommerce);
       const jaSet = new Set<string>();
@@ -567,7 +585,7 @@ serve(async (req: Request) => {
         const { data: ja } = await supabase.from("devolucao_auto").select("order_sn").eq("conta", contaH).in("order_sn", sns);
         for (const r of (ja || []) as any[]) jaSet.add(String(r.order_sn));
       }
-      const fila = ((cand || []) as any[]).filter((c) => !jaSet.has(String(c.numero_ecommerce))).slice(0, max);
+      const fila = ((cand || []) as any[]).filter((c) => contaH === "ottz" || !jaSet.has(String(c.numero_ecommerce))).slice(0, max); // v11: a view da Ottz ja deixa so o que pode (re)tentar
 
       const resultados: any[] = [];
       for (const f of fila) {
@@ -575,12 +593,13 @@ serve(async (req: Request) => {
         const agora = new Date().toISOString();
         if (!dry) {
           const { error: eIns } = await supabase.from("devolucao_auto").upsert({
-            conta: contaH, order_sn: f.numero_ecommerce, tiny_pedido_id: f.origem_pedido_id, canal: f.canal, caso: "historico_cancelado",
-            estado: "criando", tentativas: 1, atualizado_em: agora,
+            conta: contaH, order_sn: f.numero_ecommerce, tiny_pedido_id: f.origem_pedido_id, canal: f.canal, caso: f.caso || "historico_cancelado",
+            estado: "criando", tentativas: Number(f.tentativas || 0) + 1, atualizado_em: agora,
           }, { onConflict: "conta,order_sn" });
           if (eIns) { resultados.push({ order_sn: f.numero_ecommerce, erro: eIns.message }); continue; }
         }
-        const qs = new URLSearchParams({ modulo: "criar", conta: contaH, id_nota_venda: String(f.id_nota), pedido_id: String(f.origem_pedido_id), serie: serieH });
+        const qs = new URLSearchParams({ modulo: "criar", conta: contaH, pedido_id: String(f.origem_pedido_id), serie: serieH });
+        if (f.id_nota) qs.set("id_nota_venda", String(f.id_nota)); // v11: reembolso da Ottz vem sem nota — a nf-devolucao pega a do pedido
         if (!dry) qs.set("confirmar", "1");
         let r: any = null;
         try {
@@ -602,9 +621,9 @@ serve(async (req: Request) => {
         resultados.push(res);
         if (dry) continue;
 
-        const st = estadoDe(r, 1, "historico_cancelado");
+        const st = estadoDe(r, Number(f.tentativas || 0) + 1, f.caso || "historico_cancelado");
         const upd: Record<string, unknown> = {
-          estado: st.estado === "erro" ? "revisar" : st.estado, // historico: erro nao retenta sozinho, vai para revisao
+          estado: st.estado === "erro" && contaH !== "ottz" ? "revisar" : st.estado, // historico SVL: erro vai para revisao; Ottz (v11) retenta pelo reagendamento
           chave_venda: r?.chave_referenciada ?? null,
           detalhe: (r?.erro || r?.guard || null)?.toString().slice(0, 500) ?? null,
           proxima_em: st.reagendarMin ? new Date(Date.now() + st.reagendarMin * 60000).toISOString() : null,
@@ -633,9 +652,10 @@ serve(async (req: Request) => {
         await avisarDiscord({ nivel: "erro", titulo: "SEFAZ bloqueou a emissão das devoluções da Ottz (656 · Consumo Indevido)",
           descricao: `O robô do histórico pausou por 1 h e volta sozinho. Autorizadas nesta rodada: ${emitidasAgora.length}.` });
       }
-      let qF = supabase.from("view_devolucao_hist_candidatos").select("id_nota", { count: "exact", head: true })
-        .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true);
-      if (contaH === "ottz") qF = qF.eq("regime_venda", "lucro_real").eq("emit_cnpj", CNPJ_ACZ);
+      const qF = contaH === "ottz"
+        ? supabase.from("view_devolucao_auto_candidatos_ottz").select("order_sn", { count: "exact", head: true })
+        : supabase.from("view_devolucao_hist_candidatos").select("id_nota", { count: "exact", head: true })
+            .eq("conta", contaH).eq("devolucao", "nenhuma").eq("canc_conta", true);
       const { count: faltam } = await qF;
       return json({ modulo, conta: contaH, dry, desde, processados: resultados.length, criadas: resultados.filter((x) => x.codigo === "criada" && x.ok).length,
         emitidas: emitidasAgora.length, pausado_656: pausado656, candidatos_restantes_na_view: faltam ?? null, resultados, tempo_ms: Date.now() - inicio });

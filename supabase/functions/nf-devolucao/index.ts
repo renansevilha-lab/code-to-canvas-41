@@ -1,5 +1,16 @@
 // ============================================================================
-// Edge Function: nf-devolucao v3.26 (MULTI-CONTA: ottz | svl)
+// Edge Function: nf-devolucao v3.27 (MULTI-CONTA: ottz | svl)
+// v3.27 (26/nov/2026, pedido do dono): conta OTTZ volta a ser automatizada, so vendas do LUCRO REAL da ACZ.
+//   - natureza padrao da Ottz = "Devolução de Venda de Mercadoria - Lucro Real" (param `natureza` ainda troca).
+//     Com ela o Tiny cria a nota no regime 3 com ICMS destacado (a natureza antiga saia regime 1 e a SEFAZ
+//     recusava com 481). A serie sai a da natureza (20), o param `serie` e ignorado pelo Tiny nesse caso.
+//   - trava: venda da Ottz so gera devolucao se a NF de venda e da ACZ (CNPJ na chave) e foi emitida em/apos
+//     10/08/2026 (Lucro Real). Antes disso = codigo `venda_simples` (periodo desconsiderado por decisao do dono).
+//   - caminho direto aceita so `pedido_id` (a nota vem do proprio pedido) e, na Ottz, pedido NAO cancelado com
+//     reembolso ACEITO da Shopee (loja Ottz) — igual a SVL; parcial recorta os itens sem abrir kit (a NF da Ottz
+//     traz o kit inteiro).
+//   - anti-duplicata da Ottz tambem olha o espelho fiscal: devolucao (finalidade 4) ja emitida pela ACZ que
+//     referencia a chave da venda (fiscal_nfe.ref_nfe) — cobre as feitas a mao no Tiny (o espelho e noturno).
 // v3.26 (24/nov/2026): depois de criar, o `criar` RELE a nota no Tiny e compara os itens com o que foi enviado. Quando
 //   a venda tem um KIT cadastrado como kit na conta, a v2 `nota.fiscal.incluir` DESMEMBRA o kit nos componentes e o
 //   Tiny depois recusa emitir ("o item X esta sem a chave de acesso da NF-e referenciada": o item nao casa com a NF de
@@ -63,6 +74,11 @@ function serieDevolucaoDe(conta: string): string {
   if (conta === "svl") return (Deno.env.get("TINY_SERIE_DEVOLUCAO_SVL") || "12").trim();
   return "13";
 }
+// v3.27: Ottz (ACZ) no Lucro Real desde 10/08/2026 — so essas vendas geram devolucao automatica
+const NATUREZA_OTTZ_LUCRO_REAL = "Devolução de Venda de Mercadoria - Lucro Real";
+const CNPJ_ACZ = "37393638000140";
+const INICIO_LUCRO_REAL = "2026-08-10";
+const SHOP_SHOPEE_OTTZ = 522186766;
 function v2TokenDe(conta: string): string {
   return conta === "svl" ? TINY_V2_TOKEN_SVL : TINY_V2_TOKEN_OTTZ;
 }
@@ -313,7 +329,7 @@ function recortarItens(fonte: any[], devolver: { sku: string; qtd: number }[]) {
 
 /** v3.21: itens da devolucao Shopee traduzidos para o SKU do Tiny (kit aberto).
  *  completo=true quando o reembolso cobre o pedido inteiro (itens ou valor). */
-async function traduzirItensDevolvidos(supabase: ReturnType<typeof createClient>, orderSn: string, ret: any) {
+async function traduzirItensDevolvidos(supabase: ReturnType<typeof createClient>, orderSn: string, ret: any, abrirKit = true) {
   const norm = (x: unknown) => String(x ?? "").trim().toUpperCase();
   const devolver = ((ret?.itens || []) as any[])
     .map((i) => ({ sku: String(i.sku ?? "").trim(), qtd: Number(i.qtd ?? 1) || 1 }))
@@ -336,7 +352,7 @@ async function traduzirItensDevolvidos(supabase: ReturnType<typeof createClient>
   for (const d of devolver) {
     const ip = acha(d.sku);
     const skuTiny = String(ip?.filho || ip?.pai || d.sku).trim();
-    const { data: kit } = await supabase.from("produto_kits").select("sku_componente, quantidade").eq("sku_kit", skuTiny);
+    const { data: kit } = abrirKit ? await supabase.from("produto_kits").select("sku_componente, quantidade").eq("sku_kit", skuTiny) : { data: [] as any[] };
     if ((kit || []).length) for (const k of kit as any[]) itens.push({ sku: String(k.sku_componente), qtd: d.qtd * (Number(k.quantidade) || 1) });
     else itens.push({ sku: skuTiny, qtd: d.qtd });
   }
@@ -356,6 +372,12 @@ async function devolucaoExistente(supabase: ReturnType<typeof createClient>, con
   const { data: a } = await supabase.from("devolucao_auto")
     .select("id_nota_devolucao, numero_nota").eq("conta", conta).eq("chave_venda", chave).not("id_nota_devolucao", "is", null).limit(1);
   if ((a || []).length) return { onde: "devolucao_auto", id_nota: a![0].id_nota_devolucao, numero: a![0].numero_nota, situacao: null };
+  if (conta === "ottz") {
+    // v3.27: devolucao ja emitida pela ACZ (inclusive a mao no Tiny) que referencia a venda — espelho fiscal noturno
+    const { data: f } = await supabase.from("fiscal_nfe").select("tiny_id, numero, serie")
+      .eq("fin_nfe", "4").eq("emit_doc", CNPJ_ACZ).contains("ref_nfe", [chave]).or("cancelada.is.null,cancelada.eq.false").limit(1);
+    if ((f || []).length) return { onde: "fiscal_nfe", id_nota: f![0].tiny_id, numero: f![0].numero, situacao: null };
+  }
   return null;
 }
 
@@ -800,19 +822,36 @@ serve(async (req: Request) => {
     let devolverItens: { sku: string; qtd: number }[] | null = null;
 
     const pedidoDireto = parseInt(param("pedido_id") || param("pedido_svl_id") || "0", 10);
-    if (!param("tiny_pedido_id") && param("id_nota_venda") && (conta === "svl" || pedidoDireto > 0)) {
+    if (!param("tiny_pedido_id") && (param("id_nota_venda") || (conta === "ottz" && pedidoDireto > 0)) && (conta === "svl" || pedidoDireto > 0)) {
       // v3.24/v3.25: venda emitida NA PROPRIA conta (SVL sem pedido no principal; Ottz historico). Guard: o pedido
       // de origem esta cancelado AO VIVO nessa conta e a nota informada e a nota dele (nunca confiar so no espelho).
-      const idNotaSvl = parseInt(param("id_nota_venda") || "0", 10);
+      let idNotaSvl = parseInt(param("id_nota_venda") || "0", 10);
       const pedSvlId = pedidoDireto;
-      if (!idNotaSvl || !pedSvlId) return json({ erro: `conta ${conta} sem ponte: informe id_nota_venda E pedido_id (pedido de origem no Tiny da conta)` }, { status: 400 });
+      if (!pedSvlId || (!idNotaSvl && conta !== "ottz")) return json({ erro: `conta ${conta} sem ponte: informe id_nota_venda E pedido_id (pedido de origem no Tiny da conta)` }, { status: 400 });
       const pedSvl = await tinyFetch(accessToken, `/pedidos/${pedSvlId}`);
       if (!pedSvl) return json({ modulo: "criar", conta, ok: false, codigo: "sem_pedido_svl", erro: `pedido ${pedSvlId} nao encontrado no Tiny ${conta}` }, { status: 404 });
+      let reembolsoOttz = false;
       if (String(pedSvl.situacao) !== "2") {
-        return json({ modulo: "criar", conta, ok: false, codigo: "nao_cancelado", nao_cancelado: true, situacao_pedido: pedSvl.situacao,
-          erro: `O pedido ${pedSvl.numeroPedido} NAO esta cancelado no Tiny ${conta} (situacao ${pedSvl.situacao}). Nao gero devolucao para pedido ativo.` });
+        // v3.27: na Ottz, pedido entregue com reembolso ACEITO na Shopee (loja Ottz) tambem gera devolucao
+        const ordemPed = String(pedSvl.ecommerce?.numeroPedidoEcommerce || pedSvl.numeroOrdemCompra || "").trim();
+        const { data: ret } = conta === "ottz" && ordemPed
+          ? await supabase.from("shopee_devolucoes").select("return_sn, itens, solucao, refund_amount")
+              .eq("order_sn", ordemPed).eq("shop_id", SHOP_SHOPEE_OTTZ).eq("status", "ACCEPTED").order("create_time", { ascending: false }).limit(1)
+          : { data: [] as any[] };
+        if (!(ret || []).length) {
+          return json({ modulo: "criar", conta, ok: false, codigo: "nao_cancelado", nao_cancelado: true, situacao_pedido: pedSvl.situacao,
+            erro: `O pedido ${pedSvl.numeroPedido} NAO esta cancelado no Tiny ${conta} (situacao ${pedSvl.situacao}) e nao tem reembolso aceito. Nao gero devolucao para pedido ativo.` });
+        }
+        const tr = await traduzirItensDevolvidos(supabase, ordemPed, ret![0], false);
+        devolverItens = tr.itens;
+        reembolsoOttz = true;
+        guard = `reembolso_aceito(${ret![0].return_sn}, ${tr.motivo})`;
       }
       const notaDoPedido = pedSvl.idNotaFiscal ?? pedSvl.notaFiscal?.id ?? null;
+      if (!idNotaSvl) {
+        if (notaDoPedido == null || !Number(notaDoPedido)) return json({ modulo: "criar", conta, ok: false, codigo: "sem_nf_venda", erro: `pedido ${pedSvl.numeroPedido} sem NF de venda vinculada no Tiny ${conta}` }, { status: 404 });
+        idNotaSvl = Number(notaDoPedido);
+      }
       if (notaDoPedido != null && Number(notaDoPedido) !== idNotaSvl) {
         return json({ modulo: "criar", conta, ok: false, codigo: "nota_nao_do_pedido", situacao_pedido: pedSvl.situacao,
           erro: `A NF ${idNotaSvl} nao e a nota vinculada ao pedido ${pedSvl.numeroPedido} no Tiny ${conta} (idNotaFiscal ${notaDoPedido}).` }, { status: 422 });
@@ -820,7 +859,7 @@ serve(async (req: Request) => {
       venda = await tinyFetch(accessToken, `/notas/${idNotaSvl}`);
       if (!venda) return json({ codigo: "sem_nf_venda", erro: `nota de venda ${idNotaSvl} nao encontrada no Tiny ${conta}` }, { status: 404 });
       idNotaVenda = idNotaSvl;
-      guard = `cancelado_${conta}`;
+      if (!reembolsoOttz) guard = `cancelado_${conta}`;
       bridge = { direto: true, pedido_svl: pedSvlId, nota_do_pedido: notaDoPedido };
     } else if (conta === "svl") {
       const tinyPedidoId = parseInt(param("tiny_pedido_id") || "0", 10);
@@ -865,6 +904,19 @@ serve(async (req: Request) => {
     }
     chave = venda.chaveAcesso || null;
     if (!chave || String(chave).length !== 44) return json({ codigo: "sem_chave", erro: `NF de venda sem chave de acesso valida` }, { status: 400 });
+    if (conta === "ottz") {
+      // v3.27: so venda da ACZ emitida no Lucro Real (desde 10/08/2026); o periodo do Simples fica de fora
+      const emitVenda = digits(chave).slice(6, 20);
+      const dataVenda = String(venda.dataEmissao || "").slice(0, 10);
+      if (emitVenda !== CNPJ_ACZ) {
+        return json({ modulo: "criar", conta, ok: false, codigo: "nao_acz", chave_referenciada: chave,
+          erro: `A NF de venda ${venda.numero} nao e da ACZ (CNPJ ${emitVenda} na chave). Devolucao automatica da Ottz so para notas da ACZ.` }, { status: 422 });
+      }
+      if (!dataVenda || dataVenda < INICIO_LUCRO_REAL) {
+        return json({ modulo: "criar", conta, ok: false, codigo: "venda_simples", chave_referenciada: chave, data_venda: dataVenda || null,
+          erro: `A NF de venda ${venda.numero} foi emitida em ${dataVenda || "?"}, antes do Lucro Real (${INICIO_LUCRO_REAL}). Periodo do Simples fica de fora por enquanto.` }, { status: 422 });
+      }
+    }
     chaveParaVinculo = chave;
 
     // v3.20: anti-duplicata em TODAS as origens, tambem no dry (o motor usa o dry)
@@ -882,7 +934,7 @@ serve(async (req: Request) => {
         return json({ modulo: "criar", conta, ok: false, codigo: "ja_existe", ja_existe: true, id_nota_devolucao: jaVinc![0].id_nota_devolucao,
           erro: `Ja existe uma devolucao criada para este pedido (id ${jaVinc![0].id_nota_devolucao}).` });
       }
-      if (conta === "ottz") {
+      if (conta === "ottz" && !guard.startsWith("reembolso_aceito")) {
         const { data: ncRow } = await supabase.from("notas_cancelados").select("tiny_pedido_id, numero_pedido").eq("chave_nfe", chaveParaVinculo).limit(1);
         const tinyPedidoId = ncRow?.[0]?.tiny_pedido_id;
         if (tinyPedidoId) {
@@ -918,7 +970,7 @@ serve(async (req: Request) => {
     }
     const feito = montarPayloadDevolucao(venda, serie, chave, fonteItens);
     const { payload, nItens, itensSemNcm } = feito;
-    const naturezaParam = (param("natureza") || "").trim();
+    const naturezaParam = (param("natureza") || "").trim() || (conta === "ottz" ? NATUREZA_OTTZ_LUCRO_REAL : ""); // v3.27
     if (naturezaParam) (payload.nota_fiscal as any).natureza_operacao = naturezaParam; // v3.25
     if (nItens === 0) return json({ codigo: "sem_itens", erro: "nota de venda sem itens" }, { status: 400 });
 
@@ -1146,5 +1198,5 @@ serve(async (req: Request) => {
     return json({ modulo: "varrer-cancelados", conta: "ottz", candidatos_90d: (candidatos || []).length, ja_verificados_12h: jaVerificados.size, processados_agora: pendentes.length, com_nf: comNf, sem_nf: semNf, pulados_nao_cancelado_ao_vivo: puloNaoCancelado, erros, gravadas, limpos_falsos_positivos: limpos, restam: (candidatos || []).length - jaVerificados.size - pendentes.length, tempo_ms: Date.now() - inicio });
   }
 
-  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.26: criar rele a nota e avisa itens_divergem (kit desmembrado pelo Tiny); v3.25: criar direto por id_nota_venda+pedido_id nas duas contas, natureza opcional" });
+  return json({ modulos: ["varrer-cancelados", "pendentes", "emitir", "criar", "clonar", "clonar-lote", "v2-teste", "svl-nota", "nota-crua", "procurar-nota", "itens-venda"], conta, nota: "v3.27: Ottz so Lucro Real (natureza propria, reembolso aceito, anti-duplicata fiscal); v3.26: criar rele a nota e avisa itens_divergem (kit desmembrado pelo Tiny); v3.25: criar direto por id_nota_venda+pedido_id nas duas contas, natureza opcional" });
 });
