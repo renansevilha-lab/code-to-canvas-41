@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-chat v5 — chat com compradores Shopee
+// Edge Function: shopee-chat v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
 // v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
 //   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
 //   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
@@ -35,6 +35,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
+import Anthropic from "npm:@anthropic-ai/sdk@1.14.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -225,12 +226,10 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
   if (!instrucao && soAgradecimento(ctx?.historico)) {
     return { sugestao: RESPOSTA_AGRADECIMENTO, precisa_humano: false, motivo: null, modelo: "regra: agradecimento" };
   }
-  // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
-  const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
-  const tom = cfg?.valor || TOM_PADRAO;
-  const key = Deno.env.get("OPENAI_API_KEY") || "";
-  if (!key) return { erro: "OPENAI_API_KEY nao cadastrada" };
-  const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
+  // tom de voz e contexto do negocio vem de atendimento_config: mudam sem publicar a funcao
+  const { data: cfgs } = await sb.from("atendimento_config").select("chave, valor").in("chave", ["tom", "contexto_negocio"]);
+  const cfg = (k: string) => (cfgs || []).find((c: any) => c.chave === k)?.valor || "";
+  const tom = cfg("tom") || TOM_PADRAO;
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const sistema = [
     `Voce atende clientes da loja ${MARCA[loja]} no chat da Shopee Brasil (pet shop: areia para gatos, higiene e acessorios pet). Hoje e ${hoje}.`,
@@ -244,8 +243,46 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
     "Se faltar o numero do pedido e ele for necessario, peca. Se o pedido ainda nao foi enviado e esta no prazo, diga que esta sendo preparado e informe a data limite de envio.",
     "Se a pergunta exigir decisao humana (reclamacao grave, ameaca, pedido de reembolso, produto errado/quebrado, assunto que os dados nao respondem), marque precisa_humano=true e ainda assim escreva uma resposta segura de acolhimento.",
     'Responda APENAS um JSON: {"resposta": "...", "precisa_humano": true|false, "motivo": "frase curta para a equipe"}.',
-  ].join("\n");
+    cfg("contexto_negocio"),
+  ].filter(Boolean).join("\n");
   const usuario = JSON.stringify({ conversa: ctx.historico, pedidos: ctx.pedidos, produtos: ctx.produtos, instrucao_da_equipe: instrucao || null });
+  const g = await gerarRascunho(sistema, usuario);
+  if (g.erro) return { erro: g.erro };
+  const out = g.out;
+  return { sugestao: String(out.resposta || "").trim(), precisa_humano: !!out.precisa_humano, motivo: out.motivo || null, modelo: g.modelo };
+}
+
+// v7 (26/nov): Claude Haiku 5.5 quando ANTHROPIC_API_KEY existe (decisao do dono); sem a chave,
+// ou se o Claude falhar, cai na OpenAI como antes. Modelo trocavel pelo secret MODELO_ATENDIMENTO.
+const SCHEMA_RASCUNHO = {
+  type: "object",
+  properties: { resposta: { type: "string" }, precisa_humano: { type: "boolean" }, motivo: { type: ["string", "null"] } },
+  required: ["resposta", "precisa_humano", "motivo"],
+  additionalProperties: false,
+};
+async function gerarRascunho(sistema: string, usuario: string): Promise<{ out?: any; modelo?: string; erro?: string }> {
+  let falhaClaude = "";
+  const akey = Deno.env.get("ANTHROPIC_API_KEY") || "";
+  if (akey) {
+    const modelo = Deno.env.get("MODELO_ATENDIMENTO") || "claude-haiku-5-5";
+    try {
+      const client = new Anthropic({ apiKey: akey });
+      const r: any = await client.messages.create({
+        model: modelo, max_tokens: 4000,
+        system: [{ type: "text", text: sistema, cache_control: { type: "ephemeral" } }],
+        output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA_RASCUNHO } },
+        messages: [{ role: "user", content: usuario }],
+      } as any);
+      if (r.stop_reason === "refusal") falhaClaude = "o Claude recusou";
+      else {
+        const t = (r.content || []).find((b: any) => b.type === "text")?.text || "";
+        return { out: JSON.parse(t), modelo };
+      }
+    } catch (e) { falhaClaude = `Claude: ${(e as Error).message}`.slice(0, 200); }
+  }
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  if (!key) return { erro: falhaClaude || "nenhuma chave de IA cadastrada" };
+  const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
   let r: Response;
   try {
     r = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -259,8 +296,7 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
   if (!r.ok) return { erro: `OpenAI ${r.status}: ${t.slice(0, 200)}` };
   try {
     const j = JSON.parse(t);
-    const out = JSON.parse(j.choices?.[0]?.message?.content || "{}");
-    return { sugestao: String(out.resposta || "").trim(), precisa_humano: !!out.precisa_humano, motivo: out.motivo || null, modelo };
+    return { out: JSON.parse(j.choices?.[0]?.message?.content || "{}"), modelo: falhaClaude ? `${modelo} (reserva: ${falhaClaude})` : modelo };
   } catch { return { erro: "resposta da IA fora do formato" }; }
 }
 

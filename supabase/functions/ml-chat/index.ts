@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: ml-chat v1 — atendimento do Mercado Livre com IA (26/nov/2026)
+// Edge Function: ml-chat v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v1 — atendimento do Mercado Livre com IA (26/nov/2026)
 // ----------------------------------------------------------------------------
 // Duas caixas por conta (ottz = 1107117809, svl = 1299638625):
 //   * perguntas (antes da compra): GET /questions/search?status=UNANSWERED;
@@ -19,6 +19,7 @@
 // ============================================================================
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import Anthropic from "npm:@anthropic-ai/sdk@1.14.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -166,12 +167,10 @@ async function rascunhoIa(sb: any, conta: string, tipo: string, ctx: any, instru
   if (tipo !== "pergunta" && !instrucao && soAgradecimento(ctx?.conversa)) {
     return { sugestao: RESPOSTA_AGRADECIMENTO, precisa_humano: false, motivo: null, modelo: "regra: agradecimento", limite: 340 };
   }
-  // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
-  const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
-  const tom = cfg?.valor || TOM_PADRAO;
-  const key = Deno.env.get("OPENAI_API_KEY") || "";
-  if (!key) return { erro: "OPENAI_API_KEY nao cadastrada" };
-  const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
+  // tom de voz e contexto do negocio vem de atendimento_config: mudam sem publicar a funcao
+  const { data: cfgs } = await sb.from("atendimento_config").select("chave, valor").in("chave", ["tom", "contexto_negocio"]);
+  const cfg = (k: string) => (cfgs || []).find((x: any) => x.chave === k)?.valor || "";
+  const tom = cfg("tom") || TOM_PADRAO;
   const c = CONTAS[conta];
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const limite = tipo === "pergunta" ? 800 : 340;
@@ -189,22 +188,59 @@ async function rascunhoIa(sb: any, conta: string, tipo: string, ctx: any, instru
     "Nunca passe telefone, WhatsApp, e-mail, redes sociais nem link externo (regra do Mercado Livre).",
     "Se exigir decisao humana (reclamacao grave, produto errado/quebrado, pedido de reembolso, ameaca, informacao que os dados nao respondem), marque precisa_humano=true e escreva uma resposta segura de acolhimento.",
     'Responda APENAS um JSON: {"resposta": "...", "precisa_humano": true|false, "motivo": "frase curta para a equipe"}.',
-  ].join("\n");
+    cfg("contexto_negocio"),
+  ].filter(Boolean).join("\n");
+  const g = await gerarRascunho(regras, JSON.stringify({ ...ctx, instrucao_da_equipe: instrucao || null }));
+  if (g.erro) return { erro: g.erro };
+  const out = g.out;
+  let resp = String(out.resposta || "").trim();
+  if (resp.length > limite + 10) resp = resp.slice(0, limite);
+  return { sugestao: resp, precisa_humano: !!out.precisa_humano, motivo: out.motivo || null, modelo: g.modelo, limite };
+}
+
+// v7 (26/nov): Claude Haiku 5.5 quando ANTHROPIC_API_KEY existe (decisao do dono); sem a chave,
+// ou se o Claude falhar, cai na OpenAI como antes. Modelo trocavel pelo secret MODELO_ATENDIMENTO.
+const SCHEMA_RASCUNHO = {
+  type: "object",
+  properties: { resposta: { type: "string" }, precisa_humano: { type: "boolean" }, motivo: { type: ["string", "null"] } },
+  required: ["resposta", "precisa_humano", "motivo"],
+  additionalProperties: false,
+};
+async function gerarRascunho(sistema: string, usuario: string): Promise<{ out?: any; modelo?: string; erro?: string }> {
+  let falhaClaude = "";
+  const akey = Deno.env.get("ANTHROPIC_API_KEY") || "";
+  if (akey) {
+    const modelo = Deno.env.get("MODELO_ATENDIMENTO") || "claude-haiku-5-5";
+    try {
+      const client = new Anthropic({ apiKey: akey });
+      const r: any = await client.messages.create({
+        model: modelo, max_tokens: 4000,
+        system: [{ type: "text", text: sistema, cache_control: { type: "ephemeral" } }],
+        output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA_RASCUNHO } },
+        messages: [{ role: "user", content: usuario }],
+      } as any);
+      if (r.stop_reason === "refusal") falhaClaude = "o Claude recusou";
+      else {
+        const t = (r.content || []).find((b: any) => b.type === "text")?.text || "";
+        return { out: JSON.parse(t), modelo };
+      }
+    } catch (e) { falhaClaude = `Claude: ${(e as Error).message}`.slice(0, 200); }
+  }
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  if (!key) return { erro: falhaClaude || "nenhuma chave de IA cadastrada" };
+  const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: modelo, response_format: { type: "json_object" }, max_completion_tokens: 4000, reasoning_effort: "low",
-      messages: [{ role: "system", content: regras }, { role: "user", content: JSON.stringify({ ...ctx, instrucao_da_equipe: instrucao || null }) }],
+      messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }],
     }),
   }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) } as any));
   const t = await r.text();
   if (!r.ok) return { erro: `OpenAI ${r.status}: ${t.slice(0, 200)}` };
   try {
-    const out = JSON.parse(JSON.parse(t).choices?.[0]?.message?.content || "{}");
-    let resp = String(out.resposta || "").trim();
-    if (resp.length > limite + 10) resp = resp.slice(0, limite);
-    return { sugestao: resp, precisa_humano: !!out.precisa_humano, motivo: out.motivo || null, modelo, limite };
+    return { out: JSON.parse(JSON.parse(t).choices?.[0]?.message?.content || "{}"), modelo: falhaClaude ? `${modelo} (reserva: ${falhaClaude})` : modelo };
   } catch { return { erro: "resposta da IA fora do formato" }; }
 }
 
