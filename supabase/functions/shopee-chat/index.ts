@@ -185,7 +185,12 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
   return { comprador_id: compradorId, historico: historico.slice(-20), pedidos, produtos };
 }
 
-async function rascunhoIa(loja: string, ctx: any, instrucao: string) {
+const TOM_PADRAO = 'TOM: simpatico, humano e natural, sem formalidade de robo e sem exagero. Comece com "Oi, tudo bem?". Use "voce", frases diretas, no maximo 1 emoji.';
+
+async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
+  // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
+  const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
+  const tom = cfg?.valor || TOM_PADRAO;
   const key = Deno.env.get("OPENAI_API_KEY") || "";
   if (!key) return { erro: "OPENAI_API_KEY nao cadastrada" };
   const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
@@ -193,7 +198,8 @@ async function rascunhoIa(loja: string, ctx: any, instrucao: string) {
   const sistema = [
     `Voce atende clientes da loja ${MARCA[loja]} no chat da Shopee Brasil (pet shop: areia para gatos, higiene e acessorios pet). Hoje e ${hoje}.`,
     `Escreva a PROXIMA resposta da loja, em portugues do Brasil, curta (ate 4 frases).`,
-    `TOM (pedido do dono): humano, proximo e acolhedor, como uma pessoa simpatica da loja conversando — nada de robo ou formal. Comece com uma saudacao calorosa e informal (ex.: "Oiee, tudo bem? 😊", "Oii! Tudo certinho por ai?") quando for o inicio da resposta; use "voce", frases simples, diminutivos com naturalidade (certinho, rapidinho) e no maximo 1 ou 2 emojis leves (😊 💜 🐾). Em reclamacao ou problema, acolha primeiro ("poxa, sinto muito por isso!") antes de orientar. Termine sempre com a assinatura "${ASSINATURA[loja]}" (pode vir apos um "Qualquer coisa, e so chamar!").`,
+    tom,
+    `Termine sempre com a assinatura "${ASSINATURA[loja]}".`,
     "Use SOMENTE os dados fornecidos (pedidos, rastreio, produto). Nunca invente prazo, status, rastreio, preco ou estoque.",
     "NUNCA prometa reembolso, troca, desconto, brinde, cupom nem devolucao de dinheiro. Para problema com o produto ou entrega, peca foto/detalhes se faltar e oriente o cliente a abrir 'Devolucao/Reembolso' pelo app da Shopee, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, link externo nem peca para comprar fora da Shopee (regra da Shopee).",
@@ -371,7 +377,7 @@ serve(async (req) => {
       const ctx = await contextoDaConversa(sb, a, l.shop_id, conversa);
       if (ctx.erro) return json({ modulo, erro: ctx.erro }, 502);
       const instrucao = (p("instrucao") || "").trim().slice(0, 500);
-      const r = await rascunhoIa(nome, ctx, instrucao);
+      const r = await rascunhoIa(sb, nome, ctx, instrucao);
       return json({ modulo, loja: nome, conversa, ...r, contexto: { pedidos: ctx.pedidos, produtos: ctx.produtos, comprador_id: ctx.comprador_id } });
     }
 

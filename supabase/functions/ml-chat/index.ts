@@ -128,7 +128,12 @@ async function lerConversa(sb: any, tk: string, seller: number, pack: string) {
   };
 }
 
-async function rascunhoIa(conta: string, tipo: string, ctx: any, instrucao: string) {
+const TOM_PADRAO = 'TOM: simpatico, humano e natural, sem formalidade de robo e sem exagero. Comece com "Oi, tudo bem?". Use "voce", frases diretas, no maximo 1 emoji.';
+
+async function rascunhoIa(sb: any, conta: string, tipo: string, ctx: any, instrucao: string) {
+  // tom de voz vem de atendimento_config (chave 'tom'): muda sem publicar a funcao
+  const { data: cfg } = await sb.from("atendimento_config").select("valor").eq("chave", "tom").maybeSingle();
+  const tom = cfg?.valor || TOM_PADRAO;
   const key = Deno.env.get("OPENAI_API_KEY") || "";
   if (!key) return { erro: "OPENAI_API_KEY nao cadastrada" };
   const modelo = Deno.env.get("MODELO_TEXTO_OPENAI") || "gpt-5.5";
@@ -141,7 +146,8 @@ async function rascunhoIa(conta: string, tipo: string, ctx: any, instrucao: stri
       ? "Responda a PERGUNTA de um interessado num anuncio. A resposta fica PUBLICA no anuncio: sem dados pessoais, sem numero de pedido. Responda com base no titulo/atributos do anuncio e nas respostas anteriores da loja; se a informacao nao estiver nos dados, diga que o detalhe esta na descricao/ficha do anuncio ou que nao temos essa informacao, sem inventar."
       : "Escreva a PROXIMA mensagem da loja na conversa pos-venda de um pedido.",
     `Portugues do Brasil, no maximo ${limite} caracteres (conte os caracteres: o limite e rigido).`,
-    `TOM (pedido do dono): humano, proximo e acolhedor, como uma pessoa simpatica da loja — nada de robo ou formal. Comece com uma saudacao calorosa e informal (ex.: "Oiee, tudo bem? 😊", "Oii! Tudo certinho?"); use "voce", frases simples, diminutivos com naturalidade e no maximo 1 ou 2 emojis leves (😊 💜 🐾). Em reclamacao ou problema, acolha primeiro ("poxa, sinto muito por isso!") antes de orientar. Termine com a assinatura "${c.assinatura}".`,
+    tom,
+    `Termine com a assinatura "${c.assinatura}".`,
     "Use SOMENTE os dados fornecidos. Nunca invente prazo, rastreio, estoque, preco, medida ou composicao.",
     "NUNCA prometa reembolso, troca, desconto, cupom ou brinde. Problema com o produto ou entrega: acolha, peca foto/detalhes se faltar e oriente a usar 'Tenho um problema' / devolucao pelo Mercado Livre, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, redes sociais nem link externo (regra do Mercado Livre).",
@@ -292,7 +298,7 @@ serve(async (req) => {
       ctx = { conversa: r.mensagens.slice(-20).map((m: any) => ({ de: m.de_nos ? "loja" : "cliente", texto: m.texto, em: m.em })), pedidos: r.pedidos };
       if (r.bloqueada) return json({ modulo, erro: `conversa bloqueada pelo Mercado Livre (${r.motivo_bloqueio || "sem motivo"}) — nao aceita mensagem` }, 409);
     }
-    const out = await rascunhoIa(conta, tipo, ctx, (p("instrucao") || "").slice(0, 500));
+    const out = await rascunhoIa(sb, conta, tipo, ctx, (p("instrucao") || "").slice(0, 500));
     return json({ modulo, conta, tipo, referencia: ref, ...out });
   }
 
