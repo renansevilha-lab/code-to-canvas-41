@@ -578,8 +578,8 @@ export function MultiSkuPanel() {
         { t: obs ? "Editar observação…" : "Observação…", onClick: () => { const chave = String(p.separacao_id); void editarObsSeparacao("pedido", chave, obs?.texto, perfil?.nome ?? null).then(recarregarObs); } },
       ];
       return (
-        <div key={p.separacao_id} style={{ display: "grid", gridTemplateColumns: "minmax(200px,max-content) 80px 100px 80px minmax(130px,1fr) 36px", gap: 8, alignItems: "center", padding: "5px 10px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
-          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div key={p.separacao_id} style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center", padding: "6px 4px", borderTop: i ? "1px solid var(--pm-b)" : undefined, fontSize: 12 }}>
+          <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: "1 1 180px" }}>
             <CodigoPedido ecommerce={p.numero_ecommerce} tiny={p.venda_numero} />
             {obs && <ObsLinha obs={obs} />}
           </span>
@@ -702,14 +702,14 @@ export function MultiSkuPanel() {
                         ]} />
                       </DropdownMenu>
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {g.itens.map((i) => (
-                        <div key={i.sku} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 6px", borderRadius: 10, background: "var(--pm-s2)", flex: "1 1 170px", minWidth: 0 }}>
-                          <Foto src={i.foto} alt={i.nome ?? i.sku} tam={44} />
-                          <b style={{ ...MONO, fontSize: 20, fontWeight: 700 }}>×{formatNumber(i.qtd)}</b>
-                          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                            <span title={i.nome ?? ""} style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nome ?? i.sku}</span>
-                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--pm-t2)" }}>
+                        <div key={i.sku} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 6px 6px", borderRadius: 10, background: "var(--pm-s2)", minWidth: 0 }}>
+                          <Foto src={i.foto} alt={i.nome ?? i.sku} tam={48} />
+                          <b style={{ ...MONO, fontSize: 20, fontWeight: 700, flex: "none", minWidth: 40 }}>×{formatNumber(i.qtd)}</b>
+                          <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.3, whiteSpace: "normal", overflowWrap: "anywhere" }}>{i.nome ?? i.sku}</span>
+                            <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 3, fontSize: 11, color: "var(--pm-t2)", marginTop: 2 }}>
                               {i.localizacao && <><MapPin className="h-3 w-3" /><b style={{ ...MONO, fontWeight: 600 }}>{i.localizacao}</b> ·</>} SKU {i.sku}
                             </span>
                           </span>
@@ -748,8 +748,8 @@ export function MultiSkuPanel() {
                       </button>
                     </div>
                     {aberto && (
-                      <div style={{ borderTop: "1px solid var(--pm-b)", paddingTop: 6, overflowX: "auto" }}>
-                        <div style={{ minWidth: 560 }}>{g.peds.map(pedidoLinha)}</div>
+                      <div style={{ borderTop: "1px solid var(--pm-b)", paddingTop: 6 }}>
+                        {g.peds.map(pedidoLinha)}
                       </div>
                     )}
                   </div>
