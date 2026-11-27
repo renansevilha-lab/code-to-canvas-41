@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { embalarNoSistema } from "@/lib/embalar";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, Printer, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -167,14 +168,9 @@ async function reimprimirShopee(loja: "ottz" | "svl", orderSn: string, printerId
 
 /** Marca UMA separação como embalada no Tiny (mesmo endpoint da Separação). */
 async function embalarUmApi(separacaoId: number): Promise<void> {
-  const resp = await fetch(
-    `${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=embalar-um&separacao_id=${separacaoId}&confirmar=1`,
-    { headers: { Authorization: `Bearer ${EXTERNAL_PUBLISHABLE_KEY}` } },
-  );
-  if (!resp.ok) {
-    const d = (await resp.json().catch(() => ({}))) as { error?: string; message?: string };
-    throw new Error(d.error ?? d.message ?? `HTTP ${resp.status}`);
-  }
+  // v41: marca no sistema na hora; o Tiny recebe pela fila (embalar-fila).
+  const r = await embalarNoSistema({ ids: [separacaoId] });
+  if (r.marcados === 0) throw new Error(r.bloqueados.length ? "etiqueta ainda não foi impressa/confirmada" : "pedido já saiu da fila");
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

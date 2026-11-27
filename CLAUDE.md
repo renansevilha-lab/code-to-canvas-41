@@ -1270,6 +1270,20 @@ existindo na barra. Função separada da `tiny-separacao` (crítica; outras sess
 mexem). **Fase 2 (a testar): embalar automaticamente os pedidos com impressão
 confirmada** — o gancho natural é o `confirmar-impressao` (job `done`).
 
+## 5.5.0 Embalar sem esperar o Tiny (27/nov/2026, pedido do dono)
+
+Marcar embalado demorava: cada pedido era um `embalar-um` (~0,8 s, PUT no Tiny) e a tela fazia um por vez. Agora a tela chama a RPC
+**`separacao_embalar_marcar(p_ids | p_tag, p_forcar, p_por, p_motivo)`** (security definer, authenticated): mesma trava de impressão
+confirmada (done/forcado; com `p_forcar` grava a linha `forcado` em `impressao_etiquetas`), põe `separacao_tiny.situacao = 3` na hora
+e enfileira em **`separacao_embalar_fila`** (PK separacao_id; tentativas, proxima_em, ultimo_erro, concluido_em, desistiu_em). Devolve
+`{marcados, total, bloqueados[ids]}`. Helper único no front: `embalarNoSistema()` em `src/lib/embalar.ts` (Separação: por SKU, por
+pedido, lote, vários lotes; Multi SKU; A enviar/Risco). Depois ele dá um empurrão sem esperar em
+`tiny-separacao?modulo=embalar-fila` (**v41**, deploy 48), que manda o PUT situacao 3 ao Tiny (4xx → confere se o Tiny já está
+embalado), com espera 2^t min (máx 30) e, na 8ª falha, desiste, devolve o pedido à fila do app (situacao 1) e avisa no Discord (erros).
+Cron **197** `tiny-separacao-embalar-fila` (`1-59 * * * *`, só chama a função se há pendente). O `sync` da v41 NÃO reverte para 1
+quem está pendente nessa fila (e pula a reversão inteira se a leitura da fila falhar). `embalar-um`/`embalar-lote` seguem no ar.
+Fonte da função agora em `supabase/functions/tiny-separacao/`.
+
 ## 5.5.1 Separação no design novo — fase 1 (22/out/2026)
 
 Pacote "Separação" do Claude Design (zip de 22/out). `SeparacaoPage` abre o visual novo por padrão
@@ -4777,7 +4791,7 @@ Desenho aprovado em https://claude.ai/artifact/L5QjFtFBfWJDaAmDx7uUQy, com o ped
 | `shopee-ship` | v2 | Confirmar envio na Shopee (`ship_order`) — ver seção 5.1 |
 | `shopee-catalogo-itens` | v2 | Relê do catálogo Shopee **só os anúncios pedidos** (v2: `modulo=recentes` = anúncios novos/alterados nos últimos N dias que o espelho não tem; fonte em `supabase/functions/`) (≤30/chamada, `pendentes` = reenviar) e faz upsert no espelho com o MESMO mapeamento do `shopee-sync-ads?modulo=catalogo`. Só leitura na Shopee; JWT de usuário. Usado pelo "Atualizar da Shopee" da Minha Promoção — ver seção 5.9.1 |
 | `shopee-flashsale` | v11 (deploy 24, 21/out — escrita com `confirmar=1` só com login de usuário ou service role; a chave pública só lê e faz prévia; exceção: a rodada do robô `programar&auto=1` sem `dia`, cron 87; o front `chamarFlashsale` manda a sessão) · v10 (deploy 23 — limite de 50 VARIAÇÕES por relâmpago, §5.9.1.1); antes: v9 (deploy 22; a descrição ao lado é da v3 — ver §5.9.1 para v8/v9) | Relâmpago da Loja: leitura (slots/criteria/list/sale/catalogo) + escrita gated `confirmar=1` (criar/add-items/ativar/remover-itens/excluir) + **`programar` = RECONCILIAÇÃO**: compara `flashsale_programacao` com o que JÁ existe no slot de amanhã na Shopee e adiciona só o que falta — completa blocos existentes e cria blocos novos de até `flashsale_config.max_itens_bloco` produtos (default 10, limite do Seller Center), ativando só os novos. **ARMADILHA:** `get_time_slot_id` ESCONDE slot que já tem sale — o timeslot do dia vem das sales existentes primeiro. Cron jobid 87 (21h UTC; `&auto=1` respeita `automacao_ativa`, default OFF). Guarda de preço: pula promo ≥ original ou < 50%. Tela `/flash-sale` (busca no espelho `shopee_anuncios`; MC% via RPC `flashsale_mc_base` = comissão/imposto efetivos 60d + CMV kit-aware; grant só authenticated) |
-| `tiny-separacao` | v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
+| `tiny-separacao` | v41 (deploy 48, 27/nov: `embalar-fila` — o app marca embalado na hora e o Tiny recebe depois, §5.5.0; fonte em `supabase/functions/tiny-separacao/`) · v33 | Sync da fila, tags de lote, embalar. `processar-abertos` confere o Tiny **ao vivo** e espelha na hora o que falta (fecha o gap de ~10 min do espelho); apos aprovar, marca `aprovada` no espelho (evita reprocesso/marcador duplicado) |
 | `separacao-falta` | v6 (deploy 9) | Reportar falta de estoque: marcador "FALTA ESTOQUE" no Tiny + aviso no Discord (canal `estoque` = #estoque-pedido-sem-estoque) + **balanço 0 no depósito Geral do Tiny** (`zerar=1`, kit exige `sku_zerar`) + agenda a conferência da Shopee. `?separacao_id=` um pedido; `?tag=` lote; `?grupo=` linha da fila; `&preview=1` lê o saldo ao vivo sem aplicar nada; `?desfazer=1&sku=` "estoque voltou". Grava `separacao_tiny.falta_estoque_em/_por`. Ver §5.0.2. Separada da tiny-separacao de propósito |
 | `produtos-peso` | v2 | Peso real do produto (`dimensoes.pesoBruto` do Tiny) → `produtos.peso_bruto`. Base da divisão de separação por peso — ver §5.0.3. `?modulo=preencher` (cron jobid 113, `9,39`), `refresh`, `sku=X`, `&dry=1` |
 | `estoque-conferir` | v1 | Fecha o ciclo da falta: lê o estoque **ao vivo** dos anúncios Shopee do SKU (`get_model_list` / `get_item_base_info`, duas lojas) e avisa no canal `estoque` se, depois do balanço 0 no Tiny, a Shopee ainda mostra estoque. `?modulo=conferir` (cron jobid 109, `4-59/5`), `&sku=X` força, `?modulo=estoque&sku=X` só leitura. Ver §5.0.2 |

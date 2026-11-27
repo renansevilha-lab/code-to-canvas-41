@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { embalarNoSistema } from "@/lib/embalar";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -160,11 +161,9 @@ async function imprimirPedidoMl(orderId: string, printerId: number): Promise<boo
 }
 
 async function embalarUmApi(separacaoId: number): Promise<void> {
-  const resp = await fetch(`${EXTERNAL_URL}/functions/v1/tiny-separacao?modulo=embalar-um&separacao_id=${separacaoId}&confirmar=1`, { headers: HEADERS });
-  if (!resp.ok) {
-    const d = (await resp.json().catch(() => ({}))) as { erro?: string; error?: string; message?: string };
-    throw new Error(d.erro ?? d.error ?? d.message ?? `HTTP ${resp.status}`);
-  }
+  // v41: marca no sistema na hora; o Tiny recebe pela fila (embalar-fila).
+  const r = await embalarNoSistema({ ids: [separacaoId] });
+  if (r.marcados === 0) throw new Error(r.bloqueados.length ? "etiqueta ainda não foi impressa/confirmada" : "pedido já saiu da fila");
 }
 
 async function aguardarImpressora(onTick: (impressas: number, pendentes: number) => void, cancelado: () => boolean, maxMs = 120_000) {

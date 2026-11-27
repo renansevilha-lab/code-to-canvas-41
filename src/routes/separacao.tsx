@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Component, type ErrorInfo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { embalarNoSistema } from "@/lib/embalar";
 import {
   PackageCheck,
   Zap,
@@ -2179,9 +2180,16 @@ function LotesDoDia({
   async function marcarEmbalado(lote: TagLoteRow) {
     setEmbalando(lote.tag);
     try {
-      const data = await callSeparacaoFn<EmbalarLoteResponse>(
-        `modulo=embalar-lote&tag=${encodeURIComponent(lote.tag)}&confirmar=1`,
-      );
+      // v41: marca no sistema na hora; o Tiny recebe pela fila (embalar-fila).
+      const r = await embalarNoSistema({ tag: lote.tag, por: perfil?.nome ?? null });
+      if (r.marcados === 0) {
+        toast.error("Nenhum pedido deste lote teve etiqueta impressa e confirmada", {
+          description: "Imprima as etiquetas e aguarde a confirmação, ou use o forçar no pedido.",
+        });
+        return;
+      }
+      const data = { tag: lote.tag, embaladas: r.marcados, total: r.total,
+        erros: r.bloqueados.length ? [`${r.bloqueados.length} sem impressão confirmada (ficaram na fila)`] : [] };
       if (data.erros && data.erros.length > 0) {
         toast.warning(
           `${data.embaladas} de ${data.total} embalados — ${data.erros.length} erro(s)`,
@@ -2236,9 +2244,9 @@ function LotesDoDia({
     try {
       for (const tag of tags) {
         try {
-          const data = await callSeparacaoFn<EmbalarLoteResponse>(
-            `modulo=embalar-lote&tag=${encodeURIComponent(tag)}&confirmar=1`,
-          );
+          const r = await embalarNoSistema({ tag, por: perfil?.nome ?? null });
+          const data = { embaladas: r.marcados, total: r.total,
+            erros: r.bloqueados.length || r.marcados === 0 ? ["pendencia"] : [] };
           okLotes++;
           totalEmb += data.embaladas ?? 0;
           if ((data.embaladas ?? 0) > 0) {
@@ -3640,30 +3648,23 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
     }
     setEmbalandoKey(key);
     try {
-      let ok = 0, errs = 0;
-      const qs = forcado
-        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
-        : "";
-      // Batelada: chama embalar-um separacao_id por id
+      // v41: marca no sistema na hora; o Tiny recebe pela fila (embalar-fila).
+      const r = await embalarNoSistema({
+        ids: alvos, forcar: !!forcado,
+        por: forcado?.nome ?? perfil?.nome ?? null, motivo: forcado?.motivo ?? null,
+      });
+      const bloq = new Set(r.bloqueados);
       for (const id of alvos) {
-        try {
-          await callSeparacaoFn(
-            `modulo=embalar-um&separacao_id=${id}&confirmar=1${qs}`,
-          );
-          ok++;
-          void registrarSeparacaoLog({
-            evento: "embalado", usuario: perfil?.nome ?? null,
-            separacao_id: id, sku: item.sku, detalhe: { via: "sku", forcado: !!forcado },
-          });
-        } catch (e) {
-          errs++;
-          console.warn("embalar-um falhou", id, (e as Error).message);
-        }
+        if (bloq.has(id)) continue;
+        void registrarSeparacaoLog({
+          evento: "embalado", usuario: perfil?.nome ?? null,
+          separacao_id: id, sku: item.sku, detalhe: { via: "sku", forcado: !!forcado },
+        });
       }
-      if (errs > 0) {
-        toast.warning(`${ok}/${alvos.length} embalados — ${errs} erro(s)`);
+      if (r.marcados < alvos.length) {
+        toast.warning(`${r.marcados}/${alvos.length} embalados — os outros já saíram da fila ou estão sem impressão confirmada`);
       } else {
-        toast.success(`${ok} pedido(s) marcados como embalados`);
+        toast.success(`${r.marcados} pedido(s) marcados como embalados`, { description: "O Tiny é atualizado em segundo plano." });
       }
       // recarrega em segundo plano — NÃO bloqueia a UI. O await aqui segurava
       // o estado "embalando" (que desabilita os botões) por vários segundos
@@ -3735,12 +3736,16 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
     }
     setEmbalandoKey(key);
     try {
-      const qs = forcado
-        ? `&forcar=1&forcado_por=${encodeURIComponent(forcado.nome)}&forcado_motivo=${encodeURIComponent(forcado.motivo)}`
-        : "";
-      await callSeparacaoFn(
-        `modulo=embalar-um&separacao_id=${p.separacao_id}&confirmar=1${qs}`,
-      );
+      // v41: marca no sistema na hora; o Tiny recebe pela fila (embalar-fila).
+      const r = await embalarNoSistema({
+        ids: [p.separacao_id], forcar: !!forcado,
+        por: forcado?.nome ?? perfil?.nome ?? null, motivo: forcado?.motivo ?? null,
+      });
+      if (r.marcados === 0) {
+        const err = new Error(r.bloqueados.length ? "impressão não confirmada" : "pedido já saiu da fila") as Error & { status?: number };
+        if (r.bloqueados.length) err.status = 409;
+        throw err;
+      }
       void registrarSeparacaoLog({
         evento: "embalado", usuario: perfil?.nome ?? null,
         order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
