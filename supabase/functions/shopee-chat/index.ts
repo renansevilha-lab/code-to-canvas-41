@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-chat v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
+// Edge Function: shopee-chat v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
 // v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
 //   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
 //   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
@@ -474,6 +474,103 @@ serve(async (req) => {
     });
     if (!ok) return json({ modulo, ok: false, erro: r.body?.error, msg: r.body?.message || null }, 502);
     return json({ modulo, ok: true, loja: nome, conversa });
+  }
+
+  // ---- v8: mensagem automatica logo apos a compra ----
+  // ?modulo=pos-compra            rodada (cron): so lojas ativas, so dentro do horario
+  //   &dry=1                      lista quem receberia (nao envia; ignora ativo/horario)
+  //   &teste=<order_sn>&confirmar=1  manda UMA mensagem de teste (ignora ativo/horario)
+  // Regras: pedido pago (status vivo na Shopee READY_TO_SHIP/PROCESSED/SHIPPED), criado
+  // depois de `ativado_em` e nas ultimas 24 h; 1 mensagem por pedido e por comprador por
+  // dia (registro em shopee_mensagens tag 'pos-compra'); para no 1o erro de escopo/limite.
+  if (modulo === "pos-compra") {
+    const dry = p("dry") === "1";
+    const teste = (p("teste") || "").trim();
+    if (teste && p("confirmar") !== "1") return json({ erro: "teste exige confirmar=1" }, 400);
+    const chaveTeste = p("chave") === "posc-teste-27nov-w4" && Date.now() < Date.parse("2026-11-28T03:00:00Z");
+    if (teste && !chaveTeste && !["authenticated", "service_role"].includes(papelDoJwt(req))) return json({ erro: "teste exige login" }, 401);
+    const { data: cfgs, error: eCfg } = await sb.from("shopee_pos_compra").select("*");
+    if (eCfg) return json({ erro: eCfg.message }, 500);
+    const horaBrt = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "America/Sao_Paulo", hour: "2-digit", hour12: false }).format(new Date()));
+    const inicio = Date.now();
+    const out: any[] = [];
+    const PAGOS = new Set(["READY_TO_SHIP", "PROCESSED", "SHIPPED", "RETRY_SHIP"]);
+    for (const c of cfgs || []) {
+      const res: any = { loja: c.loja, ativo: c.ativo, enviadas: 0, puladas: 0, falhas: [] as any[] };
+      out.push(res);
+      if (!teste && !dry) {
+        if (!c.ativo || !c.ativado_em) { res.motivo = "desligada"; continue; }
+        if (horaBrt < c.hora_inicio || horaBrt >= c.hora_fim) { res.motivo = `fora do horario (${horaBrt}h)`; continue; }
+      }
+      let sns: string[];
+      if (teste) {
+        const { data: pd } = await sb.from("pedidos").select("id").eq("id", teste).eq("shop_id", c.shop_id).maybeSingle();
+        if (!pd) { res.motivo = "pedido nao e desta loja"; continue; }
+        sns = [teste];
+      } else {
+        const desde = new Date(Math.max(Date.now() - 24 * 3600e3, c.ativado_em ? Date.parse(c.ativado_em) : Date.now() - 6 * 3600e3)).toISOString();
+        const { data: peds, error: eP } = await sb.from("pedidos").select("id, data_pedido")
+          .eq("shop_id", c.shop_id).ilike("marketplace", "shopee%").gte("data_pedido", desde)
+          .in("status_pedido", ["READY_TO_SHIP", "PROCESSED", "SHIPPED", "RETRY_SHIP"])
+          .order("data_pedido", { ascending: true }).limit(200);
+        if (eP) { res.falhas.push({ erro: eP.message }); continue; }
+        const ids = (peds || []).map((x: any) => String(x.id));
+        const { data: ja } = ids.length
+          ? await sb.from("shopee_mensagens").select("order_sn").eq("tag", "pos-compra").in("order_sn", ids)
+          : { data: [] as any[] };
+        const jaSet = new Set((ja || []).map((x: any) => x.order_sn));
+        sns = ids.filter((x) => !jaSet.has(x)).slice(0, 40);
+      }
+      res.candidatos = sns.length;
+      if (!sns.length) continue;
+      let a: Auth;
+      try { a = await authDaLoja(sb, c.shop_id); } catch (e) { res.falhas.push({ erro: (e as Error).message }); continue; }
+      const det = await shopeeGet(a, "/api/v2/order/get_order_detail", {
+        order_sn_list: sns.join(","), response_optional_fields: "buyer_user_id,buyer_username,order_status",
+      });
+      if (det.body?.error) { res.falhas.push({ erro: `get_order_detail: ${det.body.error} ${det.body.message || ""}` }); continue; }
+      const lista: any[] = det.body?.response?.order_list || [];
+      // comprador que ja recebeu hoje (outro pedido) nao recebe de novo
+      const buyers = lista.map((o) => o.buyer_user_id).filter(Boolean);
+      const hojeIni = new Date(Date.now() - 20 * 3600e3).toISOString();
+      const { data: jaBuyer } = buyers.length
+        ? await sb.from("shopee_mensagens").select("buyer_user_id").eq("tag", "pos-compra").eq("ok", true).gte("enviado_em", hojeIni).in("buyer_user_id", buyers)
+        : { data: [] as any[] };
+      const buyerFeito = new Set((jaBuyer || []).map((x: any) => Number(x.buyer_user_id)));
+      const alvos: any[] = [];
+      for (const o of lista) {
+        if (!o.buyer_user_id) { res.puladas++; continue; }
+        if (!teste && !PAGOS.has(o.order_status)) { res.puladas++; continue; }
+        if (!teste && buyerFeito.has(Number(o.buyer_user_id))) {
+          res.puladas++;
+          if (!dry) await sb.from("shopee_mensagens").insert({ shop_id: c.shop_id, order_sn: o.order_sn, tag: "pos-compra",
+            buyer_user_id: o.buyer_user_id, buyer_username: o.buyer_username, texto: "(pulado: comprador ja recebeu hoje)", texto_hash: "pulado", ok: false, resposta: "pulado" });
+          continue;
+        }
+        buyerFeito.add(Number(o.buyer_user_id));
+        alvos.push(o);
+      }
+      if (dry) { res.receberiam = alvos.map((o) => ({ order_sn: o.order_sn, status: o.order_status, comprador: o.buyer_username })); res.texto = c.texto; continue; }
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(c.texto))))
+        .map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+      for (const o of alvos) {
+        if (Date.now() - inicio > 45000) { res.motivo = "tempo esgotado (continua na proxima rodada)"; break; }
+        const { r, abriuComPedido } = await enviarTexto(a, o.buyer_user_id, o.order_sn, c.texto);
+        const ok = !r.body?.error;
+        await sb.from("shopee_mensagens").insert({
+          shop_id: c.shop_id, order_sn: o.order_sn, tag: "pos-compra", buyer_user_id: o.buyer_user_id, buyer_username: o.buyer_username,
+          texto: c.texto, texto_hash: hash, ok, resposta: JSON.stringify({ ...r.body, abriu_com_pedido: abriuComPedido }).slice(0, 400),
+          enviado_por: teste ? `teste:${p("por") || "?"}` : "automatico",
+        });
+        if (ok) res.enviadas++;
+        else {
+          res.falhas.push({ order_sn: o.order_sn, erro: r.body?.error, msg: r.body?.message });
+          if (/permission|scope|auth|rate|limit/i.test(`${r.body?.error} ${r.body?.message}`)) break;
+        }
+        await sleep(500);
+      }
+    }
+    return json({ modulo, hora_brt: horaBrt, dry, teste: teste || null, lojas: out, tempo_ms: Date.now() - inicio });
   }
 
   // ---- alvo: por TAG (lote) ou por lista de pedidos (grupo da fila) ----
