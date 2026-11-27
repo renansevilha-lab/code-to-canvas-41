@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-chat v9 (27/nov: cartao de devolucao no chat acha o pedido; regras de "nao recebi"/entregue) · v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
+// Edge Function: shopee-chat v10 (27/nov: resposta automatica da Shopee nao tira o cliente da fila) · v9 (27/nov: cartao de devolucao no chat acha o pedido; regras de "nao recebi"/entregue) · v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
 // v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
 //   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
 //   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
@@ -440,7 +440,31 @@ serve(async (req) => {
         ultima_msg_de_nos: c.latest_message_from_id != null && c.to_id != null && String(c.latest_message_from_id) !== String(c.to_id),
         ultima_msg_em: c.last_message_timestamp ? new Date(Number(String(c.last_message_timestamp).slice(0, 13))).toISOString() : null,
         fixada: !!c.pinned,
+        auto_respondida: false,
       }));
+      // v10: a resposta automatica da Shopee (fora do expediente, FAQ, assistente) chega como
+      // mensagem "da loja" (source server) e escondia o cliente da fila. Nas conversas dos
+      // ultimos 7 dias cuja ultima mensagem e da loja ou de sistema, olha as ultimas mensagens
+      // e ignora as automaticas: se a ultima de verdade e do cliente, a conversa volta a pedir resposta.
+      const TXT = new Set(["text", "image", "video", "order", "item", "product", "sticker"]);
+      const limite7d = Date.now() - 7 * 864e5;
+      // so as que ainda tem mensagem nao lida (a automatica nao marca como lida) ou terminam em cartao/sistema
+      const rever = conversas.filter((c: any) => ((c.ultima_msg_de_nos && c.nao_lidas > 0) || !TXT.has(c.ultima_msg_tipo))
+        && c.ultima_msg_em && Date.parse(c.ultima_msg_em) > limite7d).slice(0, 25);
+      for (let i = 0; i < rever.length; i += 5) {
+        await Promise.all(rever.slice(i, i + 5).map(async (c: any) => {
+          const rm = await shopeeGetIdsTexto(a, "/api/v2/sellerchat/get_message", { conversation_id: c.conversation_id, page_size: "8" });
+          const ms = rm.body?.response?.messages || []; // mais nova primeiro
+          const real = ms.find((m: any) => m.source !== "server" && TXT.has(m.message_type));
+          if (!real) return;
+          const deNos = real.from_id != null && c.comprador_id != null && String(real.from_id) !== String(c.comprador_id);
+          if (!deNos) {
+            c.auto_respondida = !!c.ultima_msg_de_nos; c.ultima_msg_de_nos = false;
+            c.ultima_msg = resumoConteudo(real.message_type, real.content); c.ultima_msg_tipo = real.message_type;
+            if (real.created_timestamp) c.ultima_msg_em = new Date(Number(real.created_timestamp) * 1000).toISOString();
+          }
+        }));
+      }
       return json({
         modulo, loja: nome, tipo, conversas,
         mais: !!resp.page_result?.more,
