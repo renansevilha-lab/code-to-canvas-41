@@ -483,14 +483,17 @@ export function MultiSkuPanel() {
     }))) return;
     let ok = 0, erros = 0;
     try {
-      for (let i = 0; i < alvo.length; i++) {
-        setEmbalando({ atual: i + 1, total: alvo.length });
-        const p = alvo[i];
-        try {
-          await embalarUmApi(p.separacao_id); ok++;
+      // v41: todos de uma vez no sistema; o Tiny recebe pela fila (embalar-fila).
+      setEmbalando({ atual: alvo.length, total: alvo.length });
+      try {
+        const r = await embalarNoSistema({ ids: alvo.map((p) => p.separacao_id), por: perfil?.nome ?? null });
+        const bloq = new Set(r.bloqueados);
+        ok = r.marcados; erros = alvo.length - r.marcados;
+        for (const p of alvo) {
+          if (bloq.has(p.separacao_id)) continue;
           void registrarSeparacaoLog({ evento: "embalado", usuario: perfil?.nome ?? null, order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, tag: p.tag_lote, detalhe: { via: "multi", forcado: false } });
-        } catch (e) { erros++; toast.error(`Falha ao embalar ${p.venda_numero}`, { description: (e as Error).message }); }
-      }
+        }
+      } catch (e) { erros = alvo.length; toast.error("Falha ao embalar", { description: (e as Error).message }); }
     } finally { setEmbalando(null); invalidar(); }
     toast[erros > 0 ? "warning" : "success"](`${ok} pedido(s) embalados${erros > 0 ? ` · ${erros} erro(s)` : ""}`);
   }

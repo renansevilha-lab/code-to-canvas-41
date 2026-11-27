@@ -238,6 +238,41 @@ interface PriorizadaRow {
   foto_capa: string | null;
 }
 
+/**
+ * Tira da tela, NA HORA, as separações recém-embaladas (27/nov/2026). Sem isto a
+ * linha só sumia quando ~15 listas da Separação terminavam de recarregar.
+ * Mexe só no cache do navegador; o recarregamento em segundo plano confirma.
+ */
+function tirarDaTelaOtimista(qc: ReturnType<typeof useQueryClient>, ids: number[]) {
+  if (ids.length === 0) return;
+  const set = new Set(ids);
+  type Est = { porSep: Map<number, unknown>; porLinha: Map<string, { seps: number[]; total: number }>; hasSent: boolean };
+  const est = qc.getQueryData<Est>(["separacao", "impressao_estados"]);
+  const remPorLinha = new Map<string, number>();
+  if (est?.porLinha) {
+    const novo = new Map(est.porLinha);
+    for (const [k, v] of est.porLinha) {
+      const n = v.seps.filter((x) => set.has(x)).length;
+      if (n === 0) continue;
+      remPorLinha.set(k, n);
+      novo.set(k, { ...v, seps: v.seps.filter((x) => !set.has(x)), total: Math.max(0, v.total - n) });
+    }
+    qc.setQueryData<Est>(["separacao", "impressao_estados"], { ...est, porLinha: novo });
+  }
+  qc.setQueryData<PriorizadaRow[]>(["separacao", "view_separacao_priorizada"], (old) =>
+    old?.flatMap((r) => {
+      const n = remPorLinha.get(linhaKeyDe(r));
+      if (!n) return [r];
+      const q = (r.qtd_pedidos ?? 0) - n;
+      if (q <= 0) return [];
+      return [{ ...r, qtd_pedidos: q, total_unidades: r.qtd_unidades != null ? q * r.qtd_unidades : r.total_unidades }];
+    }),
+  );
+  qc.setQueriesData({ queryKey: ["separacao", "view_separacao_pedidos"] }, (old: unknown) =>
+    Array.isArray(old) ? old.filter((p: { separacao_id?: number | null }) => !set.has(Number(p.separacao_id))) : old,
+  );
+}
+
 function usePriorizadaRows() {
   return useQuery({
     queryKey: ["separacao", "view_separacao_priorizada"],
@@ -3654,6 +3689,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
         por: forcado?.nome ?? perfil?.nome ?? null, motivo: forcado?.motivo ?? null,
       });
       const bloq = new Set(r.bloqueados);
+      tirarDaTelaOtimista(qc, alvos.filter((id) => !bloq.has(id)));
       for (const id of alvos) {
         if (bloq.has(id)) continue;
         void registrarSeparacaoLog({
@@ -3746,6 +3782,7 @@ function FilaPriorizada({ visual = "antigo", onVisual }: { visual?: VisualSep; o
         if (r.bloqueados.length) err.status = 409;
         throw err;
       }
+      tirarDaTelaOtimista(qc, [p.separacao_id]);
       void registrarSeparacaoLog({
         evento: "embalado", usuario: perfil?.nome ?? null,
         order_sn: p.numero_ecommerce, separacao_id: p.separacao_id, sku: p.sku_unico,
