@@ -9,7 +9,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { Spinner } from "@/components/separacao/ui/kit";
 import {
   type Grupo, type OrdemQuadro, type Passo, atrasoDias, diaMes, faltaFechar, fornecedorDe, grupoDe, num,
-  ehSugestao, passosDe, proximoPasso, rotuloOrdem,
+  ehSugestao, passoConcluivel, passosDe, proximoPasso, rotuloOrdem,
 } from "./defs";
 import { BotaoR, Busca, Progresso, SeloR, Trilha, cartaoR, kicker, mini, tnum } from "./pecas";
 
@@ -264,7 +264,8 @@ function LinhaOrdem({ o, grupo, ehAdm, ultimo, onAbrir, onChegou, onFeitoNoTiny 
         )}
       </div>
 
-      <Trilha passos={passos} />
+      <Trilha passos={passos} podeConcluir={(x) => passoConcluivel(o, x)}
+        onConcluir={(x) => { if (passoConcluivel(o, x)) onFeitoNoTiny(o, x.id); }} />
 
       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
         {falta && (

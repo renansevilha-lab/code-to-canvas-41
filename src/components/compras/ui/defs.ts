@@ -183,6 +183,13 @@ export function passosDe(o: OrdemQuadro): Passo[] {
   ];
 }
 
+export type PassoFechar = "estoque" | "contas" | "custo";
+/** Bolinha que pode ser concluída com um clique: estoque, contas ou custo ainda em aberto,
+ *  depois que a carga foi conferida (24/nov/2026). Nota e conferência têm fluxo próprio. */
+export function passoConcluivel(o: OrdemQuadro, p: Passo): p is Passo & { id: PassoFechar } {
+  return conferida(o) && p.estado !== "ok" && (p.id === "estoque" || p.id === "contas" || p.id === "custo");
+}
+
 /** Rótulo do botão principal da linha no quadro. */
 export function proximoPasso(o: OrdemQuadro): string {
   switch (grupoDe(o)) {

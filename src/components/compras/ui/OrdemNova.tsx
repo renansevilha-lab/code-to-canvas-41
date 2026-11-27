@@ -10,7 +10,7 @@ import { formatBRL, formatNumber } from "@/lib/format";
 import { DropdownMenu, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MenuItens, Spinner } from "@/components/separacao/ui/kit";
 import {
-  type OrdemQuadro, conferida, diaMes, diasEntre, ehSugestao, etapaAtual, fornecedorDe, num, passosDe, rotuloOrdem,
+  type OrdemQuadro, conferida, diaMes, passoConcluivel, diasEntre, ehSugestao, etapaAtual, fornecedorDe, num, passosDe, rotuloOrdem,
 } from "./defs";
 import { Apontamentos } from "./Apontamentos";
 import { BotaoR, FotoR, ParKV, Pilulas, Progresso, SeloR, Trilha, cartaoR, kicker, mini, tnum } from "./pecas";
@@ -195,7 +195,8 @@ export function OrdemNova(p: OrdemNovaProps) {
             ]} />
           </DropdownMenu>
         </div>
-        <div style={{ marginTop: 14 }}><Trilha passos={passos} detalhe /></div>
+        <div style={{ marginTop: 14 }}><Trilha passos={passos} detalhe podeConcluir={(x) => passoConcluivel(ordem, x)}
+          onConcluir={(x) => { if (passoConcluivel(ordem, x)) p.onFeitoNoTiny(x.id); }} /></div>
       </section>
 
       {p.slotDivergencia}

@@ -351,9 +351,9 @@ function ComprasPageNova({ onUsarAntigo }: { onUsarAntigo: () => void }) {
 
   async function feitoNoTiny(o: OrdemQuadro, passo: "estoque" | "contas" | "custo") {
     const ok = await confirmarSep({
-      kicker: rotuloOrdem(o), titulo: `Marcar ${NOME_PASSO_TINY[passo]} como já feito no Tiny?`,
+      kicker: rotuloOrdem(o), titulo: `Concluir a etapa: ${NOME_PASSO_TINY[passo]} já foi feito no Tiny?`,
       resumo: "O app só registra que este passo foi feito fora dele. Nada é lançado no Tiny.",
-      okTxt: "Marcar como feito",
+      okTxt: "Concluir etapa",
     });
     if (!ok) return;
     const { error } = await supabaseExternal.from("compras_ordens").update(patchFeitoNoTiny(passo, perfil?.nome)).eq("tiny_id", o.tiny_id);
@@ -1073,9 +1073,9 @@ function ConferenciaOrdem({ tinyId, onVoltar, novo, ordens, onUsarAntigo }: {
 
   async function feitoNoTiny(passo: "estoque" | "contas" | "custo") {
     const ok = await confirmarSep({
-      kicker: rotuloOrdem(oq), titulo: `Marcar ${NOME_PASSO_TINY[passo]} como já feito no Tiny?`,
+      kicker: rotuloOrdem(oq), titulo: `Concluir a etapa: ${NOME_PASSO_TINY[passo]} já foi feito no Tiny?`,
       resumo: "O app só registra que este passo foi feito fora dele. Nada é lançado no Tiny.",
-      okTxt: "Marcar como feito",
+      okTxt: "Concluir etapa",
     });
     if (!ok) return;
     await salvarOrdem(patchFeitoNoTiny(passo, perfil?.nome) as Partial<Ordem>);

@@ -97,11 +97,16 @@ export function FotoR({ url, tam = 46 }: { url?: string | null; tam?: number }) 
 }
 
 /** Linha do tempo de 6 passos. `detalhe` mostra hora e quem (dentro da ordem). */
-export function Trilha({ passos, detalhe }: { passos: Passo[]; detalhe?: boolean }) {
+/** `podeConcluir(p)` diz quais bolinhas viram botão; o clique chama `onConcluir(p)` (24/nov/2026). */
+export function Trilha({ passos, detalhe, podeConcluir, onConcluir }: {
+  passos: Passo[]; detalhe?: boolean;
+  podeConcluir?: (p: Passo) => boolean; onConcluir?: (p: Passo) => void;
+}) {
   return (
     <div style={{ display: "flex", alignItems: "flex-start", minWidth: 0 }}>
       {passos.map((p, i) => {
         const ok = p.estado === "ok", agora = p.estado === "agora", prob = p.estado === "problema";
+        const clicavel = !!onConcluir && !!podeConcluir?.(p);
         const corBola = ok ? "var(--pm-g)" : prob ? "var(--pm-am)" : agora ? "var(--pm-a)" : "var(--pm-bc)";
         const data = p.quando ? (detalhe ? diaHora(p.quando) : diaMes(p.quando)) : null;
         const linha2 = data ? (detalhe && p.quem ? `${data} · ${p.quem}` : data) : p.nota ? (detalhe && p.quem ? `${p.nota} · ${p.quem}` : p.nota) : null;
@@ -110,11 +115,18 @@ export function Trilha({ passos, detalhe }: { passos: Passo[]; detalhe?: boolean
             {i > 0 && (
               <div style={{ position: "absolute", top: 8, left: "-50%", width: "100%", height: 3, borderRadius: 3, background: ok || prob ? "var(--pm-g)" : "var(--pm-b)" }} />
             )}
-            <div style={{
-              width: 19, height: 19, borderRadius: "50%", position: "relative", zIndex: 1, display: "grid", placeItems: "center",
-              border: `2px solid ${corBola}`, background: ok || prob ? corBola : "var(--pm-s)",
-              boxShadow: agora ? "0 0 0 4px var(--pm-as)" : undefined, color: "#fff", fontSize: 11, fontWeight: 700,
-            }}>
+            <div
+              role={clicavel ? "button" : undefined} tabIndex={clicavel ? 0 : undefined}
+              title={clicavel ? `Concluir a etapa ${p.nomeLongo}` : undefined}
+              className={clicavel ? "cp-bola-clic" : undefined}
+              onClick={clicavel ? (e) => { e.stopPropagation(); onConcluir!(p); } : undefined}
+              onKeyDown={clicavel ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onConcluir!(p); } } : undefined}
+              style={{
+                width: 19, height: 19, borderRadius: "50%", position: "relative", zIndex: 1, display: "grid", placeItems: "center",
+                border: `2px solid ${corBola}`, background: ok || prob ? corBola : "var(--pm-s)",
+                boxShadow: agora ? "0 0 0 4px var(--pm-as)" : undefined, color: "#fff", fontSize: 11, fontWeight: 700,
+                cursor: clicavel ? "pointer" : undefined,
+              }}>
               {ok ? <Check size={12} strokeWidth={3} /> : prob ? "!" : null}
             </div>
             <span style={{
@@ -134,6 +146,7 @@ export function Trilha({ passos, detalhe }: { passos: Passo[]; detalhe?: boolean
           </div>
         );
       })}
+      {onConcluir && <style>{`.pm-ui .cp-bola-clic:hover{ transform: scale(1.18); border-color: var(--pm-g) !important; } .pm-ui .cp-bola-clic{ transition: transform .12s; }`}</style>}
     </div>
   );
 }
