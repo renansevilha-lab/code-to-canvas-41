@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-chat v10 (27/nov: resposta automatica da Shopee nao tira o cliente da fila) · v9 (27/nov: cartao de devolucao no chat acha o pedido; regras de "nao recebi"/entregue) · v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
+// Edge Function: shopee-chat v11 (27/nov: produto do chat lido ao vivo — preco, variacoes, estoque, foto, descricao) · v10 (27/nov: resposta automatica da Shopee nao tira o cliente da fila) · v9 (27/nov: cartao de devolucao no chat acha o pedido; regras de "nao recebi"/entregue) · v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
 // v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
 //   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
 //   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
@@ -238,8 +238,43 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
   const produtos: any[] = [];
   const its = [...itemIds].slice(-3);
   if (its.length) {
-    const { data } = await sb.from("shopee_anuncios").select("item_id, nome, preco_min, preco_max, estoque_total, status").in("item_id", its.map(Number));
-    for (const x of (data || [])) produtos.push({ anuncio: String(x.item_id), nome: x.nome, preco: x.preco_min === x.preco_max ? x.preco_min : `${x.preco_min} a ${x.preco_max}`, estoque: x.estoque_total, situacao: x.status });
+    // v11: produto AO VIVO na Shopee (o espelho nao tem preco/estoque de anuncio com variacoes):
+    // nome, foto, preco atual (com promocao), estoque, variacoes e um trecho da descricao
+    const fmt = (v: number) => v.toFixed(2).replace(".", ",");
+    const bi = await shopeeGet(a, "/api/v2/product/get_item_base_info", { item_id_list: its.join(",") });
+    for (const it of (bi.body?.response?.item_list || [])) {
+      const pi = (it.price_info || [])[0] || {};
+      let variacoes: any[] = [];
+      let precos: number[] = pi.current_price != null ? [Number(pi.current_price)] : [];
+      let estoque: number | null = it.stock_info_v2?.summary_info?.total_available_stock ?? null;
+      if (it.has_model) {
+        const ml = await shopeeGet(a, "/api/v2/product/get_model_list", { item_id: String(it.item_id) });
+        const tiers = ml.body?.response?.tier_variation || [];
+        variacoes = (ml.body?.response?.model || []).map((m: any) => {
+          const nomeVar = (m.tier_index || []).map((ix: number, t: number) => tiers[t]?.option_list?.[ix]?.option).filter(Boolean).join(" / ");
+          const pm = (m.price_info || [])[0] || {};
+          return { nome: nomeVar || m.model_sku || "", sku: m.model_sku || null,
+            preco: pm.current_price != null ? Number(pm.current_price) : null,
+            preco_cheio: pm.original_price != null ? Number(pm.original_price) : null,
+            estoque: m.stock_info_v2?.summary_info?.total_available_stock ?? null };
+        });
+        precos = variacoes.map((v) => v.preco).filter((v) => v != null);
+        const est = variacoes.map((v) => v.estoque).filter((v) => v != null);
+        estoque = est.length ? est.reduce((s, v) => s + v, 0) : estoque;
+      }
+      const min = precos.length ? Math.min(...precos) : null, max = precos.length ? Math.max(...precos) : null;
+      produtos.push({
+        anuncio: String(it.item_id), nome: it.item_name, situacao: it.item_status,
+        foto: it.image?.image_url_list?.[0] ?? null,
+        preco: min == null ? null : min === max ? fmt(min) : `${fmt(min)} a ${fmt(max!)}`,
+        estoque, variacoes,
+        descricao: String(it.description || "").replace(/\s+/g, " ").slice(0, 700) || null,
+      });
+    }
+    if (!produtos.length) {
+      const { data } = await sb.from("shopee_anuncios").select("item_id, nome, preco_min, preco_max, estoque_total, status").in("item_id", its.map(Number));
+      for (const x of (data || [])) produtos.push({ anuncio: String(x.item_id), nome: x.nome, preco: x.preco_min == null ? null : x.preco_min === x.preco_max ? x.preco_min : `${x.preco_min} a ${x.preco_max}`, estoque: x.estoque_total, situacao: x.status });
+    }
   }
   return { comprador_id: compradorId, historico: historico.slice(-20), pedidos, produtos };
 }
@@ -280,6 +315,7 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
     "Nunca passe telefone, WhatsApp, e-mail, link externo nem peca para comprar fora da Shopee (regra da Shopee).",
     "Se o pedido tem 'devolucao' preenchida, a solicitacao JA esta aberta: nao peca para abrir de novo. Status JUDGING ou REQUESTED com motivo NOT_RECEIPT = a Shopee esta analisando o 'nao recebi'; diga isso e que a decisao sai pelo app. Se entrega_ida = LOGISTICS_DELIVERY_DONE ou status_shopee COMPLETED/TO_CONFIRM_RECEIVE, a transportadora registrou a entrega: diga isso com cuidado (sem acusar), sugira conferir com vizinhos/portaria e acompanhar a analise da Shopee.",
     "Nunca diga que 'nao encontrou pedido vinculado ao chat' nem fale do sistema interno: se nenhum pedido veio nos dados, apenas peca gentilmente o numero do pedido.",
+    "Se o cliente so mandou o cartao de um produto, sem pergunta: cumprimente, cite o produto pelo nome curto (sem repetir o titulo inteiro do anuncio) e pergunte em que pode ajudar. Use preco, variacoes, estoque e descricao do produto para responder duvidas sobre ele. Nunca diga que 'nao tem o preco/estoque aqui' nem mande o cliente procurar na pagina: se o dado faltar, simplesmente nao cite.",
     "Se faltar o numero do pedido e ele for necessario, peca. Se o pedido ainda nao foi enviado e esta no prazo, diga que esta sendo preparado e informe a data limite de envio.",
     "Se a pergunta exigir decisao humana (reclamacao grave, ameaca, pedido de reembolso, produto errado/quebrado, assunto que os dados nao respondem), marque precisa_humano=true e ainda assim escreva uma resposta segura de acolhimento.",
     'Responda APENAS um JSON: {"resposta": "...", "precisa_humano": true|false, "motivo": "frase curta para a equipe"}.',
