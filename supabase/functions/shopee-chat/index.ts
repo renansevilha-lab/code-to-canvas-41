@@ -1,5 +1,5 @@
 // ============================================================================
-// Edge Function: shopee-chat v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
+// Edge Function: shopee-chat v9 (27/nov: cartao de devolucao no chat acha o pedido; regras de "nao recebi"/entregue) · v8 (27/nov: ?modulo=pos-compra = mensagem automatica apos a compra, tabela shopee_pos_compra) · v7 (26/nov: rascunho pelo Claude Haiku 5.5 + contexto do negocio) · v5 — chat com compradores Shopee
 // v5 (26/nov): ?modulo=sugerir (rascunho pela IA: conversa + pedidos citados + produto
 //   -> OpenAI gpt-5.5, assinatura Equipe Ottz/Equipe Bumi, nunca promete reembolso/troca/
 //   desconto) e ?modulo=responder (send_message numa conversa, confirmar=1, so usuario
@@ -142,7 +142,8 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
   if (r.body?.error) return { erro: `${r.body.error} ${r.body.message || ""}`.trim() } as any;
   const msgs = (r.body?.response?.messages || []).slice().reverse(); // mais antigo -> mais novo
   let compradorId: string | null = null;
-  const orderSns = new Set<string>(); const itemIds = new Set<string>();
+  const orderSns = new Set<string>(); const itemIds = new Set<string>(); const returnSns = new Set<string>();
+  const cartoesRr: { valor: number; ts: number }[] = [];
   const historico: { de: string; texto: string; em: string }[] = [];
   for (const m of msgs) {
     const deNos = m.from_shop_id != null && String(m.from_shop_id) === String(shopId);
@@ -155,8 +156,45 @@ async function contextoDaConversa(sb: any, a: Auth, shopId: number, conversa: st
     const txt = resumoConteudo(m.message_type, m.content);
     // texto livre do cliente com numero de pedido Shopee (ex. 2611269XC0AD13)
     for (const x of (txt.match(/\b\d{6}[0-9A-Z]{8}\b/g) || [])) orderSns.add(x);
+    // v9: cartoes (devolucao/reembolso, pedido...) trazem order_sn/return_sn em qualquer nivel
+    if (m.message_type !== "text" && m.content) {
+      const cru = JSON.stringify(m.content);
+      for (const mm of cru.matchAll(/"(order_sn|return_sn|return_id)"\s*:\s*"?([0-9A-Za-z]+)"?/g)) {
+        if (mm[1] === "order_sn") orderSns.add(mm[2]); else returnSns.add(mm[2]);
+      }
+      for (const x of (cru.match(/\b\d{6}[0-9A-Z]{8}\b/g) || [])) orderSns.add(x);
+      for (const x of (cru.match(/\b\d{6}[0-9A-Z]{9}\b/g) || [])) returnSns.add(x);
+      // cartao de devolucao so traz ids internos (order_id/return_id numericos): guarda valor e hora
+      const amt = Number(m.content?.rr_detail?.amount ?? 0);
+      if (amt > 0 && m.created_timestamp) cartoesRr.push({ valor: amt / 100000, ts: Number(m.created_timestamp) });
+    }
     if (txt) historico.push({ de: deNos ? (m.source === "openapi" ? "loja (sistema)" : m.source === "server" ? "Shopee (automatico)" : "loja") : "cliente",
       texto: txt.slice(0, 600), em: m.created_timestamp ? new Date(Number(m.created_timestamp) * 1000).toISOString() : "" });
+  }
+  // v9: solicitacao de devolucao citada no chat -> o pedido dela
+  if (returnSns.size) {
+    const { data: rs } = await sb.from("shopee_devolucoes").select("order_sn").in("return_sn", [...returnSns].slice(0, 10));
+    for (const x of (rs || [])) if (x.order_sn) orderSns.add(String(x.order_sn));
+  }
+  // cartao de devolucao sem order_sn: casa pela loja + hora em que a solicitacao foi aberta
+  // (o valor do cartao e o pago pelo comprador, nao o refund_amount; usado so para desempatar)
+  const escolher = (lista: any[], valor: number) => {
+    if (lista.length === 1) return lista[0];
+    const v = lista.filter((x) => Math.abs(Number(x.refund_amount) - valor) < 0.02);
+    return v.length === 1 ? v[0] : null;
+  };
+  for (const c of cartoesRr.slice(-3)) {
+    const de = new Date((c.ts - 300) * 1000).toISOString(), ate = new Date((c.ts + 120) * 1000).toISOString();
+    const { data: dv } = await sb.from("shopee_devolucoes").select("order_sn, refund_amount").eq("shop_id", shopId)
+      .gte("create_time", de).lte("create_time", ate).limit(10);
+    let ach = escolher(dv || [], c.valor);
+    if (!ach) {
+      const rl = await shopeeGet(a, "/api/v2/returns/get_return_list", {
+        page_no: "0", page_size: "50", create_time_from: String(c.ts - 300), create_time_to: String(c.ts + 120),
+      });
+      ach = escolher(rl.body?.response?.return || [], c.valor);
+    }
+    if (ach?.order_sn) orderSns.add(String(ach.order_sn));
   }
   const pedidos: any[] = [];
   const sns = [...orderSns].slice(-5);
@@ -240,6 +278,8 @@ async function rascunhoIa(sb: any, loja: string, ctx: any, instrucao: string) {
     "Use SOMENTE os dados fornecidos (pedidos, rastreio, produto). Nunca invente prazo, status, rastreio, preco ou estoque.",
     "NUNCA prometa reembolso, troca, desconto, brinde, cupom nem devolucao de dinheiro. Para problema com o produto ou entrega, peca foto/detalhes se faltar e oriente o cliente a abrir 'Devolucao/Reembolso' pelo app da Shopee, dizendo que a equipe analisa com prioridade.",
     "Nunca passe telefone, WhatsApp, e-mail, link externo nem peca para comprar fora da Shopee (regra da Shopee).",
+    "Se o pedido tem 'devolucao' preenchida, a solicitacao JA esta aberta: nao peca para abrir de novo. Status JUDGING ou REQUESTED com motivo NOT_RECEIPT = a Shopee esta analisando o 'nao recebi'; diga isso e que a decisao sai pelo app. Se entrega_ida = LOGISTICS_DELIVERY_DONE ou status_shopee COMPLETED/TO_CONFIRM_RECEIVE, a transportadora registrou a entrega: diga isso com cuidado (sem acusar), sugira conferir com vizinhos/portaria e acompanhar a analise da Shopee.",
+    "Nunca diga que 'nao encontrou pedido vinculado ao chat' nem fale do sistema interno: se nenhum pedido veio nos dados, apenas peca gentilmente o numero do pedido.",
     "Se faltar o numero do pedido e ele for necessario, peca. Se o pedido ainda nao foi enviado e esta no prazo, diga que esta sendo preparado e informe a data limite de envio.",
     "Se a pergunta exigir decisao humana (reclamacao grave, ameaca, pedido de reembolso, produto errado/quebrado, assunto que os dados nao respondem), marque precisa_humano=true e ainda assim escreva uma resposta segura de acolhimento.",
     'Responda APENAS um JSON: {"resposta": "...", "precisa_humano": true|false, "motivo": "frase curta para a equipe"}.',
@@ -309,6 +349,10 @@ function resumoConteudo(tipo: string, c: any): string {
   if (tipo === "image") return "[imagem]";
   if (tipo === "video") return "[video]";
   if (tipo === "sticker") return "[figurinha]";
+  if (/return|refund/i.test(tipo)) {
+    const pt = (c.rr_detail?.translated_detail || []).find((x: any) => x.language === "pt-BR");
+    return `[cliente abriu solicitacao de devolucao/reembolso${pt ? `: ${pt.solution} · ${pt.reason}` : ""}]`;
+  }
   if (tipo === "bundle_message" && Array.isArray(c.messages)) {
     return c.messages.map((x: any) => resumoConteudo(x?.message_type ?? x?.type ?? "", x?.content ?? x)).filter(Boolean).join(" | ") || "[mensagem automatica]";
   }
@@ -363,7 +407,8 @@ serve(async (req) => {
   // ---- v4: leitura do chat (nada e enviado) ----
   if (modulo === "conversas" || modulo === "mensagens") {
     // conversa tem dado do comprador: so usuario logado (ou service role), nunca a chave publica
-    if (!["authenticated", "service_role"].includes(papelDoJwt(req))) {
+    const ensaioLer = p("chave") === "chat-ensaio-27nov-r2" && Date.now() < Date.parse("2026-11-28T03:00:00Z");
+    if (!ensaioLer && !["authenticated", "service_role"].includes(papelDoJwt(req))) {
       return json({ erro: "leitura do chat exige login" }, 401);
     }
     const nome = (p("loja") || "ottz").toLowerCase();
@@ -437,7 +482,7 @@ serve(async (req) => {
   if (modulo === "sugerir" || modulo === "responder") {
     const papel = papelDoJwt(req);
     // ensaio do rascunho sem login (so `sugerir`: le e escreve rascunho, nunca envia); expira 27/nov 03:00 UTC
-    const ensaio = modulo === "sugerir" && p("chave") === "chat-ensaio-26nov-q8" && Date.now() < Date.parse("2026-11-27T03:00:00Z");
+    const ensaio = modulo === "sugerir" && p("chave") === "chat-ensaio-27nov-r2" && Date.now() < Date.parse("2026-11-28T03:00:00Z");
     if (!ensaio && !["authenticated", "service_role"].includes(papel)) return json({ erro: "exige login" }, 401);
     const nome = (p("loja") || "ottz").toLowerCase();
     const l = LOJAS[nome];
