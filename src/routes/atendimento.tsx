@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { supabaseExternal, EXTERNAL_URL, EXTERNAL_PUBLISHABLE_KEY } from "@/integrations/supabase/external-client";
 import { usePerfil } from "@/hooks/usePerfil";
-import { PedidoCard, mlParaVis, shopeeParaVis } from "@/components/atendimento/PedidoCard";
 
 // ============================================================================
 // Central de Atendimento — 26/nov/2026 (proposta aprovada pelo dono:
@@ -545,7 +544,23 @@ function Contexto({ it, sug }: { it: Item; sug?: Sug }) {
     const pedidos: any[] = extra?.pedidos ?? [];
     return (
       <>
-        {pedidos.map((p) => <PedidoCard key={p.pedido} p={mlParaVis(p)} />)}
+        {pedidos.map((p) => (
+          <Bloco key={p.pedido} titulo={`Pedido ${p.pedido}`}>
+            {(p.itens ?? []).map((i: any) => (
+              <div key={i.mlb} className="mb-2 flex items-center gap-2.5">
+                {i.foto ? <img src={i.foto} alt="" className="h-11 w-11 rounded-lg object-cover" /> : <div className="grid h-11 w-11 place-items-center rounded-lg bg-[var(--pm-s2)]"><Package className="h-4 w-4 text-[var(--pm-t3)]" /></div>}
+                <div className="min-w-0 text-xs leading-snug"><div className="font-medium">{i.qtd}× {i.titulo}</div>{i.variacao && <div className="text-[var(--pm-t3)]">{i.variacao}</div>}</div>
+              </div>
+            ))}
+            <div className="space-y-1">
+              <Linha k="Situação" v={p.status} />
+              <Linha k="Envio" v={p.envio ? (STATUS_ENVIO[p.envio.status] ?? p.envio.status) : null} />
+              <Linha k="Despachar até" v={dataBR(p.envio?.despachar_ate)} />
+              <Linha k="Previsão de entrega" v={dataBR(p.envio?.previsao)} />
+              <Linha k="Rastreio" v={p.envio?.rastreio} />
+            </div>
+          </Bloco>
+        ))}
         {q.isLoading && <Bloco titulo="Pedido"><div className="text-xs text-[var(--pm-t3)]">Carregando…</div></Bloco>}
         {!q.isLoading && pedidos.length === 0 && <Bloco titulo="Pedido"><div className="text-xs text-[var(--pm-t3)]">{it.produto ?? "Sem dados do pedido."}</div></Bloco>}
       </>
@@ -574,7 +589,18 @@ function Contexto({ it, sug }: { it: Item; sug?: Sug }) {
           )}
         </Bloco>
       ))}
-      {(ctx?.pedidos ?? []).map((p: any) => <PedidoCard key={p.pedido} p={shopeeParaVis(p)} />)}
+      {(ctx?.pedidos ?? []).map((p: any) => (
+        <Bloco key={p.pedido} titulo={`Pedido ${p.pedido}`}>
+          <div className="mb-2 space-y-0.5 text-xs">{(p.itens ?? []).map((i: string, k: number) => <div key={k} className="flex gap-1.5"><ShoppingBag className="mt-0.5 h-3 w-3 shrink-0 text-[var(--pm-t3)]" />{i}</div>)}</div>
+          <div className="space-y-1">
+            <Linha k="Situação" v={p.status_shopee} />
+            <Linha k="Enviar até" v={dataBR(p.enviar_ate)} />
+            <Linha k="No galpão" v={p.situacao_no_galpao} />
+            <Linha k="Rastreio" v={p.rastreio} />
+            {p.devolucao && <Linha k="Devolução" v={`${p.devolucao.status}${p.devolucao.solucao ? ` · ${p.devolucao.solucao}` : ""}`} />}
+          </div>
+        </Bloco>
+      ))}
       {!ctx && <Bloco titulo="Pedido"><div className="text-xs text-[var(--pm-t3)]">Os dados do pedido aparecem junto com a resposta da IA.</div></Bloco>}
       {ctx && (ctx.pedidos ?? []).length === 0 && <Bloco titulo="Pedido"><div className="text-xs text-[var(--pm-t3)]">Nenhum pedido citado nesta conversa.</div></Bloco>}
     </>
