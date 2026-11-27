@@ -1703,6 +1703,7 @@ com o `config.json` ao lado. A 1ª chamada do agente levou ~30 s (cold start).
   com id que não é nosso (as telas não oferecem mais) — limpar no próximo deploy delas. Não apagar o
   secret `PRINTNODE_API_KEY` antes disso: o `confirmar-impressao` (contador da tela) ainda o lê.
   `impressoras.id 151` (entrada da ZD220 do PC da Tânia que não imprime) ficou `ativa = false`.
+- **Corrida job × linha (27/nov/2026):** o agente conclui o job em 0,5–3 s e às vezes ANTES de a função gravar a linha em `impressao_etiquetas` — o `trg_print_jobs_espelha` não acha a linha e ela fica `sent` para sempre: o pedido não libera o embalar e o `confirmar-impressao` conta 1 pendente, então a barra "Impressora imprimindo" da Separação esperava os 2 min inteiros em TODA impressão (sintoma: "fica carregando e só depois do F5 aparece o embalar"). Gatilho `trg_impressao_job_ja_concluido` (BEFORE INSERT/UPDATE em `impressao_etiquetas`): se o job já está `impresso`/`erro`/`cancelado`, a linha nasce `done`/`error`.
 - **Pendente:** tirar a reserva do PrintNode depois de ~1
   semana; PDFs do Fulfillment → ZPL (pdf.js → ^GFA); seletor de impressora
   próprio no front. 55 linhas `sent` de ago (antes da janela do cron) ficam
